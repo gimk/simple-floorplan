@@ -1,23 +1,24 @@
-// Cloudflare Pages Function: Hono API for Simple Floorplan.
+// Hono API for Simple Floorplan.
 // Storage: D1 (binding DB) for structured data, R2 (binding IMAGES) for images.
-// Auth: header `x-passcode` must equal env PASSCODE (if PASSCODE is unset, allow all).
+// Auth: `Authorization: Bearer sfp_...` or the legacy `x-passcode` header (see auth.ts).
+// Mounted by the Worker entry (functions/worker.ts) at the /api prefix.
 import { Hono } from 'hono'
-import { handle } from 'hono/cloudflare-pages'
 import { ZodError } from 'zod'
-import { PRUNE_SNAPSHOTS_SQL, pruneCutoffVersion } from '../../src/sync/projects'
-import { planJsonSchema, SnapshotPutBodySchema } from '../../src/core/schema'
-import { applyBatch, CommandError, CommandsBatchRequestSchema } from '../../src/core/commands'
-import { QueryError, querySummary, runQuery } from '../../src/core/queries'
-import { renderPlanSvg } from '../../src/core/export'
-import { registerFormatsRoutes } from '../routes/formats'
-import { OPENAPI_SPEC } from '../openapi'
-import { mcpRoutes } from '../routes/mcp'
-import { accessMiddleware, registerAccessRoutes } from '../auth'
-import { syncProjectTitle } from '../routes/projectTitle'
-import { commitDoc, loadProjectDoc, type ProjectRow } from '../store'
-import { checkUpload, parseCaps, uploadWindowStartIso } from '../../src/core/caps'
+import { PRUNE_SNAPSHOTS_SQL, pruneCutoffVersion } from '../src/sync/projects'
+import { planJsonSchema, SnapshotPutBodySchema } from '../src/core/schema'
+import { applyBatch, CommandError, CommandsBatchRequestSchema } from '../src/core/commands'
+import { QueryError, querySummary, runQuery } from '../src/core/queries'
+import { renderPlanSvg } from '../src/core/export'
+import { registerFormatsRoutes } from './routes/formats'
+import { OPENAPI_SPEC } from './openapi'
+import { mcpRoutes } from './routes/mcp'
+import { accessMiddleware, registerAccessRoutes } from './auth'
+import { syncProjectTitle } from './routes/projectTitle'
+import { commitDoc, loadProjectDoc, type ProjectRow } from './store'
+import { checkUpload, parseCaps, uploadWindowStartIso } from '../src/core/caps'
 
-type Env = {
+/** Bindings and vars this API needs. The Worker entry adds the ASSETS binding. */
+export type Env = {
   DB: D1Database
   IMAGES: R2Bucket
   PASSCODE?: string
@@ -27,7 +28,7 @@ type Env = {
   MAX_UPLOADS_PER_DAY?: string
 }
 
-const app = new Hono<{ Bindings: Env }>().basePath('/api')
+export const app = new Hono<{ Bindings: Env }>().basePath('/api')
 
 // ---------- small helpers ----------
 
@@ -595,5 +596,3 @@ app.route('/mcp', mcpRoutes)
 registerAccessRoutes(app)
 
 registerFormatsRoutes(app)
-
-export const onRequest = handle(app)

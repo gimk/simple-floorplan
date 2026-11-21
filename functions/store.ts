@@ -1,5 +1,5 @@
 // Single shared D1 persistence implementation for Simple Floorplan.
-// Used by the commands route (functions/api/[[route]].ts), the .sfp PUT route
+// Used by the commands route (functions/app.ts), the .sfp PUT route
 // (functions/routes/formats.ts) and the MCP server (functions/mcp/store.ts).
 //
 // Storage layout: one row per snapshot version in floorplan_snapshots (the

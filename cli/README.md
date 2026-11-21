@@ -2,7 +2,9 @@
 
 Zero-dependency Node.js (>= 18) command-line client for the Simple Floorplan HTTP API.
 It talks to the same `/api/*` endpoints as the web app, so it works against a local
-`wrangler pages dev` server, a deployed Cloudflare Pages site, or any compatible URL.
+`wrangler dev` server, a deployed Cloudflare Worker, or any compatible URL.
+Deployed base URL until the custom domain is attached:
+`https://simple-floorplan.<account-subdomain>.workers.dev`.
 
 Install / link: the package declares `"bin": { "sfp": "cli/sfp.mjs" }`, so after
 `npm install` (or `npm link`) the `sfp` command is on your PATH. You can also run it
@@ -31,7 +33,7 @@ sfp measure <project> <label> <cm>             # set one measurement, e.g. sfp m
 Examples:
 
 ```bash
-export SFP_URL=https://simple-floorplan.pages.dev SFP_PASSCODE=secret
+export SFP_URL=https://simple-floorplan.<account-subdomain>.workers.dev SFP_PASSCODE=secret
 sfp projects
 sfp pull proj_abc > apartment.sfp        # human-readable, git-diffable text
 $EDITOR apartment.sfp

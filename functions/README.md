@@ -1,9 +1,21 @@
 # Backend — Hono + Cloudflare D1 + R2
 
-Cloudflare Pages serves the built SPA from `dist/` (`pages_build_output_dir` in
-`../wrangler.toml`) and this Hono app from `functions/api/[[route]].ts` under
-`/api/*`. Data lives in D1 (binding `DB`, database `simple-floorplan`) and images
-in R2 (binding `IMAGES`, bucket `simple-floorplan-images`).
+One Cloudflare Worker (`simple-floorplan`, entry `functions/worker.ts`) serves two
+things: the built SPA from `dist/` through the `ASSETS` binding (`[assets]` in
+`../wrangler.toml`, single-page-application fallback) and this Hono app
+(`functions/app.ts`) under `/api/*`. Requests for `/api/*` reach the Worker first
+(`run_worker_first`); every other path is answered by the assets layer. Data lives
+in D1 (binding `DB`, database `simple-floorplan`) and images in R2 (binding
+`IMAGES`, bucket `simple-floorplan-images`).
+
+Files:
+
+| File | Role |
+|---|---|
+| `functions/worker.ts` | Worker entry: `/api/*` → Hono app, everything else → `ASSETS` |
+| `functions/app.ts` | Hono app (exported `app`, type `Env`), routes under `/api` |
+| `functions/routes/*`, `functions/mcp/*` | Route groups and MCP implementation |
+| `functions/auth.ts`, `functions/store.ts` | Auth middleware, shared D1 persistence |
 
 ## Setup (once)
 
@@ -16,33 +28,55 @@ wrangler d1 create simple-floorplan
 # 2. Create the R2 bucket
 wrangler r2 bucket create simple-floorplan-images
 
-# 3. Apply the schema (local dev DB used by `wrangler pages dev`)
+# 3. Apply the schema (local dev DB used by `wrangler dev`)
 npm run db:migrate:local
 #    wrangler d1 migrations apply simple-floorplan --local
 
 # 4. Optional passcode auth (if unset, the API is open)
-wrangler pages secret put PASSCODE --project-name simple-floorplan
+wrangler secret put PASSCODE
 ```
 
 ## Local development
 
 ```bash
 npm run dev:api
-# = wrangler pages dev --port 8788 -- npx vite
-# Vite (proxied at /api -> :8788, see vite.config.ts) runs through wrangler,
-# which executes functions/ for /api/* against the LOCAL D1/R2.
+# = vite build && wrangler dev --port 8788
+# wrangler runs functions/worker.ts locally against the LOCAL D1/R2 and serves
+# dist/ as static assets. Vite (port 5173) proxies /api -> :8788 (vite.config.ts).
 ```
 
-If you prefer running Vite directly (port 5173), start the API separately with
-`wrangler pages dev --port 8788` — Vite already proxies `/api` to `:8788`.
+If you prefer running Vite directly (port 5173), build once and start the API
+separately with `npx wrangler dev --port 8788` — Vite already proxies `/api` to
+`:8788`.
+
+Local secrets: `wrangler dev` reads `.dev.vars` (gitignored). To test the passcode
+locally, put `PASSCODE=...` there; without it the local API stays open.
 
 ## Deploy
 
+The Worker is deployed by **Workers Builds**, connected to the GitHub repository
+(`main` branch). Each push to `main` triggers:
+
+1. build command `npm run build` → `dist/`
+2. deploy command `npx wrangler deploy` → Worker `simple-floorplan`
+
+No local deploy is needed. Do the one-time and manual steps yourself:
+
 ```bash
-npm run build                                        # SPA -> dist/
+# Remote D1 schema (run from a machine, before the first deploy that needs it)
 wrangler d1 migrations apply simple-floorplan --remote
-wrangler pages deploy dist --project-name simple-floorplan
+
+# Secret (the Worker has no PASSCODE until you set it)
+wrangler secret put PASSCODE
+
+# Arbitrary check of the build locally before pushing
+npx tsc -b && npx tsc -p functions/tsconfig.json && npx vitest run && npm run build
 ```
+
+Until the custom domain is attached, the site is
+`https://simple-floorplan.<account-subdomain>.workers.dev`. To use
+`floorplan.pantoine.com`, open the Worker in the dashboard → **Settings → Domains &
+Routes → Add → Custom domain**, then point the DNS record as the dialog shows.
 
 ## API summary
 
@@ -103,14 +137,15 @@ How it works:
 
 The passcode is a shared secret. For real protection, put Cloudflare Access in
 front of the whole site. Access checks who the user is before any request reaches
-Pages, so the SPA, the API and the images are all protected.
+the Worker, so the SPA, the API and the images are all protected.
 
 One-time setup (Zero Trust dashboard, free for up to 50 users):
 
 1. Open **Zero Trust → Access → Applications → Add an application → Self-hosted**.
-2. Application domain: your Pages domain, for example `simple-floorplan.pages.dev`.
-   To protect the preview deployments too, add `*.simple-floorplan.pages.dev`
-   (the wildcard covers `<hash>.simple-floorplan.pages.dev`).
+2. Application domain: your Worker domain, for example
+   `simple-floorplan.<account-subdomain>.workers.dev`, and the custom domain
+   once it is attached (`floorplan.pantoine.com`). Add one application per
+   hostname.
 3. **Identity providers**: enable **One-time PIN**. Access sends a 6-digit code to
    the email address of the user. No password is needed.
 4. **Policy**: action **Allow**, rule **Emails** (or **Emails ending in**), and list

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "dev:api": "wrangler pages dev --port 8788 -- npx vite",
+    "dev:api": "vite build && wrangler dev --port 8788",
     "db:migrate:local": "wrangler d1 migrations apply simple-floorplan --local",
     "db:migrate:remote": "wrangler d1 migrations apply simple-floorplan --remote",
     "build": "tsc -b && vite build",

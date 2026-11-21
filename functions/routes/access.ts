@@ -1,5 +1,5 @@
 // Access-feature routes: API token admin + project event log.
-// Mounted ONCE from functions/api/[[route]].ts via registerAccessRoutes(app)
+// Mounted ONCE from functions/app.ts via registerAccessRoutes(app)
 // (the main app already has basePath('/api'), so paths here are relative).
 // Scope enforcement for these routes happens in functions/auth.ts
 // (accessMiddleware): /tokens* needs admin, /projects/:id/events needs read.

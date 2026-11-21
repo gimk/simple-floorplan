@@ -1,22 +1,28 @@
-# Cloudflare Pages project: serves the built SPA from dist/ and the Hono API
-# from functions/. See functions/README.md for setup.
+# Cloudflare Worker: serves the built SPA from dist/ (ASSETS binding) and the Hono
+# API from functions/app.ts behind /api/*. See functions/README.md for setup.
 name = "simple-floorplan"
+main = "functions/worker.ts"
 compatibility_date = "2025-06-01"
-pages_build_output_dir = "dist"
 
-# D1 (SQLite) database. Replace the placeholder database_id with the real one
-# returned by `wrangler d1 create simple-floorplan`.
+# Static assets: the Vite build output. The assets layer serves every file in dist/,
+# and single-page-application handling gives unknown paths index.html so the client
+# router can take over. API requests reach the Worker first (run_worker_first).
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+# D1 (SQLite) database.
 [[d1_databases]]
 binding = "DB"
 database_name = "simple-floorplan"
 database_id = "d550597a-3646-4324-8959-8fcfa741cd1c"
-preview_database_id = "d550597a-3646-4324-8959-8fcfa741cd1c"
 
 # R2 bucket for background plan images.
 [[r2_buckets]]
 binding = "IMAGES"
 bucket_name = "simple-floorplan-images"
-preview_bucket_name = "simple-floorplan-images-preview"
 
 # Hard cost caps for R2 uploads (see "Cost safety" in functions/README.md).
 # Values are strings: the API parses them and falls back to the defaults when a
@@ -27,5 +33,5 @@ MAX_R2_TOTAL_MB = "5000"
 MAX_UPLOADS_PER_DAY = "200"
 
 # Secrets (not in this file):
-#   wrangler pages secret put PASSCODE --project-name simple-floorplan
+#   wrangler secret put PASSCODE
 # If PASSCODE is unset, the API allows all requests.

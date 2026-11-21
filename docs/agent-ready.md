@@ -25,7 +25,7 @@ AI agents fail when forced to simulate human mouse drags on raw pixel coordinate
 
 ## 2. Current State Assessment
 
-Based on `src/model/{types,store,geometry,survey}.ts`, `functions/api/[[route]].ts`, `src/sync/{api,sync}.ts`, `src/features/rooms/{ops,RoomsLayer}.tsx`, `src/features/elements/geometry.ts`, and `src/features/measure/{logic,index,RoomCard}.tsx`.
+Based on `src/model/{types,store,geometry,survey}.ts`, `functions/app.ts`, `src/sync/{api,sync}.ts`, `src/features/rooms/{ops,RoomsLayer}.tsx`, `src/features/elements/geometry.ts`, and `src/features/measure/{logic,index,RoomCard}.tsx`.
 
 ### What Works for Agents Today
 1. **Clean, flat centimeter coordinate system (`src/model/types.ts`):** All world units are `cm` (x right, y down) with no nested affine transforms. `PlanDoc` is already a clean, serializable JSON document.
@@ -35,7 +35,7 @@ Based on `src/model/{types,store,geometry,survey}.ts`, `functions/api/[[route]].
    - `features/rooms/ops.ts`: `makeRoom`, `sliceDoc`, `cutDoc`, `insertVertex`, `removeVertex`, `deleteRoom`, `setRoomCode` (using `polygon-clipping`).
    - `features/elements/geometry.ts`: `clampOffset`, `overflows`, `nearestWall`, `defaultElement`.
    - `features/measure/logic.ts`: `discrepancy`, `squarenessCheck`, `oppositeWallNotes`, `roomProgress`, `docProgress`, `adjacentItems`.
-3. **Granular Hono REST API (`functions/api/[[route]].ts`):**
+3. **Granular Hono REST API (`functions/app.ts`):**
    - Supports project CRUD, optimistic concurrency (`baseVersion` + `409 version_conflict`) on `PUT /api/projects/:id/snapshot`, atomic per-value writes for measurements, items, and notes, R2 image upload/fetch, and `GET /api/projects/:id/changes?since=`.
 4. **Accessible Measuring Mode DOM (`src/features/measure/`):**
    - Uses deterministic IDs (`#room-CODE`, `#m-CODE-1`, `#note-CODE`), `<section aria-label={room.name}>`, `role="progressbar"`, `role="status"` for squareness and opposite-wall warnings, and URL hash navigation (`#room-CODE`).
@@ -44,7 +44,7 @@ Based on `src/model/{types,store,geometry,survey}.ts`, `functions/api/[[route]].
 ### What Blocks Agents Today
 1. **No shared command layer:** High-level edits (`slice`, `cutout`, `setWallType`, `placeElement`) live in frontend files and React handlers. An agent using the HTTP API must download the full snapshot, re-implement geometry math and element re-parenting, and `PUT` the entire snapshot back—risking `409` conflicts and data corruption.
 2. **Random vertex IDs as wall keys:** `uid()` in `store.ts` uses `Date.now()` + `Math.random()`. Walls and `WallElement.wallStart` are keyed by random vertex IDs (`v1a2b3c`) instead of human/survey labels (`SE-2` or `{ roomCode: "SE", wallIndex: 2 }`). Agents must parse the full vertex list just to refer to a wall.
-3. **No schema version or runtime validation:** `PlanDoc` has no `schemaVersion`. `functions/api/[[route]].ts` uses minimal manual checks (`isObj`, `Array.isArray`); an agent can write invalid polygons, negative widths, or dangling `wallStart` references without error.
+3. **No schema version or runtime validation:** `PlanDoc` has no `schemaVersion`. `functions/app.ts` uses minimal manual checks (`isObj`, `Array.isArray`); an agent can write invalid polygons, negative widths, or dangling `wallStart` references without error.
 4. **No MCP server, CLI, OpenAPI spec, or `/llms.txt`:** Agents cannot discover capabilities or invoke typed tools.
 5. **No server-side semantic queries or validation:** Areas, bearing-wall lists, unmeasured IDs, discrepancy reports, squareness checks, and shared-wall detection only run in the browser.
 6. **Missing renovation operations:** `mergeRooms` (knock down a partition wall between two rooms) and `applyMeasurements` (re-solve room polygons from verified lengths) do not exist yet.

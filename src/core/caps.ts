@@ -5,7 +5,7 @@
 //   MAX_UPLOAD_MB       biggest single file accepted (413 above it)
 //   MAX_R2_TOTAL_MB     biggest total of all stored images (507 above it)
 //   MAX_UPLOADS_PER_DAY biggest number of uploads in the last 24 h (429 above it)
-// The route in functions/api/[[route]].ts reads the usage from D1, calls
+// The route in functions/app.ts reads the usage from D1, calls
 // checkUpload(), and only writes to R2 when the answer is null.
 
 /** Bytes in one megabyte (1 MiB, the value shown to the user). */

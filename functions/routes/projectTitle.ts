@@ -5,7 +5,7 @@
 // (and into projects.name when the name is still a default placeholder).
 //
 // This file holds the pure decision logic (unit-tested) plus the small D1 write.
-// No new HTTP routes are needed: functions/api/[[route]].ts imports `syncProjectTitle`
+// No new HTTP routes are needed: functions/app.ts imports `syncProjectTitle`
 // and calls it from the snapshot PUT handler (one import line, no mount line).
 
 /** Names that count as "default" placeholders: replaced by the snapshot title. */

@@ -1,6 +1,6 @@
 // Format routes for Simple Floorplan: .sfp text DSL and DXF export.
-// Mounted from functions/api/[[route]].ts via registerFormatsRoutes(app) — this file is
-// owned by the "formats" agent; keep route edits here, not in [[route]].ts.
+// Mounted from functions/app.ts via registerFormatsRoutes(app) — this file is
+// owned by the "formats" agent; keep route edits here, not in app.ts.
 //
 //   GET /api/projects/:id/plan.sfp          -> text/plain .sfp DSL of the current plan
 //   PUT /api/projects/:id/plan.sfp          -> replace geometry from a .sfp body (text/plain);

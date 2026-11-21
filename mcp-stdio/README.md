@@ -15,7 +15,7 @@ Zero-dependency Node.js (`>= 18`) stdio bridge for the Simple Floorplan MCP Stre
 ### Remote Streamable HTTP (recommended when deployed)
 
 ```bash
-claude mcp add --transport http simple-floorplan https://your-app.pages.dev/api/mcp \
+claude mcp add --transport http simple-floorplan https://simple-floorplan.<account-subdomain>.workers.dev/api/mcp \
   --header "Authorization: Bearer sfp_your_token"
 ```
 
@@ -39,7 +39,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
       "command": "node",
       "args": ["/absolute/path/to/simple-floorplan/mcp-stdio/index.mjs"],
       "env": {
-        "SFP_URL": "https://your-app.pages.dev/api/mcp",
+        "SFP_URL": "https://simple-floorplan.<account-subdomain>.workers.dev/api/mcp",
         "SFP_TOKEN": "sfp_your_token"
       }
     }

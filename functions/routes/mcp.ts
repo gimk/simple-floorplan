@@ -1,5 +1,5 @@
 // Hono sub-app for the MCP Streamable HTTP endpoint (/api/mcp).
-// Auth is handled by the parent /api middleware in functions/api/[[route]].ts;
+// Auth is handled by the parent /api middleware in functions/app.ts;
 // here we read the authenticated identity (getAuth) and pass it into the
 // dispatcher so tools/call can enforce per-tool scopes and append write events
 // to the project event log, exactly like the commands route does.

@@ -29,23 +29,27 @@ npm install
 npm run dev
 ```
 
-### Local API (Cloudflare Pages Functions + D1)
+### Local API (Cloudflare Worker + D1)
 
 ```bash
 npm run db:migrate:local
 npx vite build
-npx wrangler pages dev dist --port 8788
+npx wrangler dev --port 8788
 ```
 
-or in one command:
+or in one command (`vite build` then `wrangler dev`):
 
 ```bash
 npm run dev:api
 ```
 
+`wrangler dev` runs the Worker in `functions/worker.ts` locally: `dist/` is served
+as static assets and `/api/*` goes to the Hono app in `functions/app.ts`, backed by
+a local D1 database. Vite (`npm run dev`) proxies `/api` to port 8788.
+
 ## Deploy
 
-See [functions/README.md](functions/README.md) for Cloudflare Pages + D1 + R2
+See [functions/README.md](functions/README.md) for the Cloudflare Worker + D1 + R2
 deployment.
 
 ## For AI agents
@@ -71,7 +75,7 @@ deployment.
 │   ├── sync/       API client, offline queue, IndexedDB, photos
 │   ├── canvas/     SVG viewport
 │   └── model/      store, types, survey
-├── functions/      Cloudflare Pages Functions (Hono API, MCP, OpenAPI)
+├── functions/      Cloudflare Worker entry, Hono API, MCP, OpenAPI
 ├── migrations/     D1 SQL migrations
 ├── cli/            sfp command-line client
 ├── mcp-stdio/      MCP stdio wrapper

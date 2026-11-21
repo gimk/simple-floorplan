@@ -1,4 +1,4 @@
-// Typed fetch client for the Cloudflare Pages API (functions/api/[[route]].ts).
+// Typed fetch client for the API (functions/app.ts, served by functions/worker.ts).
 // All routes live under /api (Vite proxies /api to wrangler on :8788 in dev).
 import type { PlanDoc, WallElement } from '../model/types'
 
@@ -13,7 +13,7 @@ export class ApiError extends Error {
   }
 }
 
-// ---------- wire types (mirror functions/api/[[route]].ts) ----------
+// ---------- wire types (mirror functions/app.ts) ----------
 
 export type ProjectSummary = { id: string; name: string; title: string | null; updatedAt: string }
 

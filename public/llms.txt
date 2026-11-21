@@ -4,6 +4,12 @@
 > World units are **centimeters (cm)** everywhere, with **x right** and **y down**.
 > Walls are addressed by survey label `CODE-1..n` (1-based polygon order), diagonal by `CODE-D`, and ceiling height by `CODE-H`.
 
+## Base URL
+
+Until the custom domain `floorplan.pantoine.com` is attached, the deployed server is
+`https://simple-floorplan.<account-subdomain>.workers.dev`. Locally, `npm run dev:api`
+runs `wrangler dev` and serves the same routes on `http://localhost:8788`.
+
 ## Machine-Readable Specs
 
 - OpenAPI 3.1: `/api/openapi.json`
