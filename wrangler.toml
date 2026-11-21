@@ -9,8 +9,8 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "simple-floorplan"
-database_id = "00000000-0000-0000-0000-000000000000"
-preview_database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "d550597a-3646-4324-8959-8fcfa741cd1c"
+preview_database_id = "d550597a-3646-4324-8959-8fcfa741cd1c"
 
 # R2 bucket for background plan images.
 [[r2_buckets]]
