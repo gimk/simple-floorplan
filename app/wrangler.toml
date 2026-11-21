@@ -1,0 +1,23 @@
+# Cloudflare Pages project: serves the built SPA from dist/ and the Hono API
+# from functions/. See functions/README.md for setup.
+name = "simple-floorplan"
+compatibility_date = "2025-06-01"
+pages_build_output_dir = "dist"
+
+# D1 (SQLite) database. Replace the placeholder database_id with the real one
+# returned by `wrangler d1 create simple-floorplan`.
+[[d1_databases]]
+binding = "DB"
+database_name = "simple-floorplan"
+database_id = "00000000-0000-0000-0000-000000000000"
+preview_database_id = "00000000-0000-0000-0000-000000000000"
+
+# R2 bucket for background plan images.
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "simple-floorplan-images"
+preview_bucket_name = "simple-floorplan-images-preview"
+
+# Secrets (not in this file):
+#   wrangler pages secret put PASSCODE --project-name simple-floorplan
+# If PASSCODE is unset, the API allows all requests.

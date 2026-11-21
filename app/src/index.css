@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+:root { color-scheme: light dark; }
+html, body, #root { height: 100%; margin: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #f6f7f5; color: #1b2430; }
+@media (prefers-color-scheme: dark) { body { background: #12161b; color: #e8ecef; } }
