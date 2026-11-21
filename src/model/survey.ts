@@ -1,4 +1,4 @@
-// Survey IDs for Measuring Mode (see plan.md 2.5.1).
+// Survey IDs for Measuring Mode (see docs/plan.md 2.5.1).
 // CODE-1..n = walls in polygon order, CODE-D = diagonal (if room.diagonal), CODE-H = ceiling height.
 import { dist, roomWalls } from './geometry'
 import type { PlanDoc, Room } from './types'

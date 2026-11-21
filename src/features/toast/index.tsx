@@ -1,6 +1,6 @@
 // Tiny toast store + host. Mount <ToastHost /> once from any layer/panel; it renders
 // into document.body via a portal, so it works from inside the SVG tree.
-// Used for destructive-action feedback (plan.md 7.2 #15): "Room deleted · Undo".
+// Used for destructive-action feedback (docs/plan.md 7.2 #15): "Room deleted · Undo".
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { create } from 'zustand'

@@ -1,4 +1,4 @@
-// Browser-agent bridge (agent-ready.md 3.9): a stable window.__floorplan API so an
+// Browser-agent bridge (docs/agent-ready.md 3.9): a stable window.__floorplan API so an
 // agent in the browser (Claude in Chrome / Playwright) can read state and drive the
 // app without guessing pointer pixels. Installed once from App.
 import { useDoc, useUi } from '../model/store'

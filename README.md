@@ -1,32 +1,86 @@
-# React + TypeScript + Vite
+# Simple Floorplan
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A web-based 2D floorplan editor for apartment renovation, with a phone-friendly
+on-site measuring mode. Built to be used by humans **and** AI agents (MCP
+clients, CLIs, scripts).
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Tracing & calibration** — import a plan image or PDF, calibrate the scale
+  with two points.
+- **Rooms** — rectangle, polygon, slice and cutout tools; snapping; shared
+  corners between rooms.
+- **Walls** — bearing, partition and exterior wall types.
+- **Doors, windows, storage** — placed on walls.
+- **Measuring mode** — on-site survey with stable wall IDs; estimated vs
+  verified values; discrepancy and squareness checks; "next unmeasured" jump;
+  voice entry (FR/EN); keep-screen-on; sunlight mode.
+- **Pins & photos** and **tape measures** on the plan.
+- **Offline PWA** — installable, works offline with IndexedDB storage and sync
+  when back online.
+- **Projects** — multiple floorplans, synced through the API.
+- **Exports** — SVG, PNG, PDF, DXF, CSV.
+- **Calculators** — flooring, baseboard, paint.
 
-## React Compiler
+## Quick start
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+### Local API (Cloudflare Pages Functions + D1)
+
+```bash
+npm run db:migrate:local
+npx vite build
+npx wrangler pages dev dist --port 8788
+```
+
+or in one command:
+
+```bash
+npm run dev:api
+```
+
+## Deploy
+
+See [functions/README.md](functions/README.md) for Cloudflare Pages + D1 + R2
+deployment.
+
+## For AI agents
+
+- **MCP server** — `POST /api/mcp` (HTTP transport) plus the
+  [mcp-stdio wrapper](mcp-stdio/README.md) for stdio-only clients.
+- **CLI** — `sfp` ([cli/README.md](cli/README.md)) using the plain-text `.sfp`
+  plan format.
+- **REST API** — semantic commands at `POST /api/projects/:id/commands` and
+  queries at `/api/projects/:id/query`; OpenAPI spec at `/api/openapi.json`.
+- **Discovery** — `/llms.txt` describes the whole API surface.
+- **Auth** — API tokens with scopes, or passcode; see
+  [functions/README.md](functions/README.md).
+- **Design doc** — [docs/agent-ready.md](docs/agent-ready.md).
+
+## Project layout
+
+```
+├── src/
+│   ├── core/       pure logic: schema, commands, DSL, geometry, export (no React/DOM)
+│   ├── features/   rooms, elements, measure, background, export, projects, ...
+│   ├── shell/      app shell: toolbar, zoom, theme, shortcuts, agent bridge
+│   ├── sync/       API client, offline queue, IndexedDB, photos
+│   ├── canvas/     SVG viewport
+│   └── model/      store, types, survey
+├── functions/      Cloudflare Pages Functions (Hono API, MCP, OpenAPI)
+├── migrations/     D1 SQL migrations
+├── cli/            sfp command-line client
+├── mcp-stdio/      MCP stdio wrapper
+├── docs/           plan.md, agent-ready.md
+└── public/         PWA assets, llms.txt
+```
+
+## Tests
+
+```bash
+npx vitest run
+```

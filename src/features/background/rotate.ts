@@ -1,4 +1,4 @@
-// Pure helpers for background rotation and calibration input (plan.md 7.2 #12).
+// Pure helpers for background rotation and calibration input (docs/plan.md 7.2 #12).
 
 /** Wrap an angle to (-180, 180]. */
 export const normalizeDeg = (d: number): number => {

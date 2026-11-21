@@ -1,4 +1,4 @@
-// Offline-first outbox (plan.md 2.5.5).
+// Offline-first outbox (docs/plan.md 2.5.5).
 // Every change is enqueued locally with a sequence number, persisted (IndexedDB,
 // localStorage fallback), then flushed to the API. A job is removed only when the
 // server confirms it AND its seq is unchanged locally. Retries: 15 s after a

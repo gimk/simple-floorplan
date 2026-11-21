@@ -25,7 +25,7 @@ claude mcp add --transport http simple-floorplan https://your-app.pages.dev/api/
 claude mcp add simple-floorplan \
   -e SFP_URL=http://localhost:8788/api/mcp \
   -e SFP_TOKEN=sfp_your_token \
-  -- node /absolute/path/to/simple-floorplan/app/mcp-stdio/index.mjs
+  -- node /absolute/path/to/simple-floorplan/mcp-stdio/index.mjs
 ```
 
 ## Claude Desktop
@@ -37,7 +37,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
   "mcpServers": {
     "simple-floorplan": {
       "command": "node",
-      "args": ["/absolute/path/to/simple-floorplan/app/mcp-stdio/index.mjs"],
+      "args": ["/absolute/path/to/simple-floorplan/mcp-stdio/index.mjs"],
       "env": {
         "SFP_URL": "https://your-app.pages.dev/api/mcp",
         "SFP_TOKEN": "sfp_your_token"

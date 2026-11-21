@@ -1,6 +1,6 @@
 # Making Simple Floorplan Agent-Ready
 
-> Design document and implementation plan to make **Simple Floorplan** (`app/src`, `app/functions`) first-class for AI agents (Claude Code, Claude in Chrome, MCP clients, and scripts) as well as humans.
+> Design document and implementation plan to make **Simple Floorplan** (`src`, `functions`) first-class for AI agents (Claude Code, Claude in Chrome, MCP clients, and scripts) as well as humans.
 
 ---
 
@@ -25,21 +25,21 @@ AI agents fail when forced to simulate human mouse drags on raw pixel coordinate
 
 ## 2. Current State Assessment
 
-Based on `app/src/model/{types,store,geometry,survey}.ts`, `app/functions/api/[[route]].ts`, `app/src/sync/{api,sync}.ts`, `app/src/features/rooms/{ops,RoomsLayer}.tsx`, `app/src/features/elements/geometry.ts`, and `app/src/features/measure/{logic,index,RoomCard}.tsx`.
+Based on `src/model/{types,store,geometry,survey}.ts`, `functions/api/[[route]].ts`, `src/sync/{api,sync}.ts`, `src/features/rooms/{ops,RoomsLayer}.tsx`, `src/features/elements/geometry.ts`, and `src/features/measure/{logic,index,RoomCard}.tsx`.
 
 ### What Works for Agents Today
-1. **Clean, flat centimeter coordinate system (`app/src/model/types.ts`):** All world units are `cm` (x right, y down) with no nested affine transforms. `PlanDoc` is already a clean, serializable JSON document.
+1. **Clean, flat centimeter coordinate system (`src/model/types.ts`):** All world units are `cm` (x right, y down) with no nested affine transforms. `PlanDoc` is already a clean, serializable JSON document.
 2. **Pure, React-free domain logic already exists:**
    - `model/geometry.ts`: `roomAreaM2`, `roomWalls`, `centroid`, `pointInPolygon`, `projectOnSegment`.
    - `model/survey.ts`: `surveyIds`, `allSurveyIds`, `roomsInWalkOrder`, `nextRoomCode`.
    - `features/rooms/ops.ts`: `makeRoom`, `sliceDoc`, `cutDoc`, `insertVertex`, `removeVertex`, `deleteRoom`, `setRoomCode` (using `polygon-clipping`).
    - `features/elements/geometry.ts`: `clampOffset`, `overflows`, `nearestWall`, `defaultElement`.
    - `features/measure/logic.ts`: `discrepancy`, `squarenessCheck`, `oppositeWallNotes`, `roomProgress`, `docProgress`, `adjacentItems`.
-3. **Granular Hono REST API (`app/functions/api/[[route]].ts`):**
+3. **Granular Hono REST API (`functions/api/[[route]].ts`):**
    - Supports project CRUD, optimistic concurrency (`baseVersion` + `409 version_conflict`) on `PUT /api/projects/:id/snapshot`, atomic per-value writes for measurements, items, and notes, R2 image upload/fetch, and `GET /api/projects/:id/changes?since=`.
-4. **Accessible Measuring Mode DOM (`app/src/features/measure/`):**
+4. **Accessible Measuring Mode DOM (`src/features/measure/`):**
    - Uses deterministic IDs (`#room-CODE`, `#m-CODE-1`, `#note-CODE`), `<section aria-label={room.name}>`, `role="progressbar"`, `role="status"` for squareness and opposite-wall warnings, and URL hash navigation (`#room-CODE`).
-5. **Vector SVG canvas (`app/src/canvas/Viewport.tsx`):** Elements are DOM nodes rather than an opaque `<canvas>` bitmap.
+5. **Vector SVG canvas (`src/canvas/Viewport.tsx`):** Elements are DOM nodes rather than an opaque `<canvas>` bitmap.
 
 ### What Blocks Agents Today
 1. **No shared command layer:** High-level edits (`slice`, `cutout`, `setWallType`, `placeElement`) live in frontend files and React handlers. An agent using the HTTP API must download the full snapshot, re-implement geometry math and element re-parenting, and `PUT` the entire snapshot back—risking `409` conflicts and data corruption.
@@ -79,7 +79,7 @@ Based on `app/src/model/{types,store,geometry,survey}.ts`, `app/functions/api/[[
                └── /api/projects/:id/events    (append-only audit log)
                               │
                               ▼
-        [ Shared Pure Core (`app/src/core/`) — zero React, zero DOM ]
+        [ Shared Pure Core (`src/core/`) — zero React, zero DOM ]
           ├── schema.ts    (Zod schemas -> TS types, JSON Schema, OpenAPI)
           ├── commands.ts  (pure reducer: (doc, cmd, ctx) -> { doc, diff, warnings })
           ├── queries.ts   (summary, unmeasured, validate, sharedWalls, quantities)
@@ -90,7 +90,7 @@ Based on `app/src/model/{types,store,geometry,survey}.ts`, `app/functions/api/[[
              [ Cloudflare D1 (SQLite) ] + [ Cloudflare R2 (Images) ]
 ```
 
-### 3.1 Shared Pure Command Layer (`app/src/core/commands.ts`)
+### 3.1 Shared Pure Command Layer (`src/core/commands.ts`)
 Move pure operations out of `features/rooms/ops.ts` and `features/measure/` into a single shared core imported by **both** the React frontend (`useDoc` + `zundo`) and the Hono Worker (`POST /api/projects/:id/commands`).
 
 - **Signature:**
@@ -106,7 +106,7 @@ Move pure operations out of `features/rooms/ops.ts` and `features/measure/` into
 
 ### 3.2 Versioned Document Schema (`PlanDoc` v1)
 - Add `schemaVersion: 1` to `PlanDoc`.
-- Define all types in `app/src/core/schema.ts` with **Zod** (`zod`), then derive TypeScript types (`z.infer`), JSON Schema (`GET /api/schema/plan.v1.json`), and OpenAPI 3.1 (`@hono/zod-openapi` at `GET /api/openapi.json`).
+- Define all types in `src/core/schema.ts` with **Zod** (`zod`), then derive TypeScript types (`z.infer`), JSON Schema (`GET /api/schema/plan.v1.json`), and OpenAPI 3.1 (`@hono/zod-openapi` at `GET /api/openapi.json`).
 - Enforce invariants at the boundary:
   - Room polygons have `>= 3` vertices, non-zero area (`> 100 cm²`), and unique `code`.
   - `WallElement.roomId` and `wallStart` exist; `widthCm > 0`; `offsetCm >= 0`.
@@ -163,11 +163,11 @@ room SE "Living Room" poly(180,0 600,0 600,420 180,420) ceiling=265 walk=2
   opening SE-4 at=50 w=110 h=204
   measure SE-1=421 SE-2=419 SE-D=594
 ```
-- **Bidirectional:** `planToDsl(doc)` and `dslToPlan(text)` live in `app/src/core/dsl.ts`.
+- **Bidirectional:** `planToDsl(doc)` and `dslToPlan(text)` live in `src/core/dsl.ts`.
 - **Use cases:** Fast LLM plan generation, human-readable PR diffs, low-token MCP resource reads.
 
 ### 3.6 Import / Export Formats
-All exports are generated by pure functions in `app/src/core/export.ts` (usable in browser, Worker, CLI, and MCP):
+All exports are generated by pure functions in `src/core/export.ts` (usable in browser, Worker, CLI, and MCP):
 - **SVG (`export_plan` format `svg`):** Crisp vector with layers (`walls`, `openings`, `dimensions`, `labels`, `legend`, `scale-bar`). Optional `overlayBackground: true` embeds the calibrated background image for visual alignment checks.
 - **PDF (`pdf`):** Multi-option sheet (full plan or single-room focus, e.g., kitchen) with scale bar, dimension table, and notes. (Browser uses existing `jspdf`; Worker/CLI can generate SVG-to-PDF or HTML print sheet.)
 - **DXF (`dxf`):** ASCII DXF R12/R2000 (pure string generator, zero heavy deps) with standard CAD layers: `WALLS_BEARING`, `WALLS_PARTITION`, `WALLS_EXTERIOR`, `OPENINGS`, `DIMENSIONS`, `ROOM_LABELS`.
@@ -577,19 +577,19 @@ All MCP tools map 1:1 to Hono API endpoints. Every mutation tool accepts optiona
 Effort scale: **S** (0.5–1 day), **M** (2–4 days), **L** (5+ days). Build in this order so each phase immediately unlocks real agent workflows.
 
 ### Phase 1 — Core Schema, Command Layer & Semantic Queries (Foundation)
-1. **Zod `PlanDoc` v1 schema + JSON Schema endpoint** (`S`): Add `schemaVersion: 1`, `app/src/core/schema.ts`, and `GET /api/schema/plan.v1.json`. Validate all API writes.
-2. **Pure Command Layer + `POST /api/projects/:id/commands`** (`M`): Move room/element/measurement mutations into `app/src/core/commands.ts` with semantic wall addressing (`SE-2`), `dryRun`, and `Idempotency-Key`. Add `merge_rooms` and `apply_measurements`.
+1. **Zod `PlanDoc` v1 schema + JSON Schema endpoint** (`S`): Add `schemaVersion: 1`, `src/core/schema.ts`, and `GET /api/schema/plan.v1.json`. Validate all API writes.
+2. **Pure Command Layer + `POST /api/projects/:id/commands`** (`M`): Move room/element/measurement mutations into `src/core/commands.ts` with semantic wall addressing (`SE-2`), `dryRun`, and `Idempotency-Key`. Add `merge_rooms` and `apply_measurements`.
 3. **Semantic Query Engine + `POST /api/projects/:id/query`** (`S`): Expose `summary` (areas, paint/baseboard takeoff), `unmeasured`, `validate`, and `shared_walls` using existing pure logic from `geometry.ts` and `measure/logic.ts`.
 4. **Browser-agent DOM attributes + `window.__floorplan` + URL state** (`S`): Add `data-room-code`, `data-wall-label`, `data-tool`, `aria-label` in `App.tsx` and `RoomsLayer.tsx`, plus `window.__floorplan` bridge.
 
 ### Phase 2 — MCP Server, Discovery & Headless Visual Render (Agent Usability)
-5. **Headless SVG renderer (`exportSvg`)** (`S`): Pure TS SVG generator in `app/src/core/export.ts` (with optional background overlay) so agents can visually inspect plans without a browser.
+5. **Headless SVG renderer (`exportSvg`)** (`S`): Pure TS SVG generator in `src/core/export.ts` (with optional background overlay) so agents can visually inspect plans without a browser.
 6. **Remote MCP Server (`/api/mcp`) + stdio wrapper** (`M`): Expose the 18 tools, 6 resources, and 4 prompts over Streamable HTTP.
 7. **OpenAPI 3.1 (`/api/openapi.json`) + `/llms.txt`** (`S`): Auto-generate OpenAPI from Zod routes and publish `/llms.txt` at site root.
 8. **Scoped API Tokens + Event Log (`project_events`)** (`M`): Add `api_tokens` and `project_events` D1 migrations, `Authorization: Bearer` middleware, and `GET /api/projects/:id/events`.
 
 ### Phase 3 — Concise DSL, CLI & Contractor Exports (Power Workflows)
-9. **Floorplan DSL (`.sfp`) parser & formatter** (`M`): Bidirectional `planToDsl` / `dslToPlan` in `app/src/core/dsl.ts`, wired into `get_plan`, MCP resources, and CLI.
+9. **Floorplan DSL (`.sfp`) parser & formatter** (`M`): Bidirectional `planToDsl` / `dslToPlan` in `src/core/dsl.ts`, wired into `get_plan`, MCP resources, and CLI.
 10. **CLI (`sfp`)** (`S`): Thin CLI for `pull`, `apply --dry-run`, `query`, `export`, and local `.sfp` workflows.
 11. **Export suite: PDF, CSV, DXF** (`M`): Kitchen/contractor PDF sheet, CSV survey/takeoff export, and layered ASCII DXF export.
 

@@ -8,7 +8,6 @@ in R2 (binding `IMAGES`, bucket `simple-floorplan-images`).
 ## Setup (once)
 
 ```bash
-cd app
 npm install
 
 # 1. Create the D1 database and paste the returned database_id into wrangler.toml

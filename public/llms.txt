@@ -241,7 +241,7 @@ Simple Floorplan exposes a stateless MCP Streamable HTTP endpoint at `/api/mcp` 
 
 ### Local Stdio Bridge
 
-For stdio-only MCP clients (e.g. Claude Desktop), run `node app/mcp-stdio/index.mjs` with `SFP_URL` (default `http://localhost:8788/api/mcp`) and `SFP_TOKEN` (or `SFP_PASSCODE`). See `app/mcp-stdio/README.md`.
+For stdio-only MCP clients (e.g. Claude Desktop), run `node mcp-stdio/index.mjs` with `SFP_URL` (default `http://localhost:8788/api/mcp`) and `SFP_TOKEN` (or `SFP_PASSCODE`). See `mcp-stdio/README.md`.
 
 ## Text DSL (`.sfp`) — compact, diffable plan format
 

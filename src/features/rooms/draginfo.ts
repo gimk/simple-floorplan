@@ -1,5 +1,5 @@
 // Tracks the vertex/wall currently being dragged, so the dimension labels of the
-// attached walls stay visible even when short on screen (plan.md 7.2 #22).
+// attached walls stay visible even when short on screen (docs/plan.md 7.2 #22).
 import { create } from 'zustand'
 import type { Room } from '../../model/types'
 

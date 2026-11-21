@@ -1,6 +1,6 @@
 # Brief for feature agents
 
-Project: Simple Floorplan. Read `../plan.md` (the product plan) for feature details.
+Project: Simple Floorplan. Read `docs/plan.md` (the product plan) for feature details.
 App: React 19 + TypeScript + Vite + Tailwind v4 + Zustand/zundo + lucide-react + polygon-clipping (already installed).
 
 ## Rules

@@ -69,7 +69,7 @@ function RectDraw({ onDone, onShift }: { onDone: (a: Vec, b: Vec) => void; onShi
     return r.point
   }
   // Capture phase: cancel an in-progress drag on Escape and keep the tool active
-  // (the shell's Escape handler must not fire — plan.md 7.2 #13).
+  // (the shell's Escape handler must not fire — docs/plan.md 7.2 #13).
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || !drag) return

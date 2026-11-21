@@ -1,4 +1,4 @@
-// Wires the local store to the API (plan.md 3.2 + 2.5.5).
+// Wires the local store to the API (docs/plan.md 3.2 + 2.5.5).
 // - Local first: the store saves to IndexedDB (src/sync/idb.ts); every change is also put in the outbox.
 // - Per-value changes (measurements, notes, elements) are separate jobs, so two devices
 //   can edit different values at the same time.
