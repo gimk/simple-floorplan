@@ -200,3 +200,84 @@ A lightweight, web-based 2D floorplan editor and on-site measuring companion bui
 3. **Phase 3 — Persistence (D1 + R2):** Hono API + Cloudflare D1 schema + R2 image upload so plans sync seamlessly between desktop and phone.
 4. **Phase 4 — Mobile Measuring Mode:** Port the prototype: room codes and auto-generated IDs from traced polygons, overview + chips progress, room cards with linked drawing/inputs, Enter-to-next flow, per-wall items with live drawing and shared-wall doors, room notes, offline-first dirty queue with live sync. Then add the *(new)* extensions: verified/estimated badges, discrepancy view, squareness and consistency checks, apply-to-plan.
 5. **Phase 5 — Polish & Exports:** PDF/SVG export, note/photo pins, paint & flooring calculators.
+
+---
+
+## 7. Review & Inspiration (2026-11-21)
+
+### 7.1 Inspiration
+
+- **magicplan:** Universal Bluetooth laser meter pairing (PrecisionLink) fills the selected wall field immediately. Borrow the "select wall, shoot laser, auto-advance" loop and clean per-room estimate exports.
+- **Bosch MeasureOn:** Infinite workspace, wall-elevation views for windows/doors, and direct photo-to-dimension overlays ("sketch on photo"). Borrow wall-elevation snippets and dimensions drawn on site photos.
+- **Leica DISTO Plan:** *Sketch Plan* (draw a rough shape, then assign real lengths to auto-scale) and *Smart Room* (walk clockwise to build a room). Borrow rough-trace-then-solve scaling and clockwise room capture.
+- **Floorplanner:** Fast orthogonal wall snapping, automatic room fill on close, and click-to-type exact wall lengths on the canvas. Borrow inline click-to-edit wall length labels.
+- **RoomSketcher:** Automatic interior/exterior dimension strings, inner-vs-outer wall measurement toggle, and polished client-ready 2D PDF exports. Borrow clean exterior/interior dimension layers and export presets.
+- **Planner 5D:** Friendly room templates and quick drag-and-drop placement with immediate visual feedback. Borrow starter room templates for users who do not have a blueprint to trace.
+- **Sweet Home 3D:** Strict blueprint scaling, locked background image calibration, and predictable constraint updates when you edit a wall length numerically. Borrow manual point-to-point dimension lines and reliable numeric wall edits.
+- **SketchUp / LayOut 2D:** Mnemonic single-key shortcuts (`Space`, `L`, `R`), strict axis/endpoint/midpoint inference locking, and scale-accurate 2D sheets. Borrow midpoint snapping and print-ready scale bars.
+- **Homestyler:** Clear docked inspector panels and structured fixture/appliance catalogs. Borrow consistent inspector grouping and standard kitchen/appliance footprint presets.
+- **CubiCasa:** Snapshot reports that pin site photos directly to locations on the 2D floorplan, plus Gross Living Area (GLA) summaries. Borrow photo pins anchored to walls/corners and summary area tables.
+- **Canvas (Occipital):** Remodeler-focused export directly into trade CAD formats (DXF/DWG/PDF). Borrow clean layered SVG/DXF export for kitchen planners and contractors.
+- **Polycam:** Instant browser-based share links that contractors can open without an account, plus on-site dimension review before leaving. Borrow zero-login read-only share links and an on-site "review missing values" checklist.
+- **Moasure:** Single-person capture of irregular shapes, curves, and outdoor spaces with direct CSV/DXF/PDF sharing to field crews. Borrow simple CSV/PDF field reports for irregular rooms and terraces.
+- **Archisketch:** Clean presentation aesthetics and fast mobile sketch-plus-laser workflow. Borrow lightweight presentation mode (hide edit chrome for client/contractor review).
+- **Excalidraw:** Floating minimal toolbar, subtle dot/grid canvas background, helpful empty-state hints, and a `?` keyboard shortcut modal. Borrow the empty-state guide, subtle grid, and shortcut sheet.
+- **Figma / tldraw:** Smart alignment guides, bottom zoom/fit controls (`0` to fit, `+`/`-`), and context-aware right sidebar that stays out of the way. Borrow the zoom/fit pill, live tool hint bar, and collapsible inspector.
+
+### 7.2 Usability Fixes
+
+#### P0 (Critical — fix first)
+1. **Remove or implement the dead Tape tool (`app/src/App.tsx`):** `tape` (`T`) is in the toolbar, but `ToolOverlay()` returns `null`. Test: click Tape or press `T`; either draw a point-to-point measurement or hide the button until implemented.
+2. **Add Edit Mode empty state and editable project title (`app/src/App.tsx`, `app/src/canvas/Viewport.tsx`):** New projects open to a blank canvas and a read-only `<h1>` title. Add a subtle grid, a centered onboarding card ("Import a plan image", "Draw a rectangle room", or "Load demo"), and an inline-editable title. Test: open a fresh project, rename it, and start from the prompt.
+3. **Add Zoom controls, Fit-to-Plan, and a scale bar (`app/src/canvas/Viewport.tsx`):** Users can pan/zoom off-screen with no recovery. Add a bottom-left floating bar (`-`, `100%`, `+`, `Fit` / key `0`) and a dynamic metric scale bar. Test: pan far away, click `Fit`, and verify all rooms center in view.
+4. **Fix off-screen Calibration prompts (`app/src/features/background/index.tsx`):** Instructions render in world SVG coordinates near `(0, 0)` and vanish when panned. Move them to a fixed screen-space banner. Test: pan 2000 cm away, activate Calibrate, and confirm the prompt stays visible.
+5. **Enlarge touch targets on `MiniDrawing` labels (`app/src/features/measure/MiniDrawing.tsx`):** Only the 12 px `<text>` receives clicks. Add transparent hit rects (at least 40×40 px equivalent) and clickable wall hit lines with `role="button"` and `tabIndex={0}`. Test: tap near any wall ID on a 375 px viewport and verify the matching input focuses.
+6. **Prevent silent `localStorage` quota failure (`app/src/model/store.ts`, `app/src/features/background/index.tsx`):** Full base64 background images are saved in `localStorage` on every change and can exceed the 5 MB limit silently. Store background blobs in IndexedDB (not `localStorage`) and show a warning banner if local persistence fails. Test: import a 4 MB image, draw a room, reload, and verify both persist.
+7. **Show Undo/Redo disabled states (`app/src/App.tsx`):** Subscribe to `useDoc.temporal` to disable Undo/Redo buttons when `pastStates`/`futureStates` are empty and add `aria-label` attributes. Test: open a fresh doc and verify both buttons are disabled until an edit occurs.
+8. **Add safe-area insets and remove duplicate Measuring Mode header (`app/src/App.tsx`, `app/src/features/measure/index.tsx`, `app/src/index.css`):** Measuring Mode renders a second sticky header under the app header, repeating title and sync status and consuming ~110 px on phones. Merge them into one compact sticky header with `env(safe-area-inset-top/bottom)` padding. Test: open Measuring Mode on a 375×667 viewport and confirm one header with progress bar and mode switch.
+
+#### P1 (High-impact friction)
+9. **Add a bottom tool-hint bar (`app/src/App.tsx`, `app/src/features/rooms/tools.tsx`):** Surface hidden gestures: double-click wall to add vertex, `Shift` in Cutout for polygon mode, `Enter`/`Backspace` in Polygon, `Alt` to bypass snap, `B` for bearing wall. Test: switch tools and verify the hint updates for each tool.
+10. **Expose Snap settings in the UI (`app/src/App.tsx` or `RoomsPanel.tsx`):** `ui.snap` (`grid`, `gridCm`, `angles`, `vertices`) has no UI controls. Add a compact Snap popover (toggle grid/angles/vertices, choose 1/5/10 cm step). Test: change grid step to 10 cm and verify vertex drags snap to 10 cm.
+11. **Make the right sidebar collapsible / drawer on narrow viewports (`app/src/App.tsx`):** Fixed `w-72` sidebar crushes the canvas on tablets and phones in Edit Mode. Add a collapse toggle and render as an overlay drawer below `md` (`768px`). Test: resize to 640 px in Edit Mode and verify the canvas remains usable.
+12. **Allow full 360° or ±180° background rotation + 90° rotate buttons (`app/src/features/background/index.tsx`):** Rotation is currently clamped to `-10°..+10°`, so sideways phone photos cannot be oriented. Add `-90°` / `+90°` buttons and allow fine adjustment around any orientation; also accept comma decimals in calibration input. Test: rotate an image 90° and calibrate with `4,25` m.
+13. **Fix `Escape` tool conflict (`app/src/App.tsx`, `app/src/features/rooms/tools.tsx`, `app/src/features/background/index.tsx`):** Pressing `Escape` while placing polygon/slice/calibrate points cancels the points and also switches to `select`. Let the active tool consume `Escape` first to cancel in-progress points; a second `Escape` returns to `select`. Test: place 2 polygon points, press `Escape` once, verify tool stays `polygon` with 0 points.
+14. **Add drag threshold on elements and unify `ElementsPanel` styling (`app/src/features/elements/index.tsx`):** Add a 4 px drag threshold (matching `rooms/interaction.ts`) so selecting an element does not accidentally nudge it. Wrap `ElementsPanel` in the same card border/padding and orange/slate palette as other panels. Test: click an element with 2 px pointer jitter and verify `offsetCm` does not change.
+15. **Add Undo toast or two-tap confirm for destructive Edit actions (`app/src/features/rooms/RoomsPanel.tsx`, `app/src/features/background/index.tsx`, `app/src/features/elements/index.tsx`):** Deleting a room, element, or background image happens immediately with no feedback. Show a 5 s toast ("Room deleted · Undo") or use two-tap confirm. Test: delete a room, click Undo in the toast, and verify full restoration.
+16. **Fix `SyncBadge` passcode UX (`app/src/App.tsx`):** Add a visible Submit button next to the passcode input and show an inline error when a passcode is rejected (`401`). Test: submit a wrong passcode and confirm clear error feedback.
+17. **Add overflow warning and focus-on-add in Measuring Mode `ItemsEditor` (`app/src/features/measure/ItemsEditor.tsx`):** Show a warning when `offsetCm + widthCm` exceeds the wall length (using measured length if available, else planned). Auto-focus the new item's first numeric field when tapping `+ Add item`. Test: enter an item wider than the wall and verify the warning appears.
+18. **Add "Next unmeasured" jump button in Measuring Mode (`app/src/features/measure/index.tsx`):** Let users jump straight to the next empty measurement ID across all rooms without scrolling. Test: leave 2 fields empty across 5 rooms, tap "Next unmeasured", and verify focus moves to the first empty field.
+19. **Hide or wire the unused `Notes` layer toggle (`app/src/App.tsx`):** Toggling `Notes` in Layers currently does nothing. Hide it until canvas note pins exist, or render room note badges on the canvas when enabled. Test: toggle every checkbox in Layers and confirm each produces a visible change.
+
+#### P2 (Polish & accessibility)
+20. **Add `aria-label` and `aria-pressed` to all icon buttons (`app/src/App.tsx`, `RoomsPanel.tsx`, `BackgroundPanel`):** Screen readers and keyboard users need accessible names and active states on toolbar and icon buttons. Test: audit with keyboard Tab and accessibility tree; zero unlabeled buttons.
+21. **Show locked-wall affordance on canvas (`app/src/features/rooms/RoomsLayer.tsx`, `interaction.ts`):** Display a small lock badge on locked walls and show `cursor: not-allowed` (or a brief hint) when a user tries to drag a locked wall or adjacent vertex. Test: lock a wall, hover/drag it, and confirm visual feedback.
+22. **Show live lengths for attached walls during vertex drag (`app/src/features/rooms/RoomsLayer.tsx`):** Always display the dimension labels of walls connected to the currently dragged vertex, even when shorter than 55 px on screen. Test: zoom out and drag a vertex; verify its two wall lengths stay readable.
+23. **Add a `?` keyboard shortcuts dialog (`app/src/App.tsx`):** Show all tool, edit, and navigation shortcuts in a clean modal triggered by `?` or a header icon. Test: press `?` outside inputs and verify the modal opens and closes with `Escape`.
+24. **Add a Light / Dark / System theme toggle (`app/src/App.tsx`, `app/src/index.css`):** Allow forcing high-contrast Light mode on bright job sites even when the phone OS uses Dark mode. Test: toggle theme and verify persistence across reload.
+25. **Add keyboard focus support to `Overview` SVG rooms (`app/src/features/measure/Overview.tsx`):** Add `role="button"`, `tabIndex={0}`, and `Enter`/`Space` handling on room `<g>` elements (or mark the SVG decorative since room chips below already provide keyboard navigation). Test: navigate Measuring Mode with keyboard only.
+
+### 7.3 Missing Necessary Features
+
+- **Project management & local backup (JSON export/import):** Rename project, switch between multiple projects/versions, and export/import a `.json` backup file so renovation data is never trapped in one browser.
+- **Contractor-ready export (PDF / SVG / PNG + CSV survey table):** Clean 2D plan export with scale bar, legend (bearing vs. partition walls), room areas, verified dimensions, and a CSV/PDF list of all survey IDs, openings, and notes.
+- **Working Point-to-Point Tape Tool:** Record ad-hoc clearances (wall-to-column, radiator-to-door, ceiling-to-beam) in Edit Mode and verify them in Measuring Mode.
+- **Apply-to-Plan from Verified Measurements:** One-click (with preview) to re-solve room polygons from verified wall lengths and lock those walls, closing the loop between Setup Mode and Measuring Mode.
+- **Photo & Note Pins:** Attach phone photos and short notes directly to a wall or corner so contractors see pipes, electrical panels, and window frames in context.
+- **Material & Surface Calculator:** Automatic floor area (`m²` + waste margin), wall surface area minus openings (for paint/wallpaper), and baseboard linear meters minus door widths.
+- **True PWA / Offline Caching:** Web app manifest + Service Worker to cache the app shell and IndexedDB-backed background images so Measuring Mode works reliably in basements or apartments with zero signal.
+
+### 7.4 Clever Features
+
+| Feature | Description | Effort |
+|---|---|---|
+| **Bluetooth Laser Meter Input (Web Bluetooth + HID)** — *low priority (the owner's meter has no Bluetooth)* | Pair Bosch GLM or Leica DISTO meters via Web Bluetooth GATT (or HID keyboard mode) so pressing Measure fills the focused field and jumps to the next ID. | **M** |
+| **Voice Measurement Entry** | Hands-free Web Speech API button in Measuring Mode: speak *"342 comma 5"* while holding a tape measure to fill the active field and advance automatically. | **S** |
+| **Auto-Straighten Background Plan** | Click two points along a wall that should be horizontal or vertical; compute the exact angle and deskew the background photo in one step. | **S** |
+| **Wake Lock + Sunlight Mode** | Use the Screen Wake Lock API and a high-contrast light theme toggle in Measuring Mode so the phone screen stays readable and awake on site. | **S** |
+| **Door-Swing & Clearance Collision Check** | Highlight overlapping door arcs, radiators, and cupboards in real time so layout clashes are caught before buying fixtures. | **S** |
+| **Read-Only Contractor Share Link** | Generate a tokenized read-only URL showing verified dimensions, opening specs, room notes, and PDF/CSV downloads without requiring login. | **M** |
+| **Sketch-on-Photo Dimension Overlays** | Snap a site photo, draw arrows between two points, and attach measured `cm` values or link an existing survey ID directly onto the image. | **M** |
+| **Photo-to-Value OCR of Laser/Tape Readings** | Point the phone camera at a laser meter screen (or tape mark) to read the digits with lightweight OCR when the laser lacks Bluetooth. | **M** |
+| **Before / After Renovation Diff** | Tag non-bearing partitions as "demolish" or "new" and toggle an overlay that recalculates room areas and highlights structural changes. | **M** |
+| **Clockwise Smart-Room Auto-Build** | Walk a room clockwise entering wall lengths (via laser or voice) and 90°/left/right turns to generate and auto-close the room polygon automatically. | **L** |

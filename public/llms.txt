@@ -1,0 +1,297 @@
+# Simple Floorplan
+
+> 2D apartment floorplan editor and on-site laser-measure survey app.
+> World units are **centimeters (cm)** everywhere, with **x right** and **y down**.
+> Walls are addressed by survey label `CODE-1..n` (1-based polygon order), diagonal by `CODE-D`, and ceiling height by `CODE-H`.
+
+## Machine-Readable Specs
+
+- OpenAPI 3.1: `/api/openapi.json`
+- PlanDoc v1 JSON Schema: `/api/schema/plan.v1.json`
+
+## Authentication
+
+When the server has `PASSCODE` configured, include this header on every `/api/*` request (except `/api/openapi.json` and `/api/schema/plan.v1.json`):
+
+```
+x-passcode: <your-passcode>
+```
+
+## Key Endpoints
+
+- `GET /api/projects` — List projects.
+- `POST /api/projects` — Create a project (`{ "name": "Apt 4B", "title": "Apt 4B" }`).
+- `GET /api/projects/:id` — Get full `PlanDoc` v1 merged with measurements, elements, notes, and `version`.
+- `PATCH /api/projects/:id` — Rename project (`{ "name", "title" }`).
+- `DELETE /api/projects/:id` — Delete project, all rows, and R2 images.
+- `PUT /api/projects/:id/snapshot` — Replace snapshot with optimistic concurrency (`baseVersion`). Validated with `PlanDoc` v1 schema.
+- `POST /api/projects/:id/commands` — Execute an atomic batch of high-level commands (`{ "commands": [...], "dryRun": false, "baseVersion": 3 }`). Supports `Idempotency-Key` header for safe retries.
+- `POST /api/projects/:id/query` — Run a semantic query (`summary`, `unmeasured`, `validate`, `shared_walls`, `room`).
+- `GET /api/projects/:id/render.svg?background=0|1` — Render a standalone SVG of the floorplan for visual verification.
+- `PUT /api/projects/:id/measurements/:label` — Set one on-site measurement (`{ "actualCm": 342.5 }`).
+- `DELETE /api/projects/:id/measurements/:label` — Delete one measurement.
+- `PUT /api/projects/:id/items/:itemId` — Upsert one wall element.
+- `DELETE /api/projects/:id/items/:itemId` — Soft-delete one wall element.
+- `PUT /api/projects/:id/notes/:code` — Set a room note (`{ "text": "..." }`).
+- `GET /api/projects/:id/changes?since=<ISO>` — Incremental sync feed.
+- `POST /api/projects/:id/images` — Upload background/pin image (`multipart/form-data` with `file`).
+- `GET /api/images/:key` — Fetch uploaded image.
+
+## Queries (`POST /api/projects/:id/query`)
+
+- `{ "query": "summary" }` — Indoor/outdoor areas, per-room breakdown, survey progress, and paint/flooring/baseboard takeoff.
+- `{ "query": "unmeasured", "args": { "roomCode": "CU" } }` — Remaining unmeasured survey IDs in walking order.
+- `{ "query": "validate" }` — Checks discrepancies (> 2 cm), squareness, opposite walls, element overflow, overlapping elements, and self-intersections.
+- `{ "query": "shared_walls", "args": { "roomCodes": ["SE", "CU"] } }` — Detects collinear shared walls between rooms and whether they are bearing.
+- `{ "query": "room", "args": { "roomCode": "CU" } }` — Full details for one room.
+
+## Commands (`POST /api/projects/:id/commands`)
+
+Send `{ "commands": [ ... ], "dryRun": false, "baseVersion": 1 }`. Walls can be addressed by survey label (`"SE-2"`), `{ "roomId": "...", "wallStart": "..." }`, or `{ "roomCode": "SE", "wallIndex": 2 }`.
+
+1. `add_room`:
+```json
+{ "type": "add_room", "code": "CU", "name": "Kitchen", "rect": { "x": 0, "y": 0, "w": 280, "h": 350 }, "ceilingCm": 265 }
+```
+
+2. `update_room`:
+```json
+{ "type": "update_room", "roomCode": "CU", "name": "Open Kitchen", "code": "K1", "ceilingCm": 264, "walkOrder": 2 }
+```
+
+3. `delete_room`:
+```json
+{ "type": "delete_room", "roomCode": "K1" }
+```
+
+4. `slice_room`:
+```json
+{ "type": "slice_room", "roomCode": "SE", "a": { "x": 200, "y": -10 }, "b": { "x": 200, "y": 430 }, "newRoomCode": "EN", "newRoomName": "Entry" }
+```
+
+5. `cutout_room`:
+```json
+{ "type": "cutout_room", "roomCode": "CU", "rect": { "x": 0, "y": 0, "w": 60, "h": 45 } }
+```
+
+6. `merge_rooms`:
+```json
+{ "type": "merge_rooms", "roomCodes": ["SE", "CU"], "keepCode": "SE", "newName": "Living + Kitchen", "allowBearingRemoval": false }
+```
+
+7. `set_wall_props`:
+```json
+{ "type": "set_wall_props", "wall": "SE-2", "wallType": "bearing", "thicknessCm": 25, "locked": true }
+```
+
+8. `set_wall_length`:
+```json
+{ "type": "set_wall_length", "wall": "CU-1", "lengthCm": 285, "anchor": "start" }
+```
+
+9. `move_vertex`:
+```json
+{ "type": "move_vertex", "roomCode": "CU", "vertexIndex": 2, "x": 285, "y": 350, "moveLinked": true }
+```
+
+10. `place_element`:
+```json
+{ "type": "place_element", "wall": "CU-2", "kind": "window", "variant": "standard", "offsetCm": 65, "widthCm": 120, "heightCm": 135, "sillCm": 95 }
+```
+
+11. `update_element`:
+```json
+{ "type": "update_element", "elementId": "el_123", "offsetCm": 70, "widthCm": 115 }
+```
+
+12. `delete_element`:
+```json
+{ "type": "delete_element", "elementId": "el_123" }
+```
+
+13. `set_measurement`:
+```json
+{ "type": "set_measurement", "label": "CU-1", "actualCm": 281.5 }
+```
+
+14. `clear_measurement`:
+```json
+{ "type": "clear_measurement", "label": "CU-1" }
+```
+
+15. `apply_measurements`:
+```json
+{ "type": "apply_measurements", "roomCode": "CU", "lockVerifiedWalls": true }
+```
+
+16. `set_room_note`:
+```json
+{ "type": "set_room_note", "roomCode": "CU", "text": "Water shutoff valve under sink" }
+```
+
+17. `add_pin`:
+```json
+{ "type": "add_pin", "roomCode": "CU", "wall": "CU-2", "at": { "x": 280, "y": 120 }, "text": "Electrical panel" }
+```
+
+18. `add_tape`:
+```json
+{ "type": "add_tape", "roomCode": "CU", "a": { "x": 0, "y": 100 }, "b": { "x": 140, "y": 100 }, "actualCm": 141, "label": "Clearance to island" }
+```
+
+## Agent access with API tokens
+
+In addition to the `x-passcode` header (full admin, used by the web app), agents can send a scoped bearer token:
+
+```
+Authorization: Bearer sfp_...
+```
+
+Scopes are cumulative: `read` < `measure` < `edit` < `admin`.
+
+- `read`: all GET routes, `POST /api/projects/:id/query`, `render.svg`, `events`.
+- `measure`: `read` + measurement/item/note writes + commands `set_measurement`, `clear_measurement`, `set_room_note`, `add_pin`, `add_tape`.
+- `edit`: everything except token admin and project delete.
+- `admin`: everything, including token admin and `DELETE /api/projects/:id`.
+
+A token can be restricted to one project (`projectId` at creation). Missing/invalid credentials return `401`; a valid token without the needed scope returns `403` with `{ "error": "forbidden", "requiredScope": "...", "message": "..." }`.
+
+Create a token (the plaintext is returned exactly once; only its SHA-256 hash is stored):
+
+```bash
+curl -X POST https://<host>/api/tokens \
+  -H "Authorization: Bearer $SFP_ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{ "name": "survey-agent", "scopes": "read,measure", "projectId": "proj_apt_4b" }'
+# -> { "id": "...", "name": "survey-agent", "scopes": ["read","measure"], "token": "sfp_..." }
+```
+
+Use it:
+
+```bash
+TOKEN=sfp_...
+curl https://<host>/api/projects/proj_apt_4b \
+  -H "Authorization: Bearer $TOKEN"                       # read scope
+curl -X PUT https://<host>/api/projects/proj_apt_4b/measurements/CU-2 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{ "actualCm": 342 }'                                 # measure scope
+curl -X POST https://<host>/api/projects/proj_apt_4b/commands \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -H 'Idempotency-Key: measure-cu-2-once' \
+  -d '{ "commands": [{ "type": "set_measurement", "label": "CU-2", "actualCm": 342 }] }'
+```
+
+List and revoke tokens (admin scope or `x-passcode`):
+
+```bash
+curl https://<host>/api/tokens -H "Authorization: Bearer $SFP_ADMIN_TOKEN"
+curl -X DELETE https://<host>/api/tokens/<id> -H "Authorization: Bearer $SFP_ADMIN_TOKEN"
+```
+
+Read the append-only event log (read scope) — one event per write route, one per command in a batch:
+
+```bash
+curl "https://<host>/api/projects/proj_apt_4b/events?since=2026-11-21T00:00:00Z&limit=100" \
+  -H "Authorization: Bearer $TOKEN"
+# -> { "events": [{ "id": "...", "ts": "...", "actor": "survey-agent", "kind": "command",
+#                  "summary": "set_measurement CU-2 = 342 cm", "payload": { ... } }] }
+```
+
+
+## MCP Server (`POST /api/mcp`)
+
+Simple Floorplan exposes a stateless MCP Streamable HTTP endpoint at `/api/mcp` (JSON-RPC 2.0, protocol `2025-06-18` and `2025-03-26`; `GET /api/mcp` returns `405`). It uses the same `/api` authentication (`Authorization: Bearer <token>` or `x-passcode`). The route itself requires the `read` scope; each `tools/call` is then checked against the tool's own required scope (read-only tools: `read`, `set_measurement`: `measure`, `run_commands`: per command type via the same rules as `/commands`, all other write tools: `edit`). A missing scope returns a tool result with `isError: true` and `structuredContent.error.requiredScope`. Every successful MCP write logs one event per command to the project event log (kind `command`, actor = token name), and `create_project` logs a `project_create` event — visible via `GET /api/projects/:id/events` and the `get_events` tool below.
+
+### MCP Tools
+
+- `list_projects` — List all projects.
+- `create_project` — Create a project (`{ name, title? }`).
+- `get_plan` — Get a project as `summary` (default) or full `json` (`{ projectId, format? }`).
+- `get_unmeasured` — Remaining unmeasured survey IDs in walk order (`{ projectId, roomCode? }`).
+- `validate_plan` — Check geometry, element overflows/overlaps, discrepancies, and squareness (`{ projectId, roomCode? }`).
+- `find_shared_walls` — Detect collinear shared walls and bearing status (`{ projectId, roomCodes? }`).
+- `run_commands` — Execute an atomic batch of commands (`{ projectId, commands, dryRun?, baseVersion? }`).
+- `set_measurement` — Record a verified laser measurement (`{ projectId, label, cm }`).
+- `place_element` — Place a door, window, opening, radiator, or cupboard on a wall.
+- `add_room` — Add a room by `rect` or `vertices`.
+- `slice_room` — Split a room along a line `(a, b)`.
+- `merge_rooms` — Merge two adjacent rooms (blocks bearing walls unless `allowBearingRemoval: true`; supports `dryRun`).
+- `set_wall_props` — Set wall type (`partition | bearing | exterior`), thickness, or lock.
+- `apply_measurements` — Re-solve room polygons from verified wall lengths.
+- `render_svg` — Render a standalone SVG (returned as text + `image/svg+xml` resource link).
+- `get_events` — Read the project event log (`{ projectId, since?, limit? }`; default limit 100, max 1000).
+
+### MCP Resources
+
+- `floorplan://projects`
+- `floorplan://projects/{id}/plan.json`
+- `floorplan://projects/{id}/summary.json`
+- `floorplan://projects/{id}/unmeasured.json`
+- `floorplan://projects/{id}/render.svg`
+- `floorplan://projects/{id}/events.json`
+
+### MCP Prompts
+
+- `trace_plan_image`
+- `finish_survey`
+- `renovation_option`
+- `contractor_export`
+
+### Local Stdio Bridge
+
+For stdio-only MCP clients (e.g. Claude Desktop), run `node app/mcp-stdio/index.mjs` with `SFP_URL` (default `http://localhost:8788/api/mcp`) and `SFP_TOKEN` (or `SFP_PASSCODE`). See `app/mcp-stdio/README.md`.
+
+## Text DSL (`.sfp`) — compact, diffable plan format
+
+Endpoints:
+
+- `GET /api/projects/:id/plan.sfp` — Download the plan as `.sfp` text (`text/plain`).
+- `PUT /api/projects/:id/plan.sfp?dryRun=1` — Replace geometry from a `.sfp` body (`text/plain`). `?dryRun=1` returns `{ dryRun, version, diff, summary }` without writing. `?baseVersion=N` returns `409 version_conflict` on mismatch. Parse errors return `400 { error: "dsl_parse_error", message, line }`.
+- `GET /api/projects/:id/plan.dxf` — ASCII DXF R12 (`application/dxf`, attachment).
+
+Grammar (units are **cm**, x right, y down; `#` starts a comment; wall label `CODE-n` = wall starting at vertex n-1):
+
+```text
+plan "Apartment 4B" version=1 unit=cm
+
+room EN "Entry" rect(0,0 180x240) ceiling=265 walk=1 [outdoor] [diag=0,3] [id=room_EN]
+  wall EN-1 exterior 30cm locked        # only non-default walls (default: partition 10cm)
+  hole poly(60,60 90,60 90,90 60,90)     # cutouts
+  door EN-1 at=40 w=90 h=204 single hinge=start swing=in [note="..."]
+  window SE-1 at=80 w=160 h=140 sill=90 french
+  cupboard CU-3 at=10 w=100 depth=60 wall-cabinet
+  measure EN-1=181 EN-2=239 EN-D=255 EN-H=265   # or top-level: measure SE-2 = 412.5
+  note "Electrical panel near EN-4"
+  pin at(10,0) wall=EN-1 text="Meter" photos=key1,key2
+
+room SE "Living Room" poly(180,0 600,0 600,420 180,420) ceiling=265 walk=2
+  ...
+
+tape from(0,150) to(400,150) =401 label="Cross room" room=SE
+pin at(10,10) room=EN text="..."
+```
+
+- `rect(x,y WxH)` for axis-aligned rectangles, `poly(x,y x,y ...)` otherwise. A vertex may carry an explicit id: `poly(v1:0,0 v2:180,0 ...)` (emitted only when it differs from the deterministic default `v_<code>_<i>`).
+- Element kinds: `door | window | opening | cupboard | radiator | other`. Variants are bare words: doors `single|double|sliding|pocket`, windows `standard|french|fixed`, storage `wall-cabinet|recessed|wardrobe`.
+- Fields: `at=` offset from wall start, `w=` width, `h=` height, `sill=`, `depth=`, `hinge=start|end`, `swing=in|out`, `note=`, `id=`.
+- Round-trip is lossless for geometry and values: `dslToPlan(planToDsl(doc))` deep-equals `doc` on geometry/values (ids are regenerated deterministically when not explicit). Implemented in `src/core/dsl.ts` (`planToDsl`, `dslToPlan`, `DslParseError` with line numbers).
+
+## DXF export
+
+`GET /api/projects/:id/plan.dxf` returns ASCII **DXF R12 (AC1009)**, units cm (`$INSUNITS=5`), y axis flipped to the DXF y-up convention. Layers: `ROOMS` (closed POLYLINE+VERTEX), `WALLS_BEARING` / `WALLS_PARTITION` / `WALLS_EXTERIOR` (LINE pairs for both wall faces), `DOORS` (swing ARC + leaf LINE), `WINDOWS`, `STORAGE`, `DIMENSIONS` (wall length lines + labels), `TEXT` (room labels `CODE name area m2`). Pure generator in `src/core/dxf.ts` (`planToDxf`).
+
+## CLI (`sfp`)
+
+Zero-dependency Node >= 18 client (`cli/sfp.mjs`, bin name `sfp`; see `cli/README.md`). Config via `SFP_URL` (default `http://localhost:8788`), `SFP_TOKEN` (Bearer) or `SFP_PASSCODE` (x-passcode).
+
+```bash
+sfp projects
+sfp pull <project> [--format sfp|json] [-o file]
+sfp push <project> <file.sfp> [--dry-run]
+sfp query <project> summary|unmeasured|validate|shared_walls [--room CODE] [--json]
+sfp run <project> <commands.json> [--dry-run]
+sfp export <project> svg|dxf -o file
+sfp measure <project> <label> <cm>     # e.g. sfp measure proj_1 SE-2 412.5
+```

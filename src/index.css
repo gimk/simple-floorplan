@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+/* dark: follows the data-theme attribute set by src/shell/theme.ts (Light/Dark/System). */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+:root { color-scheme: light; }
+html[data-theme="dark"] { color-scheme: dark; }
+html, body, #root { height: 100%; margin: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #f6f7f5; color: #1b2430; }
+html[data-theme="dark"] body { background: #12161b; color: #e8ecef; }
+
+/* Sunlight mode (Measuring Mode high contrast, toggled in the measure header):
+   pure black on white even in dark theme, bigger digits, thicker drawing lines. */
+.sunlight,
+.sunlight [class*="dark:bg-"] { background-color: #fff !important; }
+.sunlight,
+.sunlight [class*="dark:text-"] { color: #000 !important; }
+.sunlight [class*="dark:border-"] { border-color: #000 !important; }
+.sunlight input, .sunlight textarea, .sunlight select { font-size: 1.15rem !important; }
+.sunlight input { font-size: 1.4rem !important; } /* bigger digits for the measurement fields */
+.sunlight svg line, .sunlight svg polygon, .sunlight svg path, .sunlight svg rect[stroke], .sunlight svg circle {
+  stroke-width: 3.5 !important;
+}
