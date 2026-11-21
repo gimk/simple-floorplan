@@ -18,6 +18,14 @@ binding = "IMAGES"
 bucket_name = "simple-floorplan-images"
 preview_bucket_name = "simple-floorplan-images-preview"
 
+# Hard cost caps for R2 uploads (see "Cost safety" in functions/README.md).
+# Values are strings: the API parses them and falls back to the defaults when a
+# value is missing or not a positive number.
+[vars]
+MAX_UPLOAD_MB = "10"
+MAX_R2_TOTAL_MB = "5000"
+MAX_UPLOADS_PER_DAY = "200"
+
 # Secrets (not in this file):
 #   wrangler pages secret put PASSCODE --project-name simple-floorplan
 # If PASSCODE is unset, the API allows all requests.

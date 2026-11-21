@@ -32,7 +32,8 @@ type SyncState = { conn: ConnState; detail?: string }
 
 let syncState: SyncState = { conn: 'connecting' }
 const listeners = new Set<() => void>()
-const setSync = (s: SyncState) => { syncState = s; listeners.forEach((l) => l()) }
+const notify = () => listeners.forEach((l) => l())
+const setSync = (s: SyncState) => { syncState = s; notify() }
 
 const ls = {
   get: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
@@ -163,6 +164,31 @@ async function uploadBackground() {
 // and replaced by its R2 key (silent update: no undo step). The change to `pins`
 // then goes out with the next snapshot.
 let uploadingPhotos = false
+
+/**
+ * Photos the server refused because of a cost cap (413 file too large, 507 storage
+ * cap, 429 daily upload cap; see src/core/caps.ts). Each one stays a data URL in the
+ * doc and is not sent again in this session, so a capped bucket never causes an
+ * endless retry loop. `photoNotice` holds the reason for the status text.
+ */
+const refusedPhotos = new Set<string>()
+let photoNotice: string | null = null
+
+function setPhotoNotice(text: string | null) {
+  if (photoNotice === text) return
+  photoNotice = text
+  notify()
+}
+
+/** Status text for a refused upload, or null when the error is a normal retryable failure. */
+function photoRefusalText(e: unknown): string | null {
+  if (!(e instanceof api.ApiError)) return null
+  if (e.status === 413) return 'Photo not uploaded: file is too large for the server'
+  if (e.status === 507) return 'Photo not uploaded: storage limit reached'
+  if (e.status === 429) return 'Photo not uploaded: daily upload limit reached'
+  return null
+}
+
 async function uploadPhotos() {
   if (!connected || uploadingPhotos) return
   uploadingPhotos = true
@@ -170,15 +196,24 @@ async function uploadPhotos() {
   try {
     for (;;) {
       const doc = useDoc.getState().doc
-      const [dataUrl] = collectDataUrls(pinsOf(doc))
+      // Skip the photos the server already refused: they stay local data URLs.
+      const dataUrl = collectDataUrls(pinsOf(doc)).find((u) => !refusedPhotos.has(u))
       if (!dataUrl || gen !== generation) break
       const blob = await (await fetch(dataUrl)).blob()
-      const { key } = await api.uploadImage(doc.projectId, blob, 'photo.' + (blob.type.split('/')[1] || 'jpg'))
-      if (gen !== generation) break
-      useDoc.getState().updateSilent((d) => {
-        const pins = (d as unknown as { pins?: PinLike[] }).pins
-        return pins ? ({ ...d, pins: replacePhoto(pins, dataUrl, key) } as PlanDoc) : d
-      })
+      try {
+        const { key } = await api.uploadImage(doc.projectId, blob, 'photo.' + (blob.type.split('/')[1] || 'jpg'))
+        if (gen !== generation) break
+        useDoc.getState().updateSilent((d) => {
+          const pins = (d as unknown as { pins?: PinLike[] }).pins
+          return pins ? ({ ...d, pins: replacePhoto(pins, dataUrl, key) } as PlanDoc) : d
+        })
+      } catch (e) {
+        const text = photoRefusalText(e)
+        if (!text) throw e // network or server error: retried on the next connect
+        // Cost cap: keep this photo as a local data URL, do not retry it, and say why.
+        refusedPhotos.add(dataUrl)
+        setPhotoNotice(text)
+      }
     }
   } catch { /* retried on next connect or next pins change */ } finally { uploadingPhotos = false }
 }
@@ -312,6 +347,8 @@ export async function openDoc(doc: PlanDoc): Promise<void> {
   if (pullTimer) { clearTimeout(pullTimer); pullTimer = null }
   uploading = false
   uploadingPhotos = false
+  refusedPhotos.clear()
+  setPhotoNotice(null)
   applying = true
   try {
     useDoc.getState().replace(doc)
@@ -372,5 +409,6 @@ export function useSyncStatusText(): { text: string; warn: boolean } {
   if (n) return { text: `${ch} waiting to upload. They are safe on this device and upload when the connection is back.${s.lastError ? ` (Last error: ${s.lastError})` : ''}`, warn: true }
   if (s.conn === 'offline') return { text: `Offline. Values are kept on this device.${s.detail ? ` (${s.detail})` : ''}`, warn: true }
   if (s.conn === 'connecting') return { text: 'Connecting…', warn: false }
+  if (photoNotice) return { text: photoNotice, warn: true }
   return { text: `All saved online${s.lastSyncAt ? ` · ${hhmm(s.lastSyncAt)}` : ''}`, warn: false }
 }

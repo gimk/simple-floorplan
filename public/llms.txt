@@ -34,7 +34,7 @@ x-passcode: <your-passcode>
 - `DELETE /api/projects/:id/items/:itemId` — Soft-delete one wall element.
 - `PUT /api/projects/:id/notes/:code` — Set a room note (`{ "text": "..." }`).
 - `GET /api/projects/:id/changes?since=<ISO>` — Incremental sync feed.
-- `POST /api/projects/:id/images` — Upload background/pin image (`multipart/form-data` with `file`).
+- `POST /api/projects/:id/images` — Upload background/pin image (`multipart/form-data` with `file`). Refused by the R2 cost caps: `413 file_too_large`, `507 storage_cap_reached`, `429 daily_upload_cap` (see **Cost safety**).
 - `GET /api/images/:key` — Fetch uploaded image.
 
 ## Queries (`POST /api/projects/:id/query`)
@@ -199,6 +199,27 @@ curl "https://<host>/api/projects/proj_apt_4b/events?since=2026-11-21T00:00:00Z&
 #                  "summary": "set_measurement CU-2 = 342 cm", "payload": { ... } }] }
 ```
 
+
+## Cost safety (R2 caps)
+
+Images are stored in R2 and the API keeps the bucket inside the free tier with three
+hard caps, read from `[vars]` in `wrangler.toml` (`src/core/caps.ts` holds the
+defaults and the pure decision logic):
+
+| Var | Default | Refusal |
+|---|---|---|
+| `MAX_UPLOAD_MB` | `10` | `413 { "error": "file_too_large", "maxMb": 10 }` |
+| `MAX_R2_TOTAL_MB` | `5000` | `507 { "error": "storage_cap_reached", "usedMb": 4999.3, "capMb": 5000 }` |
+| `MAX_UPLOADS_PER_DAY` | `200` | `429 { "error": "daily_upload_cap", "cap": 200 }` |
+
+- The checks run **before** R2 is written, in this order: single file size, bucket
+  total (`SUM(size_bytes)` in D1, migration `0004_image_sizes.sql`), uploads in the
+  last 24 h. A value exactly at a cap is allowed.
+- `DELETE /api/projects/:id` removes the R2 objects and the `images` rows, so the
+  total drops at once.
+- These are permanent errors, not transient ones: do not retry the same upload.
+  Report the reason to the user instead. The web app keeps the photo as a local
+  data URL and shows it in the sync status line.
 
 ## MCP Server (`POST /api/mcp`)
 

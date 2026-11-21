@@ -15,11 +15,16 @@ import { mcpRoutes } from '../routes/mcp'
 import { accessMiddleware, registerAccessRoutes } from '../auth'
 import { syncProjectTitle } from '../routes/projectTitle'
 import { commitDoc, loadProjectDoc, type ProjectRow } from '../store'
+import { checkUpload, parseCaps, uploadWindowStartIso } from '../../src/core/caps'
 
 type Env = {
   DB: D1Database
   IMAGES: R2Bucket
   PASSCODE?: string
+  // Cost caps from wrangler.toml [vars]; missing values use the defaults in src/core/caps.ts.
+  MAX_UPLOAD_MB?: string
+  MAX_R2_TOTAL_MB?: string
+  MAX_UPLOADS_PER_DAY?: string
 }
 
 const app = new Hono<{ Bindings: Env }>().basePath('/api')
@@ -142,6 +147,7 @@ app.delete('/projects/:id', async (c) => {
   // R2 delete takes up to 1000 keys per call.
   for (let i = 0; i < keys.length; i += 1000) await c.env.IMAGES.delete(keys.slice(i, i + 1000))
   // Explicit deletes: do not rely on foreign-key cascades being enabled.
+  // The images rows go too, so SUM(size_bytes) stays exact for the R2 cost caps.
   await c.env.DB.batch(
     ['floorplan_snapshots', 'measurements', 'survey_items', 'room_notes', 'images'].map((t) =>
       c.env.DB.prepare(`DELETE FROM ${t} WHERE project_id = ?`).bind(id),
@@ -521,6 +527,19 @@ const EXT_BY_TYPE: Record<string, string> = {
   'application/pdf': '.pdf',
 }
 
+// Usage numbers for the cost caps: total bytes stored and uploads in the last 24 h.
+// Both read the images rows, so a deleted project frees its space immediately.
+async function imageUsage(db: D1Database, now: Date): Promise<{ usedBytes: number; uploadsLast24h: number }> {
+  const totals = await db
+    .prepare('SELECT COALESCE(SUM(size_bytes), 0) AS used FROM images')
+    .first<{ used: number }>()
+  const recent = await db
+    .prepare('SELECT COUNT(*) AS n FROM images WHERE created_at >= ?')
+    .bind(uploadWindowStartIso(now))
+    .first<{ n: number }>()
+  return { usedBytes: Number(totals?.used ?? 0), uploadsLast24h: Number(recent?.n ?? 0) }
+}
+
 app.post('/projects/:id/images', async (c) => {
   const id = c.req.param('id')
   if (!(await projectExists(c.env.DB, id))) return notFound(c)
@@ -534,14 +553,22 @@ app.post('/projects/:id/images', async (c) => {
   if (!(file instanceof File)) return badRequest(c, 'missing "file" field')
   const contentType = file.type || 'application/octet-stream'
   if (!contentType.startsWith('image/')) return badRequest(c, 'only image uploads are allowed')
+  // Cost caps: refuse BEFORE R2 is written, so the bucket never passes the cap.
+  // 413 file_too_large / 507 storage_cap_reached / 429 daily_upload_cap.
+  const usage = await imageUsage(c.env.DB, new Date())
+  const rejected = checkUpload({ sizeBytes: file.size, ...usage }, parseCaps(c.env))
+  if (rejected) return c.json(rejected.body, rejected.status)
   const ext = EXT_BY_TYPE[contentType] ?? '.img'
   const key = `${id}/${crypto.randomUUID()}${ext}`
   await c.env.IMAGES.put(key, await file.arrayBuffer(), { httpMetadata: { contentType } })
-  await c.env.DB.prepare('INSERT INTO images (key, project_id, content_type, created_at) VALUES (?, ?, ?, ?)').bind(
+  await c.env.DB.prepare(
+    'INSERT INTO images (key, project_id, content_type, created_at, size_bytes) VALUES (?, ?, ?, ?, ?)',
+  ).bind(
     key,
     id,
     contentType,
     nowIso(),
+    file.size,
   ).run()
   return c.json({ key, url: `/api/images/${encodeURIComponent(key)}` }, 201)
 })

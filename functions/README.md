@@ -61,8 +61,43 @@ All routes are under `/api` and require header `x-passcode: <PASSCODE>` when the
 | PUT / DELETE | `/projects/:id/items/:id` | Upsert / soft-delete one survey item (LWW by `updatedAt`) |
 | PUT | `/projects/:id/notes/:code` | Upsert one room note (LWW by `updatedAt`) |
 | GET | `/projects/:id/changes?since=ISO` | Measurements/items/notes updated after `since` (deleted items included) |
-| POST | `/projects/:id/images` | Multipart upload (`file` field) to R2 → `{key, url}` |
+| POST | `/projects/:id/images` | Multipart upload (`file` field) to R2 → `{key, url}`; refused with 413 / 507 / 429 by the cost caps (see **Cost safety**) |
 | GET | `/images/:key` | Stream image from R2 with immutable cache headers |
+
+## Cost safety
+
+Images live in R2, which is billed per stored GB. The API keeps the bucket inside
+the free tier with three hard caps. They are `[vars]` in `../wrangler.toml`
+(strings; a missing or invalid value uses the default from
+`src/core/caps.ts`):
+
+| Var | Default | Effect |
+|---|---|---|
+| `MAX_UPLOAD_MB` | `10` | Biggest single file. Above it: `413 { "error": "file_too_large", "maxMb": 10 }` |
+| `MAX_R2_TOTAL_MB` | `5000` | Biggest total of all stored images. Above it: `507 { "error": "storage_cap_reached", "usedMb": 4999.3, "capMb": 5000 }` |
+| `MAX_UPLOADS_PER_DAY` | `200` | Uploads in the last 24 h. At the cap: `429 { "error": "daily_upload_cap", "cap": 200 }` |
+
+How it works:
+
+- `POST /projects/:id/images` reads the usage from D1 (migration
+  `0004_image_sizes.sql`: `images.size_bytes` plus an index on `created_at`), calls
+  `checkUpload()` in `src/core/caps.ts` (pure logic, tests in
+  `src/core/caps.test.ts`) and refuses the request **before** R2 is written. The
+  bucket therefore never passes the cap, even for one file.
+- Checks run in this order: single file size (413), bucket total (507), uploads in
+  the last 24 h (429). A value exactly at a cap is allowed; the next byte is not.
+- `size_bytes` is stored with every upload, so `SUM(size_bytes)` is the bucket
+  total. Rows written before the migration stay at `0` (unknown size), so the total
+  is an underestimate only for those old rows.
+- `DELETE /projects/:id` removes the R2 objects **and** the `images` rows, so a
+  deleted project frees its space at once.
+- Apply the migration before you deploy the new API:
+  `wrangler d1 migrations apply simple-floorplan --remote`.
+- The web app (`src/sync/sync.ts`) does not retry a refused photo: the photo stays
+  a local data URL on the device and the sync status line says why, for example
+  "Photo not uploaded: storage limit reached". Nothing is lost, but the photo is not
+  shared with other devices until there is room again (reload the page after the
+  cap is raised or space is freed).
 
 ## Cloudflare Access (recommended)
 
