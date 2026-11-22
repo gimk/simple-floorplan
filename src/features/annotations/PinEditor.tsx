@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Camera, Trash2, X } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import { undoToast } from '../toast'
@@ -14,29 +15,16 @@ function PhotoThumb({ src, alt }: { src: string; alt: string }) {
   return <img src={url} alt={alt} className="size-full object-cover" />
 }
 
-/** Text, photos and delete for one pin. Edits are silent; `silent` only controls whether delete is an undo step. */
-export function PinEditor({ pin, silent = true, compact = false, onDeleted, label }: { pin: Pin; silent?: boolean; compact?: boolean; onDeleted?: () => void; label?: string }) {
+/**
+ * Photos of one pin: the grid with one delete button per photo, then the hidden file
+ * input and the "Add photo" button. `trailing` is drawn at the end of that last row
+ * (PinEditor puts its delete button there). Shared by PinEditor and the pin inspector.
+ */
+export function PinPhotos({ pin, compact = false, trailing }: { pin: Pin; compact?: boolean; trailing?: ReactNode }) {
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [armed, setArmed] = useState(false)
-  const timer = useRef<number | undefined>(undefined)
-  useEffect(() => () => window.clearTimeout(timer.current), [])
-
-  const field = `w-full rounded-lg border border-black/15 bg-white px-3 py-2 dark:border-white/20 dark:bg-[#12161b] ${compact ? 'text-sm' : 'text-[15px]'}`
   const btnH = compact ? 'h-9' : 'min-h-11'
-
-  const onDelete = () => {
-    if (silent && !armed) {
-      setArmed(true)
-      timer.current = window.setTimeout(() => setArmed(false), 3000)
-      return
-    }
-    window.clearTimeout(timer.current)
-    removePin(pin.id, silent)
-    if (!silent) undoToast('Pin deleted', () => useDoc.temporal.getState().undo())
-    onDeleted?.()
-  }
 
   const addFiles = async (files: FileList | null) => {
     if (!files?.length) return
@@ -54,13 +42,7 @@ export function PinEditor({ pin, silent = true, compact = false, onDeleted, labe
   }
 
   return (
-    <div className="flex flex-col gap-2.5" data-pin={pin.id}>
-      {label && <b className="text-sm">{label}</b>}
-      <textarea
-        name="pinNote" aria-label="Pin note" rows={2} placeholder="Note (radiator pipes here, panel 140 cm from floor…)"
-        value={pin.text ?? ''} onChange={(e) => patchPin(pin.id, { text: e.target.value || undefined })}
-        className={`${field} min-h-16 resize-y`}
-      />
+    <>
       {pin.photoKeys.length > 0 && (
         <ul className="grid grid-cols-3 gap-2">
           {pin.photoKeys.map((src, i) => (
@@ -82,12 +64,56 @@ export function PinEditor({ pin, silent = true, compact = false, onDeleted, labe
           type="button" disabled={busy} onClick={() => input.current?.click()}
           className={`flex ${btnH} items-center gap-1.5 rounded-lg border border-orange-600 px-3 text-sm font-semibold text-orange-700 disabled:opacity-50 dark:border-orange-400 dark:text-orange-400`}
         ><Camera size={16} /> {busy ? 'Adding…' : 'Add photo'}</button>
-        <span className="flex-1" />
-        <button
-          type="button" onClick={onDelete}
-          className={`flex ${btnH} items-center gap-1.5 rounded-lg border px-3 text-sm font-semibold ${armed ? 'border-orange-700 bg-orange-700 text-white' : 'border-red-600/40 text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400'}`}
-        ><Trash2 size={16} /> {armed ? 'Tap to confirm' : 'Delete pin'}</button>
+        {trailing && (
+          <>
+            <span className="flex-1" />
+            {trailing}
+          </>
+        )}
       </div>
+    </>
+  )
+}
+
+/** Text, photos and delete for one pin. Edits are silent; `silent` only controls whether delete is an undo step. */
+export function PinEditor({ pin, silent = true, compact = false, onDeleted, label }: { pin: Pin; silent?: boolean; compact?: boolean; onDeleted?: () => void; label?: string }) {
+  const [armed, setArmed] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+
+  const field = `w-full rounded-lg border border-black/15 bg-white px-3 py-2 dark:border-white/20 dark:bg-[#12161b] ${compact ? 'text-sm' : 'text-[15px]'}`
+  const btnH = compact ? 'h-9' : 'min-h-11'
+
+  const onDelete = () => {
+    if (silent && !armed) {
+      setArmed(true)
+      timer.current = window.setTimeout(() => setArmed(false), 3000)
+      return
+    }
+    window.clearTimeout(timer.current)
+    removePin(pin.id, silent)
+    if (!silent) undoToast('Pin deleted', () => useDoc.temporal.getState().undo())
+    onDeleted?.()
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5" data-pin={pin.id}>
+      {label && <b className="text-sm">{label}</b>}
+      <textarea
+        name="pinNote" aria-label="Pin note" rows={2} placeholder="Note (radiator pipes here, panel 140 cm from floor…)"
+        value={pin.text ?? ''} onChange={(e) => patchPin(pin.id, { text: e.target.value || undefined })}
+        className={`${field} min-h-16 resize-y`}
+      />
+      <PinPhotos
+        pin={pin}
+        compact={compact}
+        trailing={
+          <button
+            type="button" onClick={onDelete}
+            className={`flex ${btnH} items-center gap-1.5 rounded-lg border px-3 text-sm font-semibold ${armed ? 'border-orange-700 bg-orange-700 text-white' : 'border-red-600/40 text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400'}`}
+          ><Trash2 size={16} /> {armed ? 'Tap to confirm' : 'Delete pin'}</button>
+        }
+      />
     </div>
   )
 }

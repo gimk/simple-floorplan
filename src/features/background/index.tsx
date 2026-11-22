@@ -1,11 +1,12 @@
 // OWNER: background agent. Contract: keep these export names and signatures.
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Crosshair, Eye, EyeOff, ImagePlus, Lock, LockOpen, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
+import { Crosshair, ImagePlus, RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { beginDrag, endDrag, useDoc, useUi } from '../../model/store'
 import { dist, fmtCm } from '../../model/geometry'
 import type { PlanDoc, Vec } from '../../model/types'
+import { BTN, EmptyHint, FieldRow, IconButton, NumberField, SelectField, SwitchRow } from '../../shell/panel'
 import { undoToast } from '../toast'
 import { calibrateScale, imageSizeCm } from './calibrate'
 import { pdfPageCount, renderPdfPage } from './pdf'
@@ -72,7 +73,9 @@ export function BackgroundLayer() {
   )
 }
 
-/** Sidebar panel: import, opacity, visibility, lock, rotation, calibration button. */
+/** Sidebar content: import, opacity, rotation, calibration, visibility and lock.
+ *  It draws no border and no heading of its own: the sidebar wraps it in a
+ *  PanelSection (docs/sidebar-plan.md §4). */
 export function BackgroundPanel() {
   const bg = useDoc((s) => s.doc.background)
   const update = useDoc((s) => s.update)
@@ -159,17 +162,15 @@ export function BackgroundPanel() {
     onKeyUp: endSlider,
   }
 
-  const [rotDraft, setRotDraft] = useState<string | null>(null)
-  const label = 'flex items-center gap-2'
-  const row = 'flex h-9 items-center gap-2'
-  const inputCls =
-    'h-9 w-full rounded-md border border-black/10 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#12161b]'
+  const setBg = (patch: Partial<NonNullable<PlanDoc['background']>>) =>
+    update((d) => (d.background ? { ...d, background: { ...d.background, ...patch } } : d))
+
+  // Same metrics as BTN, without the border, for the two primary actions.
+  const primary =
+    'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md bg-orange-700 px-3 text-sm text-white hover:bg-orange-800 disabled:opacity-50 pointer-coarse:min-h-11'
 
   return (
-    <section className="rounded-lg border border-black/10 p-2 text-sm dark:border-white/10">
-      <h2 className="flex h-9 items-center gap-2 text-sm font-semibold">
-        <ImagePlus size={16} /> Background
-      </h2>
+    <div className="flex flex-col gap-2">
       <input
         ref={fileRef}
         name="bgFile"
@@ -179,59 +180,48 @@ export function BackgroundPanel() {
         onChange={onFile}
       />
       {busy && (
-        <div className="mt-2 flex h-9 items-center justify-center gap-2 rounded-md bg-black/5 text-xs dark:bg-white/10">
+        <div role="status" className="flex min-h-9 items-center justify-center gap-2 rounded-md bg-black/5 text-xs dark:bg-white/10">
           Rendering PDF…
         </div>
       )}
-      {error && <div className="mt-2 rounded-md bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/40 dark:text-red-200">{error}</div>}
+      {error && (
+        <p role="alert" className="rounded-md bg-red-100 px-2 py-1 text-xs text-red-800 dark:bg-red-900/40 dark:text-red-200">
+          {error}
+        </p>
+      )}
       {pdfPick && (
-        <div className="mt-2 flex h-9 items-center gap-2 rounded-md border border-black/10 px-2 dark:border-white/10">
-          <span className="flex-1 truncate text-xs" title={pdfPick.name}>
+        <div className="flex items-center gap-2 rounded-md border border-black/10 px-2 py-1 dark:border-white/10">
+          <span className="min-w-0 flex-1 truncate text-xs" title={pdfPick.name}>
             {pdfPick.name} · {pdfPick.numPages} pages
           </span>
-          <select
-            name="pdfPage"
-            aria-label="PDF page"
-            className="h-7 rounded border border-black/10 bg-white text-xs dark:border-white/10 dark:bg-[#12161b]"
-            value={pdfPick.page}
-            onChange={(e) => setPdfPick({ ...pdfPick, page: Number(e.target.value) })}
-          >
-            {Array.from({ length: pdfPick.numPages }, (_, i) => (
-              <option key={i + 1} value={i + 1}>
-                Page {i + 1}
-              </option>
-            ))}
-          </select>
-          <button
-            className="h-7 rounded-md bg-orange-600 px-2 text-xs text-white hover:bg-orange-700"
-            onClick={() => pdfPick && void renderPdf(pdfPick.file, pdfPick.page)}
-          >
+          <div className="w-24 shrink-0">
+            <SelectField
+              name="pdfPage"
+              ariaLabel="PDF page"
+              value={String(pdfPick.page)}
+              options={Array.from({ length: pdfPick.numPages }, (_, i) => ({ value: String(i + 1), label: `Page ${i + 1}` }))}
+              onChange={(v) => setPdfPick({ ...pdfPick, page: Number(v) })}
+            />
+          </div>
+          <button type="button" className={BTN} onClick={() => pdfPick && void renderPdf(pdfPick.file, pdfPick.page)}>
             Render
           </button>
-          <button
-            className="h-7 rounded-md border border-black/10 px-2 text-xs hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10"
-            onClick={() => setPdfPick(null)}
-          >
+          <button type="button" className={BTN} onClick={() => setPdfPick(null)}>
             Cancel
           </button>
         </div>
       )}
       {!bg ? (
-        <button
-          data-action="import-background"
-          className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-md bg-orange-700 px-2 text-sm text-white hover:bg-orange-800"
-          onClick={() => fileRef.current?.click()}
-        >
+        <button data-action="import-background" className={`${primary} w-full`} onClick={() => fileRef.current?.click()}>
           <ImagePlus size={16} /> Import image or PDF
         </button>
       ) : (
-        <div className="mt-2 flex flex-col gap-2">
-          <div className="text-xs opacity-70">
+        <>
+          <EmptyHint>
             Scale: 1 px = {bg.cmPerPx.toFixed(3).replace('.', ',')} cm · {(100 / bg.cmPerPx).toFixed(1).replace('.', ',')} px/m
-          </div>
+          </EmptyHint>
 
-          <div>
-            <div className="flex justify-between"><span>Opacity</span><span>{Math.round(bg.opacity * 100)}%</span></div>
+          <FieldRow label="Opacity" hint={`${Math.round(bg.opacity * 100)} %`}>
             <input
               type="range"
               name="bgOpacity"
@@ -247,34 +237,20 @@ export function BackgroundPanel() {
                 updateSilent((d) => (d.background ? { ...d, background: { ...d.background, opacity: v } } : d))
               }}
             />
+          </FieldRow>
+
+          <div className="flex flex-col gap-0.5">
+            <SwitchRow name="bgVisible" label="Visible" checked={bg.visible} onChange={(checked) => setBg({ visible: checked })} />
+            <SwitchRow
+              name="bgLocked"
+              label={bg.locked ? 'Locked' : 'Unlocked'}
+              checked={bg.locked}
+              onChange={(checked) => setBg({ locked: checked })}
+            />
           </div>
 
-          <div className={row}>
-            <label className={`${label} flex-1 cursor-pointer`}>
-              <input
-                type="checkbox"
-                name="bgVisible"
-                className="h-4 w-4 accent-orange-600"
-                checked={bg.visible}
-                onChange={(e) => update((d) => (d.background ? { ...d, background: { ...d.background, visible: e.target.checked } } : d))}
-              />
-              {bg.visible ? <Eye size={16} /> : <EyeOff size={16} />} Visible
-            </label>
-            <label className={`${label} flex-1 cursor-pointer`}>
-              <input
-                type="checkbox"
-                name="bgLocked"
-                className="h-4 w-4 accent-orange-600"
-                checked={bg.locked}
-                onChange={(e) => update((d) => (d.background ? { ...d, background: { ...d.background, locked: e.target.checked } } : d))}
-              />
-              {bg.locked ? <Lock size={16} /> : <LockOpen size={16} />} {bg.locked ? 'Locked' : 'Unlocked'}
-            </label>
-          </div>
-
-          <div>
-            <div className="flex justify-between"><span>Rotation</span><span>{bg.rotationDeg.toFixed(1).replace('.', ',')}°</span></div>
-            <div className="flex items-center gap-2">
+          <FieldRow label="Rotation">
+            <div className="flex flex-col gap-1">
               <input
                 type="range"
                 name="bgRotationSlider"
@@ -290,76 +266,55 @@ export function BackgroundPanel() {
                   updateSilent((d) => (d.background ? { ...d, background: { ...d.background, rotationDeg: v } } : d))
                 }}
               />
-              <input
-                type="text"
-                name="bgRotation"
-                inputMode="decimal"
-                value={rotDraft ?? bg.rotationDeg.toFixed(1).replace('.', ',')}
-                aria-label="Rotation value in degrees"
-                className={`${inputCls} w-20`}
-                onChange={(e) => setRotDraft(e.target.value)}
-                onBlur={() => {
-                  if (rotDraft !== null) {
-                    const raw = parseCommaNumber(rotDraft)
-                    if (Number.isFinite(raw)) {
-                      const v = normalizeDeg(raw)
-                      update((d) => (d.background ? { ...d, background: { ...d.background, rotationDeg: v } } : d))
-                    }
-                    setRotDraft(null)
-                  }
-                }}
-                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-              />
-              <button
-                type="button"
-                aria-label="Rotate -90 degrees"
-                title="Rotate −90°"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10"
-                onClick={() => update((d) => (d.background ? { ...d, background: { ...d.background, rotationDeg: rotateBy(d.background.rotationDeg, -90) } } : d))}
-              >
-                <RotateCcw size={16} />
-              </button>
-              <button
-                type="button"
-                aria-label="Rotate +90 degrees"
-                title="Rotate +90°"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-black/10 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10"
-                onClick={() => update((d) => (d.background ? { ...d, background: { ...d.background, rotationDeg: rotateBy(d.background.rotationDeg, 90) } } : d))}
-              >
-                <RotateCw size={16} />
-              </button>
+              <div className="flex items-center gap-1">
+                <div className="w-20 shrink-0">
+                  <NumberField
+                    name="bgRotation"
+                    ariaLabel="Rotation value in degrees"
+                    unit="°"
+                    value={bg.rotationDeg}
+                    onCommit={(v) => {
+                      if (v === null) return false
+                      const next = normalizeDeg(v)
+                      if (next === bg.rotationDeg) return
+                      setBg({ rotationDeg: next })
+                    }}
+                  />
+                </div>
+                <IconButton
+                  label="Rotate -90 degrees"
+                  icon={<RotateCcw size={16} />}
+                  onClick={() => setBg({ rotationDeg: rotateBy(bg.rotationDeg, -90) })}
+                />
+                <IconButton
+                  label="Rotate +90 degrees"
+                  icon={<RotateCw size={16} />}
+                  onClick={() => setBg({ rotationDeg: rotateBy(bg.rotationDeg, 90) })}
+                />
+              </div>
             </div>
-          </div>
+          </FieldRow>
 
-          <div className="flex gap-2">
-            <button
-              className="flex h-9 flex-1 items-center justify-center gap-1 rounded-md bg-orange-700 px-2 text-sm text-white hover:bg-orange-800"
-              onClick={() => setTool('calibrate')}
-            >
+          <div className="flex gap-1">
+            <button type="button" className={`${primary} flex-1`} onClick={() => setTool('calibrate')}>
               <Crosshair size={16} /> Calibrate scale
             </button>
-            <button
-              className="flex h-9 w-9 items-center justify-center rounded-md border border-red-600/40 text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400"
-              title="Remove image"
-              aria-label="Remove background image"
+            <IconButton
+              variant="danger"
+              label="Remove background image"
+              icon={<Trash2 size={16} />}
               onClick={() => {
                 update((d) => ({ ...d, background: undefined }))
                 undoToast('Background image deleted', () => useDoc.temporal.getState().undo())
               }}
-            >
-              <Trash2 size={16} />
-            </button>
+            />
           </div>
-          <button
-            data-action="import-background"
-            className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-black/10 px-2 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10"
-            onClick={() => fileRef.current?.click()}
-          >
+          <button data-action="import-background" className={`${BTN} w-full`} onClick={() => fileRef.current?.click()}>
             <ImagePlus size={16} /> Replace image / PDF
           </button>
-        </div>
+        </>
       )}
-    </section>
+    </div>
   )
 }
 

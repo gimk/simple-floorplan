@@ -107,4 +107,17 @@ describe('Sidebar shell', () => {
     expect(html).toContain('name="layer-background"')
     expect(html).toContain('name="layer-notes"')
   })
+
+  it('gives the Plan tab one collapsible section per global tool', () => {
+    const html = renderToString(<Sidebar />)
+    for (const title of ['Background', 'Layers', 'Calculators', 'Export']) {
+      expect(html).toContain(`aria-label="${title}"`)
+    }
+    // The sections own their content: no double border box around them any more.
+    expect(html).not.toContain('<details')
+    expect(html).toContain('name="wastePct"')
+    expect(html).toContain('name="coverage"')
+    expect(html).toContain('name="exportA3"')
+    expect(html).toContain('name="exportWithBg"')
+  })
 })

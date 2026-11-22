@@ -1,58 +1,48 @@
+// Sidebar panel: properties of the selected room / wall / vertex, plus the walls and the
+// elements of the room (docs/sidebar-plan.md phase 2, primitives in src/shell/panel).
+// All lengths are cm. One undo step per edit, comma decimals.
 import { useEffect, useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
 import { fmtCm, roomAreaM2, roomWalls } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
-import type { PlanDoc, Room, WallProps, WallType } from '../../model/types'
+import type { PlanDoc, Room, Selection, WallProps, WallType } from '../../model/types'
+import { effectiveCeilingCm } from '../export/calc'
+import {
+  BTN,
+  CheckboxRow,
+  EmptyHint,
+  FieldRow,
+  IconButton,
+  MUTED,
+  NumberField,
+  PanelSection,
+  Segmented,
+  StatGrid,
+  SwitchRow,
+  TextField,
+  formatM2,
+} from '../../shell/panel'
 import { undoToast } from '../toast'
 import { applyMeasured, applyMeasuredAll, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
 import { useActiveHole } from './holes'
 import { deleteRoom, perimeter, setRoomCode } from './ops'
+import { elementRows, wallElementRows, wallRows, WALL_TYPE_CHIP, type ElementRow } from './roomLists'
 import { DEFAULT_THICKNESS, wallProps } from './walls'
-
-const input = 'h-9 w-full rounded-md border border-black/15 bg-white px-2 text-sm dark:border-white/15 dark:bg-[#12161b]'
-const label = 'flex flex-col gap-0.5 text-xs text-slate-500 dark:text-slate-400'
 
 const update = (fn: (d: PlanDoc) => PlanDoc) => useDoc.getState().update(fn)
 const patchRoom = (id: string, patch: Partial<Room>) =>
   update((d) => ({ ...d, rooms: d.rooms.map((r) => (r.id === id ? { ...r, ...patch } : r)) }))
 
-/** Text/number field that commits on blur or Enter (one undo step per edit). */
-function Field({ title, value, onCommit, type = 'text', errorText, disabled, suffix }: {
-  title: string; value: string; onCommit: (v: string) => boolean | void; type?: 'text' | 'number'; errorText?: string; disabled?: boolean; suffix?: string
-}) {
-  const [text, setText] = useState(value)
-  const [bad, setBad] = useState(false)
-  useEffect(() => { setText(value); setBad(false) }, [value])
-  const commit = () => {
-    if (text === value) return
-    if (onCommit(text) === false) { setBad(true); setText(value) } else setBad(false)
-  }
-  return (
-    <label className={label}>
-      <span>{title}{suffix ? ` (${suffix})` : ''}</span>
-      <input
-        className={`${input} ${bad ? 'border-red-500' : ''}`}
-        type="text"
-        name={title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}
-        inputMode={type === 'number' ? 'decimal' : undefined}
-        aria-invalid={bad}
-        value={text}
-        disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-      />
-      {bad && <span role="alert" className="text-red-600 dark:text-red-400">{errorText ?? 'Invalid value'}</span>}
-    </label>
-  )
-}
-
-const num = (s: string) => { const n = Number(s.replace(',', '.')); return Number.isFinite(n) ? n : null }
+const WALL_TYPES = [
+  { value: 'bearing', label: 'Bearing' },
+  { value: 'partition', label: 'Partition' },
+  { value: 'exterior', label: 'Exterior' },
+] as const
 
 function setWall(roomId: string, startId: string, patch: Partial<WallProps>) {
   update((d) => ({
     ...d,
-    rooms: d.rooms.map((r) => r.id !== roomId ? r : { ...r, walls: { ...r.walls, [startId]: { ...wallProps(r, startId), ...patch } } }),
+    rooms: d.rooms.map((r) => (r.id !== roomId ? r : { ...r, walls: { ...r.walls, [startId]: { ...wallProps(r, startId), ...patch } } })),
   }))
 }
 
@@ -78,17 +68,47 @@ function setWallLength(roomId: string, startId: string, length: number) {
   }))
 }
 
+/** One clickable row of an element list: kind + variant, then wall label (room list) or
+ *  offset from the wall start (wall list), then width. */
+function ElementList({ rows, onSelect, show = 'wall' }: { rows: ElementRow[]; onSelect: (id: string) => void; show?: 'wall' | 'offset' }) {
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {rows.map((row) => (
+        <li key={row.id}>
+          <button
+            type="button"
+            onClick={() => onSelect(row.id)}
+            aria-label={`Select element ${row.kindLabel} ${row.wallLabel ?? ''}`.trim()}
+            className="flex min-h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11"
+          >
+            <span className="min-w-0 flex-1 truncate">
+              {row.kindLabel}
+              {row.variantLabel && <span className={MUTED}> · {row.variantLabel}</span>}
+            </span>
+            {show === 'wall' ? (
+              <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>{row.wallLabel ?? '—'}</span>
+            ) : (
+              <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`} title="Offset from the wall start">
+                @{fmtCm(row.offsetCm)} cm
+              </span>
+            )}
+            <span className="shrink-0 font-mono text-xs tabular-nums">{fmtCm(row.widthCm)}</span>
+            <span className={`shrink-0 text-[11px] ${MUTED}`}>cm</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Selected hole (own store, see ./holes.ts). Passed down so the view stays pure. */
+export type ActiveHole = { roomId: string; holeIndex: number } | null
+
 /** Sidebar panel: properties of the selected room / wall / vertex. */
 export function RoomsPanel() {
+  const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
-  const roomId = selection && selection.kind !== 'element' ? selection.roomId : null
-  const room = useDoc((s) => s.doc.rooms.find((r) => r.id === roomId))
-  const allRooms = useDoc((s) => s.doc.rooms)
-  const measurements = useDoc((s) => s.doc.measurements)
-  const apartmentCeilingCm = useDoc((s) => s.doc.apartment?.defaultCeilingCm ?? null)
   const activeHole = useActiveHole()
-  const [applyNote, setApplyNote] = useState<string | null>(null)
-  useEffect(() => setApplyNote(null), [roomId])
 
   // 'b' toggles the selected wall between bearing and partition.
   useEffect(() => {
@@ -106,6 +126,18 @@ export function RoomsPanel() {
     return () => window.removeEventListener('keydown', k)
   }, [])
 
+  return <RoomsPanelView doc={doc} selection={selection} activeHole={activeHole} />
+}
+
+/** Same panel from plain data, so it can be rendered without the stores (tests, SSR). */
+export function RoomsPanelView({ doc, selection, activeHole }: { doc: PlanDoc; selection: Selection; activeHole: ActiveHole }) {
+  const roomId = selection && selection.kind !== 'element' ? selection.roomId : null
+  const room = doc.rooms.find((r) => r.id === roomId)
+  const apartmentCeilingCm = doc.apartment?.defaultCeilingCm ?? null
+  // The apply note belongs to the room it was run for, so it vanishes on a room change
+  // without an effect (derive during render instead of resetting in an effect).
+  const [note, setNote] = useState<{ roomId: string; text: string } | null>(null)
+
   if (!room || !selection || selection.kind === 'element') return null
   const walls = roomWalls(room)
   const wall = selection.kind === 'wall' ? walls.find((w) => w.start.id === selection.wallStart) : undefined
@@ -114,112 +146,250 @@ export function RoomsPanel() {
   const holeVertex = selection.kind === 'vertex' && !outlineVertex ? room.holes.flat().find((v) => v.id === selection.vertexId) : undefined
   const vertex = outlineVertex ?? holeVertex
   const holeRing = holeVertex ? room.holes.find((h) => h.some((v) => v.id === holeVertex.id)) : undefined
-  const verified = verifiedWalls({ measurements }, room)
-  const allLocked = verifiedAllLocked({ measurements }, room)
+  const verified = verifiedWalls({ measurements: doc.measurements }, room)
+  const allLocked = verifiedAllLocked({ measurements: doc.measurements }, room)
   // Same rule as hasOwnCeiling(): a room height of 0 does not count as its own.
   const ownCeiling = room.ceilingCm !== undefined && room.ceilingCm > 0
+  const ceiling = effectiveCeilingCm(doc, room)
+  const areaM2 = roomAreaM2(room)
+  const select = useUi.getState().select
+
   const runApply = (all: boolean) => {
-    const doc = useDoc.getState().doc
-    const r = all ? applyMeasuredAll(doc) : (() => { const x = applyMeasured(doc, room.id); return { doc: x.doc, reports: [x.report] } })()
-    if (r.doc !== doc) update(() => r.doc)
+    const current = useDoc.getState().doc
+    const r = all ? applyMeasuredAll(current) : (() => { const x = applyMeasured(current, room.id); return { doc: x.doc, reports: [x.report] } })()
+    if (r.doc !== current) update(() => r.doc)
     const done = r.reports.filter((x) => x.mode !== 'none')
-    setApplyNote(all
+    setNote({ roomId: room.id, text: all
       ? done.length ? `Applied to ${done.length} room${done.length === 1 ? '' : 's'}. ${done.map(describeReport).join(' ')}` : 'No room has verified wall lengths.'
-      : describeReport(r.reports[0]))
+      : describeReport(r.reports[0]) })
   }
-  const box = 'rounded-lg border border-black/10 p-2 text-sm dark:border-white/10'
-  const typeBtn = (t: WallType, text: string) => (
-    <button
-      key={t}
-      type="button"
-      aria-pressed={props?.type === t}
-      className={`h-9 flex-1 rounded-md border text-xs ${props?.type === t ? 'border-orange-700 bg-orange-700 text-white' : 'border-black/15 hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10'}`}
-      onClick={() => wall && setWallType(room.id, wall.start.id, t)}
-    >{text}</button>
-  )
 
   return (
-    <div className="flex flex-col gap-3">
+    <>
       {wall && props && (
-        <section className={`${box} flex flex-col gap-2`}>
-          <h2 className="text-sm font-semibold">Wall {room.code}-{wall.index + 1}</h2>
-          <div className="flex gap-1">{typeBtn('bearing', 'Bearing')}{typeBtn('partition', 'Partition')}{typeBtn('exterior', 'Exterior')}</div>
-          <Field title="Thickness" suffix="cm" type="number" value={fmtCm(props.thicknessCm)}
-            onCommit={(v) => { const n = num(v); if (n === null || n < 1 || n > 200) return false; setWall(room.id, wall.start.id, { thicknessCm: n }) }} />
-          <Field title="Length" suffix="cm" type="number" value={fmtCm(wall.length)} disabled={!!props.locked}
-            onCommit={(v) => { const n = num(v); if (n === null || n < 1) return false; setWallLength(room.id, wall.start.id, n) }} />
-          <label className="flex min-h-9 cursor-pointer items-center gap-2">
-            <input type="checkbox" name="wallLocked" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!props.locked} onChange={(e) => setWall(room.id, wall.start.id, { locked: e.target.checked })} />
-            Locked (cannot be resized)
-          </label>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Key B: bearing / partition. Length moves the end vertex.</p>
-        </section>
+        <PanelSection title={`Wall ${room.code}-${wall.index + 1}`}>
+          <FieldRow label="Type">
+            <Segmented ariaLabel="Wall type" options={WALL_TYPES} value={props.type} onChange={(t) => setWallType(room.id, wall.start.id, t as WallType)} />
+          </FieldRow>
+          <FieldRow label="Thickness" htmlFor="wall-thickness">
+            <NumberField
+              id="wall-thickness"
+              name="thickness"
+              unit="cm"
+              value={props.thicknessCm}
+              min={1}
+              max={200}
+              onCommit={(v) => {
+                if (v === null || v < 1 || v > 200) return false
+                setWall(room.id, wall.start.id, { thicknessCm: v })
+              }}
+            />
+          </FieldRow>
+          <FieldRow label="Length" htmlFor="wall-length">
+            <NumberField
+              id="wall-length"
+              name="length"
+              unit="cm"
+              value={wall.length}
+              min={1}
+              disabled={!!props.locked}
+              onCommit={(v) => {
+                if (v === null || v < 1) return false
+                setWallLength(room.id, wall.start.id, v)
+              }}
+            />
+          </FieldRow>
+          <SwitchRow
+            name="wallLocked"
+            label="Locked (cannot be resized)"
+            checked={!!props.locked}
+            onChange={(checked) => setWall(room.id, wall.start.id, { locked: checked })}
+          />
+          <EmptyHint>Key B: bearing / partition. Length moves the end vertex.</EmptyHint>
+        </PanelSection>
       )}
+
+      {wall && (
+        <PanelSection id="wall-elements" title="On this wall" collapsible>
+          {(() => {
+            const rows = wallElementRows(doc, room, wall.start.id)
+            return rows.length
+              ? <ElementList rows={rows} show="offset" onSelect={(id) => select({ kind: 'element', elementId: id })} />
+              : <EmptyHint>No door, window or fixture on this wall.</EmptyHint>
+          })()}
+        </PanelSection>
+      )}
+
       {vertex && (
-        <section className={`${box} text-xs text-slate-500 dark:text-slate-400`}>
-          {holeVertex ? 'Hole vertex' : 'Vertex'} at {fmtCm(vertex.x)} / {fmtCm(vertex.y)} cm. Press Delete to remove it
-          {holeVertex ? ((holeRing?.length ?? 0) <= 3 ? ' (a hole needs 3 vertices)' : '') : (room.vertices.length <= 3 ? ' (a room needs 3 vertices)' : '')}.
-        </section>
+        <PanelSection title={holeVertex ? 'Hole vertex' : 'Vertex'}>
+          <p className={MUTED}>
+            {holeVertex ? 'Hole vertex' : 'Vertex'} at {fmtCm(vertex.x)} / {fmtCm(vertex.y)} cm. Press Delete to remove it
+            {holeVertex ? ((holeRing?.length ?? 0) <= 3 ? ' (a hole needs 3 vertices)' : '') : (room.vertices.length <= 3 ? ' (a room needs 3 vertices)' : '')}.
+          </p>
+        </PanelSection>
       )}
+
       {activeHole && (
-        <section className={`${box} text-xs text-slate-500 dark:text-slate-400`}>
-          Hole selected. Drag its handles to reshape it. Press Delete to remove the whole hole.
-        </section>
+        <PanelSection title="Hole">
+          <p className={MUTED}>Hole selected. Drag its handles to reshape it. Press Delete to remove the whole hole.</p>
+        </PanelSection>
       )}
-      <section className={`${box} flex flex-col gap-2`}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Room</h2>
-          <button className="flex h-9 w-9 items-center justify-center rounded-md text-red-600 hover:bg-red-500/10 dark:text-red-400" title="Delete room" aria-label={`Delete room ${room.name}`}
+
+      <PanelSection
+        title="Room"
+        icon={<Square size={16} />}
+        actions={
+          <IconButton
+            label={`Delete room ${room.name}`}
+            icon={<Trash2 size={16} />}
+            variant="danger"
             onClick={() => {
               update((d) => deleteRoom(d, room.id))
               useUi.getState().select(null)
               undoToast('Room deleted', () => useDoc.temporal.getState().undo())
-            }}>
-            <Trash2 size={16} />
-          </button>
-        </div>
-        <Field title="Name" value={room.name} onCommit={(v) => { if (!v.trim()) return false; patchRoom(room.id, { name: v.trim() }) }} />
-        <Field title="Code (unique)" value={room.code} errorText="Code already used"
-          onCommit={(v) => {
-            const c = v.trim()
-            if (!c || allRooms.some((r) => r.id !== room.id && r.code === c)) return false
-            update((d) => setRoomCode(d, room.id, c))
-          }} />
-        <Field title="Walk order" type="number" value={String(room.walkOrder)}
-          onCommit={(v) => { const n = num(v); if (n === null) return false; patchRoom(room.id, { walkOrder: n }) }} />
-        <Field title="Ceiling height" suffix="cm" type="number" value={room.ceilingCm === undefined ? '' : fmtCm(room.ceilingCm)}
-          onCommit={(v) => {
-            if (!v.trim()) { patchRoom(room.id, { ceilingCm: undefined }); return }
-            const n = num(v); if (n === null || n <= 0) return false; patchRoom(room.id, { ceilingCm: n })
-          }} />
-        {!ownCeiling && apartmentCeilingCm !== null && apartmentCeilingCm > 0 && (
-          <p className="text-xs text-slate-500 dark:text-slate-400">Apartment default: {fmtCm(apartmentCeilingCm)} cm</p>
-        )}
-        <label className="flex min-h-9 cursor-pointer items-center gap-2">
-          <input type="checkbox" name="roomOutdoor" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!room.outdoor} onChange={(e) => patchRoom(room.id, { outdoor: e.target.checked })} />
-          Outdoor (balcony, terrace)
-        </label>
-        <div className="flex flex-col gap-1.5 border-t border-black/10 pt-2 dark:border-white/10">
-          <h3 className="text-xs font-semibold text-slate-600 dark:text-slate-300">Measured lengths</h3>
-          <button disabled={!verified.length}
-            className="min-h-9 rounded-md border border-black/15 px-2 text-sm hover:bg-black/5 disabled:opacity-40 dark:border-white/15 dark:hover:bg-white/10"
-            onClick={() => runApply(false)}>Apply measured lengths</button>
-          <button disabled={!allRooms.some((r) => verifiedWalls({ measurements }, r).length)}
-            className="min-h-9 rounded-md border border-black/15 px-2 text-sm hover:bg-black/5 disabled:opacity-40 dark:border-white/15 dark:hover:bg-white/10"
-            onClick={() => runApply(true)}>Apply to all rooms</button>
-          <label className="flex min-h-9 cursor-pointer items-center gap-2">
-            <input type="checkbox" name="lockVerifiedWalls" className="h-4 w-4 cursor-pointer accent-orange-700" disabled={!verified.length} checked={allLocked}
-              onChange={(e) => update((d) => setVerifiedLocked(d, room.id, e.target.checked))} />
-            Lock verified walls
-          </label>
-          {!verified.length && <p className="text-xs text-slate-500 dark:text-slate-400">No verified wall lengths yet. Measure this room in Measuring Mode.</p>}
-          {applyNote && <p className="text-xs text-slate-700 dark:text-slate-200">{applyNote}</p>}
-        </div>
-        <dl className="grid grid-cols-2 gap-x-2 text-xs text-slate-500 dark:text-slate-400">
-          <dt>Area</dt><dd className="text-right tabular-nums text-slate-800 dark:text-slate-100">{roomAreaM2(room).toFixed(2).replace('.', ',')} m²</dd>
-          <dt>Perimeter</dt><dd className="text-right tabular-nums text-slate-800 dark:text-slate-100">{fmtCm(perimeter(room.vertices))} cm</dd>
-        </dl>
-      </section>
-    </div>
+            }}
+          />
+        }
+      >
+        <FieldRow label="Name" htmlFor="room-name">
+          <TextField
+            id="room-name"
+            name="name"
+            value={room.name}
+            onCommit={(v) => {
+              if (!v.trim()) return false
+              patchRoom(room.id, { name: v.trim() })
+            }}
+          />
+        </FieldRow>
+        <FieldRow label="Code" htmlFor="room-code" hint="unique">
+          <TextField
+            id="room-code"
+            name="code-unique-"
+            value={room.code}
+            invalidMessage="Code already used"
+            onCommit={(v) => {
+              const c = v.trim()
+              if (!c || doc.rooms.some((r) => r.id !== room.id && r.code === c)) return false
+              update((d) => setRoomCode(d, room.id, c))
+            }}
+          />
+        </FieldRow>
+        <FieldRow label="Walk order" htmlFor="room-walk-order">
+          <NumberField
+            id="room-walk-order"
+            name="walk-order"
+            value={room.walkOrder}
+            onCommit={(v) => {
+              if (v === null) return false
+              patchRoom(room.id, { walkOrder: v })
+            }}
+          />
+        </FieldRow>
+        <FieldRow
+          label="Ceiling"
+          htmlFor="room-ceiling"
+          hint={!ownCeiling && apartmentCeilingCm !== null && apartmentCeilingCm > 0 ? `Apartment default: ${fmtCm(apartmentCeilingCm)} cm` : undefined}
+        >
+          <NumberField
+            id="room-ceiling"
+            name="ceiling-height"
+            unit="cm"
+            value={room.ceilingCm ?? null}
+            placeholder={!ownCeiling && apartmentCeilingCm !== null && apartmentCeilingCm > 0 ? fmtCm(apartmentCeilingCm) : undefined}
+            onCommit={(v) => {
+              if (v === null) { patchRoom(room.id, { ceilingCm: undefined }); return }
+              if (v <= 0) return false
+              patchRoom(room.id, { ceilingCm: v })
+            }}
+          />
+        </FieldRow>
+        <SwitchRow
+          name="roomOutdoor"
+          label="Outdoor (balcony, terrace)"
+          checked={!!room.outdoor}
+          onChange={(checked) => patchRoom(room.id, { outdoor: checked })}
+        />
+        <StatGrid
+          items={[
+            { label: 'Area', value: `${formatM2(areaM2)} m²` },
+            { label: 'Perimeter', value: `${fmtCm(perimeter(room.vertices))} cm` },
+            { label: 'Volume', value: ceiling === null ? '—' : `${formatM2((areaM2 * ceiling) / 100)} m³` },
+            {
+              label: 'Ceiling',
+              value: ceiling === null ? '—' : `${fmtCm(ceiling)} cm`,
+              hint: ceiling !== null && !ownCeiling ? '(apartment default)' : undefined,
+            },
+          ]}
+        />
+      </PanelSection>
+
+      <PanelSection id="room-walls" title="Walls" icon={<Ruler size={16} />} collapsible>
+        {(() => {
+          const rows = wallRows(doc, room)
+          if (!rows.length) return <EmptyHint>This room has no wall yet.</EmptyHint>
+          return (
+            <ul className="flex flex-col gap-0.5">
+              {rows.map((row) => {
+                const selected = selection.kind === 'wall' && selection.wallStart === row.wallStart
+                return (
+                  <li key={row.wallStart}>
+                    <button
+                      type="button"
+                      aria-label={`Select wall ${row.label}`}
+                      aria-current={selected ? 'true' : undefined}
+                      onClick={() => select({ kind: 'wall', roomId: room.id, wallStart: row.wallStart })}
+                      className={`flex min-h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm pointer-coarse:min-h-11 ${
+                        selected ? 'bg-orange-700/10' : 'hover:bg-black/5 dark:hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="w-10 shrink-0 font-mono text-xs">{row.label}</span>
+                      <span className={`shrink-0 rounded px-1 text-[11px] ${WALL_TYPE_CHIP[row.type]}`}>{row.typeLabel}</span>
+                      <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
+                        {row.verifiedCm === null ? (
+                          <span className={MUTED}>{fmtCm(row.lengthCm)}</span>
+                        ) : (
+                          <span className="text-emerald-700 dark:text-emerald-400">
+                            {fmtCm(row.verifiedCm)}
+                            <Check size={11} role="img" aria-label="verified" className="ml-0.5 inline align-[-1px]" />
+                          </span>
+                        )}
+                        <span className={`text-[11px] ${MUTED}`}>cm</span>
+                      </span>
+                      {row.locked && <Lock size={12} role="img" aria-label="locked" className="shrink-0 text-slate-500 dark:text-slate-400" />}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )
+        })()}
+      </PanelSection>
+
+      <PanelSection id="room-elements" title="Elements" icon={<DoorOpen size={16} />} collapsible>
+        {(() => {
+          const rows = elementRows(doc, room)
+          return rows.length
+            ? <ElementList rows={rows} onSelect={(id) => select({ kind: 'element', elementId: id })} />
+            : <EmptyHint>No door, window or fixture in this room yet.</EmptyHint>
+        })()}
+      </PanelSection>
+
+      <PanelSection id="room-measured" title="Measured lengths" collapsible>
+        <button className={BTN} disabled={!verified.length} onClick={() => runApply(false)}>Apply measured lengths</button>
+        <button className={BTN} disabled={!doc.rooms.some((r) => verifiedWalls({ measurements: doc.measurements }, r).length)} onClick={() => runApply(true)}>
+          Apply to all rooms
+        </button>
+        <CheckboxRow
+          name="lockVerifiedWalls"
+          label="Lock verified walls"
+          disabled={!verified.length}
+          checked={allLocked}
+          onChange={(checked) => update((d) => setVerifiedLocked(d, room.id, checked))}
+        />
+        {!verified.length && <EmptyHint>No verified wall lengths yet. Measure this room in Measuring Mode.</EmptyHint>}
+        {note && note.roomId === room.id && <p className="text-xs text-slate-700 dark:text-slate-200">{note.text}</p>}
+      </PanelSection>
+    </>
   )
 }

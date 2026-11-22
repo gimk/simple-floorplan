@@ -75,4 +75,19 @@ describe('ApartmentCard', () => {
     expect(render(baseDoc, { kind: 'room', roomId: 'room_SE' })).toBe('')
     expect(render(baseDoc, null)).toContain('Apartment')
   })
+
+  it('keeps the field names and the collapsible reference section', () => {
+    const html = render()
+    expect(html).toContain('aria-label="Reference surfaces"')
+    expect(html).toContain('aria-expanded="true"') // open on the first visit
+    expect(html).toContain('name="defaultCeilingCm"')
+    expect(html).toContain('name="referenceSource"')
+    expect(html).toContain('name="referenceSurface"')
+    expect(html).toContain('name="referenceRoomCode"')
+    expect(html).toContain('name="referenceLabel"')
+    expect(html).toContain('name="referenceDate"')
+    expect(html).toContain('name="referenceNote"')
+    expect(html).toContain('aria-label="Reference source"')
+    expect(html).toContain('aria-label="Reference surface in square meters"')
+  })
 })

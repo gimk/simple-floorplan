@@ -58,37 +58,41 @@ export function Sidebar() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div
-        role="tablist"
-        aria-label="Sidebar view"
-        className="flex shrink-0 gap-1 rounded-lg border border-black/10 p-0.5 dark:border-white/10"
-      >
-        {TABS.map((t, index) => {
-          const active = tab === t.id
-          return (
-            <button
-              key={t.id}
-              ref={(el) => {
-                tabRefs.current[t.id] = el
-              }}
-              id={`${baseId}-tab-${t.id}`}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              aria-controls={`${baseId}-panel-${t.id}`}
-              tabIndex={active ? 0 : -1}
-              onClick={() => setTab(t.id)}
-              onKeyDown={(e) => onTabKeyDown(e, index)}
-              className={`min-h-9 min-w-0 flex-1 rounded-md px-2 text-sm pointer-coarse:min-h-11 ${
-                active
-                  ? 'bg-orange-700 font-medium text-white'
-                  : 'text-slate-600 hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10'
-              }`}
-            >
-              {t.label}
-            </button>
-          )
-        })}
+      {/* Sticky bar: negative margins and matching background cover the aside padding,
+          so the scrolling sections pass behind it instead of showing through. */}
+      <div className="sticky top-0 z-10 -mx-3 -mt-3 border-b border-black/10 bg-white px-3 pb-2 pt-3 dark:border-white/10 dark:bg-[#1b2128]">
+        <div
+          role="tablist"
+          aria-label="Sidebar view"
+          className="flex shrink-0 gap-1 rounded-lg border border-black/10 p-0.5 dark:border-white/10"
+        >
+          {TABS.map((t, index) => {
+            const active = tab === t.id
+            return (
+              <button
+                key={t.id}
+                ref={(el) => {
+                  tabRefs.current[t.id] = el
+                }}
+                id={`${baseId}-tab-${t.id}`}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-controls={`${baseId}-panel-${t.id}`}
+                tabIndex={active ? 0 : -1}
+                onClick={() => setTab(t.id)}
+                onKeyDown={(e) => onTabKeyDown(e, index)}
+                className={`min-h-9 min-w-0 flex-1 rounded-md px-2 text-sm pointer-coarse:min-h-11 ${
+                  active
+                    ? 'bg-orange-700 font-medium text-white'
+                    : 'text-slate-600 hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10'
+                }`}
+              >
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <div
@@ -115,7 +119,7 @@ export function Sidebar() {
           <BackgroundPanel />
         </PanelSection>
         <LayersSection />
-        {/* These two still render their own <details>; phase 2 unifies them. */}
+        {/* Each of these owns its collapsible PanelSection (ids "calculators", "export"). */}
         <CalculatorsPanel />
         <ExportPanel />
       </div>

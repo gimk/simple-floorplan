@@ -1,18 +1,20 @@
 // OWNER: elements agent. Contract: keep these export names and signatures.
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Trash2 } from 'lucide-react'
 import { create } from 'zustand'
 import { beginDrag, endDrag, nowIso, uid, useDoc, useUi } from '../../model/store'
-import { dot, fmtCm, sub, wallByStart } from '../../model/geometry'
+import { dot, sub, wallByStart } from '../../model/geometry'
 import type { ElementKind, ElementVariant, PlanDoc, Room, WallElement } from '../../model/types'
 import { undoToast } from '../toast'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
+import { ERROR, FieldRow, IconButton, NumberField, PanelSection, Segmented, SelectField, TextField } from '../../shell/panel'
 import { ElementSymbol, symbolExtent } from './Symbol'
 import {
   KIND_LABEL, VARIANT_LABEL, VARIANTS, clampOffset, defaultElement, defaultVariant, elementFrame, nearestWall, offsetFromEnd,
   offsetFromEndToStart, overflows, placeOffset, snapTo, wallThickness,
 } from './geometry'
+import { ELEMENT_FIELD_NAMES, depthDefault, elementPanelTitle, hasDepth, overflowWarning, showsHeight } from './panel'
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement ||
@@ -248,44 +250,190 @@ function KindPicker() {
 
 // ---------- Panel ----------
 
-function NumField({ label, value, onCommit, min }: { label: string; value: number; onCommit: (v: number) => void; min?: number }) {
-  const [text, setText] = useState(fmtCm(value))
-  useEffect(() => setText(fmtCm(value)), [value])
-  const commit = () => {
-    const n = parseFloat(text.replace(',', '.'))
-    if (Number.isFinite(n) && (min === undefined || n >= min)) { if (n !== value) onCommit(n) }
-    else setText(fmtCm(value))
-  }
-  return (
-    <label className="flex flex-col gap-0.5 text-xs text-slate-500 dark:text-slate-400">
-      {label}
-      <input
-        type="text" name={label.toLowerCase().replace(/[^a-z0-9]+/g, '-')} inputMode="decimal" value={text}
-        onChange={(e) => setText(e.target.value)} onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-        className="h-9 w-full rounded-md border border-black/15 bg-white px-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100"
-      />
-    </label>
-  )
+/** Field names of the pre-migration inputs (`width-cm-`, `elementKind`, …). */
+const N = ELEMENT_FIELD_NAMES
+
+const HINGE_OPTIONS = [
+  { value: 'start', label: 'Start' },
+  { value: 'end', label: 'End' },
+]
+
+const SWING_OPTIONS = [
+  { value: 'in', label: 'In', title: 'In (into room)' },
+  { value: 'out', label: 'Out', title: 'Out' },
+]
+
+export type ElementCardProps = {
+  el: WallElement
+  /** Host room, when the doc still has it. */
+  room?: Room
+  /** One edit: the caller turns it into one undo step. */
+  onPatch: (patch: Partial<WallElement>) => void
+  onDelete: () => void
 }
 
-function NoteField({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
-  const [text, setText] = useState(value)
-  useEffect(() => setText(value), [value])
-  const commit = () => { if (text !== value) onCommit(text) }
+/** The element inspector card. Pure: the store-connected wrapper is `ElementsPanel`. */
+export function ElementCard({ el, room, onPatch: patch, onDelete: deleteElement }: ElementCardProps) {
+  const wall = room ? wallByStart(room, el.wallStart) : undefined
+  const wallLabel = room && wall ? `${room.code}-${wall.index + 1}` : '?'
+  const L = wall?.length ?? 0
+  const variants = VARIANTS[el.kind]
+  // widthCm may be absent (Measuring Mode can leave it empty): treat as 0 here.
+  const eff = { ...el, widthCm: el.widthCm ?? 0 }
+  const kindOptions = KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))
+  const variantOptions = variants.map((v) => ({ value: v, label: VARIANT_LABEL[v] }))
+  const over = wall ? overflows(eff, L) : false
+
   return (
-    <label className={fieldLabel}>Note
-      <textarea
-        name="elementNote" rows={2} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
-        className="rounded-md border border-black/15 bg-white p-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100"
-      />
-    </label>
+    <PanelSection
+      title={elementPanelTitle(el.kind, wallLabel, wall?.length)}
+      actions={<IconButton label="Delete element" variant="danger" icon={<Trash2 size={16} />} onClick={deleteElement} />}
+    >
+      {/* A new key resets the drafts of the fields when another element is selected. */}
+      <Fragment key={el.id}>
+        {/* 6 kinds: a select reads better than 6 squeezed segments in a 320 px sidebar. */}
+        <FieldRow label="Kind" htmlFor={N.kind}>
+          <SelectField
+            id={N.kind}
+            name={N.kind}
+            value={el.kind}
+            options={kindOptions}
+            onChange={(v) => {
+              const k = v as ElementKind
+              const d = defaultElement(k)
+              patch({ kind: k, variant: d.variant, heightCm: d.heightCm, sillCm: d.sillCm, depthCm: d.depthCm, hinge: d.hinge, swing: d.swing })
+            }}
+          />
+        </FieldRow>
+        {variants.length > 0 && (
+          <FieldRow label="Variant" htmlFor={N.variant}>
+            <SelectField
+              id={N.variant}
+              name={N.variant}
+              value={el.variant ?? variants[0]}
+              options={variantOptions}
+              onChange={(v) => patch({ variant: v as ElementVariant })}
+            />
+          </FieldRow>
+        )}
+        <FieldRow label="Width" htmlFor={N.width}>
+          <div className="flex flex-col gap-1">
+            <NumberField
+              id={N.width}
+              name={N.width}
+              unit="cm"
+              value={el.widthCm ?? null}
+              min={1}
+              invalidMessage="Type a width in centimeters."
+              onCommit={(v) => {
+                if (v == null) return false
+                patch({ widthCm: v })
+              }}
+            />
+            {over && <p role="alert" className={ERROR}>{overflowWarning(L)}</p>}
+          </div>
+        </FieldRow>
+        {showsHeight(el.kind) && (
+          <FieldRow label="Height" htmlFor={N.height}>
+            <NumberField
+              id={N.height}
+              name={N.height}
+              unit="cm"
+              value={el.heightCm ?? 0}
+              min={0}
+              onCommit={(v) => {
+                if (v != null) patch({ heightCm: v })
+              }}
+            />
+          </FieldRow>
+        )}
+        {el.kind === 'window' && (
+          <FieldRow label="Sill" htmlFor={N.sill}>
+            <NumberField
+              id={N.sill}
+              name={N.sill}
+              unit="cm"
+              value={el.sillCm ?? 0}
+              min={0}
+              onCommit={(v) => {
+                if (v != null) patch({ sillCm: v })
+              }}
+            />
+          </FieldRow>
+        )}
+        {hasDepth(el.kind) && (
+          <FieldRow label="Depth" htmlFor={N.depth}>
+            <NumberField
+              id={N.depth}
+              name={N.depth}
+              unit="cm"
+              value={el.depthCm ?? depthDefault(el.kind)}
+              min={1}
+              onCommit={(v) => {
+                if (v != null) patch({ depthCm: v })
+              }}
+            />
+          </FieldRow>
+        )}
+        <FieldRow label="From start corner" htmlFor={N.offsetStart}>
+          <NumberField
+            id={N.offsetStart}
+            name={N.offsetStart}
+            unit="cm"
+            value={el.offsetCm}
+            onCommit={(v) => {
+              if (v != null) patch({ offsetCm: v })
+            }}
+          />
+        </FieldRow>
+        <FieldRow label="From end corner" htmlFor={N.offsetEnd}>
+          <NumberField
+            id={N.offsetEnd}
+            name={N.offsetEnd}
+            unit="cm"
+            value={offsetFromEnd(eff, L)}
+            onCommit={(v) => {
+              if (v != null) patch({ offsetCm: offsetFromEndToStart(v, eff.widthCm, L) })
+            }}
+          />
+        </FieldRow>
+        {el.kind === 'door' && (
+          <>
+            <FieldRow label="Hinge">
+              <Segmented
+                ariaLabel="Hinge"
+                size="sm"
+                options={HINGE_OPTIONS}
+                value={el.hinge ?? 'start'}
+                onChange={(v) => patch({ hinge: v as 'start' | 'end' })}
+              />
+            </FieldRow>
+            <FieldRow label="Swing">
+              <Segmented
+                ariaLabel="Swing"
+                size="sm"
+                options={SWING_OPTIONS}
+                value={el.swing ?? 'in'}
+                onChange={(v) => patch({ swing: v as 'in' | 'out' })}
+              />
+            </FieldRow>
+          </>
+        )}
+        <FieldRow label="Note" htmlFor={N.note}>
+          <TextField
+            id={N.note}
+            name={N.note}
+            rows={2}
+            value={el.note ?? ''}
+            onCommit={(note) => {
+              patch({ note: note || undefined })
+            }}
+          />
+        </FieldRow>
+      </Fragment>
+    </PanelSection>
   )
 }
-
-// Same card palette as RoomsPanel (7.2 #14).
-const selectCls = 'h-9 w-full rounded-md border border-black/15 bg-white px-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100'
-const fieldLabel = 'flex flex-col gap-0.5 text-xs text-slate-500 dark:text-slate-400'
 
 /** Sidebar panel: numeric properties of the selected element. */
 export function ElementsPanel() {
@@ -296,76 +444,18 @@ export function ElementsPanel() {
   const el = doc.elements.find((x) => x.id === selection.elementId)
   if (!el) return null
   const room = doc.rooms.find((r) => r.id === el.roomId)
-  const wall = room ? wallByStart(room, el.wallStart) : undefined
-  const wallLabel = room && wall ? `${room.code}-${wall.index + 1}` : '?'
-  const patch = (p: Partial<WallElement>) =>
-    update((d) => ({ ...d, elements: d.elements.map((x) => (x.id === el.id ? { ...x, ...p, updatedAt: nowIso() } : x)) }))
-  const L = wall?.length ?? 0
-  const hasDepth = el.kind === 'cupboard' || el.kind === 'radiator'
-  const variants = VARIANTS[el.kind]
-  // widthCm may be absent (Measuring Mode can leave it empty): treat as 0 here.
-  const eff = { ...el, widthCm: el.widthCm ?? 0 }
-
   return (
-    <section className="flex flex-col gap-2 rounded-lg border border-black/10 p-2 text-sm dark:border-white/10">
-      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Element · wall {wallLabel}{wall ? ` (${fmtCm(L)} cm)` : ''}</h2>
-      <div className="grid grid-cols-2 gap-2">
-        <label className={fieldLabel}>Kind
-          <select name="elementKind" className={selectCls} value={el.kind} onChange={(e) => {
-            const k = e.target.value as ElementKind
-            const d = defaultElement(k)
-            patch({ kind: k, variant: d.variant, heightCm: d.heightCm, sillCm: d.sillCm, depthCm: d.depthCm, hinge: d.hinge, swing: d.swing })
-          }}>
-            {KINDS.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
-          </select>
-        </label>
-        {variants.length > 0 && (
-          <label className={fieldLabel}>Variant
-            <select name="elementVariant" className={selectCls} value={el.variant ?? variants[0]} onChange={(e) => patch({ variant: e.target.value as ElementVariant })}>
-              {variants.map((v) => <option key={v} value={v}>{VARIANT_LABEL[v]}</option>)}
-            </select>
-          </label>
-        )}
-        <NumField label="Width (cm)" value={el.widthCm ?? 0} min={1} onCommit={(v) => patch({ widthCm: v })} />
-        {el.kind !== 'other' && el.kind !== 'cupboard' && <NumField label="Height (cm)" value={el.heightCm ?? 0} min={0} onCommit={(v) => patch({ heightCm: v })} />}
-        {el.kind === 'cupboard' && <NumField label="Height (cm)" value={el.heightCm ?? 0} min={0} onCommit={(v) => patch({ heightCm: v })} />}
-        {el.kind === 'window' && <NumField label="Sill (cm)" value={el.sillCm ?? 0} min={0} onCommit={(v) => patch({ sillCm: v })} />}
-        {hasDepth && <NumField label="Depth (cm)" value={el.depthCm ?? (el.kind === 'radiator' ? 10 : 60)} min={1} onCommit={(v) => patch({ depthCm: v })} />}
-        <NumField label="From start corner (cm)" value={el.offsetCm} onCommit={(v) => patch({ offsetCm: v })} />
-        <NumField label="From end corner (cm)" value={offsetFromEnd(eff, L)} onCommit={(v) => patch({ offsetCm: offsetFromEndToStart(v, eff.widthCm, L) })} />
-      </div>
-      {wall && overflows(eff, L) && (
-        <p className="rounded-md bg-amber-100 p-2 text-xs text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">
-          Offset + width is longer than the wall ({fmtCm(L)} cm).
-        </p>
-      )}
-      {el.kind === 'door' && (
-        <div className="grid grid-cols-2 gap-2">
-          <label className={fieldLabel}>Hinge
-            <select name="elementHinge" className={selectCls} value={el.hinge ?? 'start'} onChange={(e) => patch({ hinge: e.target.value as 'start' | 'end' })}>
-              <option value="start">Start</option><option value="end">End</option>
-            </select>
-          </label>
-          <label className={fieldLabel}>Swing
-            <select name="elementSwing" className={selectCls} value={el.swing ?? 'in'} onChange={(e) => patch({ swing: e.target.value as 'in' | 'out' })}>
-              <option value="in">In (into room)</option><option value="out">Out</option>
-            </select>
-          </label>
-        </div>
-      )}
-      <NoteField value={el.note ?? ''} onCommit={(note) => patch({ note: note || undefined })} />
-      <button
-        type="button"
-        aria-label="Delete element"
-        className="flex min-h-9 items-center justify-center gap-2 rounded-md border border-red-600/40 px-3 text-sm font-medium text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400"
-        onClick={() => {
-          update((d) => ({ ...d, elements: d.elements.filter((x) => x.id !== el.id) }))
-          useUi.getState().select(null)
-          undoToast('Element deleted', () => useDoc.temporal.getState().undo())
-        }}
-      >
-        <Trash2 size={16} /> Delete
-      </button>
-    </section>
+    <ElementCard
+      el={el}
+      room={room}
+      onPatch={(p) =>
+        update((d) => ({ ...d, elements: d.elements.map((x) => (x.id === el.id ? { ...x, ...p, updatedAt: nowIso() } : x)) }))
+      }
+      onDelete={() => {
+        update((d) => ({ ...d, elements: d.elements.filter((x) => x.id !== el.id) }))
+        useUi.getState().select(null)
+        undoToast('Element deleted', () => useDoc.temporal.getState().undo())
+      }}
+    />
   )
 }

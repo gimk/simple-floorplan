@@ -1,15 +1,16 @@
 // OWNER: annotations agent. Tape tool, note/photo pins (Edit Mode canvas + sidebar panels).
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { MapPin, Trash2 } from 'lucide-react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { fmtCm } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
 import type { Pin, TapeMeasure, Vec } from '../../model/types'
-import { addPin, addTape, patchTape, removePin, removeTape } from './actions'
+import { FieldRow, IconButton, NumberField, PanelSection, StatGrid, TextField } from '../../shell/panel'
+import { addPin, addTape, patchPin, patchTape, removePin, removeTape } from './actions'
 import { SNAP_PX, isUnplaced, placePin, snapToPlan, tapeLabel, tracedCm } from './logic'
-import { PinEditor } from './PinEditor'
+import { PinPhotos } from './PinEditor'
+import { PIN_FIELD_NAMES, TAPE_FIELD_NAMES, notePatch, pinTextPatch, realLengthPatch, tapeStats } from './panel'
 import { selectAnnot, useAnnotSel, type AnnotSel } from './selection'
-import { parseCm } from '../measure/logic'
 import { undoToast } from '../toast'
 
 const isTyping = (t: EventTarget | null) =>
@@ -161,60 +162,98 @@ export function PinTool() {
   return <CaptureRect onPointerDown={onDown} style={{ cursor: 'copy' }} />
 }
 
-const box = 'flex flex-col gap-2 rounded-lg border border-black/10 p-2 text-sm dark:border-white/10'
+/** Small colour chip in front of the tape section title. */
+const tapeChip = <span aria-hidden="true" className="inline-block h-0.5 w-4 shrink-0" style={{ background: TAPE }} />
 
-/** Sidebar panel: the selected tape (real length + note). */
+/** The tape inspector card. Pure: the store-connected wrapper is `TapePanel`. */
+export function TapeCard({ tape, onPatch, onDelete }: { tape: TapeMeasure; onPatch: (p: Partial<TapeMeasure>) => void; onDelete: () => void }) {
+  return (
+    <PanelSection
+      title="Tape"
+      icon={tapeChip}
+      actions={
+        <IconButton
+          label="Delete tape"
+          variant="danger"
+          icon={<Trash2 size={16} />}
+          onClick={onDelete}
+        />
+      }
+    >
+      {/* A new key resets the drafts of the fields when another tape is selected. */}
+      <Fragment key={tape.id}>
+        <StatGrid items={tapeStats(tape)} columns={1} />
+        <FieldRow label="Real length">
+          <NumberField
+            name={TAPE_FIELD_NAMES.realLength}
+            ariaLabel="Real length"
+            unit="cm"
+            min={1}
+            value={tape.actualCm ?? null}
+            invalidMessage="Type a length in centimeters."
+            onCommit={(v) => {
+              onPatch(realLengthPatch(v))
+            }}
+          />
+        </FieldRow>
+        <FieldRow label="Note">
+          <TextField
+            name={TAPE_FIELD_NAMES.note}
+            ariaLabel="Tape note"
+            value={tape.note ?? ''}
+            onCommit={(text) => {
+              const p = notePatch(text)
+              if (p.note !== (tape.note || undefined)) onPatch(p)
+            }}
+          />
+        </FieldRow>
+      </Fragment>
+    </PanelSection>
+  )
+}
+
+/** The pin inspector card. Pure: the store-connected wrapper is `PinPanel`. */
+export function PinCard({ pin, onDelete }: { pin: Pin; onDelete: () => void }) {
+  return (
+    <PanelSection
+      title="Pin"
+      icon={<MapPin size={15} style={{ color: PIN }} />}
+      actions={<IconButton label="Delete pin" variant="danger" icon={<Trash2 size={16} />} onClick={onDelete} />}
+    >
+      <div key={pin.id} data-pin={pin.id} className="flex flex-col gap-2">
+        <TextField
+          name={PIN_FIELD_NAMES.note}
+          ariaLabel="Pin note"
+          rows={3}
+          placeholder="Note (radiator pipes here, panel 140 cm from floor…)"
+          value={pin.text ?? ''}
+          onCommit={(text) => {
+            patchPin(pin.id, pinTextPatch(text))
+          }}
+        />
+        <PinPhotos pin={pin} compact />
+      </div>
+    </PanelSection>
+  )
+}
+
+/** Sidebar panel: the selected tape (drawn length, real length, note). */
 export function TapePanel() {
   const selection = useAnnotSel((s) => s.sel)
   const tape = useDoc((s): TapeMeasure | undefined => (selection?.kind === 'tape' ? s.doc.tapes.find((t) => t.id === selection.id) : undefined))
-  const [draft, setDraft] = useState<string | null>(null)
-  const [noteDraft, setNoteDraft] = useState<string | null>(null)
-  useEffect(() => { setDraft(null); setNoteDraft(null) }, [tape?.id])
   if (!tape) return null
-  const shown = draft ?? (tape.actualCm != null ? fmtCm(tape.actualCm) : '')
-  const bad = draft != null && Number.isNaN(parseCm(draft))
-  const commitLen = () => {
-    if (draft === null) return
-    const n = parseCm(draft)
-    if (n == null) patchTape(tape.id, { actualCm: undefined }, false)
-    else if (!Number.isNaN(n)) patchTape(tape.id, { actualCm: n }, false)
-    setDraft(null)
-  }
-  const commitNote = () => {
-    if (noteDraft === null) return
-    const next = noteDraft || undefined
-    if (next !== tape.note) patchTape(tape.id, { note: next }, false)
-    setNoteDraft(null)
-  }
   return (
-    <section className={box}>
-      <h2 className="flex items-center gap-1.5 text-sm font-semibold"><span className="inline-block h-0.5 w-4" style={{ background: TAPE }} /> Tape</h2>
-      <p className="font-mono">Traced {fmtCm(tracedCm(tape))} cm</p>
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-slate-500 dark:text-slate-400">Real length (cm)</span>
-        <input
-          type="text" name="tapeLength" inputMode="decimal" aria-label="Real length" value={shown} aria-invalid={bad}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commitLen}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          className={`h-9 rounded-md border bg-white px-2 font-mono dark:bg-[#12161b] ${bad ? 'border-red-500' : 'border-black/15 dark:border-white/20'}`}
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-xs text-slate-500 dark:text-slate-400">Note</span>
-        <input
-          name="tapeNote" aria-label="Tape note" value={noteDraft ?? (tape.note ?? '')}
-          onChange={(e) => setNoteDraft(e.target.value)}
-          onBlur={commitNote}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          className="h-9 rounded-md border border-black/15 bg-white px-2 dark:border-white/20 dark:bg-[#12161b]"
-        />
-      </label>
-      <button
-        type="button" onClick={() => { removeTape(tape.id); selectAnnot(null); undoToast('Tape deleted', () => useDoc.temporal.getState().undo()) }}
-        className="flex h-9 items-center justify-center gap-1.5 rounded-md border border-red-600/40 font-medium text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400"
-      ><Trash2 size={14} /> Delete tape</button>
-    </section>
+    <TapeCard
+      tape={tape}
+      onPatch={(p) => {
+        patchTape(tape.id, p, false)
+      }}
+      onDelete={() => {
+        removeTape(tape.id)
+        selectAnnot(null)
+        undoToast('Tape deleted', () => useDoc.temporal.getState().undo())
+      }}
+    />
   )
 }
 
@@ -224,11 +263,15 @@ export function PinPanel() {
   const pin = useDoc((s) => (selection?.kind === 'pin' ? (s.doc.pins ?? []).find((p) => p.id === selection.id) : undefined))
   if (!pin) return null
   return (
-    <section className={box}>
-      <h2 className="flex items-center gap-1.5 text-sm font-semibold"><MapPin size={14} style={{ color: PIN }} /> Pin</h2>
-      <PinEditor pin={pin} silent={false} compact onDeleted={() => selectAnnot(null)} />
-    </section>
+    <PinCard
+      pin={pin}
+      onDelete={() => {
+        removePin(pin.id)
+        selectAnnot(null)
+        undoToast('Pin deleted', () => useDoc.temporal.getState().undo())
+      }}
+    />
   )
 }
 
-export { PinEditor } from './PinEditor'
+export { PinEditor, PinPhotos } from './PinEditor'
