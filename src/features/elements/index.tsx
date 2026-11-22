@@ -3,6 +3,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Trash2 } from 'lucide-react'
 import { create } from 'zustand'
+import { normalizeDoorHosts } from '../../core/doorHost'
 import { beginDrag, endDrag, nowIso, uid, useDoc, useUi } from '../../model/store'
 import { dot, sub, wallByStart } from '../../model/geometry'
 import type { ElementKind, ElementVariant, PlanDoc, Room, WallElement } from '../../model/types'
@@ -192,7 +193,8 @@ export function PlaceElementTool() {
     e.stopPropagation()
     const now = nowIso()
     const el: WallElement = { id: uid('el_'), roomId: h.roomId, wallStart: h.wallStart, offsetCm: h.offsetCm, ...h.spec, createdAt: now, updatedAt: now }
-    useDoc.getState().update((d) => ({ ...d, elements: [...d.elements, el] }))
+    // A door that opens into a neighbouring room belongs to that room (its id does not change).
+    useDoc.getState().update((d) => normalizeDoorHosts({ ...d, elements: [...d.elements, el] }).doc)
     useUi.getState().select({ kind: 'element', elementId: el.id })
   }
 
@@ -449,7 +451,10 @@ export function ElementsPanel() {
       el={el}
       room={room}
       onPatch={(p) =>
-        update((d) => ({ ...d, elements: d.elements.map((x) => (x.id === el.id ? { ...x, ...p, updatedAt: nowIso() } : x)) }))
+        // One undo step, and the door-host rule right after: an out-door moves to the room it opens into.
+        update((d) =>
+          normalizeDoorHosts({ ...d, elements: d.elements.map((x) => (x.id === el.id ? { ...x, ...p, updatedAt: nowIso() } : x)) }).doc,
+        )
       }
       onDelete={() => {
         update((d) => ({ ...d, elements: d.elements.filter((x) => x.id !== el.id) }))

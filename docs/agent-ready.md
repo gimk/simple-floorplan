@@ -428,6 +428,7 @@ All MCP tools map 1:1 to Hono API endpoints. Every mutation tool accepts optiona
     "element": { "id": "el_CU_2_win_1", "roomCode": "CU", "wallLabel": "CU-2", "kind": "window", "offsetCm": 65, "widthCm": 120, "overflows": false }
   }
   ```
+- **Door host rule:** a door belongs to the room it opens into. A door placed or updated with `swing: "out"` on a wall shared with another room is moved to that room's matching wall with `swing: "in"` (same world position and hinge point, same id). The result then has a `DOOR_REHOSTED` warning: `{ "code": "DOOR_REHOSTED", "message": "...", "details": { "elementId", "fromRoomId", "toRoomId" } }`. A door that opens outward on an exterior wall keeps `swing: "out"`.
 
 #### 11. `update_or_delete_element` — `POST /api/projects/:id/commands` (`update_element` / `delete_element`)
 - **Input:**

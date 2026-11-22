@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { normalizeDoorHosts } from '../../core/doorHost'
 import { fmtCm, roomWalls } from '../../model/geometry'
 import { nowIso, uid, useDoc } from '../../model/store'
 import type { ElementKind, PlanDoc, Room, WallElement } from '../../model/types'
@@ -12,8 +13,24 @@ const DOT: Record<ElementKind, string> = {
 }
 
 // Measurements and items are not undo steps in Measuring Mode.
-const patchElement = (id: string, p: Partial<WallElement>) =>
-  useDoc.getState().updateSilent((d: PlanDoc) => ({ ...d, elements: d.elements.map((e) => (e.id === id ? { ...e, ...p, updatedAt: nowIso() } : e)) }))
+// Every edit is ONE store update and ends with the door-host rule: a door that opens into a
+// neighbouring room moves to that room. The returned name is that room, null when nothing moved.
+type HostNote = string | null
+
+function commit(next: (d: PlanDoc) => PlanDoc, id: string): HostNote {
+  const cur = useDoc.getState().doc
+  const { doc, moved } = normalizeDoorHosts(next(cur))
+  useDoc.getState().updateSilent(() => doc)
+  const hit = moved.find((m) => m.elementId === id)
+  if (!hit) return null
+  return doc.rooms.find((r) => r.id === hit.toRoomId)?.name ?? hit.toRoomId
+}
+
+/** Report a re-hosted door to the room card: "Door moved to <room name> (it opens into that room)". */
+const report = (note: HostNote, onMoved: (note: string | null) => void) => onMoved(note)
+
+const patchElement = (id: string, p: Partial<WallElement>): HostNote =>
+  commit((d) => ({ ...d, elements: d.elements.map((e) => (e.id === id ? { ...e, ...p, updatedAt: nowIso() } : e)) }), id)
 
 /** Remove keys instead of storing 0/undefined for an empty size (WallElement.widthCm is typed required but may be absent). */
 const dropKeys = (e: WallElement, keys: string[]) => {
@@ -22,27 +39,33 @@ const dropKeys = (e: WallElement, keys: string[]) => {
   return out as WallElement
 }
 
-function setField(id: string, key: string, n: number | null) {
-  useDoc.getState().updateSilent((d: PlanDoc) => ({
-    ...d,
-    elements: d.elements.map((e) => {
-      if (e.id !== id) return e
-      const next = n == null && key !== 'offsetCm' ? dropKeys(e, [key]) : { ...e, [key]: n ?? 0 }
-      return { ...next, updatedAt: nowIso() }
+function setField(id: string, key: string, n: number | null): HostNote {
+  return commit(
+    (d) => ({
+      ...d,
+      elements: d.elements.map((e) => {
+        if (e.id !== id) return e
+        const next = n == null && key !== 'offsetCm' ? dropKeys(e, [key]) : { ...e, [key]: n ?? 0 }
+        return { ...next, updatedAt: nowIso() }
+      }),
     }),
-  }))
+    id,
+  )
 }
 
 /** Change the type and fill the sizes the user has not changed with the new type's defaults. */
-function setKind(id: string, kind: ElementKind) {
-  useDoc.getState().updateSilent((d: PlanDoc) => ({
-    ...d,
-    elements: d.elements.map((e) => {
-      if (e.id !== id) return e
-      const sizes = sizesForKind(e, e.kind, kind)
-      return { ...dropKeys(e, ['widthCm', 'heightCm', 'sillCm', 'depthCm']), ...sizes, kind, updatedAt: nowIso() } as WallElement
+function setKind(id: string, kind: ElementKind): HostNote {
+  return commit(
+    (d) => ({
+      ...d,
+      elements: d.elements.map((e) => {
+        if (e.id !== id) return e
+        const sizes = sizesForKind(e, e.kind, kind)
+        return { ...dropKeys(e, ['widthCm', 'heightCm', 'sillCm', 'depthCm']), ...sizes, kind, updatedAt: nowIso() } as WallElement
+      }),
     }),
-  }))
+    id,
+  )
 }
 
 function addItem(room: Room) {
@@ -56,13 +79,17 @@ function addItem(room: Room) {
 
 const sel = 'min-h-11 rounded-lg border border-slate-300 bg-white px-2 text-[15px] dark:border-slate-600 dark:bg-[#1b2128]'
 
-function Item({ room, el }: { room: Room; el: WallElement }) {
+function Item({ room, el, onMoved }: { room: Room; el: WallElement; onMoved: (note: string | null) => void }) {
   const [armed, setArmed] = useState(false)
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => window.clearTimeout(timer.current), [])
   const doc = useDoc((s) => s.doc)
   const walls = roomWalls(room)
   const fields = KIND_FIELDS[el.kind]
+  // One patch = one store update; a re-hosted door is reported to the room card.
+  const push = (p: Partial<WallElement>) => report(patchElement(el.id, p), onMoved)
+  const pushField = (key: string, n: number | null) => report(setField(el.id, key, n), onMoved)
+  const pushKind = (kind: ElementKind) => report(setKind(el.id, kind), onMoved)
   // Overflow warning: the item must fit on its wall (measured length when known, else planned).
   const wall = walls.find((w) => w.start.id === el.wallStart)
   const ref = wall ? wallRefLength(doc, room, wall) : null
@@ -76,10 +103,10 @@ function Item({ room, el }: { room: Room; el: WallElement }) {
     <div className="flex flex-col gap-2.5 rounded-lg border border-slate-300 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-[#12161b]" data-item={el.id}>
       <div className="flex flex-wrap items-center gap-2">
         <span aria-hidden className={`size-3 flex-none rounded-[3px] ${DOT[el.kind]}`} />
-        <select name="itemKind" aria-label="Type" className={sel} value={el.kind} onChange={(e) => setKind(el.id, e.target.value as ElementKind)}>
+        <select name="itemKind" aria-label="Type" className={sel} value={el.kind} onChange={(e) => pushKind(e.target.value as ElementKind)}>
           {KINDS.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
         </select>
-        <select name="itemWall" aria-label="Wall" className={sel} value={el.wallStart} onChange={(e) => patchElement(el.id, { wallStart: e.target.value })}>
+        <select name="itemWall" aria-label="Wall" className={sel} value={el.wallStart} onChange={(e) => push({ wallStart: e.target.value })}>
           {walls.map((w) => <option key={w.start.id} value={w.start.id}>on {room.code}-{w.index + 1}</option>)}
         </select>
         <span className="flex-1" />
@@ -97,7 +124,7 @@ function Item({ room, el }: { room: Room; el: WallElement }) {
             <NumField
               id={i === 0 ? `item-${el.id}-${key}` : undefined}
               value={el[key]} allowZero hideZero={key === 'widthCm'} ariaLabel={label}
-              onValue={(n) => setField(el.id, key, n)}
+              onValue={(n) => pushField(key, n)}
             />
           </label>
         ))}
@@ -109,7 +136,7 @@ function Item({ room, el }: { room: Room; el: WallElement }) {
       )}
       <input
         name="itemNote" aria-label="Note" autoComplete="off" placeholder="Note (opening side, handle…)" value={el.note ?? ''}
-        onChange={(e) => patchElement(el.id, { note: e.target.value || undefined })}
+        onChange={(e) => push({ note: e.target.value || undefined })}
         className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-[15px] dark:border-slate-600 dark:bg-[#1b2128]"
       />
     </div>
@@ -118,6 +145,9 @@ function Item({ room, el }: { room: Room; el: WallElement }) {
 
 export function ItemsEditor({ room, elements }: { room: Room; elements: WallElement[] }) {
   const mine = elements.filter((e) => e.roomId === room.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  // A door that was just re-hosted leaves this room: say where it went, in this card.
+  const [movedTo, setMovedTo] = useState<string | null>(null)
+  const onMoved = (name: string | null) => setMovedTo(name)
   /** Add an item and focus its first numeric field ("From start") once it is rendered. */
   const onAdd = () => {
     const id = addItem(room)
@@ -132,7 +162,12 @@ export function ItemsEditor({ room, elements }: { room: Room; elements: WallElem
       <p className="text-[13px] text-slate-500 dark:text-slate-400">
         “From start” is measured along the wall from the corner where its arrow starts, to the near edge of the item. Enter each door in the room it opens into: it also shows, dashed, in the room on the other side. For a passage with no door, use “Opening (no door)”, in either room.
       </p>
-      {mine.map((el) => <Item key={el.id} room={room} el={el} />)}
+      {movedTo && (
+        <p role="status" className="rounded-lg bg-violet-100 px-3 py-2 text-[13px] font-semibold text-violet-900 dark:bg-violet-950 dark:text-violet-200">
+          Door moved to {movedTo} (it opens into that room)
+        </p>
+      )}
+      {mine.map((el) => <Item key={el.id} room={room} el={el} onMoved={onMoved} />)}
     </div>
   )
 }

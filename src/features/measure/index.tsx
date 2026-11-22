@@ -1,6 +1,7 @@
 // OWNER: measure agent. Contract: keep this export name.
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDownCircle, Cloud, CloudOff, Eye, KeyRound, Monitor, Sun } from 'lucide-react'
+import { normalizeDoorHosts } from '../../core/doorHost'
 import { useDoc, useUi } from '../../model/store'
 import { allSurveyIds, roomsInWalkOrder } from '../../model/survey'
 import { getSyncState, setPasscode, useSyncState, useSyncStatusText } from '../../sync/sync'
@@ -60,6 +61,13 @@ export function MeasureMode() {
     set(v)
     try { localStorage.setItem(key, v ? '1' : '0') } catch { /* private mode */ }
   }
+
+  // Canonical door hosts: old plans may hold a door that opens out of its own room. Fix them once,
+  // as ONE undoable update, when Measuring Mode opens (the rule is idempotent, so a second run is a no-op).
+  useEffect(() => {
+    const { doc: fixed, moved } = normalizeDoorHosts(useDoc.getState().doc)
+    if (moved.length) useDoc.getState().update(() => fixed)
+  }, [])
 
   // Open the room from the URL hash, if any.
   useEffect(() => {

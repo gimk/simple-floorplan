@@ -611,3 +611,64 @@ describe('commands: set_apartment', () => {
     expect(requiredScopeForCommands(['set_apartment', 'set_measurement'])).toBe('edit')
   })
 })
+
+describe('commands: door-host rule (a door belongs to the room it opens into)', () => {
+  // SE = (0,0)-(400,300), CU = (400,0)-(600,300): the shared wall is SE-2 / CU-4, run in opposite directions.
+  it('place_element moves an out-door onto the neighbour room and reports a warning', () => {
+    const res = apply(twoRooms(), {
+      type: 'place_element', id: 'd1', wall: 'SE-2', kind: 'door', offsetCm: 50, widthCm: 80, hinge: 'start', swing: 'out',
+    })
+    const el = res.doc.elements[0]
+    expect(el.id).toBe('d1')
+    expect(el.roomId).toBe('r-cu')
+    expect(el.swing).toBe('in')
+    expect(el.hinge).toBe('end') // the hinge stays at the same world point (the y = 50 end)
+    expect(el.offsetCm).toBeCloseTo(170, 6)
+    expect(res.warnings.some((w) => w.code === 'DOOR_REHOSTED')).toBe(true)
+    expect((res.result.element as { roomId: string }).roomId).toBe('r-cu')
+  })
+
+  it('update_element moves the door when the swing becomes out', () => {
+    let doc = apply(twoRooms(), {
+      type: 'place_element', id: 'd1', wall: 'SE-2', kind: 'door', offsetCm: 50, widthCm: 80,
+    }).doc
+    expect(doc.elements[0].roomId).toBe('r-se')
+    const res = apply(doc, { type: 'update_element', elementId: 'd1', swing: 'out' })
+    expect(res.doc.elements[0].roomId).toBe('r-cu')
+    expect(res.doc.elements[0].swing).toBe('in')
+    expect(res.warnings.some((w) => w.code === 'DOOR_REHOSTED')).toBe(true)
+    doc = res.doc
+    // A second update finds nothing left to move.
+    const again = apply(doc, { type: 'update_element', elementId: 'd1', note: 'keep' })
+    expect(again.doc.elements[0].roomId).toBe('r-cu')
+    expect(again.warnings.some((w) => w.code === 'DOOR_REHOSTED')).toBe(false)
+  })
+
+  it('leaves an in-door, a window and an exterior out-door in place', () => {
+    const inDoor = apply(twoRooms(), {
+      type: 'place_element', id: 'd1', wall: 'SE-2', kind: 'door', offsetCm: 50, widthCm: 80, swing: 'in',
+    })
+    expect(inDoor.doc.elements[0].roomId).toBe('r-se')
+    expect(inDoor.warnings.some((w) => w.code === 'DOOR_REHOSTED')).toBe(false)
+
+    const window = apply(twoRooms(), {
+      type: 'place_element', id: 'w1', wall: 'SE-2', kind: 'window', offsetCm: 50, widthCm: 80, swing: 'out',
+    })
+    expect(window.doc.elements[0].roomId).toBe('r-se')
+
+    const exterior = apply(twoRooms(), {
+      type: 'place_element', id: 'd2', wall: 'SE-1', kind: 'door', offsetCm: 50, widthCm: 80, swing: 'out',
+    })
+    expect(exterior.doc.elements[0].roomId).toBe('r-se')
+    expect(exterior.warnings.some((w) => w.code === 'DOOR_REHOSTED')).toBe(false)
+  })
+
+  it('applyBatch keeps the doc canonical after a batch', () => {
+    const res = applyBatch(twoRooms(), [
+      { type: 'place_element', id: 'd1', wall: 'SE-2', kind: 'door', offsetCm: 50, widthCm: 80 },
+      { type: 'update_element', elementId: 'd1', swing: 'out' },
+    ])
+    expect(res.doc.elements[0].roomId).toBe('r-cu')
+    expect(res.warnings.some((w) => w.code === 'DOOR_REHOSTED')).toBe(true)
+  })
+})

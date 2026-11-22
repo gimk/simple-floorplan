@@ -1,14 +1,16 @@
 import { renderToString } from 'react-dom/server'
 import { expect, it } from 'vitest'
+import { pointInPolygon } from '../../model/geometry'
+import { normalizeDoorHosts } from '../../core/doorHost'
 import { emptyDoc } from '../../model/store'
 import { allSurveyIds, roomsInWalkOrder } from '../../model/survey'
-import type { PlanDoc, WallElement } from '../../model/types'
+import type { PlanDoc, Vec, WallElement } from '../../model/types'
 import { demoRooms } from './demo'
 import { MeasureMode } from './index'
 import { MiniDrawing } from './MiniDrawing'
 import { Overview } from './Overview'
 import { RoomCard } from './RoomCard'
-import { adjacentItems } from './logic'
+import { adjacentItems, itemSpan } from './logic'
 
 /** SVG path of a door swing arc, e.g. "M12.0,34.0 A56.0,56.0 0 0 1 ...". */
 const SWING_ARC = /<path[^>]*d="M[^"]*A[0-9.]+,[0-9.]+ 0 0 [01] [^"]*"/
@@ -62,4 +64,43 @@ it('shows a door on a shared wall DASHED in the adjacent room, solid with swing 
   expect(SWING_ARC.test(seHtml)).toBe(true)
   // The solid door line (no dasharray) is present in the owner room only.
   expect(seHtml).not.toContain(ADJACENT_DASH)
+})
+
+it('draws a door in the room it opens into, with its arc inside that room', () => {
+  const rooms = demoRooms()
+  const se = rooms.find((r) => r.code === 'SE')!
+  const en = rooms.find((r) => r.code === 'EN')!
+  // SE-5 is shared with EN-1. swing 'out' points into Entrée, so the door belongs to Entrée.
+  const door: WallElement = {
+    id: 'd-out', roomId: se.id, wallStart: se.vertices[4].id, kind: 'door',
+    offsetCm: 20, widthCm: 80, hinge: 'start', swing: 'out', createdAt: '1', updatedAt: '1',
+  }
+  const doc: PlanDoc = { ...emptyDoc(), rooms, elements: [door] }
+  const before = itemSpan(doc, se, door)!
+
+  const { doc: fixed, moved } = normalizeDoorHosts(doc)
+  expect(moved).toEqual([{ elementId: 'd-out', fromRoomId: se.id, toRoomId: en.id }])
+  const host = fixed.elements[0]
+  expect(host.swing).toBe('in')
+  expect(host.widthCm).toBe(80)
+
+  // The opening stays at the same place in the world.
+  const after = itemSpan(fixed, en, host)!
+  const edges = (s: { p0: Vec; p1: Vec }) => [Math.min(s.p0.x, s.p1.x), Math.max(s.p0.x, s.p1.x)]
+  expect(edges(after)[0]).toBeCloseTo(edges(before)[0], 6)
+  expect(edges(after)[1]).toBeCloseTo(edges(before)[1], 6)
+
+  // Host room: solid door line + swing arc, and the arc opens into the room.
+  const enHtml = renderToString(<MiniDrawing doc={fixed} room={en} focused={null} />)
+  expect(SWING_ARC.test(enHtml)).toBe(true)
+  expect(enHtml).not.toContain(ADJACENT_DASH)
+  const hinge: Vec = host.hinge === 'end' ? after.p1 : after.p0
+  const leafEnd = { x: hinge.x + after.wall.inward.x * host.widthCm, y: hinge.y + after.wall.inward.y * host.widthCm }
+  expect(pointInPolygon(leafEnd, en.vertices)).toBe(true)
+  expect(pointInPolygon(leafEnd, se.vertices)).toBe(false)
+
+  // Neighbour room: the same door, dashed, with no swing arc.
+  const seHtml = renderToString(<MiniDrawing doc={fixed} room={se} focused={null} />)
+  expect(seHtml).toContain(ADJACENT_DASH)
+  expect(SWING_ARC.test(seHtml)).toBe(false)
 })

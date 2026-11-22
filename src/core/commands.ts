@@ -41,6 +41,7 @@ import {
   WallTypeSchema,
 } from './schema'
 import { findSharedWalls } from './queries'
+import { normalizeDoorHosts } from './doorHost'
 
 const EPS = 0.05
 const BIG = 1e5
@@ -831,12 +832,43 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 /**
  * Purely apply one validated command to a PlanDoc.
  * Throws ZodError on malformed command or CommandError on domain error.
+ * Every command ends with the door-host rule: a door that opens into a neighbouring room moves there.
  */
 export function apply(rawDoc: PlanDoc, rawCommand: unknown): ApplyResult {
   const doc = parsePlan(rawDoc)
   const cmd = CommandSchema.parse(rawCommand)
   const warnings: CommandWarning[] = []
 
+  return adoptDoorHosts(runCommand(doc, cmd, warnings), warnings)
+}
+
+/**
+ * The canonical door rule, applied after every command: a door with swing 'out' on a wall shared
+ * with another room belongs to that other room (same world position, swing 'in').
+ * Reports one DOOR_REHOSTED warning per moved door and returns the moved element in `result`.
+ */
+function adoptDoorHosts(out: ApplyResult, warnings: CommandWarning[]): ApplyResult {
+  const { doc, moved } = normalizeDoorHosts(out.doc)
+  if (!moved.length) return out
+  for (const m of moved) {
+    const to = doc.rooms.find((r) => r.id === m.toRoomId)
+    warnings.push({
+      code: 'DOOR_REHOSTED',
+      message: `Door ${m.elementId} moved to room ${to ? to.code : m.toRoomId}: it opens into that room.`,
+      details: { elementId: m.elementId, fromRoomId: m.fromRoomId, toRoomId: m.toRoomId },
+    })
+  }
+  const result = { ...out.result } as Record<string, unknown>
+  const element = result.element as WallElement | undefined
+  if (element) {
+    const next = doc.elements.find((e) => e.id === element.id)
+    if (next) result.element = next
+  }
+  return { doc, result, warnings }
+}
+
+/** One validated command on a parsed doc (split from `apply` so every command goes through the door rule). */
+function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings: CommandWarning[]): ApplyResult {
   switch (cmd.type) {
     case 'add_room': {
       const pts = cmd.rect ? rectToPoints(cmd.rect) : cmd.vertices!
