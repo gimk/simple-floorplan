@@ -298,6 +298,34 @@ describe('functions/store.ts (shared D1 persistence)', () => {
     expect(version).toBe(2)
   })
 
+  it('commitDoc keeps apartment data (default ceiling height + surface reference) in the snapshot', async () => {
+    const db = new FakeDB()
+    addProject(db, 'p5')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'p5'))!
+    expect(v0.doc.apartment).toBeUndefined()
+
+    const doc = makeDoc('p5', {
+      apartment: {
+        defaultCeilingCm: 250,
+        references: [{ id: 'ref_1', source: 'dpe', label: 'DPE 2023', surfaceM2: 62.4, date: '2023-05-12' }],
+      },
+    })
+    const { version } = await commitDoc(db as unknown as D1Database, 'p5', v0, doc)
+    expect(version).toBe(1)
+
+    const loaded = await loadProjectDoc(db as unknown as D1Database, 'p5')
+    expect(loaded!.version).toBe(1)
+    expect(loaded!.doc.apartment?.defaultCeilingCm).toBe(250)
+    expect(loaded!.doc.apartment?.references).toHaveLength(1)
+    expect(loaded!.doc.apartment?.references?.[0]).toEqual({
+      id: 'ref_1',
+      source: 'dpe',
+      label: 'DPE 2023',
+      surfaceM2: 62.4,
+      date: '2023-05-12',
+    })
+  })
+
   it('commitDoc appends extraStatements to the same batch (idempotency keys)', async () => {
     const db = new FakeDB()
     addProject(db, 'p4')

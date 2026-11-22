@@ -90,8 +90,8 @@ export function roomHasMissing(doc: Pick<PlanDoc, 'measurements'>, room: Room): 
 }
 
 /** True when the room has a flagged discrepancy (> 2 cm vs plan) or a squareness warning. */
-export function roomIsFlagged(doc: Pick<PlanDoc, 'measurements'>, room: Room): boolean {
-  const flagged = surveyIds(room).some((s) => {
+export function roomIsFlagged(doc: Pick<PlanDoc, 'measurements'> & { apartment?: PlanDoc['apartment'] }, room: Room): boolean {
+  const flagged = surveyIds(room, doc.apartment?.defaultCeilingCm).some((s) => {
     const m = doc.measurements[s.label]
     if (m == null || s.plannedCm == null) return false
     return Math.abs(m.actualCm - s.plannedCm) > DISCREPANCY_CM

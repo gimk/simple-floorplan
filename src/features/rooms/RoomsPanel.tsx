@@ -83,6 +83,7 @@ export function RoomsPanel() {
   const room = useDoc((s) => s.doc.rooms.find((r) => r.id === roomId))
   const allRooms = useDoc((s) => s.doc.rooms)
   const measurements = useDoc((s) => s.doc.measurements)
+  const apartmentCeilingCm = useDoc((s) => s.doc.apartment?.defaultCeilingCm ?? null)
   const activeHole = useActiveHole()
   const [applyNote, setApplyNote] = useState<string | null>(null)
   useEffect(() => setApplyNote(null), [roomId])
@@ -113,6 +114,8 @@ export function RoomsPanel() {
   const holeRing = holeVertex ? room.holes.find((h) => h.some((v) => v.id === holeVertex.id)) : undefined
   const verified = verifiedWalls({ measurements }, room)
   const allLocked = verifiedAllLocked({ measurements }, room)
+  // Same rule as hasOwnCeiling(): a room height of 0 does not count as its own.
+  const ownCeiling = room.ceilingCm !== undefined && room.ceilingCm > 0
   const runApply = (all: boolean) => {
     const doc = useDoc.getState().doc
     const r = all ? applyMeasuredAll(doc) : (() => { const x = applyMeasured(doc, room.id); return { doc: x.doc, reports: [x.report] } })()
@@ -185,6 +188,9 @@ export function RoomsPanel() {
             if (!v.trim()) { patchRoom(room.id, { ceilingCm: undefined }); return }
             const n = num(v); if (n === null || n <= 0) return false; patchRoom(room.id, { ceilingCm: n })
           }} />
+        {!ownCeiling && apartmentCeilingCm !== null && apartmentCeilingCm > 0 && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">Apartment default: {fmtCm(apartmentCeilingCm)} cm</p>
+        )}
         <label className="flex min-h-9 items-center gap-2">
           <input type="checkbox" checked={!!room.outdoor} onChange={(e) => patchRoom(room.id, { outdoor: e.target.checked })} />
           Outdoor (balcony, terrace)

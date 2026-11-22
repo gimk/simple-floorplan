@@ -22,7 +22,7 @@ const setNote = (code: string, text: string) =>
 
 export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; allLabels: string[] }) {
   const [focused, setFocused] = useState<string | null>(null)
-  const ids = surveyIds(room)
+  const ids = surveyIds(room, doc.apartment?.defaultCeilingCm)
   const { done, total } = roomProgress(doc, room)
   const square = squarenessCheck(doc, room)
   const opposite = oppositeWallNotes(doc, room)

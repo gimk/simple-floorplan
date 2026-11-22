@@ -84,6 +84,7 @@ export async function loadProjectDoc(db: D1Database, id: string): Promise<Loaded
     elements,
     tapes: Array.isArray(base.tapes) ? base.tapes : [],
     pins: Array.isArray(base.pins) ? base.pins : [],
+    ...(base.apartment ? { apartment: base.apartment } : {}),
     measurements,
     roomNotes,
   })

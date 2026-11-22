@@ -3,6 +3,7 @@ import { parsePlan } from './schema'
 import { applyBatch } from './commands'
 import { runQuery } from './queries'
 import { renderPlanSvg } from './export'
+import { allSurveyIds, surveyIds } from '../model/survey'
 
 function sampleDoc() {
   const base = parsePlan({
@@ -212,5 +213,81 @@ describe('queries: apartment default ceiling height', () => {
     }
     expect(summary.rooms[0].ceilingCm).toBeNull()
     expect(summary.takeoff.totals.missingCeiling).toBe(1)
+  })
+})
+
+describe('surveyIds: planned ceiling height uses the apartment default', () => {
+  /** One room "SE"; any of the three height inputs can be left out. */
+  function docWith(opts: { roomCeilingCm?: number; apartmentCeilingCm?: number; measuredCm?: number } = {}) {
+    const base = parsePlan({ projectId: 'p1', title: 'Apt', rooms: [] })
+    const cmds: unknown[] = [
+      {
+        type: 'add_room',
+        code: 'SE',
+        name: 'Living',
+        rect: { x: 0, y: 0, w: 400, h: 300 },
+        ...(opts.roomCeilingCm !== undefined ? { ceilingCm: opts.roomCeilingCm } : {}),
+      },
+    ]
+    if (opts.apartmentCeilingCm !== undefined) cmds.push({ type: 'set_apartment', defaultCeilingCm: opts.apartmentCeilingCm })
+    if (opts.measuredCm !== undefined) cmds.push({ type: 'set_measurement', label: 'SE-H', actualCm: opts.measuredCm })
+    return applyBatch(base, cmds).doc
+  }
+
+  const heightId = (ids: { label: string; kind: string; plannedCm?: number }[]) => ids.find((s) => s.kind === 'height')!
+
+  it('falls back to the apartment default when the room has no own height', () => {
+    const doc = docWith({ apartmentCeilingCm: 250 })
+    const h = heightId(surveyIds(doc.rooms[0], doc.apartment?.defaultCeilingCm))
+    expect(h.label).toBe('SE-H')
+    expect(h.plannedCm).toBe(250)
+  })
+
+  it('prefers the room height over the apartment default', () => {
+    const doc = docWith({ roomCeilingCm: 265, apartmentCeilingCm: 250 })
+    expect(heightId(surveyIds(doc.rooms[0], doc.apartment?.defaultCeilingCm)).plannedCm).toBe(265)
+  })
+
+  it('leaves the planned height unset when there is no room height and no default', () => {
+    const doc = docWith()
+    expect(heightId(surveyIds(doc.rooms[0], doc.apartment?.defaultCeilingCm)).plannedCm).toBeUndefined()
+    // Old call style (no second argument) still compiles and behaves the same.
+    expect(heightId(surveyIds(doc.rooms[0])).plannedCm).toBeUndefined()
+  })
+
+  it('never takes the measured height as the planned value', () => {
+    const doc = docWith({ apartmentCeilingCm: 250, measuredCm: 273 })
+    const h = heightId(surveyIds(doc.rooms[0], doc.apartment?.defaultCeilingCm))
+    expect(h.plannedCm).toBe(250)
+
+    const own = docWith({ roomCeilingCm: 260, apartmentCeilingCm: 250, measuredCm: 273 })
+    expect(heightId(surveyIds(own.rooms[0], own.apartment?.defaultCeilingCm)).plannedCm).toBe(260)
+  })
+
+  it('applies the document default in allSurveyIds and in the unmeasured query', () => {
+    const doc = docWith({ apartmentCeilingCm: 250 })
+    expect(heightId(allSurveyIds(doc)).plannedCm).toBe(250)
+
+    const unmeasured = runQuery(doc, { query: 'unmeasured' }) as {
+      remaining: { label: string; kind: string; plannedCm: number | null }[]
+    }
+    const h = unmeasured.remaining.find((s) => s.kind === 'height')!
+    expect(h.label).toBe('SE-H')
+    expect(h.plannedCm).toBe(250)
+
+    const perRoom = runQuery(doc, { query: 'unmeasured', args: { roomCode: 'SE' } }) as {
+      remaining: { label: string; plannedCm: number | null }[]
+    }
+    expect(perRoom.remaining.find((s) => s.label === 'SE-H')!.plannedCm).toBe(250)
+    expect(unmeasured.remaining.find((s) => s.kind === 'height')!.plannedCm).toBe(250)
+  })
+
+  it('reports the default as the height in Measuring Mode progress and flags', () => {
+    // A measured height far from the apartment default is a discrepancy, not a missing plan value.
+    const doc = docWith({ apartmentCeilingCm: 250, measuredCm: 273 })
+    const summary = runQuery(doc, { query: 'validate', args: { roomCode: 'SE' } }) as {
+      warnings: { code: string; label?: string }[]
+    }
+    expect(summary.warnings.some((w) => w.code === 'DISCREPANCY' && w.label === 'SE-H')).toBe(true)
   })
 })

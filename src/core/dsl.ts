@@ -240,7 +240,7 @@ export function planToDsl(doc: PlanDoc): string {
     // Measurements for this room, in survey order (walls, diagonal, height).
     const roomMeas = byRoom.get(r.code)
     if (roomMeas && roomMeas.length) {
-      const order = new Map(surveyIds(r).map((s, i) => [s.label, i]))
+      const order = new Map(surveyIds(r, doc.apartment?.defaultCeilingCm).map((s, i) => [s.label, i]))
       roomMeas.sort((a, b) => (order.get(a[0]) ?? 999) - (order.get(b[0]) ?? 999) || a[0].localeCompare(b[0]))
       out.push(`  measure ${roomMeas.map(([l, v]) => `${l}=${fmtNum(v)}`).join(' ')}`)
     }

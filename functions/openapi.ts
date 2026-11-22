@@ -70,6 +70,7 @@ export const OPENAPI_SPEC = {
                     'set_room_note',
                     'add_pin',
                     'add_tape',
+                    'set_apartment',
                   ],
                 },
               },

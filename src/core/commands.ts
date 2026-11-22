@@ -723,7 +723,7 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
     }
   }
   const ver: { index: number; wallStart: string; label: string; cm: number }[] = []
-  surveyIds(room).forEach((s, index) => {
+  surveyIds(room, doc.apartment?.defaultCeilingCm).forEach((s, index) => {
     if (s.kind !== 'wall' || !s.wallStart) return
     const m = doc.measurements[s.label]
     if (m && Number.isFinite(m.actualCm) && m.actualCm > 0) {

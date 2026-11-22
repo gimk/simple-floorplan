@@ -2,7 +2,7 @@
 // - Local first: the store saves to IndexedDB (src/sync/idb.ts); every change is also put in the outbox.
 // - Per-value changes (measurements, notes, elements) are separate jobs, so two devices
 //   can edit different values at the same time.
-// - Geometry (rooms, background, title, tapes, elements) goes as a versioned snapshot.
+// - Geometry (rooms, background, title, tapes, elements, apartment) goes as a versioned snapshot.
 //   The sender always uploads the CURRENT doc and adopts the server version on a 409
 //   (last write wins for geometry: it is edited from one desktop at a time).
 // - Remote changes are pulled by polling, and only applied when the outbox is empty,
@@ -131,7 +131,7 @@ function diffAndEnqueue(next: PlanDoc, prev: PlanDoc) {
   }
   const pinsChanged = (next as { pins?: unknown }).pins !== (prev as { pins?: unknown }).pins
   if (pinsChanged) void uploadPhotos()
-  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || pinsChanged) {
+  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || next.apartment !== prev.apartment || pinsChanged) {
     // Debounce: drags produce many updates.
     if (snapTimer) clearTimeout(snapTimer)
     snapTimer = setTimeout(() => { void queue.enqueue('snapshot', '', null) }, 1500)
