@@ -2,21 +2,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import {
-  DoorOpen, Hand, Keyboard, Layers as LayersIcon, MousePointer2, MapPin, MoreVertical, PanelRightClose, PanelRightOpen,
+  DoorOpen, Hand, Keyboard, MousePointer2, MapPin, MoreVertical, PanelRightClose, PanelRightOpen,
   PenTool, Ruler, Scissors, Square, SquareDashed, Undo2, Redo2, Smartphone, Crosshair, Cloud, CloudOff, KeyRound,
 } from 'lucide-react'
 import { getSyncState, setPasscode, startSync, useSyncState, useSyncStatusText } from './sync/sync'
 import { Viewport } from './canvas/Viewport'
-import { useDoc, useUi, type Layers } from './model/store'
+import { useDoc, useUi } from './model/store'
 import type { ToolId } from './model/types'
-import { BackgroundLayer, BackgroundPanel, CalibrateTool } from './features/background'
-import { RoomsLayer, RoomsPanel, RoomTools } from './features/rooms'
-import { ElementsLayer, ElementsPanel, PlaceElementTool } from './features/elements'
+import { BackgroundLayer, CalibrateTool } from './features/background'
+import { RoomsLayer, RoomTools } from './features/rooms'
+import { ElementsLayer, PlaceElementTool } from './features/elements'
 import { MeasureMode } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
-import { CalculatorsPanel, ExportPanel } from './features/export'
-import { AnnotationsLayer, PinPanel, PinTool, TapePanel, TapeTool } from './features/annotations'
-import { ApartmentPanel } from './features/apartment'
+import { AnnotationsLayer, PinTool, TapeTool } from './features/annotations'
 import { ToastHost } from './features/toast'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { EmptyState } from './shell/EmptyState'
@@ -25,6 +23,7 @@ import { ToolHints } from './shell/ToolHints'
 import { SnapPopover } from './shell/SnapPopover'
 import { ShortcutsDialog } from './shell/ShortcutsDialog'
 import { ThemeToggle } from './shell/ThemeToggle'
+import { Sidebar } from './shell/sidebar/Sidebar'
 import { installBridge } from './shell/bridge'
 import { fitToDoc } from './shell/fit'
 import { initTheme } from './shell/theme'
@@ -102,28 +101,6 @@ function useUrlModeSync() {
     })
     return un
   }, [])
-}
-
-const LAYER_LABELS: Record<keyof Layers, string> = {
-  background: 'Background image', dimensions: 'Dimensions', bearingHighlight: 'Bearing walls highlight', openings: 'Openings', notes: 'Notes',
-}
-
-function LayerToggles() {
-  const layers = useUi((s) => s.layers)
-  const set = useUi((s) => s.set)
-  return (
-    <details className="rounded-lg border border-black/10 p-2 text-sm dark:border-white/10">
-      <summary className="flex cursor-pointer items-center gap-2 font-semibold"><LayersIcon size={16} /> Layers</summary>
-      <div className="mt-2 flex flex-col gap-1">
-        {(Object.keys(LAYER_LABELS) as (keyof Layers)[]).map((k) => (
-          <label key={k} className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" name={`layer-${k}`} className="h-4 w-4 cursor-pointer accent-orange-700" checked={layers[k]} onChange={(e) => set({ layers: { ...layers, [k]: e.target.checked } })} />
-            {LAYER_LABELS[k]}
-          </label>
-        ))}
-      </div>
-    </details>
-  )
 }
 
 function SyncBadge() {
@@ -360,18 +337,10 @@ export default function App() {
             <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
           )}
           <aside
-            className={`${sidebarOpen ? 'flex' : 'hidden'} w-72 shrink-0 flex-col gap-3 overflow-y-auto border-l border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-40 max-md:shadow-2xl`}
+            className={`${sidebarOpen ? 'flex' : 'hidden'} w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-40 max-md:shadow-2xl`}
             aria-label="Side panel"
           >
-            <ApartmentPanel />
-            <BackgroundPanel />
-            <RoomsPanel />
-            <ElementsPanel />
-            <TapePanel />
-            <PinPanel />
-            <LayerToggles />
-            <CalculatorsPanel />
-            <ExportPanel />
+            <Sidebar />
           </aside>
         </div>
       )}
