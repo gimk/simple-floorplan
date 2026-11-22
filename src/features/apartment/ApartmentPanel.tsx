@@ -21,6 +21,7 @@ import {
   TextField,
 } from '../../shell/panel'
 import { useAnnotSel } from '../annotations/selection'
+import { renovationSummary } from '../renovation/logic'
 import { undoToast } from '../toast'
 import { apartmentTotals, compareReference, SOURCE_LABELS, SOURCE_VALUES, type ComparisonLevel } from './logic'
 import { buildReference, draftAfterAdd, EMPTY_REFERENCE_DRAFT, type ReferenceDraft } from './referenceForm'
@@ -220,6 +221,8 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
 
   const totals = apartmentTotals(doc)
   const references = doc.apartment?.references ?? []
+  // Renovation (7.4): room areas before and after the works, only when a wall is tagged.
+  const renovation = renovationSummary(doc)
 
   return (
     <PanelSection title="Apartment" icon={<House size={16} />}>
@@ -248,6 +251,13 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
           { label: 'Survey', value: `${totals.measured.done} / ${totals.measured.total} measured` },
         ]}
       />
+
+      {renovation && (
+        <p className={`text-xs tabular-nums ${MUTED}`}>
+          Before: {formatM2(renovation.before.areaM2)} m² in {renovation.before.rooms} rooms · After:{' '}
+          {formatM2(renovation.after.areaM2)} m² in {renovation.after.rooms} rooms
+        </p>
+      )}
 
       <FieldRow label="Default ceiling" htmlFor="apt-default-ceiling">
         <NumberField

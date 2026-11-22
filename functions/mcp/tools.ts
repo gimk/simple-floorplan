@@ -295,7 +295,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'set_wall_props',
-    description: 'Set structural properties of a wall: wallType (partition | bearing | exterior), thicknessCm, and locked flag.',
+    description: 'Set properties of a wall: wallType (partition | bearing | exterior), thicknessCm, locked flag, and renovation status (existing | demolish | new). Marking a bearing or exterior wall for demolition returns a STRUCTURAL warning.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -304,6 +304,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         wallType: { type: 'string', enum: ['partition', 'bearing', 'exterior'], description: 'Wall structural type.' },
         thicknessCm: { type: 'number', exclusiveMinimum: 0, description: 'Wall thickness in cm.' },
         locked: { type: 'boolean', description: 'Lock wall against automatic geometry adjustments.' },
+        status: { type: 'string', enum: ['existing', 'demolish', 'new'], description: 'Renovation status: demolish = planned removal, new = planned wall.' },
         dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
         baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
       },
@@ -734,6 +735,7 @@ export async function callTool(
       if (wallType !== undefined) cmd.wallType = wallType
       if (args.thicknessCm !== undefined) cmd.thicknessCm = args.thicknessCm
       if (args.locked !== undefined) cmd.locked = args.locked
+      if (args.status !== undefined) cmd.status = args.status
       return executeCommandsTool(
         store,
         projectId,

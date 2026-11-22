@@ -67,7 +67,7 @@ export const PRUNE_SNAPSHOTS_SQL = 'DELETE FROM floorplan_snapshots WHERE projec
 
 // ---------- photos (pins[].photoKeys) ----------
 
-export type PinLike = { id?: string; photoKeys?: string[] }
+export type PinLike = { id?: string; photoKeys?: string[]; sketches?: Record<string, unknown> }
 
 export const isDataUrl = (s: string): boolean => s.startsWith('data:')
 export const isInlinePhoto = (s: string): boolean => s.startsWith('data:') || s.startsWith('blob:')
@@ -79,15 +79,31 @@ export function collectDataUrls(pins: PinLike[] | undefined): string[] {
   return [...out]
 }
 
-/** Replace a data URL by its R2 key everywhere. Returns the same array if nothing matched. */
+/**
+ * Replace a data URL by its R2 key everywhere (photo list AND photo sketches).
+ * Returns the same array if nothing matched.
+ */
 export function replacePhoto<T extends PinLike>(pins: T[], dataUrl: string, key: string): T[] {
   let changed = false
   const next = pins.map((p) => {
     if (!p.photoKeys?.includes(dataUrl)) return p
     changed = true
-    return { ...p, photoKeys: p.photoKeys.map((k) => (k === dataUrl ? key : k)) }
+    const photoKeys = p.photoKeys.map((k) => (k === dataUrl ? key : k))
+    const sketches = p.sketches?.[dataUrl] ? moveSketchKey(p.sketches, dataUrl, key) : p.sketches
+    return { ...p, photoKeys, ...(sketches ? { sketches } : {}) }
   })
   return changed ? next : pins
+}
+
+/** Same sketches record with one photo key renamed (merges with marks already on the new key). */
+const moveSketchKey = (
+  sketches: Record<string, unknown>,
+  from: string,
+  to: string,
+): Record<string, unknown> => {
+  const { [from]: moved, ...rest } = sketches
+  const merged = Array.isArray(rest[to]) && Array.isArray(moved) ? [...(rest[to] as unknown[]), ...moved] : moved
+  return { ...rest, [to]: merged }
 }
 
 export const pinsOf = (doc: PlanDoc): PinLike[] => ((doc as unknown as { pins?: PinLike[] }).pins ?? [])

@@ -15,6 +15,7 @@ import { ElementsLayer, PlaceElementTool } from './features/elements'
 import { MeasureMode } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
 import { AnnotationsLayer, PinTool, TapeTool } from './features/annotations'
+import { ClashLayer } from './features/clearance'
 import { ToastHost } from './features/toast'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { EmptyState } from './shell/EmptyState'
@@ -324,6 +325,7 @@ export default function App() {
               <CanvasGrid />
               {layers.background && <BackgroundLayer />}
               <RoomsLayer />
+              {layers.clashes && <ClashLayer />}
               <ElementsLayer />
               {layers.notes && <AnnotationsLayer />}
             </Viewport>

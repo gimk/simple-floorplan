@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Camera, MapPin } from 'lucide-react'
+import { Camera, MapPin, PencilRuler } from 'lucide-react'
 import { fmtCm, roomWalls } from '../../model/geometry'
 import { addPin, patchPin } from '../annotations/actions'
 import { pointOnWall, roomPins, placePin } from '../annotations/logic'
 import { PinEditor } from '../annotations/PinEditor'
+import { marksCount } from '../photosketch'
 import type { Pin, PlanDoc, Room } from '../../model/types'
 import { MiniDrawing } from './MiniDrawing'
 import { NumField } from './NumField'
@@ -33,7 +34,8 @@ function PinSheet({ doc, room, pin, onClose }: { doc: PlanDoc; room: Room; pin: 
   const off = pinOffset(doc, room, pin)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() }
+      // The photo sketch dialog sits on top of this sheet: it closes itself first.
+      if (e.key === 'Escape' && !document.querySelector('[data-photosketch]')) { e.preventDefault(); e.stopPropagation(); onClose() }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -107,6 +109,7 @@ export function PinsSection({ doc, room }: { doc: PlanDoc; room: Room }) {
               </span>
             </span>
             {p.photoKeys.length > 0 && <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400"><Camera size={14} aria-hidden />{p.photoKeys.length}</span>}
+            {marksCount(p) > 0 && <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400" title="Dimension marks on photos"><PencilRuler size={14} aria-hidden />{marksCount(p)}</span>}
             <MapPin size={16} aria-hidden className="flex-none text-slate-400" />
           </button>
         )

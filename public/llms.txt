@@ -42,6 +42,7 @@ x-passcode: <your-passcode>
 - `GET /api/projects/:id/changes?since=<ISO>` — Incremental sync feed.
 - `POST /api/projects/:id/images` — Upload background/pin image (`multipart/form-data` with `file`). Refused by the R2 cost caps: `413 file_too_large`, `507 storage_cap_reached`, `429 daily_upload_cap` (see **Cost safety**).
 - `GET /api/images/:key` — Fetch uploaded image.
+- `GET /api/share/whoami` — Project id, scopes and capabilities of the calling Bearer token (`read` scope). Used by the read-only share viewer `/share#<token>`, which sends no passcode.
 
 ## Queries (`POST /api/projects/:id/query`)
 

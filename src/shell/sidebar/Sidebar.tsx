@@ -9,11 +9,13 @@ import { ImagePlus } from 'lucide-react'
 import { useUi } from '../../model/store'
 import { useAnnotSel } from '../../features/annotations/selection'
 import { ApartmentPanel } from '../../features/apartment'
+import { ClearancePanel } from '../../features/clearance'
 import { RoomsPanel } from '../../features/rooms'
 import { ElementsPanel } from '../../features/elements'
 import { TapePanel, PinPanel } from '../../features/annotations'
 import { BackgroundPanel } from '../../features/background'
 import { CalculatorsPanel, ExportPanel } from '../../features/export'
+import { SharePanel } from '../../features/share/SharePanel'
 import { PanelSection } from '../panel'
 import { Breadcrumb } from './Breadcrumb'
 import { LayersSection } from './LayersSection'
@@ -103,6 +105,8 @@ export function Sidebar() {
       >
         <Breadcrumb />
         <ApartmentPanel />
+        {/* Clashes belong to the apartment context: only shown when nothing is selected. */}
+        {!selection && !annotSel && <ClearancePanel />}
         <RoomsPanel />
         <ElementsPanel />
         <TapePanel />
@@ -122,6 +126,8 @@ export function Sidebar() {
         {/* Each of these owns its collapsible PanelSection (ids "calculators", "export"). */}
         <CalculatorsPanel />
         <ExportPanel />
+        {/* Read-only contractor links (docs/plan.md 7.4); owns the "share" section id. */}
+        <SharePanel />
       </div>
     </div>
   )

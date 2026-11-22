@@ -77,3 +77,30 @@ describe('photos', () => {
     expect(replacePhoto(pins, 'data:nope', 'k')).toBe(pins)
   })
 })
+
+describe('photos: sketch keys follow the upload', () => {
+  const mark = { id: 'mk1', a: { x: 0.1, y: 0.2 }, b: { x: 0.6, y: 0.2 }, valueCm: 250 }
+  const dataUrl = 'data:image/jpeg;base64,AAA'
+
+  it('moves the marks of the photo to its R2 key', () => {
+    const pins = [{ id: 'p1', photoKeys: [dataUrl, 'proj/x.jpg'], sketches: { [dataUrl]: [mark] } }]
+    const next = replacePhoto(pins, dataUrl, 'proj/new.jpg')
+    expect(next[0].photoKeys).toEqual(['proj/new.jpg', 'proj/x.jpg'])
+    expect(next[0].sketches).toEqual({ 'proj/new.jpg': [mark] })
+    expect(pins[0].sketches).toEqual({ [dataUrl]: [mark] }) // input untouched
+  })
+
+  it('merges with marks already stored on the new key', () => {
+    const other = { ...mark, id: 'mk2' }
+    const pins = [{ id: 'p1', photoKeys: [dataUrl], sketches: { [dataUrl]: [mark], 'proj/new.jpg': [other] } }]
+    const next = replacePhoto(pins, dataUrl, 'proj/new.jpg')
+    expect(next[0].sketches).toEqual({ 'proj/new.jpg': [other, mark] })
+  })
+
+  it('leaves pins without sketches and other photos alone', () => {
+    const pins = [{ id: 'p1', photoKeys: [dataUrl] }, { id: 'p2', photoKeys: ['proj/x.jpg'], sketches: { 'proj/x.jpg': [mark] } }]
+    const next = replacePhoto(pins, dataUrl, 'proj/new.jpg')
+    expect(next[0]).toEqual({ id: 'p1', photoKeys: ['proj/new.jpg'] })
+    expect(next[1]).toBe(pins[1])
+  })
+})

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Camera, Trash2, X } from 'lucide-react'
+import { Camera, PencilRuler, Trash2, X } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import { undoToast } from '../toast'
 import { patchPin, removePin } from './actions'
 import { fileToPhoto } from './photo'
 import { usePhotoUrl } from '../../sync/photos'
+import { MarksBadge, PhotoMarksOverlay, PhotoSketch, marksOf } from '../photosketch'
 import type { Pin } from '../../model/types'
 
 /** One pin photo: data/blob URLs render directly, R2 keys are fetched via usePhotoUrl. */
@@ -24,6 +25,8 @@ export function PinPhotos({ pin, compact = false, trailing }: { pin: Pin; compac
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  /** Photo key of the photo open in the sketch dialog, if any. */
+  const [annotate, setAnnotate] = useState<string | null>(null)
   const btnH = compact ? 'h-9' : 'min-h-11'
 
   const addFiles = async (files: FileList | null) => {
@@ -45,18 +48,36 @@ export function PinPhotos({ pin, compact = false, trailing }: { pin: Pin; compac
     <>
       {pin.photoKeys.length > 0 && (
         <ul className="grid grid-cols-3 gap-2">
-          {pin.photoKeys.map((src, i) => (
-            <li key={i} className="relative aspect-square overflow-hidden rounded-lg border border-black/10 dark:border-white/15">
-              <PhotoThumb src={src} alt={`Photo ${i + 1}`} />
-              <button
-                type="button" aria-label={`Delete photo ${i + 1}`}
-                onClick={() => patchPin(pin.id, { photoKeys: pin.photoKeys.filter((_, j) => j !== i) })}
-                className={`absolute right-0.5 top-0.5 flex items-center justify-center rounded-full bg-black/60 text-white ${compact ? 'size-8' : 'size-11'}`}
-              ><X size={16} /></button>
-            </li>
-          ))}
+          {pin.photoKeys.map((src, i) => {
+            const marks = marksOf(pin, src)
+            return (
+              <li key={i} className="relative aspect-square overflow-hidden rounded-lg border border-black/10 dark:border-white/15">
+                <PhotoThumb src={src} alt={`Photo ${i + 1}`} />
+                <PhotoMarksOverlay marks={marks} />
+                <MarksBadge count={marks.length} />
+                <button
+                  type="button" aria-label={`Delete photo ${i + 1}`}
+                  onClick={() => {
+                    const sketches = { ...(pin.sketches ?? {}) }
+                    delete sketches[src]
+                    patchPin(pin.id, {
+                      photoKeys: pin.photoKeys.filter((_, j) => j !== i),
+                      ...(pin.sketches?.[src] ? { sketches: Object.keys(sketches).length ? sketches : undefined } : {}),
+                    })
+                  }}
+                  className={`absolute right-0.5 top-0.5 flex items-center justify-center rounded-full bg-black/60 text-white ${compact ? 'size-8' : 'size-11'}`}
+                ><X size={16} /></button>
+                <button
+                  type="button" aria-label={`Annotate photo ${i + 1}`} title="Annotate"
+                  onClick={() => setAnnotate(src)}
+                  className="absolute bottom-0.5 right-0.5 flex size-9 items-center justify-center rounded-full bg-orange-700 text-white shadow pointer-coarse:size-11"
+                ><PencilRuler size={16} /></button>
+              </li>
+            )
+          })}
         </ul>
       )}
+      {annotate && <PhotoSketch pin={pin} photoKey={annotate} onClose={() => setAnnotate(null)} />}
       {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex flex-wrap gap-2">
         <input ref={input} name="pinPhotos" type="file" accept="image/*" multiple hidden onChange={(e) => void addFiles(e.target.files)} />

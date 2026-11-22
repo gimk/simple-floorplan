@@ -3,6 +3,7 @@ import { allSurveyIds, roomsInWalkOrder } from '../../model/survey'
 import { roomWalls } from '../../model/geometry'
 import type { PlanDoc } from '../../model/types'
 import { KIND_LABEL } from '../elements/geometry'
+import { markRows } from '../photosketch/logic'
 import { toCsv } from './csv'
 
 export type SurveyRow = {
@@ -56,10 +57,13 @@ export function itemRows(doc: PlanDoc): ItemRow[] {
 
 export const SURVEY_HEAD = ['room code', 'room name', 'id', 'kind', 'planned cm', 'measured cm', 'diff cm', 'status', 'notes']
 export const ITEM_HEAD = ['room', 'wall label', 'type', 'from start cm', 'width cm', 'height cm', 'sill cm', 'depth cm', 'note']
+/** Dimension marks drawn on pin photos (docs/plan.md 7.4). */
+export const MARK_HEAD = ['pin', 'room', 'photo index', 'value cm', 'label', 'note']
 
 export function surveyCsv(doc: PlanDoc): string {
   const a = surveyRows(doc).map((r) => [r.roomCode, r.roomName, r.id, r.kind, r.plannedCm, r.measuredCm, r.diffCm, r.status, r.notes])
   const b = itemRows(doc).map((r) => [r.roomCode, r.wall, r.type, r.fromStartCm, r.widthCm, r.heightCm, r.sillCm, r.depthCm, r.note])
-  // Items start a second table after one blank line.
-  return toCsv([SURVEY_HEAD, ...a, [], ITEM_HEAD, ...b])
+  const c = markRows(doc).map((r) => [r.pin, r.roomCode, r.photoIndex, r.valueCm, r.label, r.note])
+  // Items start a second table after one blank line, photo marks a third one.
+  return toCsv([SURVEY_HEAD, ...a, [], ITEM_HEAD, ...b, ...(c.length ? [[], MARK_HEAD, ...c] : [])])
 }

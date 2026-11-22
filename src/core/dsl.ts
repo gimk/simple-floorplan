@@ -16,7 +16,8 @@
 //   pt        := ( ID ":" )? x "," y                 (WS = whitespace)
 //   attr      := "id=" WORD | "ceiling=" num | "walk=" num | "outdoor" | "diag=" i "," j
 //   roomLine  := INDENT ( wall | hole | element | measure | note | pin )
-//   wall      := "wall" LABEL ( WALLTYPE | THICK | "locked" )*
+//   wall      := "wall" LABEL ( WALLTYPE | THICK | "locked" | WALLSTATE )*
+//   WALLSTATE := demolish | new            (renovation, 7.4; default = existing)
 //   hole      := "hole" "poly(" pt ( WS pt )* ")"
 //   element   := KIND LABEL elemAttr*
 //   KIND      := door | window | opening | cupboard | radiator | other
@@ -27,12 +28,14 @@
 //   note      := "note" STRING
 //   pin       := "pin" pinAttr*   pinAttr := "id=" WORD | "at(" x "," y ")" | "wall=" LABEL
 //              | "wallid=" WORD | "room=" CODE | "text=" STRING | "photos=" WORD ("," WORD)*
+//              | "sketch=" STRING   (JSON array of {p,a,b,id,v?,l?,n?}, p = photo index in photos=)
 //   tape      := "tape" tapeAttr*  tapeAttr := "id=" WORD | "from(" x "," y ")" | "to(" x "," y ")"
 //              | "=" num | "label=" STRING | "note=" STRING | "room=" CODE
 //   LABEL     := CODE "-" DIGITS          (wall survey label, e.g. "SE-2"; 1-based polygon order)
 //   CODE      := [A-Za-z0-9_]+
 //   STRING    := double-quoted, JSON escapes (\" \\ \n ...)
 //   THICK     := num "cm"                 (e.g. "30cm")
+//   WALLTYPE  := bearing | partition | exterior
 //
 // Wall labels map to polygon order: wall "SE-2" starts at vertices[1]. Vertex ids are
 // regenerated deterministically on parse (v_<code>_<i>); the writer only emits an explicit
@@ -49,6 +52,7 @@
 //     note "Electrical panel near EN-4"
 //   room SE "Living Room" poly(180,0 600,0 600,420 180,420) ceiling=265 walk=2
 //     wall SE-2 bearing 25cm
+//     wall SE-3 partition demolish
 //     window SE-1 at=80 w=160 h=140 sill=90 french
 //     measure SE-1=421 SE-D=594
 
@@ -57,6 +61,7 @@ import { surveyIds } from '../model/survey'
 import type {
   ElementKind,
   ElementVariant,
+  PhotoMark,
   Pin,
   PlanDoc,
   Room,
@@ -65,6 +70,7 @@ import type {
   TapeMeasure,
   WallElement,
   WallProps,
+  WallStatus,
   WallType,
   Vertex,
 } from '../model/types'
@@ -100,6 +106,12 @@ const fmtNum = (n: number): string => {
   return String(Object.is(r, -0) ? 0 : r)
 }
 
+/** Normalised photo coordinates need more digits than cm values: 4 decimals = 0.01 % of the photo. */
+const roundNorm = (n: number): number => {
+  const r = Math.round(n * 1e4) / 1e4
+  return Object.is(r, -0) ? 0 : r
+}
+
 const q = (s: string) => JSON.stringify(s)
 
 // ---------- writer ----------
@@ -107,7 +119,11 @@ const q = (s: string) => JSON.stringify(s)
 const DEFAULT_T: Record<WallType, number> = { partition: 10, bearing: 25, exterior: 30 }
 
 const isDefaultWall = (p: WallProps | undefined): boolean =>
-  !p || (p.type === 'partition' && p.thicknessCm === DEFAULT_T.partition && !p.locked)
+  !p ||
+  (p.type === 'partition' &&
+    p.thicknessCm === DEFAULT_T.partition &&
+    !p.locked &&
+    (p.status === undefined || p.status === 'existing'))
 
 /** True when the 4 vertices are exactly the canonical rect order (min,min)(max,min)(max,max)(min,max). */
 function asRect(r: Room): { x: number; y: number; w: number; h: number } | null {
@@ -134,6 +150,61 @@ function fmtPt(v: Vertex, defaultId: string): string {
 
 function fmtPoly(pts: Vertex[], idOf: (i: number) => string): string {
   return `poly(${pts.map((p, i) => fmtPt(p, idOf(i))).join(' ')})`
+}
+
+/**
+ * Photo marks of one pin, as a JSON string inside a quoted DSL token. Photos are
+ * referenced by their INDEX in `photos=`: a data URL is far too long to repeat, and the
+ * key changes from a data URL to an R2 key after upload.
+ * Entry: { p: photoIndex, id, a: [x, y], b: [x, y], v?: cm, l?: survey id, n?: note }.
+ */
+function fmtSketches(p: Pin): string | null {
+  const out: { p: number; id: string; a: [number, number]; b: [number, number]; v?: number; l?: string; n?: string }[] = []
+  p.photoKeys.forEach((key, i) => {
+    for (const m of p.sketches?.[key] ?? []) {
+      const e: (typeof out)[number] = { p: i, id: m.id, a: [roundNorm(m.a.x), roundNorm(m.a.y)], b: [roundNorm(m.b.x), roundNorm(m.b.y)] }
+      if (m.valueCm != null) e.v = m.valueCm
+      if (m.label) e.l = m.label
+      if (m.note) e.n = m.note
+      out.push(e)
+    }
+  })
+  return out.length ? JSON.stringify(out) : null
+}
+
+/** Decode a `sketch=` JSON string into (photo index, mark) pairs. Throws on bad input. */
+function decodeSketches(line: number, json: string): { p: number; mark: PhotoMark }[] {
+  let data: unknown
+  try {
+    data = JSON.parse(json)
+  } catch {
+    throw new DslParseError(line, 'sketch= is not valid JSON')
+  }
+  if (!Array.isArray(data)) throw new DslParseError(line, 'sketch= expects a JSON array')
+  const point = (v: unknown): { x: number; y: number } => {
+    if (!Array.isArray(v) || v.length !== 2) throw new DslParseError(line, 'sketch= points are [x,y] pairs')
+    const x = Number(v[0]), y = Number(v[1])
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new DslParseError(line, 'sketch= points must be numbers')
+    return { x, y }
+  }
+  const out: { p: number; mark: PhotoMark }[] = []
+  for (const raw of data) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new DslParseError(line, 'sketch= entries must be objects')
+    const o = raw as Record<string, unknown>
+    const p = Number(o.p)
+    if (!Number.isInteger(p) || p < 0) throw new DslParseError(line, 'sketch= entry needs a photo index p')
+    if (typeof o.id !== 'string' || !o.id) throw new DslParseError(line, 'sketch= entry needs an id')
+    const mark: PhotoMark = { id: o.id, a: point(o.a), b: point(o.b) }
+    if (o.v != null) {
+      const v = Number(o.v)
+      if (!Number.isFinite(v) || v <= 0) throw new DslParseError(line, 'sketch= value must be a positive number')
+      mark.valueCm = v
+    }
+    if (typeof o.l === 'string' && o.l) mark.label = o.l
+    if (typeof o.n === 'string' && o.n) mark.note = o.n
+    out.push({ p, mark })
+  }
+  return out
 }
 
 const ELEMENT_KINDS: ElementKind[] = ['door', 'window', 'opening', 'cupboard', 'radiator', 'other']
@@ -208,6 +279,7 @@ export function planToDsl(doc: PlanDoc): string {
       if (p!.type !== 'partition' || p!.thicknessCm !== DEFAULT_T.partition || p!.locked) parts.push(p!.type)
       if (p!.thicknessCm !== DEFAULT_T[p!.type]) parts.push(`${fmtNum(p!.thicknessCm)}cm`)
       if (p!.locked) parts.push('locked')
+      if (p!.status === 'demolish' || p!.status === 'new') parts.push(p!.status)
       out.push(`  ${parts.join(' ')}`)
     })
 
@@ -261,6 +333,8 @@ export function planToDsl(doc: PlanDoc): string {
       }
       if (p.text) parts.push(`text=${q(p.text)}`)
       if (p.photoKeys.length) parts.push(`photos=${p.photoKeys.join(',')}`)
+      const sk = fmtSketches(p)
+      if (sk) parts.push(`sketch=${q(sk)}`)
       out.push(`  ${parts.join(' ')}`)
     }
   })
@@ -280,6 +354,8 @@ export function planToDsl(doc: PlanDoc): string {
     if (p.wallStart) parts.push(`wallid=${p.wallStart}`)
     if (p.text) parts.push(`text=${q(p.text)}`)
     if (p.photoKeys.length) parts.push(`photos=${p.photoKeys.join(',')}`)
+    const sk = fmtSketches(p)
+    if (sk) parts.push(`sketch=${q(sk)}`)
     out.push(parts.join(' '))
   }
 
@@ -308,6 +384,8 @@ const LABEL_RE = /^([A-Za-z0-9_]+)-([0-9]+)$/
 /** Survey label: wall "SE-2", diagonal "SE-D", ceiling "SE-H". */
 const MEAS_LABEL_RE = /^([A-Za-z0-9_]+)-([0-9]+|[DHdh])$/
 const WALL_TYPES: WallType[] = ['bearing', 'partition', 'exterior']
+/** Renovation states written on a wall line (7.4). "existing" is the default, never written. */
+const WALL_STATES: WallStatus[] = ['demolish', 'new']
 const SURFACE_SOURCES: SurfaceReferenceSource[] = ['dpe', 'carrez', 'boutin', 'deed', 'listing', 'other']
 
 type Tok =
@@ -630,6 +708,9 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
         } else if (t.t === 'word' && t.v === 'locked') {
           props = props ?? { type: 'partition', thicknessCm: 10 }
           props.locked = true
+        } else if (t.t === 'word' && WALL_STATES.includes(t.v as WallStatus)) {
+          props = props ?? { type: 'partition', thicknessCm: 10 }
+          props.status = t.v as WallStatus
         } else {
           throw new DslParseError(lineNo, `unexpected token ${tokDesc(t)} in wall line`)
         }
@@ -761,9 +842,10 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
         updatedAt: now,
       }
       let hasAt = false
+      let rawSketches: { p: number; mark: PhotoMark }[] = []
       while (!cur.done) {
         const t = cur.peek()
-        if (t && t.t === 'word' && ['id', 'wall', 'wallid', 'room', 'text', 'photos'].includes(t.v)) {
+        if (t && t.t === 'word' && ['id', 'wall', 'wallid', 'room', 'text', 'photos', 'sketch'].includes(t.v)) {
           cur.next()
           cur.expectPunct('=')
           const v = cur.next()
@@ -798,16 +880,22 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
               pin.text = v.v
               break
             case 'photos': {
-              const keys: string[] = []
+              if (v.t !== 'word' && v.t !== 'str') throw cur.err(`expected a photo key but found ${tokDesc(v)}`)
+              const keys: string[] = [v.v]
               for (;;) {
+                const nx = cur.peek()
+                if (!(nx && nx.t === 'punct' && nx.v === ',')) break
+                cur.next()
                 const k = cur.next()
                 if (k.t !== 'word' && k.t !== 'str') throw cur.err(`expected a photo key but found ${tokDesc(k)}`)
-                keys.push(k.t === 'str' ? k.v : k.v)
-                const nx = cur.peek()
-                if (nx && nx.t === 'punct' && nx.v === ',') { cur.next(); continue }
-                break
+                keys.push(k.v)
               }
               pin.photoKeys = keys
+              break
+            }
+            case 'sketch': {
+              if (v.t !== 'str') throw cur.err(`expected a quoted JSON string for sketch= but found ${tokDesc(v)}`)
+              rawSketches = decodeSketches(lineNo, v.v)
               break
             }
           }
@@ -827,6 +915,15 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
       if (!hasAt) throw new DslParseError(lineNo, 'pin needs at(x,y)')
       if (indented && currentRoom) {
         pin.roomId = currentRoom.id
+      }
+      // `sketch=` refers to photos by index; marks of a missing photo are dropped.
+      if (rawSketches.length) {
+        const sketches: Record<string, PhotoMark[]> = {}
+        for (const { p, mark } of rawSketches) {
+          const key = pin.photoKeys[p]
+          if (key) (sketches[key] ??= []).push(mark)
+        }
+        if (Object.keys(sketches).length) pin.sketches = sketches
       }
       const prev = baseDoc?.pins?.find((p) => p.id === pin.id)
       if (prev) {

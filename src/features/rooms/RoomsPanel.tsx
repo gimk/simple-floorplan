@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
 import { fmtCm, roomAreaM2, roomWalls } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
-import type { PlanDoc, Room, Selection, WallProps, WallType } from '../../model/types'
+import type { PlanDoc, Room, Selection, WallProps, WallStatus, WallType } from '../../model/types'
 import { effectiveCeilingCm } from '../export/calc'
 import {
   BTN,
@@ -38,6 +38,16 @@ const WALL_TYPES = [
   { value: 'partition', label: 'Partition' },
   { value: 'exterior', label: 'Exterior' },
 ] as const
+
+/** Renovation state of the selected wall (7.4). */
+const WALL_STATUSES = [
+  { value: 'existing', label: 'Existing' },
+  { value: 'demolish', label: 'Demolish' },
+  { value: 'new', label: 'New' },
+] as const
+
+/** Structural warning message: same text as the set_wall_props command warning. */
+const structuralWarning = (type: WallType) => `STRUCTURAL: ${type} wall marked for demolition`
 
 function setWall(roomId: string, startId: string, patch: Partial<WallProps>) {
   update((d) => ({
@@ -171,6 +181,19 @@ export function RoomsPanelView({ doc, selection, activeHole }: { doc: PlanDoc; s
           <FieldRow label="Type">
             <Segmented ariaLabel="Wall type" options={WALL_TYPES} value={props.type} onChange={(t) => setWallType(room.id, wall.start.id, t as WallType)} />
           </FieldRow>
+          <FieldRow label="Renovation">
+            <Segmented
+              ariaLabel="Wall status"
+              options={WALL_STATUSES}
+              value={props.status ?? 'existing'}
+              onChange={(st) => setWall(room.id, wall.start.id, { status: st as WallStatus })}
+            />
+          </FieldRow>
+          {props.status === 'demolish' && (props.type === 'bearing' || props.type === 'exterior') && (
+            <p role="alert" className="rounded border border-red-600/50 bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-700 dark:border-red-400/50 dark:bg-red-500/15 dark:text-red-300">
+              {structuralWarning(props.type)}
+            </p>
+          )}
           <FieldRow label="Thickness" htmlFor="wall-thickness">
             <NumberField
               id="wall-thickness"

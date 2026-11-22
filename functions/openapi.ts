@@ -121,6 +121,35 @@ export const OPENAPI_SPEC = {
         },
       },
     },
+    '/share/whoami': {
+      get: {
+        summary: 'Project and scopes of the calling read-only share token',
+        description:
+          'Used by the read-only share viewer (/share#<token>): a share token is project-limited, so this returns the project id it may read. Send the token as "Authorization: Bearer sfp_..."; no passcode is needed.',
+        responses: {
+          '200': {
+            description: 'Project id, scopes and capabilities of the calling token',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    projectId: { type: ['string', 'null'] },
+                    scopes: { type: 'array', items: { type: 'string' } },
+                    actor: { type: 'string' },
+                    viaToken: { type: 'boolean' },
+                    canRead: { type: 'boolean' },
+                  },
+                  required: ['projectId', 'scopes', 'actor', 'viaToken', 'canRead'],
+                },
+              },
+            },
+          },
+          '401': { description: 'Missing, invalid or revoked token' },
+          '403': { description: 'Token has no read scope' },
+        },
+      },
+    },
     '/projects': {
       get: {
         summary: 'List all projects',

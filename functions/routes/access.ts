@@ -5,7 +5,7 @@
 // (accessMiddleware): /tokens* needs admin, /projects/:id/events needs read.
 import { Hono } from 'hono'
 import type { Env } from '../auth'
-import { generateTokenPlaintext, hashToken, isValidTokenFormat, parseScopes } from '../../src/core/access'
+import { generateTokenPlaintext, hasScope, hashToken, isValidTokenFormat, parseScopes } from '../../src/core/access'
 
 const nowIso = (): string => new Date().toISOString()
 
@@ -33,7 +33,55 @@ type EventRow = {
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
+// ---------- read-only share link: who am I? ----------
+
+/** What a share viewer may know about its own token (never the token, never others). */
+export type ShareWhoami = {
+  projectId: string | null
+  scopes: string[]
+  actor: string
+  viaToken: boolean
+  /** True when the token may read the project (scope "read" or stronger). */
+  canRead: boolean
+}
+
+export type AuthLike = {
+  actor: string
+  scopes: string[]
+  projectId: string | null
+  viaToken: boolean
+}
+
+/**
+ * Pure body of GET /api/share/whoami. A read-only share token is project-limited,
+ * so this is how the viewer learns which project it may fetch: the token stays in
+ * the URL fragment and never travels in a query string.
+ */
+export function shareWhoamiBody(auth: AuthLike | undefined): ShareWhoami {
+  if (!auth) return { projectId: null, scopes: [], actor: 'anonymous', viaToken: false, canRead: false }
+  return {
+    projectId: auth.projectId,
+    scopes: [...auth.scopes],
+    actor: auth.actor,
+    viaToken: auth.viaToken,
+    canRead: hasScope(auth.scopes, 'read'),
+  }
+}
+
+/**
+ * The auth info that functions/auth.ts stored on the context. Read directly (same
+ * key as AUTH_KEY there) instead of importing the getter, to avoid an import cycle
+ * between auth.ts and this module.
+ */
+const readAuth = (c: unknown): AuthLike | undefined =>
+  (c as { get: (k: string) => unknown }).get('auth') as AuthLike | undefined
+
 export function registerAccessRoutes(app: Hono<{ Bindings: Env }>): void {
+  // GET /api/share/whoami — the read-only share viewer asks which project its token
+  // may read (the token is project-limited, so the id is not in the link).
+  // Scope: read (src/core/access.ts ROUTE_PATTERNS). No token is echoed back.
+  app.get('/share/whoami', (c) => c.json(shareWhoamiBody(readAuth(c))))
+
   // POST /api/tokens — create a token. Returns the plaintext token exactly once.
   // Body: { name, scopes: "read,measure" | ["read","measure"], projectId? }
   app.post('/tokens', async (c) => {

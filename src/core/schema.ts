@@ -16,10 +16,14 @@ export const VertexSchema = z.object({
 
 export const WallTypeSchema = z.enum(['bearing', 'partition', 'exterior'])
 
+/** Renovation state of a wall (7.4). Missing = 'existing'. */
+export const WallStatusSchema = z.enum(['existing', 'demolish', 'new'])
+
 export const WallPropsSchema = z.object({
   type: WallTypeSchema,
   thicknessCm: z.number().finite().positive(),
   locked: z.boolean().optional(),
+  status: WallStatusSchema.optional(),
 })
 
 export const RoomSchema = z.object({
@@ -98,6 +102,19 @@ export const TapeMeasureSchema = z.object({
   roomId: z.string().optional(),
 })
 
+/** One dimension arrow drawn on a pin photo. `a`/`b` are normalised 0..1 in the photo. */
+export const PhotoMarkSchema = z.object({
+  id: z.string().min(1),
+  a: VecSchema,
+  b: VecSchema,
+  valueCm: z.number().finite().positive().optional(),
+  label: z.string().optional(),
+  note: z.string().optional(),
+})
+
+/** Marks of one pin, keyed by photo key (data URL or R2 key). */
+export const PinSketchesSchema = z.record(z.string(), z.array(PhotoMarkSchema))
+
 export const PinSchema = z.object({
   id: z.string().min(1),
   roomId: z.string().optional(),
@@ -105,6 +122,7 @@ export const PinSchema = z.object({
   wallStart: z.string().optional(),
   text: z.string().optional(),
   photoKeys: z.array(z.string()).default([]),
+  sketches: PinSketchesSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

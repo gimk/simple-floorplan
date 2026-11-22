@@ -111,3 +111,82 @@ describe('schema: apartment data', () => {
     expect((schema.properties as Record<string, unknown>).apartment).toBeDefined()
   })
 })
+
+describe('schema: renovation wall status (7.4)', () => {
+  const plan = (walls: Record<string, unknown>) => ({
+    projectId: 'p1',
+    rooms: [
+      {
+        id: 'r1',
+        code: 'SE',
+        name: 'Living',
+        vertices: [
+          { id: 'v1', x: 0, y: 0 },
+          { id: 'v2', x: 400, y: 0 },
+          { id: 'v3', x: 400, y: 300 },
+        ],
+        walls,
+      },
+    ],
+  })
+
+  it('accepts existing, demolish and new, and keeps the field absent when omitted', () => {
+    for (const status of ['existing', 'demolish', 'new']) {
+      const doc = parsePlan(plan({ v1: { type: 'partition', thicknessCm: 10, status } }))
+      expect(doc.rooms[0].walls.v1.status).toBe(status)
+    }
+    const plain = parsePlan(plan({ v1: { type: 'bearing', thicknessCm: 25 } }))
+    expect(plain.rooms[0].walls.v1.status).toBeUndefined()
+  })
+
+  it('rejects an unknown status', () => {
+    expect(safeParsePlan(plan({ v1: { type: 'partition', thicknessCm: 10, status: 'remove' } })).ok).toBe(false)
+    expect(safeParsePlan(plan({ v1: { type: 'partition', thicknessCm: 10, status: null } })).ok).toBe(false)
+  })
+
+  it('exposes the status enum in the exported JSON Schema', () => {
+    const json = JSON.stringify(planJsonSchema())
+    expect(json).toContain('demolish')
+    expect(json).toContain('"new"')
+  })
+})
+
+describe('schema: pin photo sketches', () => {
+  const mark = { id: 'mk1', a: { x: 0.1, y: 0.2 }, b: { x: 0.6, y: 0.25 }, valueCm: 250, label: 'SE-2', note: 'pipe' }
+  const docWith = (sketches: unknown) => ({
+    projectId: 'p1',
+    rooms: [],
+    elements: [],
+    measurements: {},
+    roomNotes: {},
+    tapes: [],
+    pins: [{ id: 'p1', at: { x: 0, y: 0 }, photoKeys: ['proj/a.jpg'], sketches, createdAt: 'c', updatedAt: 'u' }],
+  })
+
+  it('keeps the marks of a pin photo', () => {
+    const doc = parsePlan(docWith({ 'proj/a.jpg': [mark] }))
+    expect(doc.pins[0].sketches).toEqual({ 'proj/a.jpg': [mark] })
+  })
+
+  it('accepts a pin without sketches (documents saved before it existed)', () => {
+    const doc = parsePlan(docWith(undefined))
+    expect(doc.pins[0].sketches).toBeUndefined()
+  })
+
+  it('rejects a mark without points and a non-positive value', () => {
+    expect(safeParsePlan(docWith({ 'proj/a.jpg': [{ id: 'mk1', valueCm: 100 }] })).ok).toBe(false)
+    expect(safeParsePlan(docWith({ 'proj/a.jpg': [{ ...mark, valueCm: -5 }] })).ok).toBe(false)
+    expect(safeParsePlan(docWith({ 'proj/a.jpg': [{ ...mark, id: '' }] })).ok).toBe(false)
+  })
+
+  it('accepts sketches in a snapshot body and exposes them in the JSON Schema', () => {
+    const body = SnapshotPutBodySchema.parse({
+      baseVersion: 0,
+      pins: [{ id: 'p1', at: { x: 0, y: 0 }, photoKeys: ['proj/a.jpg'], sketches: { 'proj/a.jpg': [mark] }, createdAt: 'c', updatedAt: 'u' }],
+    })
+    expect(body.pins[0].sketches).toEqual({ 'proj/a.jpg': [mark] })
+    const json = JSON.stringify(planJsonSchema())
+    expect(json).toContain('sketches')
+    expect(json).toContain('valueCm')
+  })
+})

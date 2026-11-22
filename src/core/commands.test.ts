@@ -672,3 +672,48 @@ describe('commands: door-host rule (a door belongs to the room it opens into)', 
     expect(res.warnings.some((w) => w.code === 'DOOR_REHOSTED')).toBe(true)
   })
 })
+
+describe('commands: renovation wall status (7.4)', () => {
+  const flat = () => {
+    let doc = apply(emptyDoc(), { type: 'add_room', code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 400, h: 300 } }).doc
+    doc = apply(doc, { type: 'add_room', code: 'CU', name: 'Kitchen', rect: { x: 400, y: 0, w: 200, h: 300 } }).doc
+    return doc
+  }
+
+  it('stores demolish and new on a partition without a warning', () => {
+    const r1 = apply(flat(), { type: 'set_wall_props', wall: 'CU-1', status: 'demolish' })
+    expect(r1.doc.rooms[1].walls[roomWalls(r1.doc.rooms[1])[0].start.id].status).toBe('demolish')
+    expect(r1.warnings).toHaveLength(0)
+
+    const r2 = apply(r1.doc, { type: 'set_wall_props', wall: 'CU-2', status: 'new' })
+    expect(r2.result.props).toMatchObject({ type: 'partition', thicknessCm: 10, status: 'new' })
+    expect(r2.warnings).toHaveLength(0)
+  })
+
+  it('keeps existing as an absent field and keeps the other props', () => {
+    const bearing = apply(flat(), { type: 'set_wall_props', wall: 'SE-2', wallType: 'bearing', thicknessCm: 25 }).doc
+    const demolished = apply(bearing, { type: 'set_wall_props', wall: 'SE-2', status: 'demolish' }).doc
+    const back = apply(demolished, { type: 'set_wall_props', wall: 'SE-2', status: 'existing' })
+    const wall = roomWalls(back.doc.rooms[0])[1]
+    expect(back.doc.rooms[0].walls[wall.start.id]).toEqual({ type: 'bearing', thicknessCm: 25 })
+    expect(back.warnings).toHaveLength(0)
+  })
+
+  it('warns when a bearing or exterior wall is marked for demolition', () => {
+    const doc = apply(flat(), { type: 'set_wall_props', wall: 'SE-2', wallType: 'bearing', thicknessCm: 25 }).doc
+    const res = apply(doc, { type: 'set_wall_props', wall: 'SE-2', status: 'demolish' })
+    expect(res.doc.rooms[0].walls[roomWalls(res.doc.rooms[0])[1].start.id].status).toBe('demolish')
+    expect(res.warnings).toHaveLength(1)
+    expect(res.warnings[0].code).toBe('STRUCTURAL_DEMOLITION')
+    expect(res.warnings[0].message).toBe('STRUCTURAL: bearing wall marked for demolition')
+    expect(res.warnings[0].details).toMatchObject({ roomCode: 'SE', wallLabel: 'SE-2', wallType: 'bearing' })
+
+    const ext = apply(flat(), { type: 'set_wall_props', wall: 'SE-1', wallType: 'exterior', thicknessCm: 30 }).doc
+    const extRes = apply(ext, { type: 'set_wall_props', wall: 'SE-1', status: 'demolish' })
+    expect(extRes.warnings[0].message).toBe('STRUCTURAL: exterior wall marked for demolition')
+  })
+
+  it('rejects an unknown status', () => {
+    expect(() => apply(flat(), { type: 'set_wall_props', wall: 'SE-1', status: 'remove' })).toThrow()
+  })
+})

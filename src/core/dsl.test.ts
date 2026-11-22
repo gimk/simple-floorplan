@@ -69,8 +69,9 @@ function normalize(doc: PlanDoc) {
       holes: (r.holes ?? []).map((h) => h.map((v) => ({ x: v.x, y: v.y }))),
       walls: r.vertices.map((v, i) => {
         const p = r.walls[v.id]
-        return p && (p.type !== 'partition' || p.thicknessCm !== 10 || p.locked)
-          ? { index: i + 1, type: p.type, thicknessCm: p.thicknessCm, locked: Boolean(p.locked) }
+        const status = p?.status && p.status !== 'existing' ? p.status : null
+        return p && (p.type !== 'partition' || p.thicknessCm !== 10 || p.locked || status)
+          ? { index: i + 1, type: p.type, thicknessCm: p.thicknessCm, locked: Boolean(p.locked), status }
           : null
       }),
       ceilingCm: r.ceilingCm ?? null,
@@ -186,6 +187,27 @@ describe('dsl: planToDsl / dslToPlan', () => {
     }
   })
 
+  it('round-trips the renovation wall status (7.4)', () => {
+    const doc = applyBatch(sampleDoc(), [
+      { type: 'set_wall_props', wall: 'SE-2', status: 'demolish' },
+      { type: 'set_wall_props', wall: 'CU-2', status: 'new' },
+    ]).doc
+    const dsl = planToDsl(doc)
+    expect(dsl).toContain('wall SE-2 bearing demolish')
+    expect(dsl).toContain('wall CU-2 new')
+    const back = dslToPlan(dsl, undefined, { now: NOW })
+    expect(normalize(back)).toEqual(normalize(doc))
+    // 'existing' is the default state: never written, and dropped on parse.
+    const existing = applyBatch(doc, [{ type: 'set_wall_props', wall: 'SE-2', status: 'existing' }]).doc
+    expect(planToDsl(existing)).not.toContain('existing')
+    expect(dslToPlan(planToDsl(existing), undefined, { now: NOW }).rooms[0].walls['v_SE_1'].status).toBeUndefined()
+  })
+
+  it('rejects an unknown word on a wall line', () => {
+    const text = ['plan "T"', 'room SE "Living" rect(0,0 400x300)', '  wall SE-1 remove'].join('\n')
+    expect(() => dslToPlan(text, undefined, { now: NOW })).toThrow(DslParseError)
+  })
+
   it('emits rect() for axis-aligned rooms and poly() otherwise', () => {
     const doc = sampleDoc()
     const dsl = planToDsl(doc)
@@ -287,5 +309,98 @@ describe('dsl: apartment data', () => {
     expect(line('plan "T"\n  ref dpe 62.4')?.message).toMatch(/indented line outside of a room block/)
     expect(line('plan "T"\nroom SE "L" rect(0,0 400x300)\n  ref dpe 62.4')?.message).toMatch(/must start at the beginning/)
     expect(line('plan "T"\nroom SE "L" rect(0,0 400x300)\n  apartment ceiling 250')?.message).toMatch(/must start at the beginning/)
+  })
+})
+
+describe('dsl: pin photo sketches', () => {
+  const NOW2 = '2026-02-02T00:00:00.000Z'
+  const mark = { id: 'mk1', a: { x: 0.125, y: 0.5 }, b: { x: 0.875, y: 0.5 }, valueCm: 250.5, label: 'SE-2', note: 'radiator' }
+
+  const withSketch = (): PlanDocV1 =>
+    parsePlan({
+      projectId: 'p1',
+      title: 'T',
+      rooms: [
+        {
+          id: 'r1',
+          code: 'SE',
+          name: 'Living Room',
+          vertices: [
+            { id: 'v0', x: 0, y: 0 },
+            { id: 'v1', x: 400, y: 0 },
+            { id: 'v2', x: 400, y: 300 },
+          ],
+        },
+      ],
+      elements: [],
+      measurements: {},
+      roomNotes: {},
+      tapes: [],
+      pins: [
+        {
+          id: 'p1',
+          roomId: 'r1',
+          at: { x: 10, y: 10 },
+          photoKeys: ['proj/a.jpg', 'proj/b.jpg'],
+          sketches: { 'proj/b.jpg': [mark] },
+          createdAt: NOW2,
+          updatedAt: NOW2,
+        },
+      ],
+    })
+
+  it('writes one sketch token that points at the photo index', () => {
+    const dsl = planToDsl(withSketch())
+    expect(dsl).toContain('photos=proj/a.jpg,proj/b.jpg')
+    expect(dsl).toContain('sketch=')
+    expect(dsl).toContain('\\"p\\":1')
+    // One line for the pin, as before.
+    expect(dsl.split('\n').filter((l) => l.includes('pin at('))).toHaveLength(1)
+  })
+
+  it('round-trips the marks of each photo, and stays stable', () => {
+    const dsl = planToDsl(withSketch())
+    const back = dslToPlan(dsl, undefined, { now: NOW2 })
+    expect(back.pins?.[0].sketches).toEqual({ 'proj/b.jpg': [mark] })
+    expect(planToDsl(back)).toBe(dsl)
+  })
+
+  it('omits the token when a pin has no mark', () => {
+    const doc = withSketch()
+    const plain: PlanDoc = { ...doc, pins: [{ ...doc.pins[0], sketches: undefined }] as PlanDocV1['pins'] }
+    expect(planToDsl(plain)).not.toContain('sketch=')
+  })
+
+  it('reads a hand-written sketch and drops the marks of a missing photo', () => {
+    const spec = (photo: number) => JSON.stringify(`[{"p":${photo},"id":"mk1","a":[0.1,0.2],"b":[0.5,0.5]}]`)
+    const text = (photo: number) => `plan "T"\nroom SE "L" rect(0,0 400x300)\npin at(0,0) photos=proj/a.jpg sketch=${spec(photo)}`
+    const doc = dslToPlan(text(0), undefined, { now: NOW2 })
+    expect(doc.pins?.[0].sketches).toEqual({ 'proj/a.jpg': [{ id: 'mk1', a: { x: 0.1, y: 0.2 }, b: { x: 0.5, y: 0.5 } }] })
+    // Mark 3 of a pin that only has one photo: dropped, not an error.
+    expect(dslToPlan(text(3), undefined, { now: NOW2 }).pins?.[0].sketches).toBeUndefined()
+  })
+
+  it('keeps every photo key of a photos= list', () => {
+    const doc = dslToPlan('plan "T"\nroom SE "L" rect(0,0 400x300)\npin at(0,0) photos=proj/a.jpg,proj/b.jpg text="two"', undefined, { now: NOW2 })
+    expect(doc.pins?.[0].photoKeys).toEqual(['proj/a.jpg', 'proj/b.jpg'])
+    expect(doc.pins?.[0].text).toBe('two')
+  })
+
+  it('reports an invalid sketch token', () => {
+    const line = (body: string) => {
+      try {
+        dslToPlan(`plan "T"\nroom SE "L" rect(0,0 400x300)\npin at(0,0) photos=proj/a.jpg sketch=${JSON.stringify(body)}`)
+        return null
+      } catch (err) {
+        return err as DslParseError
+      }
+    }
+    expect(line('not json')?.message).toMatch(/not valid JSON/)
+    expect(line('{}')?.message).toMatch(/JSON array/)
+    expect(line('[1]')?.message).toMatch(/must be objects/)
+    expect(line('[{"p":0,"a":[0,0],"b":[1,1]}]')?.message).toMatch(/needs an id/)
+    expect(line('[{"id":"m","a":[0,0],"b":[1,1]}]')?.message).toMatch(/photo index/)
+    expect(line('[{"id":"m","a":[0],"b":[1,1],"p":0}]')?.message).toMatch(/\[x,y\]/)
+    expect(line('[{"id":"m","a":[0,0],"b":[1,1],"p":0,"v":0}]')?.message).toMatch(/positive/)
   })
 })

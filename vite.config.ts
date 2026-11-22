@@ -50,7 +50,8 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: ({ url, request }) => request.method === 'GET' && /^\/api\/projects\/[^/]+$/.test(url.pathname),
+            // Share-link viewers send a Bearer token: do not cache their responses in this browser.
+            urlPattern: ({ url, request }) => request.method === 'GET' && !request.headers.has('Authorization') && /^\/api\/projects\/[^/]+$/.test(url.pathname),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'fp-projects',

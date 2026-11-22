@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
-import { centroid, fmtCm, roomAreaM2, roomWalls } from '../../model/geometry'
+import { centroid, fmtCm, roomWalls } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
 import type { Room, Vec } from '../../model/types'
 import { selfIntersects } from './crossing'
@@ -11,6 +11,7 @@ import { surveyIds } from '../../model/survey'
 import { polygonPath, polylinePath, wallFaces, wallQuads } from './wallOutline'
 import { RoomNameEditor } from './RoomNameEditor'
 import { wallProps } from './walls'
+import { piecesPath, renovationRooms, wallAppearance, type DisplayRoom } from '../renovation/logic'
 
 const pathOf = (rings: Vec[][]) =>
   rings.map((r) => 'M' + r.map((p) => `${p.x} ${p.y}`).join('L') + 'Z').join('')
@@ -32,6 +33,7 @@ export function RoomsLayer() {
   const rooms = useDoc((s) => s.doc.rooms)
   const selection = useUi((s) => s.selection)
   const layers = useUi((s) => s.layers)
+  const renovationView = useUi((s) => s.renovationView)
   const tool = useUi((s) => s.tool)
   const measurements = useDoc((s) => s.doc.measurements)
   const activeHole = useActiveHole()
@@ -39,6 +41,9 @@ export function RoomsLayer() {
     () => new Set(rooms.filter((r) => selfIntersects(r.vertices) || r.holes.some(selfIntersects)).map((r) => r.id)),
     [rooms],
   )
+  // Before / After / Both renovation view: 'after' shows rooms separated only by a
+  // demolished wall as one room (merged outline, display only).
+  const display = useMemo(() => renovationRooms({ rooms }, renovationView), [rooms, renovationView])
   const vp = useViewport()
   const { px, zoom } = vp
   const interactive = tool === 'select'
@@ -57,50 +62,59 @@ export function RoomsLayer() {
   const quadsOf = (r: Room) =>
     wallQuads(r, (startId) => Math.max(wallProps(r, startId).thicknessCm, px(1.5)) / 2)
 
-  const label = (r: Room) => {
+  const label = (d: DisplayRoom) => {
     // The room being renamed shows the inline editor instead (drawn last, above the hit areas).
-    if (editing === r.id) return null
-    const xs = r.vertices.map((v) => v.x), ys = r.vertices.map((v) => v.y)
+    if (!d.merged && editing === d.id) return null
+    const ring = d.pieces[0]?.[0] ?? []
+    if (ring.length < 3) return null
+    const xs = ring.map((v) => v.x), ys = ring.map((v) => v.y)
     const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
     if (small) return null
-    const c = centroid(r.vertices)
+    const c = centroid(ring)
     return (
-      <text key={r.id} x={c.x} y={c.y} textAnchor="middle" pointerEvents={interactive ? 'auto' : 'none'}
+      <text key={d.id} x={c.x} y={c.y} textAnchor="middle" pointerEvents={interactive ? 'auto' : 'none'}
         className="fill-slate-800 dark:fill-slate-100" fontSize={px(14)}>
         <tspan x={c.x} fontWeight={600} style={interactive ? { cursor: 'text' } : undefined}
-          onPointerDown={interactive ? (e) => onRoomDown(e, r.id, vp) : undefined}
-          onDoubleClick={interactive ? (e) => { e.stopPropagation(); setEditing(r.id) } : undefined}>
-          {r.name}
+          onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : undefined}
+          onDoubleClick={interactive && !d.merged ? (e) => { e.stopPropagation(); setEditing(d.id) } : undefined}>
+          {d.name}
         </tspan>
         <tspan x={c.x} dy={px(16)} fontSize={px(12)} pointerEvents="none" className="fill-slate-500 dark:fill-slate-400">
-          {roomAreaM2(r).toFixed(2).replace('.', ',')} m²
+          {d.areaM2.toFixed(2).replace('.', ',')} m²
         </tspan>
       </text>
     )
   }
 
   return (
-    <g>
+    <g data-renovation-view={renovationView}>
       <defs>
         <pattern id="rooms-bearing-stripes" patternUnits="userSpaceOnUse" width={stripeTile} height={stripeTile} patternTransform="rotate(45)">
           <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
             className="stroke-slate-600 dark:stroke-slate-900" strokeOpacity={0.9} strokeWidth={px(1)} />
         </pattern>
+        {/* New walls (renovation): green fill + thin diagonal hatch. */}
+        <pattern id="rooms-new-hatch" patternUnits="userSpaceOnUse" width={stripeTile} height={stripeTile} patternTransform="rotate(45)">
+          <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
+            className="stroke-emerald-700 dark:stroke-emerald-300" strokeOpacity={0.85} strokeWidth={px(1)} />
+        </pattern>
       </defs>
 
-      {/* fills (holes via evenodd) */}
-      {rooms.map((r) => (
+      {/* fills (holes via evenodd); rooms merged by a demolished wall are drawn as one */}
+      {display.map((d) => (
         <path
-          key={r.id}
-          d={pathOf([r.vertices, ...r.holes])}
+          key={d.id}
+          d={piecesPath(d.pieces)}
           fillRule="evenodd"
-          className={r.outdoor ? 'fill-emerald-100/80 dark:fill-emerald-900/40' : 'fill-sky-50/90 dark:fill-slate-800/90'}
+          className={d.outdoor ? 'fill-emerald-100/80 dark:fill-emerald-900/40' : 'fill-sky-50/90 dark:fill-slate-800/90'}
           pointerEvents={interactive ? 'auto' : 'none'}
           style={interactive ? { cursor: 'move' } : undefined}
-          data-room-id={r.id}
-          data-room-code={r.code}
-          aria-label={`${r.name} (${r.code})`}
-          onPointerDown={interactive ? (e) => onRoomDown(e, r.id, vp) : undefined}
+          data-room-id={d.id}
+          data-room-ids={d.roomIds.join(' ')}
+          data-room-code={d.codes[0]}
+          data-renovation-merged={d.merged ? 'true' : undefined}
+          aria-label={d.merged ? `${d.name} (merged: ${d.codes.join(', ')})` : `${d.name} (${d.codes[0]})`}
+          onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : undefined}
         />
       ))}
 
@@ -123,7 +137,31 @@ export function RoomsLayer() {
       {/* walls: mitered polygons, so corners join cleanly at any angle */}
       {rooms.map((r) => quadsOf(r).map((q) => {
         const p = wallProps(r, q.startId)
+        const look = wallAppearance(p.type, p.status, renovationView)
+        if (!look.visible) return null
         const d = polygonPath(q.points)
+        // 'both': a demolished wall is a dashed red outline with a light red fill; a
+        // bearing / exterior one gets the strong warning tone.
+        if (look.style === 'demolish') {
+          return (
+            <g key={r.id + q.startId} data-renovation="demolish" data-wall-status="demolish">
+              <path d={d} pointerEvents="none" className={look.structural ? 'fill-red-500/40' : 'fill-red-500/20'} />
+              <path d={d} pointerEvents="none" fill="none" strokeDasharray={`${px(7)} ${px(4)}`}
+                strokeWidth={look.structural ? px(2.5) : px(1.5)}
+                className={look.structural ? 'stroke-red-700 dark:stroke-red-300' : 'stroke-red-500 dark:stroke-red-400'} />
+            </g>
+          )
+        }
+        // 'both': a new wall is green with a diagonal hatch.
+        if (look.style === 'new') {
+          return (
+            <g key={r.id + q.startId} data-renovation="new" data-wall-status="new">
+              <path d={d} pointerEvents="none" className="fill-emerald-200 dark:fill-emerald-800" />
+              <path d={d} pointerEvents="none" fill="url(#rooms-new-hatch)" />
+              <path d={d} pointerEvents="none" fill="none" strokeWidth={px(1)} className="stroke-emerald-700 dark:stroke-emerald-300" />
+            </g>
+          )
+        }
         const bearingHighlight = p.type === 'bearing' && layers.bearingHighlight
         return (
           <g key={r.id + q.startId}>
@@ -143,6 +181,7 @@ export function RoomsLayer() {
       {rooms.map((r) => roomWalls(r).map((w) => {
         const p = wallProps(r, w.start.id)
         if (!p.locked) return null
+        if (!wallAppearance(p.type, p.status, renovationView).visible) return null
         const off = p.thicknessCm / 2 + px(9)
         const dimShown = layers.dimensions && (w.length * zoom >= 55 || forcedWalls.has(w.start.id))
         const tan = dimShown ? px(32) : 0
@@ -177,7 +216,7 @@ export function RoomsLayer() {
         )))}
 
       {/* labels + dimensions */}
-      {rooms.map(label)}
+      {display.map(label)}
       {layers.dimensions && rooms.map((r) => {
         const labels = new Map(surveyIds(r).filter((x) => x.kind === 'wall').map((x) => [x.wallStart, x.label]))
         return roomWalls(r).map((w) => {
@@ -185,7 +224,9 @@ export function RoomsLayer() {
           if (w.length * zoom < 55 && !forcedWalls.has(w.start.id)) return null
           const m = measurements[labels.get(w.start.id) ?? '']
           const verified = !!m && m.actualCm > 0
-          const thick = wallProps(r, w.start.id).thicknessCm
+          const dimProps = wallProps(r, w.start.id)
+          if (!wallAppearance(dimProps.type, dimProps.status, renovationView).visible) return null
+          const thick = dimProps.thicknessCm
           const off = thick / 2 + px(10)
           const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off, my = (w.start.y + w.end.y) / 2 + w.inward.y * off
           let ang = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
@@ -204,6 +245,8 @@ export function RoomsLayer() {
       {/* wall hit areas (select tool only) */}
       {interactive && rooms.map((r) => roomWalls(r).map((w) => {
         const p = wallProps(r, w.start.id)
+        // A wall hidden by the renovation view cannot be selected.
+        if (!wallAppearance(p.type, p.status, renovationView).visible) return null
         // Dragging this wall is blocked when a neighbouring wall is locked (7.2 #21).
         const blocked = locked(r, w.index - 1) || locked(r, w.index + 1)
         return (
@@ -212,6 +255,7 @@ export function RoomsLayer() {
             strokeWidth={Math.max(p.thicknessCm, px(18))}
             data-wall-label={`${r.code}-${w.index + 1}`}
             data-wall-type={p.type}
+            data-wall-status={p.status ?? 'existing'}
             data-wall-length-cm={Math.round(w.length)}
             aria-label={`Wall ${r.code}-${w.index + 1}, ${p.type}, ${fmtCm(w.length)} cm${p.locked ? ', locked' : ''}`}
             onPointerDown={(e) => onWallDown(e, vp, r.id, w.start.id)}

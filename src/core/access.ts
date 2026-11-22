@@ -100,11 +100,16 @@ const ROUTE_PATTERNS: RoutePattern[] = [
   { re: /^\/mcp$/, byMethod: { POST: 'read' } },
   { re: /^\/tokens$/, byMethod: { GET: 'admin', POST: 'admin' } },
   { re: /^\/tokens\/[^/]+$/, byMethod: { DELETE: 'admin', GET: 'admin', PATCH: 'admin' } },
+  // Read-only share link: the viewer asks which project its (read) token may read.
+  { re: /^\/share\/whoami$/, byMethod: { GET: 'read' } },
   { re: /^\/projects$/, byMethod: { GET: 'read', POST: 'edit' } },
   { re: /^\/projects\/([^/]+)\/snapshot$/, byMethod: { PUT: 'edit' } },
   { re: /^\/projects\/([^/]+)\/commands$/, byMethod: { POST: 'measure' } }, // raised per command type
   { re: /^\/projects\/([^/]+)\/query$/, byMethod: { POST: 'read' } },
   { re: /^\/projects\/([^/]+)\/render\.svg$/, byMethod: { GET: 'read' } },
+  // Format exports (functions/routes/formats.ts): reading them needs read only, so a
+  // read-only share link can download the DXF. Writing .sfp keeps its admin default.
+  { re: /^\/projects\/([^/]+)\/plan\.(sfp|dxf)$/, byMethod: { GET: 'read' } },
   { re: /^\/projects\/([^/]+)\/measurements\/[^/]+$/, byMethod: { PUT: 'measure', DELETE: 'measure' } },
   { re: /^\/projects\/([^/]+)\/items\/[^/]+$/, byMethod: { PUT: 'measure', DELETE: 'measure' } },
   { re: /^\/projects\/([^/]+)\/notes\/[^/]+$/, byMethod: { PUT: 'measure', DELETE: 'measure' } },

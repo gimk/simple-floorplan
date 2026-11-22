@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { temporal } from 'zundo'
 import type { ElementKind, Mode, PlanDoc, Selection, ToolId } from './types'
+import type { RenovationView } from '../features/renovation/logic'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
 
 // ---------- Document store (undoable) ----------
@@ -94,6 +95,8 @@ export type Layers = {
   bearingHighlight: boolean
   openings: boolean
   notes: boolean
+  /** Red highlight of door swings and fixtures that clash (features/clearance). */
+  clashes: boolean
 }
 
 type UiState = {
@@ -104,6 +107,8 @@ type UiState = {
   placeKind: ElementKind
   snap: { grid: boolean; gridCm: number; angles: boolean; vertices: boolean }
   layers: Layers
+  /** Before / After / Both renovation display (see features/renovation, 7.4). */
+  renovationView: RenovationView
   /** Viewport: world point at screen origin + zoom (screen px per cm). */
   view: { x: number; y: number; zoom: number }
   setMode: (m: Mode) => void
@@ -118,7 +123,8 @@ export const useUi = create<UiState>()((set) => ({
   selection: null,
   placeKind: 'door',
   snap: { grid: true, gridCm: 5, angles: true, vertices: true },
-  layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true },
+  layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true },
+  renovationView: 'both',
   view: { x: -100, y: -100, zoom: 1 },
   setMode: (mode) => set({ mode, tool: 'select', selection: null }),
   setTool: (tool) => set({ tool }),

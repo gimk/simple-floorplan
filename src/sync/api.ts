@@ -59,6 +59,9 @@ export const setPasscode = (p: string | null): void => {
 /** Headers for plain fetch calls (images), same auth as `request`. */
 export const authHeaders = (): Record<string, string> => (passcode ? { 'x-passcode': passcode } : {})
 
+/** True when this browser already holds a passcode (token admin needs one). */
+export const hasPasscode = (): boolean => passcode !== null
+
 type ReqOpts = { method?: string; body?: unknown; signal?: AbortSignal }
 
 async function request<T>(path: string, opts: ReqOpts = {}): Promise<T> {
@@ -150,3 +153,30 @@ export const uploadImage = (
 
 /** URL for GET /images/:key (R2 keys contain "/", so they are encoded). */
 export const imageUrl = (key: string): string => `${BASE}/images/${enc(key)}`
+
+// ---------- API tokens (admin scope: passcode, or an admin bearer token) ----------
+
+/** GET /tokens row. The plaintext token is never returned again after creation. */
+export type ApiTokenRow = {
+  id: string
+  name: string
+  scopes: string[]
+  projectId: string | null
+  createdAt: string
+  lastUsedAt: string | null
+  revoked: boolean
+}
+
+/** POST /tokens answer: `token` (plaintext, once) plus the stored row. */
+export type ApiTokenCreated = ApiTokenRow & { token: string }
+
+export const listTokens = (opts: { signal?: AbortSignal } = {}) =>
+  request<{ tokens: ApiTokenRow[] }>('/tokens', opts)
+
+export const createToken = (
+  body: { name: string; scopes: string | string[]; projectId?: string | null },
+  opts: { signal?: AbortSignal } = {},
+) => request<ApiTokenCreated>('/tokens', { ...opts, method: 'POST', body })
+
+export const revokeToken = (id: string, opts: { signal?: AbortSignal } = {}) =>
+  request<{ ok: boolean; id: string; revoked: boolean }>(`/tokens/${enc(id)}`, { ...opts, method: 'DELETE' })

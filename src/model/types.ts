@@ -7,8 +7,17 @@ export type Vertex = { id: string; x: number; y: number }
 
 export type WallType = 'bearing' | 'partition' | 'exterior'
 
+/** Renovation state of a wall: kept as it is, demolished, or built (7.4). */
+export type WallStatus = 'existing' | 'demolish' | 'new'
+
 /** Properties of the wall that STARTS at a given vertex and goes to the next vertex. */
-export type WallProps = { type: WallType; thicknessCm: number; locked?: boolean }
+export type WallProps = {
+  type: WallType
+  thicknessCm: number
+  locked?: boolean
+  /** Renovation state. Missing = 'existing'. */
+  status?: WallStatus
+}
 
 export type Room = {
   id: string
@@ -97,6 +106,24 @@ export type TapeMeasure = {
   roomId?: string
 }
 
+/**
+ * One dimension arrow drawn on a pin photo (docs/plan.md 7.4).
+ * `a` and `b` are NORMALISED to the photo: 0..1 from its top-left corner (x right, y down),
+ * so a mark stays on the right spot at any display size.
+ */
+export type PhotoMark = {
+  id: string
+  /** Start of the arrow, normalised 0..1 in the photo. */
+  a: Vec
+  /** End of the arrow, normalised 0..1 in the photo. */
+  b: Vec
+  /** Measured length in cm. Used when the mark is not linked to a survey ID. */
+  valueCm?: number
+  /** Survey ID this mark is about, e.g. "SE-2". */
+  label?: string
+  note?: string
+}
+
 /** Note / photo pin. Photos are data URLs while offline, R2 keys once uploaded. */
 export type Pin = {
   id: string
@@ -107,6 +134,8 @@ export type Pin = {
   wallStart?: string
   text?: string
   photoKeys: string[]
+  /** Dimension arrows per photo, keyed by the photo key (data URL or R2 key). */
+  sketches?: Record<string, PhotoMark[]>
   createdAt: string
   updatedAt: string
 }

@@ -26,6 +26,7 @@ import type {
   Vertex,
   WallElement,
   WallProps,
+  WallStatus,
   WallType,
 } from '../model/types'
 import { defaultElement, overflows } from '../features/elements/geometry'
@@ -38,6 +39,7 @@ import {
   SurfaceReferenceSourceSchema,
   type PlanDocV1,
   VecSchema,
+  WallStatusSchema,
   WallTypeSchema,
 } from './schema'
 import { findSharedWalls } from './queries'
@@ -178,6 +180,7 @@ const SetWallPropsSchema = z.object({
   wallType: WallTypeSchema.optional(),
   thicknessCm: z.number().finite().positive().optional(),
   locked: z.boolean().optional(),
+  status: WallStatusSchema.optional(),
 })
 
 const SetWallLengthSchema = z.object({
@@ -1241,10 +1244,22 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
       const nextThickness =
         cmd.thicknessCm ?? (cmd.wallType && cmd.wallType !== cur.type ? DEFAULT_THICKNESS[cmd.wallType] : cur.thicknessCm)
       const nextLocked = cmd.locked !== undefined ? cmd.locked : cur.locked
+      // 'existing' is the implicit value: store it as an absent field (like older documents).
+      const wantedStatus: WallStatus | undefined = cmd.status !== undefined ? cmd.status : cur.status
+      const nextStatus = wantedStatus === 'existing' ? undefined : wantedStatus
       const nextProps: WallProps = {
         type: nextType,
         thicknessCm: nextThickness,
         ...(nextLocked !== undefined ? { locked: nextLocked } : {}),
+        ...(nextStatus !== undefined ? { status: nextStatus } : {}),
+      }
+      // A demolished structural wall is allowed but flagged: the plan is asking for a risk.
+      if (nextStatus === 'demolish' && (nextType === 'bearing' || nextType === 'exterior')) {
+        warnings.push({
+          code: 'STRUCTURAL_DEMOLITION',
+          message: `STRUCTURAL: ${nextType} wall marked for demolition`,
+          details: { roomId: room.id, roomCode: room.code, wallLabel: label, wallStart: wall.start.id, wallType: nextType },
+        })
       }
       const next: PlanDocV1 = {
         ...doc,
