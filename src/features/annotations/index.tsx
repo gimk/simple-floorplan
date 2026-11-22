@@ -183,8 +183,9 @@ export function TapeCard({ tape, onPatch, onDelete }: { tape: TapeMeasure; onPat
       {/* A new key resets the drafts of the fields when another tape is selected. */}
       <Fragment key={tape.id}>
         <StatGrid items={tapeStats(tape)} columns={1} />
-        <FieldRow label="Real length">
+        <FieldRow label="Real length" htmlFor="tape-real-length">
           <NumberField
+            id="tape-real-length"
             name={TAPE_FIELD_NAMES.realLength}
             ariaLabel="Real length"
             unit="cm"
@@ -196,8 +197,9 @@ export function TapeCard({ tape, onPatch, onDelete }: { tape: TapeMeasure; onPat
             }}
           />
         </FieldRow>
-        <FieldRow label="Note">
+        <FieldRow label="Note" htmlFor="tape-note">
           <TextField
+            id="tape-note"
             name={TAPE_FIELD_NAMES.note}
             ariaLabel="Tape note"
             value={tape.note ?? ''}

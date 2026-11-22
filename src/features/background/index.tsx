@@ -176,6 +176,7 @@ export function BackgroundPanel() {
         name="bgFile"
         type="file"
         accept="image/png,image/jpeg,image/webp,application/pdf"
+        aria-label="Import background image or PDF"
         className="hidden"
         onChange={onFile}
       />
@@ -221,8 +222,9 @@ export function BackgroundPanel() {
             Scale: 1 px = {bg.cmPerPx.toFixed(3).replace('.', ',')} cm · {(100 / bg.cmPerPx).toFixed(1).replace('.', ',')} px/m
           </EmptyHint>
 
-          <FieldRow label="Opacity" hint={`${Math.round(bg.opacity * 100)} %`}>
+          <FieldRow label="Opacity" htmlFor="bg-opacity" hint={`${Math.round(bg.opacity * 100)} %`}>
             <input
+              id="bg-opacity"
               type="range"
               name="bgOpacity"
               aria-label="Background opacity"
@@ -249,7 +251,7 @@ export function BackgroundPanel() {
             />
           </div>
 
-          <FieldRow label="Rotation">
+          <FieldRow label="Rotation" htmlFor="bg-rotation">
             <div className="flex flex-col gap-1">
               <input
                 type="range"
@@ -269,6 +271,7 @@ export function BackgroundPanel() {
               <div className="flex items-center gap-1">
                 <div className="w-20 shrink-0">
                   <NumberField
+                    id="bg-rotation"
                     name="bgRotation"
                     ariaLabel="Rotation value in degrees"
                     unit="°"

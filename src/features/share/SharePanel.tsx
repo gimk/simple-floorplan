@@ -17,10 +17,12 @@ import { isoDay, shareTokenName, shareTokensFor, shareUrl, todayIsoDay } from '.
 type Created = { id: string; url: string }
 
 /** Why the section cannot create links yet, or null when it can. */
-function blockedReason(online: boolean, passcode: boolean, localProject: boolean): string | null {
+// "online" means the server accepts this app (admin passcode, or a server without a passcode),
+// so it can manage tokens. "locked" means the server wants a passcode.
+function blockedReason(conn: string, localProject: boolean): string | null {
   if (localProject) return 'This project is not saved online yet. It becomes a server project at the next save.'
-  if (!passcode) return 'Enter your passcode (top bar) to manage share links: creating one needs admin access.'
-  if (!online) return 'Connect to the server to create a share link.'
+  if (conn === 'locked') return 'Enter your passcode (top bar) to manage share links: creating one needs admin access.'
+  if (conn !== 'online') return 'Connect to the server to create a share link.'
   return null
 }
 
@@ -35,7 +37,7 @@ export function SharePanel() {
   const linkRef = useRef<HTMLInputElement | null>(null)
 
   const projectId = doc.projectId
-  const blocked = blockedReason(conn === 'online', api.hasPasscode(), isLocalId(projectId))
+  const blocked = blockedReason(conn, isLocalId(projectId))
 
   const load = useCallback(
     async (signal: AbortSignal) => {

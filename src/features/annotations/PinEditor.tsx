@@ -80,7 +80,7 @@ export function PinPhotos({ pin, compact = false, trailing }: { pin: Pin; compac
       {annotate && <PhotoSketch pin={pin} photoKey={annotate} onClose={() => setAnnotate(null)} />}
       {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex flex-wrap gap-2">
-        <input ref={input} name="pinPhotos" type="file" accept="image/*" multiple hidden onChange={(e) => void addFiles(e.target.files)} />
+        <input ref={input} name="pinPhotos" type="file" accept="image/*" multiple hidden aria-label="Add pin photos" onChange={(e) => void addFiles(e.target.files)} />
         <button
           type="button" disabled={busy} onClick={() => input.current?.click()}
           className={`flex ${btnH} items-center gap-1.5 rounded-lg border border-orange-600 px-3 text-sm font-semibold text-orange-700 disabled:opacity-50 dark:border-orange-400 dark:text-orange-400`}

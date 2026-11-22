@@ -262,7 +262,7 @@ export function PhotoSketch({ pin, photoKey, onClose }: { pin: Pin; photoKey: st
         )}
         {selected && (
           <div className="mt-2.5 flex flex-col gap-2" data-mark={selected.id}>
-            <FieldRow label="Value">
+            <FieldRow label="Value" htmlFor={selected.label ? undefined : 'mark-value'}>
               {selected.label ? (
                 <p className="min-w-0 text-sm">
                   {markLabelText(selected, doc) || 'no value yet'}{' '}
@@ -272,6 +272,7 @@ export function PhotoSketch({ pin, photoKey, onClose }: { pin: Pin; photoKey: st
                 </p>
               ) : (
                 <NumberField
+                  id="mark-value"
                   name="markValue"
                   ariaLabel="Mark value"
                   unit="cm"
@@ -282,8 +283,9 @@ export function PhotoSketch({ pin, photoKey, onClose }: { pin: Pin; photoKey: st
                 />
               )}
             </FieldRow>
-            <FieldRow label="Survey ID">
+            <FieldRow label="Survey ID" htmlFor="mark-label">
               <SelectField
+                id="mark-label"
                 name="markLabel"
                 ariaLabel="Survey ID"
                 value={selected.label ?? ''}
@@ -291,8 +293,9 @@ export function PhotoSketch({ pin, photoKey, onClose }: { pin: Pin; photoKey: st
                 onChange={(v) => save(withPatchedMark(marks, selected.id, { label: v || undefined }))}
               />
             </FieldRow>
-            <FieldRow label="Note">
+            <FieldRow label="Note" htmlFor="mark-note">
               <TextField
+                id="mark-note"
                 name="markNote"
                 ariaLabel="Mark note"
                 value={selected.note ?? ''}
