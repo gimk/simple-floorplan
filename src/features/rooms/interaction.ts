@@ -25,12 +25,18 @@ const THRESHOLD_PX = 4
 
 type PointerLike = Pick<ReactPointerEvent, 'clientX' | 'clientY' | 'pointerId'>
 
+/** Pointer position + modifier keys. Modifiers are read live, so they can be pressed after the click. */
+export type DragEv = { clientX: number; clientY: number; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
+
+const MOD_KEYS = new Set(['Shift', 'Alt', 'Control', 'Meta'])
+
 function track(
   e: PointerLike,
-  h: { onStart?: () => void; onMove: (ev: PointerEvent) => void; onEnd: (moved: boolean) => void },
+  h: { onStart?: () => void; onMove: (ev: DragEv) => void; onEnd: (moved: boolean) => void },
 ) {
   const { clientX: sx, clientY: sy, pointerId } = e
   let moved = false
+  let last: DragEv | null = null
   const move = (ev: PointerEvent) => {
     if (ev.pointerId !== pointerId) return
     if (!moved) {
@@ -38,19 +44,31 @@ function track(
       moved = true
       h.onStart?.()
     }
-    h.onMove(ev)
+    last = { clientX: ev.clientX, clientY: ev.clientY, shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey }
+    h.onMove(last)
+  }
+  // A modifier pressed or released during the drag re-runs the last move at once.
+  const key = (ev: KeyboardEvent) => {
+    if (!moved || !last || !MOD_KEYS.has(ev.key)) return
+    ev.preventDefault()
+    last = { ...last, shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey }
+    h.onMove(last)
   }
   const up = (ev: PointerEvent) => {
     if (ev.pointerId !== pointerId) return
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', up)
     window.removeEventListener('pointercancel', up)
+    window.removeEventListener('keydown', key)
+    window.removeEventListener('keyup', key)
     useGuides.getState().set([])
     h.onEnd(moved)
   }
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', up)
   window.addEventListener('pointercancel', up)
+  window.addEventListener('keydown', key)
+  window.addEventListener('keyup', key)
 }
 
 const findRoom = (roomId: string): Room | undefined => useDoc.getState().doc.rooms.find((r) => r.id === roomId)
@@ -93,10 +111,11 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
   // The room vertex nearest the pointer is the one that snaps against other rooms.
   const near = nearestVertex(room0, down)
   if (!near) return
-  // Shared corners of other rooms follow the translation, so neighbours stretch (Shift = this room only).
-  const linked = e.shiftKey ? [] : room0.vertices.flatMap((v) => movableLinked(doc0, roomId, v.id))
-  const linkedKeys = new Set(linked.map(refKey))
-  const affected = [roomId, ...new Set(linked.map((l) => l.roomId))]
+  // Shared corners of other rooms follow the translation, so neighbours stretch (Shift = this room only,
+  // read on every move so it can be pressed during the drag).
+  const linkedAll = room0.vertices.flatMap((v) => movableLinked(doc0, roomId, v.id))
+  const linkedKeysAll = new Set(linkedAll.map(refKey))
+  const affected = [roomId, ...new Set(linkedAll.map((l) => l.roomId))]
   let start: PlanDoc | null = null
   let last: Vec = near
   track(e, {
@@ -106,13 +125,14 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
     },
     onMove: (ev) => {
       if (!start) return
+      const linked = ev.shiftKey ? [] : linkedAll
       const w = vp.toWorld(ev.clientX, ev.clientY)
       const raw = { x: near.x + (w.x - down.x), y: near.y + (w.y - down.y) }
       const ui = useUi.getState()
       const r = snapPoint(raw, {
         opts: ui.snap, tolCm: vp.px(10), disabled: ev.altKey,
         // Both the room and the shared corners that travel with it stay out of the snap set.
-        vertices: otherVertices(start, (rid, vid) => rid === roomId || linkedKeys.has(rid + ':' + vid)),
+        vertices: otherVertices(start, (rid, vid) => rid === roomId || (!ev.shiftKey && linkedKeysAll.has(rid + ':' + vid))),
       })
       useGuides.getState().set(r.guides)
       last = r.point
@@ -139,56 +159,14 @@ export const locked = (room: Room, i: number) => {
   return !!room.walls[room.vertices[((i % n) + n) % n].id]?.locked
 }
 
-/** Ctrl/Cmd + drag on a corner: resize the whole room, anchored on the opposite corner. */
 const SCALE_LOCKED_MSG = 'Room has a locked wall. Resize cancelled.'
+const CORNER_LOCKED_MSG = 'A wall at this corner is locked.'
 
-function resizeRoomFromCorner(e: ReactPointerEvent, vp: Vp, room: Room, vertexId: string) {
-  const roomId = room.id
-  const corner = room.vertices.find((v) => v.id === vertexId)
-  const anchor = oppositeVertex(room, vertexId)
-  const down = vp.toWorld(e.clientX, e.clientY)
-  // Scaling changes wall lengths, so a locked wall forbids it (a translation does not).
-  if (!corner || !anchor) return
-  if (roomHasLockedWall(room)) {
-    notify(SCALE_LOCKED_MSG, down)
-    return
-  }
-  const doc0 = useDoc.getState().doc
-  // Shared corners: every neighbour vertex on the linked spot follows the vertex it shares.
-  const links: Link[] = room.vertices.flatMap((v) =>
-    movableLinked(doc0, roomId, v.id).map((ref) => ({ ref, source: { roomId, vertexId: v.id } })))
-  const linkedKeys = new Set(links.map((l) => refKey(l.ref)))
-  const affected = [roomId, ...new Set(links.map((l) => l.ref.roomId))]
-  let start: PlanDoc | null = null
-  let last: Vec = corner
-  track(e, {
-    onStart: () => { start = beginDrag() },
-    onMove: (ev) => {
-      if (!start) return
-      const w = vp.toWorld(ev.clientX, ev.clientY)
-      const raw = { x: corner.x + (w.x - down.x), y: corner.y + (w.y - down.y) }
-      const r = snapPoint(raw, {
-        opts: { ...useUi.getState().snap, angles: false }, tolCm: vp.px(10), disabled: ev.altKey,
-        // The room scales, so none of its own vertices (nor the linked ones) are snap targets.
-        vertices: otherVertices(start, (rid, vid) => rid === roomId || linkedKeys.has(rid + ':' + vid)),
-      })
-      useGuides.getState().set(r.guides)
-      const f = scaleFactors(anchor, corner, r.point, ev.shiftKey)
-      last = { x: anchor.x + (corner.x - anchor.x) * f.sx, y: anchor.y + (corner.y - anchor.y) * f.sy }
-      useDoc.getState().updateSilent(() => scaleRoomWithLinks(start as PlanDoc, roomId, anchor, f, links))
-    },
-    onEnd: () => {
-      if (!start) return
-      if (newlyCrossing(start, useDoc.getState().doc, affected)) {
-        useDoc.getState().updateSilent(() => start as PlanDoc)
-        notify(CROSS_MSG, last)
-        return
-      }
-      endDrag(start)
-    },
-  })
-}
-
+/**
+ * Drag a corner. Plain drag moves one point (Shift = this room only). Ctrl/Cmd resizes the whole
+ * room from the opposite corner (+Shift = uniform). Modifiers are read on every move, so they can be
+ * pressed or released during the drag; each move starts again from the drag-start document.
+ */
 export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, vertexId: string) {
   if (e.button !== 0 || !e.isPrimary) return
   e.stopPropagation()
@@ -197,38 +175,69 @@ export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, verte
   if (!room0) return
   const i = room0.vertices.findIndex((v) => v.id === vertexId)
   if (i < 0) return
-  // Ctrl/Cmd scales the whole room from the opposite corner instead of moving one point.
-  if (e.ctrlKey || e.metaKey) {
-    resizeRoomFromCorner(e, vp, room0, vertexId)
-    return
-  }
-  // Locked walls cannot be resized: neither the wall starting here nor the one ending here.
-  if (locked(room0, i) || locked(room0, i - 1)) return
   const n = room0.vertices.length
   const orig = room0.vertices[i]
   const prev = room0.vertices[(i - 1 + n) % n], next = room0.vertices[(i + 1) % n]
+  const anchor = oppositeVertex(room0, vertexId)
   const down = vp.toWorld(e.clientX, e.clientY)
-  // Shared corners: vertices of other rooms at the same place move too (Shift = this room only).
-  const linked = e.shiftKey ? [] : movableLinked(useDoc.getState().doc, roomId, vertexId)
+  const doc0 = useDoc.getState().doc
+  // Locked walls: a single point cannot move if a wall at this corner is locked; a resize is
+  // refused if any wall of the room is locked (a resize changes every length).
+  const pointLocked = locked(room0, i) || locked(room0, i - 1)
+  const scaleLocked = roomHasLockedWall(room0)
+  // Single point: shared corners at the same place follow.
+  const linked = movableLinked(doc0, roomId, vertexId)
   const linkedKeys = new Set(linked.map(refKey))
-  const affected = [roomId, ...new Set(linked.map((l) => l.roomId))]
+  // Resize: every neighbour vertex on a linked spot follows the vertex it shares.
+  const links: Link[] = room0.vertices.flatMap((v) =>
+    movableLinked(doc0, roomId, v.id).map((ref) => ({ ref, source: { roomId, vertexId: v.id } })))
+  const linksKeys = new Set(links.map((l) => refKey(l.ref)))
+  const affected = [roomId, ...new Set([...linked, ...links.map((l) => l.ref)].map((l) => l.roomId))]
   let start: PlanDoc | null = null
   let last = orig as Vec
+  let warned = ''
+  const warn = (msg: string, at: Vec) => { if (warned !== msg) { warned = msg; notify(msg, at) } }
   track(e, {
     onStart: () => { start = beginDrag(); setDragInfo({ kind: 'vertex', roomId, vertexId }) },
     onMove: (ev) => {
+      if (!start) return
+      const base = start
       const w = vp.toWorld(ev.clientX, ev.clientY)
       const raw = { x: orig.x + (w.x - down.x), y: orig.y + (w.y - down.y) }
       const ui = useUi.getState()
-      const doc = useDoc.getState().doc
+      if (ev.ctrlKey || ev.metaKey) {
+        if (!anchor || scaleLocked) {
+          useGuides.getState().set([])
+          useDoc.getState().updateSilent(() => base)
+          if (scaleLocked) warn(SCALE_LOCKED_MSG, raw)
+          return
+        }
+        const r = snapPoint(raw, {
+          opts: { ...ui.snap, angles: false }, tolCm: vp.px(10), disabled: ev.altKey,
+          // The room scales, so none of its own vertices (nor the linked ones) are snap targets.
+          vertices: otherVertices(base, (rid, vid) => rid === roomId || linksKeys.has(rid + ':' + vid)),
+        })
+        useGuides.getState().set(r.guides)
+        const f = scaleFactors(anchor, orig, r.point, ev.shiftKey)
+        last = { x: anchor.x + (orig.x - anchor.x) * f.sx, y: anchor.y + (orig.y - anchor.y) * f.sy }
+        useDoc.getState().updateSilent(() => scaleRoomWithLinks(base, roomId, anchor, f, links))
+        return
+      }
+      if (pointLocked) {
+        useGuides.getState().set([])
+        useDoc.getState().updateSilent(() => base)
+        warn(CORNER_LOCKED_MSG, raw)
+        return
+      }
+      const follow = ev.shiftKey ? [] : linked
       const r = snapPoint(raw, {
         opts: ui.snap, refs: [prev, next], tolCm: vp.px(10), disabled: ev.altKey,
-        vertices: otherVertices(doc, (rid, vid) => (rid === roomId && vid === vertexId) || linkedKeys.has(rid + ':' + vid)),
+        vertices: otherVertices(base, (rid, vid) => (rid === roomId && vid === vertexId) || (!ev.shiftKey && linkedKeys.has(rid + ':' + vid))),
       })
       useGuides.getState().set(r.guides)
       last = r.point
-      const moves: VMove[] = [{ roomId, vertexId, ...r.point }, ...linked.map((l) => ({ ...l, ...r.point }))]
-      useDoc.getState().updateSilent((d) => moveVertices(d, moves))
+      const moves: VMove[] = [{ roomId, vertexId, ...r.point }, ...follow.map((l) => ({ ...l, ...r.point }))]
+      useDoc.getState().updateSilent(() => moveVertices(base, moves))
     },
     onEnd: () => {
       setDragInfo(null)
@@ -261,20 +270,25 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
   const down = vp.toWorld(e.clientX, e.clientY)
   // Shared corners follow (Shift = this room only).
   const doc0 = useDoc.getState().doc
-  const linkedA = e.shiftKey ? [] : movableLinked(doc0, roomId, aId)
-  const linkedB = e.shiftKey ? [] : movableLinked(doc0, roomId, bId)
-  const linkedKeys = new Set([...linkedA, ...linkedB].map(refKey))
-  const affected = [roomId, ...new Set([...linkedA, ...linkedB].map((l) => l.roomId))]
+  const linkedAAll = movableLinked(doc0, roomId, aId)
+  const linkedBAll = movableLinked(doc0, roomId, bId)
+  const linkedKeysAll = new Set([...linkedAAll, ...linkedBAll].map(refKey))
+  const affected = [roomId, ...new Set([...linkedAAll, ...linkedBAll].map((l) => l.roomId))]
   let start: PlanDoc | null = null
   let last: Vec = a0
   track(e, {
     onStart: () => { start = beginDrag(); setDragInfo({ kind: 'wall', roomId, wallStart }) },
     onMove: (ev) => {
+      if (!start) return
+      const base = start
+      // Shift (this room only) is read on every move, so it can be pressed during the drag.
+      const linkedA = ev.shiftKey ? [] : linkedAAll, linkedB = ev.shiftKey ? [] : linkedBAll
+      const linkedKeys = ev.shiftKey ? new Set<string>() : linkedKeysAll
       const w = vp.toWorld(ev.clientX, ev.clientY)
       let d = dot({ x: w.x - down.x, y: w.y - down.y }, normal)
       if (!ev.altKey) {
         const ui = useUi.getState()
-        const doc = useDoc.getState().doc
+        const doc = base
         if (axisAligned) {
           const r = snapPoint({ x: a0.x + normal.x * d, y: a0.y + normal.y * d }, {
             opts: { ...ui.snap, angles: false }, tolCm: vp.px(10),
@@ -293,7 +307,7 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
         { roomId, vertexId: aId, ...pa }, { roomId, vertexId: bId, ...pb },
         ...linkedA.map((l) => ({ ...l, ...pa })), ...linkedB.map((l) => ({ ...l, ...pb })),
       ]
-      useDoc.getState().updateSilent((doc) => moveVertices(doc, moves))
+      useDoc.getState().updateSilent(() => moveVertices(base, moves))
     },
     onEnd: () => {
       setDragInfo(null)
