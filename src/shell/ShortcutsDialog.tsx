@@ -1,6 +1,6 @@
 // Keyboard shortcuts dialog (plan 7.2 #23): opened with `?` or the header button,
 // closed with Esc, the close button, or a backdrop click.
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import { X } from 'lucide-react'
 
 const ROWS: [string, string][] = [
@@ -23,15 +23,26 @@ const ROWS: [string, string][] = [
   ['Delete / Backspace (with a selection)', 'Delete the selection'],
 ]
 
-export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const prevFocus = useRef<HTMLElement | null>(null)
+export function ShortcutsDialog({
+  open,
+  onClose,
+  returnFocusTo,
+}: {
+  open: boolean
+  onClose: () => void
+  returnFocusTo?: RefObject<HTMLElement | null>
+}) {
+  const wasOpen = useRef(false)
   useEffect(() => {
     if (!open) {
-      prevFocus.current?.focus()
-      prevFocus.current = null
+      if (wasOpen.current) {
+        wasOpen.current = false
+        const target = returnFocusTo?.current
+        if (target && target.isConnected) target.focus()
+      }
       return
     }
-    prevFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    wasOpen.current = true
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -41,7 +52,7 @@ export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () 
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [open, onClose])
+  }, [open, onClose, returnFocusTo])
 
   if (!open) return null
   return (

@@ -93,7 +93,7 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
         </div>
 
         <form className="mb-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); const t = newName.trim() || 'New apartment'; setNewName(''); void run(() => createProject(t), true) }}>
-          <input aria-label="New project name" className={`${field} min-w-0 flex-1`} placeholder="New project name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <input name="newProjectName" aria-label="New project name" className={`${field} min-w-0 flex-1`} placeholder="New project name" value={newName} onChange={(e) => setNewName(e.target.value)} />
           <button type="submit" disabled={busy} className="flex h-9 items-center gap-1 rounded-md bg-orange-700 px-3 text-sm font-semibold text-white hover:bg-orange-800 disabled:opacity-50"><Plus size={16} /> New</button>
         </form>
 
@@ -107,7 +107,7 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
               <li key={p.id} className={`flex items-center gap-1 rounded-md px-2 py-1 ${current ? 'bg-orange-600/10' : ''}`}>
                 {rename !== null && current ? (
                   <form className="flex min-w-0 flex-1 gap-1" onSubmit={(e) => { e.preventDefault(); const t = rename.trim(); setRename(null); if (t) void run(() => renameCurrent(t)) }}>
-                    <input aria-label="Project name" autoFocus className={`${field} min-w-0 flex-1`} value={rename} onChange={(e) => setRename(e.target.value)} />
+                    <input name="projectName" aria-label="Project name" autoFocus className={`${field} min-w-0 flex-1`} value={rename} onChange={(e) => setRename(e.target.value)} />
                     <button type="submit" className="h-9 rounded-md px-2 text-sm font-semibold text-orange-700 dark:text-orange-400">Save</button>
                   </form>
                 ) : (

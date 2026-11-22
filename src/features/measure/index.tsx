@@ -1,15 +1,14 @@
 // OWNER: measure agent. Contract: keep this export name.
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownCircle, Eye, KeyRound, Monitor, Sun } from 'lucide-react'
+import { ArrowDownCircle, Cloud, CloudOff, Eye, KeyRound, Monitor, Sun } from 'lucide-react'
 import { useDoc, useUi } from '../../model/store'
 import { allSurveyIds, roomsInWalkOrder } from '../../model/survey'
-import { getSyncState, setPasscode, useSyncState } from '../../sync/sync'
+import { getSyncState, setPasscode, useSyncState, useSyncStatusText } from '../../sync/sync'
 import { loadDemoApartment } from './demo'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
 import { inputId } from './actions'
 import { Overview } from './Overview'
 import { RoomCard } from './RoomCard'
-import { useSyncStatus } from './useSyncStatus'
 import { useWakeLock } from './useWakeLock'
 import { VoiceButton } from './VoiceButton'
 
@@ -31,7 +30,7 @@ const readFlag = (key: string, def: boolean) => {
 /** Full-screen Measuring Mode (mobile-first). Rendered instead of the editor when ui.mode === 'measure'. */
 export function MeasureMode() {
   const doc = useDoc((s) => s.doc)
-  const status = useSyncStatus()
+  const { text: status, warn: statusWarn } = useSyncStatusText()
   const allRooms = roomsInWalkOrder(doc)
   const labels = allSurveyIds(doc).map((s) => s.label)
   const { done, total } = docProgress(doc)
@@ -96,7 +95,7 @@ export function MeasureMode() {
     <div className={`min-h-full bg-[#f6f7f5] text-[#1b2430] dark:bg-[#12161b] dark:text-[#e8ecef] ${sunlight ? 'sunlight' : ''}`}>
       {/* ONE compact sticky header for Measuring Mode (the app shell hides its own header in this mode). */}
       <header className="sticky top-0 z-10 border-b border-slate-300 bg-white/95 pt-[env(safe-area-inset-top)] backdrop-blur dark:border-slate-700 dark:bg-[#1b2128]/95">
-        <div className="mx-auto max-w-[560px] px-4 pb-2 pt-1.5">
+        <div className="mx-auto max-w-[560px] px-2.5 pb-2 pt-1.5 sm:px-4">
           <div className="flex items-center gap-2">
             <h1 className="min-w-0 flex-1 truncate text-[15px] font-bold">{doc.title || 'Untitled'}</h1>
             <span className="flex-none font-mono text-sm text-slate-500 dark:text-slate-400" aria-label="Measured of total">{done} / {total}</span>
@@ -119,7 +118,7 @@ export function MeasureMode() {
           >
             <div className="h-full bg-green-600 transition-[width] motion-reduce:transition-none dark:bg-green-400" style={{ width: `${total ? (100 * done) / total : 0}%` }} />
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1 sm:gap-2">
             {sync.conn === 'locked' ? (
               <form
                 className="relative flex min-w-0 flex-1 items-center gap-1"
@@ -149,14 +148,21 @@ export function MeasureMode() {
                 )}
               </form>
             ) : (
-              <span className="min-w-0 flex-1 truncate text-xs text-slate-500 dark:text-slate-400">{status}</span>
+              <span
+                className={`flex min-w-0 flex-1 items-center gap-1 text-xs ${statusWarn ? 'text-orange-700 dark:text-orange-400' : 'text-emerald-700 dark:text-emerald-400'}`}
+                aria-label={status}
+                title={status}
+              >
+                {statusWarn ? <CloudOff size={16} className="shrink-0" /> : <Cloud size={16} className="shrink-0" />}
+                <span className="hidden truncate text-slate-500 sm:inline dark:text-slate-400">{status}</span>
+              </span>
             )}
             <VoiceButton labels={labels} />
             <span role="group" aria-label="Filter rooms" className="flex flex-none overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
               {FILTERS.map((f) => (
                 <button
                   key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}
-                  className={`min-h-11 px-2.5 text-xs font-semibold ${filter === f.id ? 'bg-orange-700 text-white' : 'bg-white text-slate-600 dark:bg-[#12161b] dark:text-slate-300'}`}
+                  className={`min-h-11 px-2 text-xs font-semibold sm:px-2.5 ${filter === f.id ? 'bg-orange-700 text-white' : 'bg-white text-slate-600 dark:bg-[#12161b] dark:text-slate-300'}`}
                 >{f.label}</button>
               ))}
             </span>

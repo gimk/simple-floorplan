@@ -7,7 +7,7 @@ const NEXT: Record<ThemePref, ThemePref> = { light: 'dark', dark: 'system', syst
 const ICON = { light: Sun, dark: Moon, system: Monitor } as const
 const LABEL: Record<ThemePref, string> = { light: 'Light', dark: 'Dark', system: 'System' }
 
-export function ThemeToggle() {
+export function ThemeToggle({ showLabel = false }: { showLabel?: boolean }) {
   const [pref, setPref] = useState<ThemePref>(() => getThemePref())
   const Icon = ICON[pref]
   return (
@@ -23,7 +23,9 @@ export function ThemeToggle() {
       }}
     >
       <Icon size={16} />
-      <span className="hidden lg:inline">{LABEL[pref]}</span>
+      <span className={showLabel ? 'inline whitespace-nowrap' : 'hidden lg:inline'}>
+        {showLabel ? `Theme: ${LABEL[pref]}` : LABEL[pref]}
+      </span>
     </button>
   )
 }

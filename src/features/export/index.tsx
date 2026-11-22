@@ -57,11 +57,11 @@ export function ExportPanel() {
       <summary className="flex cursor-pointer items-center gap-2 font-semibold"><Download size={16} /> Export</summary>
       <div className="mt-2 flex flex-col gap-2">
         <label className={`flex cursor-pointer items-center gap-2 ${hasBg ? '' : 'opacity-50'}`}>
-          <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" disabled={!hasBg} checked={withBg && hasBg} onChange={(e) => setWithBg(e.target.checked)} />
+          <input type="checkbox" name="exportWithBg" className="h-4 w-4 cursor-pointer accent-orange-700" disabled={!hasBg} checked={withBg && hasBg} onChange={(e) => setWithBg(e.target.checked)} />
           Include background image{bgHidden ? ' (hidden)' : ''}
         </label>
         <label className="flex cursor-pointer items-center gap-2">
-          <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={a3} onChange={(e) => setA3(e.target.checked)} /> PDF size A3 (default A4)
+          <input type="checkbox" name="exportA3" className="h-4 w-4 cursor-pointer accent-orange-700" checked={a3} onChange={(e) => setA3(e.target.checked)} /> PDF size A3 (default A4)
         </label>
         <div className="grid grid-cols-4 gap-1">
           <button className={btn} disabled={!!busy} onClick={svg}>SVG</button>
@@ -117,9 +117,9 @@ export function CalculatorsPanel() {
       <summary className="flex cursor-pointer items-center gap-2 font-semibold"><Calculator size={16} /> Calculators</summary>
       <div className="mt-2 flex flex-col gap-2">
         <div className="grid grid-cols-3 gap-1 text-xs">
-          <label className="flex flex-col gap-1">Waste %<input className={field} inputMode="decimal" value={drafts.wastePct} onChange={set('wastePct')} /></label>
-          <label className="flex flex-col gap-1">Coats<input className={field} inputMode="decimal" value={drafts.coats} onChange={set('coats')} /></label>
-          <label className="flex flex-col gap-1">m²/L<input className={field} inputMode="decimal" value={drafts.coverage} onChange={set('coverage')} /></label>
+          <label className="flex flex-col gap-1">Waste %<input name="wastePct" className={field} inputMode="decimal" value={drafts.wastePct} onChange={set('wastePct')} /></label>
+          <label className="flex flex-col gap-1">Coats<input name="coats" className={field} inputMode="decimal" value={drafts.coats} onChange={set('coats')} /></label>
+          <label className="flex flex-col gap-1">m²/L<input name="coverage" className={field} inputMode="decimal" value={drafts.coverage} onChange={set('coverage')} /></label>
         </div>
         {rows.length === 0 ? <p className="text-xs opacity-70">No rooms yet.</p> : (
           <div className="overflow-x-auto">

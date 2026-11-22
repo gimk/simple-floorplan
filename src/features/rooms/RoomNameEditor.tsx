@@ -46,6 +46,7 @@ export function RoomNameEditor({ room, vp, onClose }: { room: Room; vp: Vp; onCl
     >
       <input
         ref={input}
+        name="roomName"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onPointerDown={(e) => e.stopPropagation()}

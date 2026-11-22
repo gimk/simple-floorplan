@@ -57,7 +57,7 @@ export function PinEditor({ pin, silent = true, compact = false, onDeleted, labe
     <div className="flex flex-col gap-2.5" data-pin={pin.id}>
       {label && <b className="text-sm">{label}</b>}
       <textarea
-        aria-label="Pin note" rows={2} placeholder="Note (radiator pipes here, panel 140 cm from floor…)"
+        name="pinNote" aria-label="Pin note" rows={2} placeholder="Note (radiator pipes here, panel 140 cm from floor…)"
         value={pin.text ?? ''} onChange={(e) => patchPin(pin.id, { text: e.target.value || undefined })}
         className={`${field} min-h-16 resize-y`}
       />
@@ -77,7 +77,7 @@ export function PinEditor({ pin, silent = true, compact = false, onDeleted, labe
       )}
       {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex flex-wrap gap-2">
-        <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => void addFiles(e.target.files)} />
+        <input ref={input} name="pinPhotos" type="file" accept="image/*" multiple hidden onChange={(e) => void addFiles(e.target.files)} />
         <button
           type="button" disabled={busy} onClick={() => input.current?.click()}
           className={`flex ${btnH} items-center gap-1.5 rounded-lg border border-orange-600 px-3 text-sm font-semibold text-orange-700 disabled:opacity-50 dark:border-orange-400 dark:text-orange-400`}

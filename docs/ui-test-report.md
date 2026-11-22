@@ -53,3 +53,16 @@ Tested `http://localhost:5199` in an isolated Chrome tab at desktop (`1440×900`
 - `[error] Failed to load resource: the server responded with a status of 502 (Bad Gateway)` (observed on initial load and after navigation; expected because the local sync backend is unavailable/unauthenticated).
 - `[issue] A form field element should have an id or name attribute (count: 10)` (increased to `count: 17` after opening panels/Measuring Mode).
 - No uncaught JS exceptions, React errors, or console warnings were observed during any interaction.
+
+## Re-test after fixes
+
+Verified in headless Chrome against `http://localhost:5199` after all code edits and passing `npx tsc -b`, `npx tsc -p functions --noEmit`, `npx vitest run` (33 files, 355 tests), and `npm run build`.
+
+| Item | What changed | Chrome result | Evidence |
+|---|---|---|---|
+| **T-1** (desktop 1440×900) | Wrapped `ZoomControls` and `ToolHints` in a `flex-wrap-reverse` bottom bar in `src/App.tsx`; removed absolute centering and `truncate` in `src/shell/ToolHints.tsx` so hints wrap cleanly without overlapping `ZoomControls` | pass | `scrollW=1440`; `zoomRect={left:60, right:373, top:845, bottom:887}`; `hintRect={left:381, right:1140, top:845, bottom:888, height:43}`; `overlap=false`, `truncated=false` |
+| **T-2** (phone 390×844 & 360×844) | Compacted `ZoomControls` on narrow viewports (`< 640px`: icon-only `Fit`, tighter gaps/padding, smaller `scaleBarStep(zoom, 50, 30, 75)`) in `src/shell/ZoomControls.tsx` | pass | At `390×844`: `scrollW=390`, `zoomRect={left:60, right:317, width:257}`, `hintRect={bottom:770}` above `zoomRect.top=778`, `overlap=false`. At `360×844`: `scrollW=360`, `zoomRect={left:60, right:317, width:257}`, `hintRect={bottom:770}`, `overlap=false` |
+| **T-3** (phone More menu) | Added `showLabel` prop to `ThemeToggle` (`src/shell/ThemeToggle.tsx`) and passed `showLabel` in the mobile More menu (`src/App.tsx`) | pass | At `390×844`, More menu lists `"Theme: System"` (`136×36`, `aria-label="Theme: System (click to change)"`) above `"Shortcuts"` (`136×36`); `scrollW=390` |
+| **T-26** (Measuring Mode 390×844) | Showed sync status as a `Cloud`/`CloudOff` icon with `aria-label`/`title` on `< sm` screens and tightened header padding/gaps in `src/features/measure/index.tsx` | pass | At `390×844`: `scrollW=390`, `headerH=123` (two rows max); row-2 tops `filter=68`, `eye=69`, `sun=69`, `sunRight=380` |
+| **T-32** (`ShortcutsDialog` focus) | Tracked `wasOpen` and `returnFocusTo` ref in `src/shell/ShortcutsDialog.tsx` and `src/App.tsx` (header `?` button, phone More button, or `?` shortcut fallback) | pass | `Escape` restored `document.activeElement` to `"Keyboard shortcuts"` (desktop click & `?` shortcut) and `"More options"` (phone More menu) |
+| **Console issue** (form field `id`/`name`) | Added `name` attributes to inputs, selects, and textareas across panels, `SnapPopover`, `LayerToggles`, and Measuring Mode (`NumField` derives `name` from `id` or `ariaLabel` while preserving existing `m-*` `id`s) | pass | `missingFieldsMeasure=0`, `missingFieldsEdit=0`, Chrome DevTools `Audits.issueAdded` form-field issues: `0` |

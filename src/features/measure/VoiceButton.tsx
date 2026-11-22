@@ -110,7 +110,7 @@ export function VoiceButton({ labels }: { labels: string[] }) {
   return (
     <span className="relative flex items-center gap-1">
       <select
-        aria-label="Voice language" value={lang} onChange={(e) => setLang(e.target.value as 'fr-FR' | 'en-US')}
+        name="voiceLang" aria-label="Voice language" value={lang} onChange={(e) => setLang(e.target.value as 'fr-FR' | 'en-US')}
         className="min-h-11 rounded-lg border border-slate-300 bg-white px-2 text-xs dark:border-slate-600 dark:bg-[#12161b]"
       >
         <option value="fr-FR">FR</option>

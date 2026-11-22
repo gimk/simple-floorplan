@@ -260,7 +260,7 @@ function NumField({ label, value, onCommit, min }: { label: string; value: numbe
     <label className="flex flex-col gap-0.5 text-xs text-slate-500 dark:text-slate-400">
       {label}
       <input
-        type="text" inputMode="decimal" value={text}
+        type="text" name={label.toLowerCase().replace(/[^a-z0-9]+/g, '-')} inputMode="decimal" value={text}
         onChange={(e) => setText(e.target.value)} onBlur={commit}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
         className="h-9 w-full rounded-md border border-black/15 bg-white px-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100"
@@ -276,7 +276,7 @@ function NoteField({ value, onCommit }: { value: string; onCommit: (v: string) =
   return (
     <label className={fieldLabel}>Note
       <textarea
-        rows={2} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
+        name="elementNote" rows={2} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
         className="rounded-md border border-black/15 bg-white p-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100"
       />
     </label>
@@ -311,7 +311,7 @@ export function ElementsPanel() {
       <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Element · wall {wallLabel}{wall ? ` (${fmtCm(L)} cm)` : ''}</h2>
       <div className="grid grid-cols-2 gap-2">
         <label className={fieldLabel}>Kind
-          <select className={selectCls} value={el.kind} onChange={(e) => {
+          <select name="elementKind" className={selectCls} value={el.kind} onChange={(e) => {
             const k = e.target.value as ElementKind
             const d = defaultElement(k)
             patch({ kind: k, variant: d.variant, heightCm: d.heightCm, sillCm: d.sillCm, depthCm: d.depthCm, hinge: d.hinge, swing: d.swing })
@@ -321,7 +321,7 @@ export function ElementsPanel() {
         </label>
         {variants.length > 0 && (
           <label className={fieldLabel}>Variant
-            <select className={selectCls} value={el.variant ?? variants[0]} onChange={(e) => patch({ variant: e.target.value as ElementVariant })}>
+            <select name="elementVariant" className={selectCls} value={el.variant ?? variants[0]} onChange={(e) => patch({ variant: e.target.value as ElementVariant })}>
               {variants.map((v) => <option key={v} value={v}>{VARIANT_LABEL[v]}</option>)}
             </select>
           </label>
@@ -342,12 +342,12 @@ export function ElementsPanel() {
       {el.kind === 'door' && (
         <div className="grid grid-cols-2 gap-2">
           <label className={fieldLabel}>Hinge
-            <select className={selectCls} value={el.hinge ?? 'start'} onChange={(e) => patch({ hinge: e.target.value as 'start' | 'end' })}>
+            <select name="elementHinge" className={selectCls} value={el.hinge ?? 'start'} onChange={(e) => patch({ hinge: e.target.value as 'start' | 'end' })}>
               <option value="start">Start</option><option value="end">End</option>
             </select>
           </label>
           <label className={fieldLabel}>Swing
-            <select className={selectCls} value={el.swing ?? 'in'} onChange={(e) => patch({ swing: e.target.value as 'in' | 'out' })}>
+            <select name="elementSwing" className={selectCls} value={el.swing ?? 'in'} onChange={(e) => patch({ swing: e.target.value as 'in' | 'out' })}>
               <option value="in">In (into room)</option><option value="out">Out</option>
             </select>
           </label>

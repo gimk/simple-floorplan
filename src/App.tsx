@@ -117,7 +117,7 @@ function LayerToggles() {
       <div className="mt-2 flex flex-col gap-1">
         {(Object.keys(LAYER_LABELS) as (keyof Layers)[]).map((k) => (
           <label key={k} className="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={layers[k]} onChange={(e) => set({ layers: { ...layers, [k]: e.target.checked } })} />
+            <input type="checkbox" name={`layer-${k}`} className="h-4 w-4 cursor-pointer accent-orange-700" checked={layers[k]} onChange={(e) => set({ layers: { ...layers, [k]: e.target.checked } })} />
             {LAYER_LABELS[k]}
           </label>
         ))}
@@ -206,7 +206,16 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
-  useShortcuts(() => setShortcutsOpen(true))
+  const shortcutsBtnRef = useRef<HTMLButtonElement>(null)
+  const moreBtnRef = useRef<HTMLButtonElement>(null)
+  const shortcutsReturnFocusRef = useRef<HTMLElement | null>(null)
+  useShortcuts(() => {
+    const active = document.activeElement
+    const headerOpener = shortcutsBtnRef.current?.offsetParent ? shortcutsBtnRef.current : moreBtnRef.current
+    shortcutsReturnFocusRef.current =
+      active instanceof HTMLElement && active !== document.body ? active : headerOpener
+    setShortcutsOpen(true)
+  })
   useUrlModeSync()
   useEffect(() => startSync(), [])
   useEffect(() => { installBridge() }, [])
@@ -265,14 +274,16 @@ export default function App() {
           <div className="hidden items-center gap-1 sm:flex">
             <ThemeToggle />
             <button
+              ref={shortcutsBtnRef}
               className={btn} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"
-              aria-haspopup="dialog" onClick={() => setShortcutsOpen(true)}
+              aria-haspopup="dialog" onClick={() => { shortcutsReturnFocusRef.current = shortcutsBtnRef.current; setShortcutsOpen(true) }}
             >
               <Keyboard size={16} />
             </button>
           </div>
           <div className="relative sm:hidden" ref={moreRef}>
             <button
+              ref={moreBtnRef}
               type="button"
               className={btn}
               aria-label="More options"
@@ -284,11 +295,11 @@ export default function App() {
             </button>
             {moreOpen && (
               <div className="absolute right-0 top-full z-50 mt-1 flex flex-col gap-1 rounded-lg border border-black/10 bg-white p-1.5 shadow-lg dark:border-white/15 dark:bg-[#1b2128]">
-                <ThemeToggle />
+                <ThemeToggle showLabel />
                 <button
                   type="button"
                   className={btn}
-                  onClick={() => { setMoreOpen(false); setShortcutsOpen(true) }}
+                  onClick={() => { shortcutsReturnFocusRef.current = moreBtnRef.current; setMoreOpen(false); setShortcutsOpen(true) }}
                 >
                   <Keyboard size={16} /> <span>Shortcuts</span>
                 </button>
@@ -340,8 +351,10 @@ export default function App() {
               {layers.notes && <AnnotationsLayer />}
             </Viewport>
             <EmptyState />
-            <ZoomControls />
-            <ToolHints />
+            <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-wrap-reverse items-end gap-2 max-md:inset-x-2">
+              <ZoomControls />
+              <ToolHints />
+            </div>
           </main>
           {sidebarOpen && (
             <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
@@ -362,7 +375,7 @@ export default function App() {
           </aside>
         </div>
       )}
-      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusTo={shortcutsReturnFocusRef} />
       <ToastHost />
       <UpdateToast />
     </div>

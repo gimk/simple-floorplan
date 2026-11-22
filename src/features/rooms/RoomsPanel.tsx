@@ -33,6 +33,7 @@ function Field({ title, value, onCommit, type = 'text', errorText, disabled, suf
       <input
         className={`${input} ${bad ? 'border-red-500' : ''}`}
         type="text"
+        name={title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}
         inputMode={type === 'number' ? 'decimal' : undefined}
         aria-invalid={bad}
         value={text}
@@ -148,7 +149,7 @@ export function RoomsPanel() {
           <Field title="Length" suffix="cm" type="number" value={fmtCm(wall.length)} disabled={!!props.locked}
             onCommit={(v) => { const n = num(v); if (n === null || n < 1) return false; setWallLength(room.id, wall.start.id, n) }} />
           <label className="flex min-h-9 cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!props.locked} onChange={(e) => setWall(room.id, wall.start.id, { locked: e.target.checked })} />
+            <input type="checkbox" name="wallLocked" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!props.locked} onChange={(e) => setWall(room.id, wall.start.id, { locked: e.target.checked })} />
             Locked (cannot be resized)
           </label>
           <p className="text-xs text-slate-500 dark:text-slate-400">Key B: bearing / partition. Length moves the end vertex.</p>
@@ -195,7 +196,7 @@ export function RoomsPanel() {
           <p className="text-xs text-slate-500 dark:text-slate-400">Apartment default: {fmtCm(apartmentCeilingCm)} cm</p>
         )}
         <label className="flex min-h-9 cursor-pointer items-center gap-2">
-          <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!room.outdoor} onChange={(e) => patchRoom(room.id, { outdoor: e.target.checked })} />
+          <input type="checkbox" name="roomOutdoor" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!room.outdoor} onChange={(e) => patchRoom(room.id, { outdoor: e.target.checked })} />
           Outdoor (balcony, terrace)
         </label>
         <div className="flex flex-col gap-1.5 border-t border-black/10 pt-2 dark:border-white/10">
@@ -207,7 +208,7 @@ export function RoomsPanel() {
             className="min-h-9 rounded-md border border-black/15 px-2 text-sm hover:bg-black/5 disabled:opacity-40 dark:border-white/15 dark:hover:bg-white/10"
             onClick={() => runApply(true)}>Apply to all rooms</button>
           <label className="flex min-h-9 cursor-pointer items-center gap-2">
-            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" disabled={!verified.length} checked={allLocked}
+            <input type="checkbox" name="lockVerifiedWalls" className="h-4 w-4 cursor-pointer accent-orange-700" disabled={!verified.length} checked={allLocked}
               onChange={(e) => update((d) => setVerifiedLocked(d, room.id, e.target.checked))} />
             Lock verified walls
           </label>

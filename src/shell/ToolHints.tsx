@@ -18,8 +18,10 @@ const HINTS: Record<ToolId, string> = {
 export function ToolHints() {
   const tool = useUi((s) => s.tool)
   return (
-    <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 max-w-[46%] -translate-x-1/2 truncate rounded-full border border-black/10 bg-white/90 px-3 py-1 text-xs opacity-80 shadow-sm dark:border-white/15 dark:bg-[#1b2128]/90 max-md:bottom-16 max-md:left-3 max-md:max-w-[calc(100%-1.5rem)] max-md:translate-x-0">
-      {HINTS[tool]}
+    <div className="pointer-events-none min-w-[280px] max-w-full flex-1">
+      <div className="w-fit max-w-full rounded-2xl border border-black/10 bg-white/90 px-3 py-1 text-xs leading-snug opacity-80 shadow-sm dark:border-white/15 dark:bg-[#1b2128]/90">
+        {HINTS[tool]}
+      </div>
     </div>
   )
 }

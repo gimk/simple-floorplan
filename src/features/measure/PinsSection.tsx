@@ -54,7 +54,7 @@ function PinSheet({ doc, room, pin, onClose }: { doc: PlanDoc; room: Room; pin: 
         <div className="grid grid-cols-2 gap-2.5">
           <label className="flex min-w-0 flex-col gap-1">
             <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">Wall</span>
-            <select aria-label="Wall" className={sel} value={pin.wallStart ?? ''} onChange={(e) => e.target.value && setWallPlace(doc, room, pin, e.target.value, off ?? 0)}>
+            <select name="pinWall" aria-label="Wall" className={sel} value={pin.wallStart ?? ''} onChange={(e) => e.target.value && setWallPlace(doc, room, pin, e.target.value, off ?? 0)}>
               {!pin.wallStart && <option value="">—</option>}
               {walls.map((w) => <option key={w.start.id} value={w.start.id}>{room.code}-{w.index + 1}</option>)}
             </select>

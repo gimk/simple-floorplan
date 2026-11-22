@@ -193,7 +193,7 @@ export function TapePanel() {
       <label className="flex flex-col gap-1">
         <span className="text-xs text-slate-500 dark:text-slate-400">Real length (cm)</span>
         <input
-          type="text" inputMode="decimal" aria-label="Real length" value={shown} aria-invalid={bad}
+          type="text" name="tapeLength" inputMode="decimal" aria-label="Real length" value={shown} aria-invalid={bad}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitLen}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
@@ -203,7 +203,7 @@ export function TapePanel() {
       <label className="flex flex-col gap-1">
         <span className="text-xs text-slate-500 dark:text-slate-400">Note</span>
         <input
-          aria-label="Tape note" value={noteDraft ?? (tape.note ?? '')}
+          name="tapeNote" aria-label="Tape note" value={noteDraft ?? (tape.note ?? '')}
           onChange={(e) => setNoteDraft(e.target.value)}
           onBlur={commitNote}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}

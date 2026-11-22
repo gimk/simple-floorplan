@@ -172,6 +172,7 @@ export function BackgroundPanel() {
       </h2>
       <input
         ref={fileRef}
+        name="bgFile"
         type="file"
         accept="image/png,image/jpeg,image/webp,application/pdf"
         className="hidden"
@@ -189,6 +190,7 @@ export function BackgroundPanel() {
             {pdfPick.name} · {pdfPick.numPages} pages
           </span>
           <select
+            name="pdfPage"
             aria-label="PDF page"
             className="h-7 rounded border border-black/10 bg-white text-xs dark:border-white/10 dark:bg-[#12161b]"
             value={pdfPick.page}
@@ -232,6 +234,7 @@ export function BackgroundPanel() {
             <div className="flex justify-between"><span>Opacity</span><span>{Math.round(bg.opacity * 100)}%</span></div>
             <input
               type="range"
+              name="bgOpacity"
               aria-label="Background opacity"
               min={10}
               max={80}
@@ -250,6 +253,7 @@ export function BackgroundPanel() {
             <label className={`${label} flex-1 cursor-pointer`}>
               <input
                 type="checkbox"
+                name="bgVisible"
                 className="h-4 w-4 accent-orange-600"
                 checked={bg.visible}
                 onChange={(e) => update((d) => (d.background ? { ...d, background: { ...d.background, visible: e.target.checked } } : d))}
@@ -259,6 +263,7 @@ export function BackgroundPanel() {
             <label className={`${label} flex-1 cursor-pointer`}>
               <input
                 type="checkbox"
+                name="bgLocked"
                 className="h-4 w-4 accent-orange-600"
                 checked={bg.locked}
                 onChange={(e) => update((d) => (d.background ? { ...d, background: { ...d.background, locked: e.target.checked } } : d))}
@@ -272,6 +277,7 @@ export function BackgroundPanel() {
             <div className="flex items-center gap-2">
               <input
                 type="range"
+                name="bgRotationSlider"
                 min={-180}
                 max={180}
                 step={0.1}
@@ -286,6 +292,7 @@ export function BackgroundPanel() {
               />
               <input
                 type="text"
+                name="bgRotation"
                 inputMode="decimal"
                 value={rotDraft ?? bg.rotationDeg.toFixed(1).replace('.', ',')}
                 aria-label="Rotation value in degrees"
@@ -467,6 +474,7 @@ export function CalibrateTool() {
             <div className="flex gap-2">
               <input
                 type="text"
+                name="calibrateLength"
                 inputMode="decimal"
                 aria-label="Real length"
                 required
@@ -476,7 +484,7 @@ export function CalibrateTool() {
                 placeholder="Real length (e.g. 4,25)"
                 className={inputCls}
               />
-              <select aria-label="Length unit" value={unit} onChange={(e) => setUnit(e.target.value as 'cm' | 'm')} className={`${inputCls} w-20`}>
+              <select name="calibrateUnit" aria-label="Length unit" value={unit} onChange={(e) => setUnit(e.target.value as 'cm' | 'm')} className={`${inputCls} w-20`}>
                 <option value="cm">cm</option>
                 <option value="m">m</option>
               </select>

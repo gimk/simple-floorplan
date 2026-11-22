@@ -31,6 +31,7 @@ export function NumField({ id, value, onValue, placeholder, ariaLabel, allowZero
         <input
           ref={ref}
           id={id}
+          name={id ?? (ariaLabel ? ariaLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-') : undefined)}
           inputMode="decimal"
           autoComplete="off"
           enterKeyHint={enterKeyHint}

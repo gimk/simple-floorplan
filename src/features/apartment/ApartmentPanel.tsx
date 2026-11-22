@@ -92,6 +92,7 @@ function CeilingField({ value }: { value: number | null }) {
       <input
         className={`${input} ${bad ? 'border-red-500' : ''}`}
         type="text"
+        name="defaultCeilingCm"
         inputMode="decimal"
         placeholder="not set"
         aria-label="Default ceiling height in centimeters"
@@ -188,6 +189,7 @@ function ReferenceForm({ doc }: { doc: PlanDoc }) {
       <label className={label}>
         <span>Source</span>
         <select
+          name="referenceSource"
           className={input}
           aria-label="Reference source"
           value={source}
@@ -203,6 +205,7 @@ function ReferenceForm({ doc }: { doc: PlanDoc }) {
       <label className={label}>
         <span>Surface (m²)</span>
         <input
+          name="referenceSurface"
           className={`${input} ${bad ? 'border-red-500' : ''}`}
           type="text"
           inputMode="decimal"
@@ -216,7 +219,7 @@ function ReferenceForm({ doc }: { doc: PlanDoc }) {
       {bad && <span role="alert" className="text-xs text-red-600 dark:text-red-400">Enter a positive surface, e.g. 62,4</span>}
       <label className={label}>
         <span>Room (optional)</span>
-        <select className={input} aria-label="Room for this reference" value={roomCode} onChange={(e) => setRoomCode(e.target.value)}>
+        <select name="referenceRoomCode" className={input} aria-label="Room for this reference" value={roomCode} onChange={(e) => setRoomCode(e.target.value)}>
           <option value="">Whole apartment</option>
           {doc.rooms.map((r) => (
             <option key={r.id} value={r.code}>
@@ -228,6 +231,7 @@ function ReferenceForm({ doc }: { doc: PlanDoc }) {
       <label className={label}>
         <span>Label (optional)</span>
         <input
+          name="referenceLabel"
           className={input}
           type="text"
           placeholder="e.g. DPE 2023"
@@ -238,11 +242,11 @@ function ReferenceForm({ doc }: { doc: PlanDoc }) {
       </label>
       <label className={label}>
         <span>Date (optional)</span>
-        <input className={input} type="date" aria-label="Reference document date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <input name="referenceDate" className={input} type="date" aria-label="Reference document date" value={date} onChange={(e) => setDate(e.target.value)} />
       </label>
       <label className={label}>
         <span>Note (optional)</span>
-        <input className={input} type="text" aria-label="Reference note" value={note} onChange={(e) => setNote(e.target.value)} />
+        <input name="referenceNote" className={input} type="text" aria-label="Reference note" value={note} onChange={(e) => setNote(e.target.value)} />
       </label>
       <button className={btn} type="submit">
         <Plus size={14} /> Add reference

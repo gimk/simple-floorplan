@@ -52,10 +52,10 @@ function TapeRow({ doc, room, tape }: { doc: PlanDoc; room: Room; tape: TapeMeas
   return (
     <div className="flex flex-col gap-2.5 rounded-lg border border-slate-300 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-[#12161b]" data-tape={tape.id}>
       <div className="grid grid-cols-2 gap-2.5">
-        <input aria-label="Tape label" autoComplete="off" placeholder="Label (wall to column…)" value={tape.label ?? ''} onChange={(e) => patchTape(tape.id, { label: e.target.value || undefined })} className={text} />
+        <input name="tapeLabel" aria-label="Tape label" autoComplete="off" placeholder="Label (wall to column…)" value={tape.label ?? ''} onChange={(e) => patchTape(tape.id, { label: e.target.value || undefined })} className={text} />
         <NumField ariaLabel="Tape value" value={tape.actualCm} onValue={(n) => patchTape(tape.id, { actualCm: n ?? undefined })} enterKeyHint="done" />
       </div>
-      <input aria-label="Tape note" autoComplete="off" placeholder="Note" value={tape.note ?? ''} onChange={(e) => patchTape(tape.id, { note: e.target.value || undefined })} className={text} />
+      <input name="tapeNote" aria-label="Tape note" autoComplete="off" placeholder="Note" value={tape.note ?? ''} onChange={(e) => patchTape(tape.id, { note: e.target.value || undefined })} className={text} />
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => setMarking(true)} className="min-h-11 rounded-lg border border-cyan-700 px-3 text-sm font-semibold text-cyan-800 dark:border-cyan-400 dark:text-cyan-300">
           {placed ? 'Move points' : 'Mark on drawing'}

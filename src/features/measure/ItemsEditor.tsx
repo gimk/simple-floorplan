@@ -76,10 +76,10 @@ function Item({ room, el }: { room: Room; el: WallElement }) {
     <div className="flex flex-col gap-2.5 rounded-lg border border-slate-300 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-[#12161b]" data-item={el.id}>
       <div className="flex flex-wrap items-center gap-2">
         <span aria-hidden className={`size-3 flex-none rounded-[3px] ${DOT[el.kind]}`} />
-        <select aria-label="Type" className={sel} value={el.kind} onChange={(e) => setKind(el.id, e.target.value as ElementKind)}>
+        <select name="itemKind" aria-label="Type" className={sel} value={el.kind} onChange={(e) => setKind(el.id, e.target.value as ElementKind)}>
           {KINDS.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
         </select>
-        <select aria-label="Wall" className={sel} value={el.wallStart} onChange={(e) => patchElement(el.id, { wallStart: e.target.value })}>
+        <select name="itemWall" aria-label="Wall" className={sel} value={el.wallStart} onChange={(e) => patchElement(el.id, { wallStart: e.target.value })}>
           {walls.map((w) => <option key={w.start.id} value={w.start.id}>on {room.code}-{w.index + 1}</option>)}
         </select>
         <span className="flex-1" />
@@ -108,7 +108,7 @@ function Item({ room, el }: { room: Room; el: WallElement }) {
         </p>
       )}
       <input
-        aria-label="Note" autoComplete="off" placeholder="Note (opening side, handle…)" value={el.note ?? ''}
+        name="itemNote" aria-label="Note" autoComplete="off" placeholder="Note (opening side, handle…)" value={el.note ?? ''}
         onChange={(e) => patchElement(el.id, { note: e.target.value || undefined })}
         className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-[15px] dark:border-slate-600 dark:bg-[#1b2128]"
       />
