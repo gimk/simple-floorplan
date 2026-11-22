@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { roomAreaM2, roomWalls } from '../model/geometry'
 import { parsePlan, type PlanDocV1 } from './schema'
 import { apply, applyBatch, CommandError, CommandsBatchRequestSchema } from './commands'
+import { requiredScopeForCommands } from './access'
 
 const emptyDoc = (): PlanDocV1 =>
   parsePlan({
@@ -532,5 +533,81 @@ describe('commands: error cases', () => {
     const failing = [...commands, { type: 'delete_room', roomCode: 'NOPE' }] as unknown[]
     try { applyBatch(input, failing); expect.unreachable('should have thrown') } catch { /* expected */ }
     expect(JSON.stringify(input)).toBe(before)
+  })
+})
+
+// ---------- apartment data ----------
+
+describe('commands: set_apartment', () => {
+  it('sets and clears the default ceiling height', () => {
+    let res = apply(emptyDoc(), { type: 'set_apartment', defaultCeilingCm: 250 })
+    expect(res.doc.apartment?.defaultCeilingCm).toBe(250)
+    expect(res.result.defaultCeilingCm).toBe(250)
+
+    // null removes it, without touching the rest of the document.
+    res = apply(res.doc, { type: 'set_apartment', defaultCeilingCm: null })
+    expect(res.doc.apartment?.defaultCeilingCm).toBeUndefined()
+    expect(res.doc.title).toBe('Test Apt')
+  })
+
+  it('adds, replaces and removes reference surfaces', () => {
+    let res = apply(emptyDoc(), {
+      type: 'set_apartment',
+      addReference: { id: 'ref_dpe', source: 'dpe', surfaceM2: 62.4, label: 'DPE 2023', date: '2023-04-01' },
+    })
+    expect(res.doc.apartment?.references).toEqual([
+      { id: 'ref_dpe', source: 'dpe', surfaceM2: 62.4, label: 'DPE 2023', date: '2023-04-01' },
+    ])
+
+    // Ids are generated when the client omits them.
+    res = apply(res.doc, { type: 'set_apartment', addReference: { source: 'carrez', surfaceM2: 60.1 } })
+    expect(res.doc.apartment?.references).toHaveLength(2)
+    expect(res.doc.apartment?.references?.[1].id).toMatch(/^ref_/)
+
+    // Full replacement.
+    res = apply(res.doc, { type: 'set_apartment', references: [{ id: 'r1', source: 'deed', surfaceM2: 61 }] })
+    expect(res.doc.apartment?.references).toEqual([{ id: 'r1', source: 'deed', surfaceM2: 61 }])
+
+    // Removal by id.
+    res = apply(res.doc, { type: 'set_apartment', removeReferenceId: 'r1' })
+    expect(res.doc.apartment?.references).toEqual([])
+  })
+
+  it('rejects duplicate, unknown or malformed references', () => {
+    const withRef = apply(emptyDoc(), {
+      type: 'set_apartment',
+      addReference: { id: 'r1', source: 'dpe', surfaceM2: 50 },
+    }).doc
+    const codeOf = (cmd: unknown) => {
+      try { apply(withRef, cmd); return null } catch (err) { return err instanceof CommandError ? err.code : 'zod' }
+    }
+    expect(codeOf({ type: 'set_apartment', addReference: { id: 'r1', source: 'other', surfaceM2: 10 } })).toBe('DUPLICATE_REFERENCE_ID')
+    expect(codeOf({
+      type: 'set_apartment',
+      references: [{ id: 'a', source: 'dpe', surfaceM2: 10 }, { id: 'a', source: 'carrez', surfaceM2: 10 }],
+    })).toBe('DUPLICATE_REFERENCE_ID')
+    expect(codeOf({ type: 'set_apartment', removeReferenceId: 'nope' })).toBe('REFERENCE_NOT_FOUND')
+    // Zod: unknown source, non-positive surface, bad date, unknown field combination.
+    expect(codeOf({ type: 'set_apartment', addReference: { source: 'tax', surfaceM2: 10 } })).toBe('zod')
+    expect(codeOf({ type: 'set_apartment', addReference: { source: 'dpe', surfaceM2: -1 } })).toBe('zod')
+    expect(codeOf({ type: 'set_apartment', addReference: { source: 'dpe', surfaceM2: 10, date: '01/04/2023' } })).toBe('zod')
+    expect(codeOf({ type: 'set_apartment', defaultCeilingCm: 0 })).toBe('zod')
+    // An empty set_apartment does nothing, so it is rejected.
+    expect(codeOf({ type: 'set_apartment' })).toBe('zod')
+  })
+
+  it('warns when a reference points to an unknown room code but keeps it', () => {
+    const res = apply(emptyDoc(), {
+      type: 'set_apartment',
+      references: [{ id: 'r1', source: 'carrez', surfaceM2: 12, roomCode: 'SE' }],
+    })
+    expect(res.doc.apartment?.references?.[0].roomCode).toBe('SE')
+    expect(res.warnings.some((w) => w.code === 'UNKNOWN_ROOM_CODE')).toBe(true)
+  })
+
+  it('keeps documents without apartment data valid and needs edit scope', () => {
+    expect(parsePlan({ projectId: 'p', rooms: [] }).apartment).toBeUndefined()
+    expect(requiredScopeForCommands(['set_apartment'])).toBe('edit')
+    expect(requiredScopeForCommands(['set_apartment', 'set_measurement'])).toBe('edit')
   })
 })

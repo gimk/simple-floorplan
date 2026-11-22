@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { area, cross, dist, dot, lerp, roomAreaM2, roomWalls, sub, wallByStart } from '../model/geometry'
 import { allSurveyIds, roomsInWalkOrder, surveyIds } from '../model/survey'
 import type { PlanDoc, Room, Vec, WallType } from '../model/types'
-import { calcAll, calcRoom, DEFAULT_INPUTS, type CalcInputs } from '../features/export/calc'
+import { calcAll, calcRoom, DEFAULT_INPUTS, effectiveCeilingCm, type CalcInputs } from '../features/export/calc'
 import { overflows, wallThickness } from '../features/elements/geometry'
 import {
   discrepancy,
@@ -118,14 +118,14 @@ export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSche
     const walls = roomWalls(r)
     const perimeterM = round2(walls.reduce((s, w) => s + w.length, 0) / 100)
     const elementCount = (doc.elements ?? []).filter((e) => e.roomId === r.id).length
-    const measuredCeiling = doc.measurements?.[`${r.code}-H`]?.actualCm
     return {
       id: r.id,
       code: r.code,
       name: r.name,
       areaM2,
       perimeterM,
-      ceilingCm: measuredCeiling ?? r.ceilingCm ?? null,
+      ceilingCm: effectiveCeilingCm(doc, r),
+      ceilingFromApartment: r.ceilingCm === undefined && effectiveCeilingCm(doc, r) !== null,
       outdoor: Boolean(r.outdoor),
       walkOrder: r.walkOrder,
       wallCount: walls.length,
@@ -552,7 +552,7 @@ export function queryRoom(doc: PlanDoc, args: z.infer<typeof RoomArgsSchema>) {
     name: room.name,
     areaM2: round2(roomAreaM2(room)),
     perimeterM: round2(roomWalls(room).reduce((s, w) => s + w.length, 0) / 100),
-    ceilingCm: doc.measurements?.[`${room.code}-H`]?.actualCm ?? room.ceilingCm ?? null,
+    ceilingCm: effectiveCeilingCm(doc, room),
     outdoor: Boolean(room.outdoor),
     walkOrder: room.walkOrder,
     diagonal: room.diagonal ?? null,

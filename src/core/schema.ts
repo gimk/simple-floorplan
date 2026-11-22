@@ -109,6 +109,27 @@ export const PinSchema = z.object({
   updatedAt: z.string(),
 })
 
+export const SurfaceReferenceSourceSchema = z.enum(['dpe', 'carrez', 'boutin', 'deed', 'listing', 'other'])
+
+/** ISO date (YYYY-MM-DD). */
+export const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected an ISO date (YYYY-MM-DD)')
+
+export const SurfaceReferenceSchema = z.object({
+  id: z.string().min(1),
+  source: SurfaceReferenceSourceSchema,
+  label: z.string().optional(),
+  surfaceM2: z.number().finite().positive(),
+  roomCode: z.string().min(1).optional(),
+  date: IsoDateSchema.optional(),
+  note: z.string().optional(),
+})
+
+/** Apartment-level data. Optional: documents saved before it existed stay valid. */
+export const ApartmentSchema = z.object({
+  defaultCeilingCm: z.number().finite().positive().optional(),
+  references: z.array(SurfaceReferenceSchema).optional(),
+})
+
 export const PlanDocV1Schema = z.object({
   schemaVersion: z.literal(1).optional().default(1),
   projectId: z.string().min(1).default('local'),
@@ -120,6 +141,7 @@ export const PlanDocV1Schema = z.object({
   roomNotes: z.record(z.string(), z.string()).default({}),
   tapes: z.array(TapeMeasureSchema).default([]),
   pins: z.array(PinSchema).default([]),
+  apartment: ApartmentSchema.optional(),
 })
 
 export type PlanDocV1 = PlanDoc & { schemaVersion: 1; pins: NonNullable<PlanDoc['pins']> }
@@ -138,6 +160,7 @@ export const SnapshotPutBodySchema = z.object({
   // Ignored on snapshot write (stored in separate tables), allowed if client sends full doc.
   measurements: z.record(z.string(), MeasurementSchema).optional(),
   roomNotes: z.record(z.string(), z.string()).optional(),
+  apartment: ApartmentSchema.optional(),
 })
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>

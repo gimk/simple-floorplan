@@ -29,11 +29,21 @@ export const effectiveWallLengths = (doc: PlanDoc, room: Room): number[] =>
     return m && m.actualCm > 0 ? m.actualCm : w.length
   })
 
+/**
+ * Ceiling height used for takeoffs, in cm, or null when unknown.
+ * Order: verified measurement (`<CODE>-H`) > room.ceilingCm > doc.apartment.defaultCeilingCm.
+ * This is the ONLY place ceiling height is resolved: always call it instead of reading
+ * `room.ceilingCm` directly.
+ */
 export const effectiveCeilingCm = (doc: PlanDoc, room: Room): number | null => {
   const m = doc.measurements?.[`${room.code}-H`]
-  const v = m && m.actualCm > 0 ? m.actualCm : room.ceilingCm
+  const v = m && m.actualCm > 0 ? m.actualCm : (room.ceilingCm ?? doc.apartment?.defaultCeilingCm)
   return v && v > 0 ? v : null
 }
+
+/** True when the room sets its own height, so the apartment default does not apply. */
+export const hasOwnCeiling = (room: Room): boolean =>
+  room.ceilingCm !== undefined && room.ceilingCm > 0
 
 const elHeight = (e: WallElement) =>
   e.heightCm && e.heightCm > 0 ? e.heightCm : e.kind === 'window' ? DEFAULT_HEIGHT.window : DEFAULT_HEIGHT.door

@@ -167,3 +167,50 @@ describe('queries & SVG export', () => {
     expect(withBg.svg).toContain('<image href="data:image/png;base64,AAAA"')
   })
 })
+
+describe('queries: apartment default ceiling height', () => {
+  function docWithoutHeights() {
+    const base = parsePlan({ projectId: 'p1', title: 'Apt', rooms: [] })
+    return applyBatch(base, [
+      { type: 'add_room', code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 400, h: 300 } },
+      { type: 'add_room', code: 'CU', name: 'Kitchen', rect: { x: 400, y: 0, w: 200, h: 300 }, ceilingCm: 265 },
+      { type: 'set_apartment', defaultCeilingCm: 250 },
+    ]).doc
+  }
+
+  it('applies the default to rooms without their own height in summary and room queries', () => {
+    const doc = docWithoutHeights()
+    const summary = runQuery(doc, { query: 'summary' }) as {
+      rooms: { code: string; ceilingCm: number | null; ceilingFromApartment: boolean }[]
+      takeoff: { totals: { missingCeiling: number; wallM2: number } }
+    }
+    const byCode = Object.fromEntries(summary.rooms.map((r) => [r.code, r]))
+    expect(byCode.SE.ceilingCm).toBe(250)
+    expect(byCode.SE.ceilingFromApartment).toBe(true)
+    expect(byCode.CU.ceilingCm).toBe(265)
+    expect(byCode.CU.ceilingFromApartment).toBe(false)
+    expect(summary.takeoff.totals.missingCeiling).toBe(0)
+    expect(summary.takeoff.totals.wallM2).toBeGreaterThan(0)
+
+    const room = runQuery(doc, { query: 'room', args: { roomCode: 'SE' } }) as {
+      ceilingCm: number | null
+      takeoff: { ceilingCm: number | null; wallM2: number | null }
+    }
+    expect(room.ceilingCm).toBe(250)
+    expect(room.takeoff.ceilingCm).toBe(250)
+    expect(room.takeoff.wallM2).toBeCloseTo(14 * 2.5 - 0, 5)
+  })
+
+  it('leaves the height unknown when there is no default', () => {
+    const base = parsePlan({ projectId: 'p1', rooms: [] })
+    const doc = applyBatch(base, [
+      { type: 'add_room', code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 400, h: 300 } },
+    ]).doc
+    const summary = runQuery(doc, { query: 'summary' }) as {
+      rooms: { ceilingCm: number | null }[]
+      takeoff: { totals: { missingCeiling: number } }
+    }
+    expect(summary.rooms[0].ceilingCm).toBeNull()
+    expect(summary.takeoff.totals.missingCeiling).toBe(1)
+  })
+})

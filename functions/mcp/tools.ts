@@ -150,7 +150,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'run_commands',
     description:
-      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_room_note, add_pin, add_tape). Supports dryRun preview and baseVersion optimistic concurrency.',
+      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_room_note, add_pin, add_tape, set_apartment). Supports dryRun preview and baseVersion optimistic concurrency.',
     inputSchema: {
       type: 'object',
       properties: {

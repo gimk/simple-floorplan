@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PlanDoc, Room } from '../../model/types'
-import { calcAll, calcRoom, DEFAULT_INPUTS } from './calc'
+import { calcAll, calcRoom, DEFAULT_INPUTS, effectiveCeilingCm, hasOwnCeiling } from './calc'
 import { csvEscape, toCsv } from './csv'
 import { surveyCsv } from './surveyExport'
 import { buildPlanSvg, fitStandardScale } from './svgExport'
@@ -52,6 +52,44 @@ describe('calc', () => {
   })
   it('excludes outdoor rooms', () => {
     expect(calcAll(mkDoc(mkRoom({ outdoor: true })), DEFAULT_INPUTS).rows).toHaveLength(0)
+  })
+})
+
+describe('calc: effectiveCeilingCm', () => {
+  it('prefers the room height, then the apartment default, and the measured value wins', () => {
+    const room = mkRoom()
+    const doc = mkDoc(room)
+    expect(effectiveCeilingCm(doc, room)).toBe(250)
+
+    // No own height: the apartment default applies.
+    const noOwn = mkRoom({ ceilingCm: undefined })
+    const withDefault: PlanDoc = { ...mkDoc(noOwn), apartment: { defaultCeilingCm: 240 } }
+    expect(effectiveCeilingCm(withDefault, noOwn)).toBe(240)
+
+    // A measured height always wins over both.
+    withDefault.measurements = { 'SE-H': { label: 'SE-H', actualCm: 262, updatedAt: now } }
+    expect(effectiveCeilingCm(withDefault, noOwn)).toBe(262)
+  })
+
+  it('returns null without a room height and without an apartment default', () => {
+    const room = mkRoom({ ceilingCm: undefined })
+    expect(effectiveCeilingCm(mkDoc(room), room)).toBeNull()
+    expect(effectiveCeilingCm({ ...mkDoc(room), apartment: {} }, room)).toBeNull()
+  })
+
+  it('uses the apartment default in takeoffs (walls, paint, volume)', () => {
+    const room = mkRoom({ ceilingCm: undefined })
+    const doc: PlanDoc = { ...mkDoc(room), apartment: { defaultCeilingCm: 200 } }
+    const r = calcRoom(doc, room, DEFAULT_INPUTS)
+    expect(r.ceilingCm).toBe(200)
+    expect(r.wallM2).toBeCloseTo(14 * 2 - 0.9 * 2.1 - 1 * 1.2)
+    const { totals } = calcAll(doc, DEFAULT_INPUTS)
+    expect(totals.missingCeiling).toBe(0)
+  })
+
+  it('reports whether a room sets its own height', () => {
+    expect(hasOwnCeiling(mkRoom())).toBe(true)
+    expect(hasOwnCeiling(mkRoom({ ceilingCm: undefined }))).toBe(false)
   })
 })
 

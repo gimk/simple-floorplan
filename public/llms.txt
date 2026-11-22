@@ -145,6 +145,12 @@ Send `{ "commands": [ ... ], "dryRun": false, "baseVersion": 1 }`. Walls can be 
 { "type": "add_tape", "roomCode": "CU", "a": { "x": 0, "y": 100 }, "b": { "x": 140, "y": 100 }, "actualCm": 141, "label": "Clearance to island" }
 ```
 
+19. `set_apartment` — default ceiling height and reference surfaces (DPE, Loi Carrez, Loi Boutin, deed, listing, other). `defaultCeilingCm: null` removes it; `references` replaces the whole list; `addReference` / `removeReferenceId` change one entry. Rooms without their own `ceilingCm` use the default:
+```json
+{ "type": "set_apartment", "defaultCeilingCm": 250 }
+{ "type": "set_apartment", "addReference": { "source": "dpe", "label": "DPE 2023", "surfaceM2": 62.4, "date": "2023-04-01" } }
+```
+
 ## Agent access with API tokens
 
 In addition to the `x-passcode` header (full admin, used by the web app), agents can send a scoped bearer token:
@@ -282,6 +288,9 @@ Grammar (units are **cm**, x right, y down; `#` starts a comment; wall label `CO
 
 ```text
 plan "Apartment 4B" version=1 unit=cm
+apartment ceiling 250                          # optional default height for rooms without one
+ref dpe 62.4 "DPE 2023" date="2023-04-01"      # optional reference surface (source surface [label])
+ref carrez 60.1 room=SE note="lower 1.8 m excluded"
 
 room EN "Entry" rect(0,0 180x240) ceiling=265 walk=1 [outdoor] [diag=0,3] [id=room_EN]
   wall EN-1 exterior 30cm locked        # only non-default walls (default: partition 10cm)

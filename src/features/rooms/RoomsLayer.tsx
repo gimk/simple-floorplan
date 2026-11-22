@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { centroid, fmtCm, roomAreaM2, roomWalls } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
@@ -9,16 +9,24 @@ import { selectHole, useActiveHole } from './holes'
 import { locked, onRoomDown, onWallDouble, onWallDown } from './interaction'
 import { surveyIds } from '../../model/survey'
 import { ToastHost } from '../toast'
+import { polygonPath, polylinePath, wallFaces, wallQuads } from './wallOutline'
+import { RoomNameEditor } from './RoomNameEditor'
 import { wallProps } from './walls'
 
 const pathOf = (rings: Vec[][]) =>
   rings.map((r) => 'M' + r.map((p) => `${p.x} ${p.y}`).join('L') + 'Z').join('')
 
+/** Solid walls (exterior, and bearing walls when the highlight layer is off). */
+const solidClass = 'fill-slate-900 dark:fill-slate-100'
+
 const wallClass = {
-  exterior: 'stroke-slate-900 dark:stroke-slate-100',
-  bearing: 'stroke-slate-900 dark:stroke-slate-100',
-  partition: 'stroke-slate-400 dark:stroke-slate-500',
+  exterior: solidClass,
+  bearing: solidClass,
+  partition: 'fill-slate-400 dark:fill-slate-500',
 }
+
+/** Bearing walls with the highlight layer on: light tone + thin dark diagonal stripes. */
+const bearingFaceClass = 'stroke-slate-500 dark:stroke-slate-400'
 
 /** Draws rooms, walls (bearing/partition/exterior styling), holes, labels, dimensions. */
 export function RoomsLayer() {
@@ -36,22 +44,36 @@ export function RoomsLayer() {
   const { px, zoom } = vp
   const interactive = tool === 'select'
   const selRoomId = selection && selection.kind !== 'element' ? selection.roomId : null
-  const hatch = px(7)
+  // Bearing wall stripes: ~6 px apart (perpendicular), ~1 px wide, at 45°, zoom independent.
+  // A 45° pattern tile of `tile` repeats its lines every tile / sqrt(2).
+  const stripeGap = px(6)
+  const stripeTile = stripeGap * Math.SQRT2
+  // Room whose name is being renamed inline.
+  const [editing, setEditing] = useState<string | null>(null)
   // Walls attached to the vertex/wall being dragged always show their length (7.2 #22).
   const drag = useDragInfo((s) => s.drag)
   const dragRoom = drag ? rooms.find((r) => r.id === drag.roomId) : undefined
   const forcedWalls = useMemo(() => forcedWallStarts(drag, dragRoom), [drag, dragRoom])
+  /** Mitered wall outlines; wall faces sit half a thickness away, with a 1.5 px floor. */
+  const quadsOf = (r: Room) =>
+    wallQuads(r, (startId) => Math.max(wallProps(r, startId).thicknessCm, px(1.5)) / 2)
 
   const label = (r: Room) => {
+    // The room being renamed shows the inline editor instead (drawn last, above the hit areas).
+    if (editing === r.id) return null
     const xs = r.vertices.map((v) => v.x), ys = r.vertices.map((v) => v.y)
     const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
     if (small) return null
     const c = centroid(r.vertices)
     return (
-      <text key={r.id} x={c.x} y={c.y} textAnchor="middle" pointerEvents="none"
+      <text key={r.id} x={c.x} y={c.y} textAnchor="middle" pointerEvents={interactive ? 'auto' : 'none'}
         className="fill-slate-800 dark:fill-slate-100" fontSize={px(14)}>
-        <tspan x={c.x} fontWeight={600}>{r.name}</tspan>
-        <tspan x={c.x} dy={px(16)} fontSize={px(12)} className="fill-slate-500 dark:fill-slate-400">
+        <tspan x={c.x} fontWeight={600} style={interactive ? { cursor: 'text' } : undefined}
+          onPointerDown={interactive ? (e) => onRoomDown(e, r.id, vp) : undefined}
+          onDoubleClick={interactive ? (e) => { e.stopPropagation(); setEditing(r.id) } : undefined}>
+          {r.name}
+        </tspan>
+        <tspan x={c.x} dy={px(16)} fontSize={px(12)} pointerEvents="none" className="fill-slate-500 dark:fill-slate-400">
           {roomAreaM2(r).toFixed(2).replace('.', ',')} m²
         </tspan>
       </text>
@@ -62,8 +84,9 @@ export function RoomsLayer() {
     <g>
       <ToastHost />
       <defs>
-        <pattern id="rooms-bearing-hatch" patternUnits="userSpaceOnUse" width={hatch} height={hatch} patternTransform="rotate(45)">
-          <line x1={hatch / 2} y1={0} x2={hatch / 2} y2={hatch} stroke="#fff" strokeOpacity={0.75} strokeWidth={px(1.6)} />
+        <pattern id="rooms-bearing-stripes" patternUnits="userSpaceOnUse" width={stripeTile} height={stripeTile} patternTransform="rotate(45)">
+          <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
+            className="stroke-slate-600 dark:stroke-slate-900" strokeOpacity={0.9} strokeWidth={px(1)} />
         </pattern>
       </defs>
 
@@ -75,10 +98,11 @@ export function RoomsLayer() {
           fillRule="evenodd"
           className={r.outdoor ? 'fill-emerald-100/80 dark:fill-emerald-900/40' : 'fill-sky-50/90 dark:fill-slate-800/90'}
           pointerEvents={interactive ? 'auto' : 'none'}
+          style={interactive ? { cursor: 'move' } : undefined}
           data-room-id={r.id}
           data-room-code={r.code}
           aria-label={`${r.name} (${r.code})`}
-          onPointerDown={interactive ? (e) => onRoomDown(e, r.id) : undefined}
+          onPointerDown={interactive ? (e) => onRoomDown(e, r.id, vp) : undefined}
         />
       ))}
 
@@ -98,16 +122,20 @@ export function RoomsLayer() {
           strokeWidth={px(2.5)} strokeDasharray={`${px(6)} ${px(4)}`} className="stroke-orange-500" />
       ))}
 
-      {/* walls */}
-      {rooms.map((r) => roomWalls(r).map((w) => {
-        const p = wallProps(r, w.start.id)
-        const t = Math.max(p.thicknessCm, px(1.5))
-        const common = { x1: w.start.x, y1: w.start.y, x2: w.end.x, y2: w.end.y, strokeLinecap: 'square' as const, pointerEvents: 'none' as const }
+      {/* walls: mitered polygons, so corners join cleanly at any angle */}
+      {rooms.map((r) => quadsOf(r).map((q) => {
+        const p = wallProps(r, q.startId)
+        const d = polygonPath(q.points)
+        const bearingHighlight = p.type === 'bearing' && layers.bearingHighlight
         return (
-          <g key={r.id + w.start.id}>
-            <line {...common} strokeWidth={t} className={wallClass[p.type]} />
-            {p.type === 'bearing' && layers.bearingHighlight && (
-              <line {...common} strokeWidth={t} stroke="url(#rooms-bearing-hatch)" />
+          <g key={r.id + q.startId}>
+            <path d={d} pointerEvents="none" className={bearingHighlight ? 'fill-slate-300 dark:fill-slate-600' : wallClass[p.type]} />
+            {bearingHighlight && (
+              <>
+                <path d={d} pointerEvents="none" fill="url(#rooms-bearing-stripes)" />
+                <path d={wallFaces(q).map(polylinePath).join('')} pointerEvents="none" fill="none"
+                  strokeWidth={px(1)} className={bearingFaceClass} />
+              </>
             )}
           </g>
         )
@@ -143,10 +171,9 @@ export function RoomsLayer() {
           strokeWidth={px(2)} strokeDasharray={`${px(6)} ${px(4)}`} className="stroke-orange-500" />
       ))}
       {selection?.kind === 'wall' && rooms.filter((r) => r.id === selection.roomId).map((r) =>
-        roomWalls(r).filter((w) => w.start.id === selection.wallStart).map((w) => (
-          <line key={'selw' + w.start.id} x1={w.start.x} y1={w.start.y} x2={w.end.x} y2={w.end.y}
-            strokeLinecap="square" pointerEvents="none" strokeOpacity={0.7}
-            strokeWidth={Math.max(wallProps(r, w.start.id).thicknessCm + px(4), px(5))} className="stroke-orange-500" />
+        quadsOf(r).filter((q) => q.startId === selection.wallStart).map((q) => (
+          <path key={'selw' + q.startId} d={polygonPath(q.points)} pointerEvents="none" strokeOpacity={0.9}
+            strokeWidth={px(2)} className="fill-orange-500/35 stroke-orange-500" />
         )))}
 
       {/* labels + dimensions */}
@@ -191,6 +218,11 @@ export function RoomsLayer() {
             onDoubleClick={(e) => onWallDouble(e, vp, r.id, w.start.id)} />
         )
       }))}
+
+      {/* inline room rename editor: topmost, so no hit area can steal its clicks */}
+      {rooms.filter((r) => r.id === editing).map((r) => (
+        <RoomNameEditor key={'edit' + r.id} room={r} vp={vp} onClose={() => setEditing(null)} />
+      ))}
     </g>
   )
 }

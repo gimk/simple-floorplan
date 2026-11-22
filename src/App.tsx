@@ -16,6 +16,7 @@ import { MeasureMode } from './features/measure'
 import { ProjectTitleButton } from './features/projects'
 import { CalculatorsPanel, ExportPanel } from './features/export'
 import { AnnotationsLayer, PinPanel, PinTool, TapePanel, TapeTool } from './features/annotations'
+import { ApartmentPanel } from './features/apartment'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { EmptyState } from './shell/EmptyState'
 import { ZoomControls } from './shell/ZoomControls'
@@ -270,6 +271,7 @@ export default function App() {
             className={`${sidebarOpen ? 'flex' : 'hidden'} w-72 shrink-0 flex-col gap-3 overflow-y-auto border-l border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-40 max-md:shadow-2xl`}
             aria-label="Side panel"
           >
+            <ApartmentPanel />
             <BackgroundPanel />
             <RoomsPanel />
             <ElementsPanel />

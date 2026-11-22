@@ -111,6 +111,31 @@ export type Pin = {
   updatedAt: string
 }
 
+/** Where a reference surface comes from (DPE, Loi Carrez, deed, listing...). */
+export type SurfaceReferenceSource = 'dpe' | 'carrez' | 'boutin' | 'deed' | 'listing' | 'other'
+
+/** A surface written on an official document, compared with the traced plan. */
+export type SurfaceReference = {
+  id: string
+  source: SurfaceReferenceSource
+  /** Free label, e.g. "DPE 2023". */
+  label?: string
+  /** Surface reported by the document, in m². */
+  surfaceM2: number
+  /** When the reference is about one room. */
+  roomCode?: string
+  /** ISO date of the document (YYYY-MM-DD). */
+  date?: string
+  note?: string
+}
+
+/** Apartment-level data (not tied to one room). */
+export type Apartment = {
+  /** Ceiling height used by rooms without their own `ceilingCm`. */
+  defaultCeilingCm?: number
+  references?: SurfaceReference[]
+}
+
 export type PlanDoc = {
   projectId: string
   title: string
@@ -121,6 +146,8 @@ export type PlanDoc = {
   roomNotes: Record<string, string> // keyed by room code
   tapes: TapeMeasure[]
   pins?: Pin[]
+  /** Optional apartment-level data. Absent in older documents. */
+  apartment?: Apartment
 }
 
 export type Selection =

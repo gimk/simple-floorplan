@@ -73,3 +73,41 @@ describe('schema: parsePlan & migration', () => {
     expect((schema.properties as Record<string, unknown>).rooms).toBeDefined()
   })
 })
+
+describe('schema: apartment data', () => {
+  it('accepts old documents without apartment data', () => {
+    const doc = parsePlan({ projectId: 'p1', title: 'Old', rooms: [] })
+    expect(doc.apartment).toBeUndefined()
+    expect(doc.pins).toEqual([])
+  })
+
+  it('accepts and normalises apartment data', () => {
+    const doc = parsePlan({
+      projectId: 'p1',
+      apartment: {
+        defaultCeilingCm: 250,
+        references: [
+          { id: 'r1', source: 'dpe', surfaceM2: 62.4, label: 'DPE 2023', date: '2023-04-01' },
+          { id: 'r2', source: 'carrez', surfaceM2: 60.1, roomCode: 'SE', note: 'lower 1.8 m excluded' },
+        ],
+      },
+      rooms: [],
+    })
+    expect(doc.apartment?.defaultCeilingCm).toBe(250)
+    expect(doc.apartment?.references).toHaveLength(2)
+    expect(doc.apartment?.references?.[0].source).toBe('dpe')
+  })
+
+  it('rejects invalid apartment data', () => {
+    expect(safeParsePlan({ apartment: { defaultCeilingCm: 0 } }).ok).toBe(false)
+    expect(safeParsePlan({ apartment: { references: [{ id: 'r1', source: 'tax', surfaceM2: 10 }] } }).ok).toBe(false)
+    expect(safeParsePlan({ apartment: { references: [{ id: 'r1', source: 'dpe', surfaceM2: -1 }] } }).ok).toBe(false)
+    expect(safeParsePlan({ apartment: { references: [{ id: 'r1', source: 'dpe', surfaceM2: 10, date: '2023' }] } }).ok).toBe(false)
+    expect(safeParsePlan({ apartment: { references: [{ source: 'dpe', surfaceM2: 10 }] } }).ok).toBe(false)
+  })
+
+  it('exposes apartment in the exported JSON Schema', () => {
+    const schema = planJsonSchema()
+    expect((schema.properties as Record<string, unknown>).apartment).toBeDefined()
+  })
+})

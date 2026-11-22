@@ -6,7 +6,11 @@
 //   file      := header ( stmt | blank | comment )*
 //   header    := "plan" STRING ( "version=" INT )? ( "unit=cm" )?
 //   comment   := "#" ...end of line
-//   stmt      := room | tape | pin | measure          (top level)
+//   stmt      := room | tape | pin | measure | apartment | ref   (top level)
+//   apartment := "apartment" ( "ceiling" ( "=" )? num )*
+//   ref       := "ref" SOURCE num ( STRING )? refAttr*
+//   refAttr   := "id=" WORD | "room=" CODE | "date=" STRING | "note=" STRING
+//   SOURCE    := dpe | carrez | boutin | deed | listing | other
 //   room      := "room" CODE STRING shape attr* NL roomLine*
 //   shape     := "poly(" pt ( WS pt )* ")"  |  "rect(" x "," y " " w "x" h ")"
 //   pt        := ( ID ":" )? x "," y                 (WS = whitespace)
@@ -56,6 +60,8 @@ import type {
   Pin,
   PlanDoc,
   Room,
+  SurfaceReference,
+  SurfaceReferenceSource,
   TapeMeasure,
   WallElement,
   WallProps,
@@ -84,6 +90,7 @@ const defaultHoleVertexId = (code: string, hi: number, i: number) => `v_${safe(c
 const defaultElementId = (code: string, wallIndex1: number, k: number) => `el_${safe(code)}_${wallIndex1}_${k}`
 const defaultPinId = (n: number) => `pin_${n}`
 const defaultTapeId = (n: number) => `tape_${n}`
+const defaultReferenceId = (n: number) => `ref_${n}`
 
 // ---------- number / string formatting ----------
 
@@ -139,6 +146,19 @@ const VARIANTS = new Set<string>([
 export function planToDsl(doc: PlanDoc): string {
   const out: string[] = []
   out.push(`plan ${q(doc.title ?? '')} version=1 unit=cm`)
+
+  // Apartment data (optional): default ceiling height, then reference surfaces.
+  const defaultCeiling = doc.apartment?.defaultCeilingCm
+  if (defaultCeiling != null) out.push(`apartment ceiling ${fmtNum(defaultCeiling)}`)
+  ;(doc.apartment?.references ?? []).forEach((r, i) => {
+    const parts = ['ref', r.source, fmtNum(r.surfaceM2)]
+    if (r.label != null) parts.push(q(r.label))
+    if (r.id !== defaultReferenceId(i)) parts.push(`id=${r.id}`)
+    if (r.roomCode != null) parts.push(`room=${r.roomCode}`)
+    if (r.date != null) parts.push(`date=${q(r.date)}`)
+    if (r.note != null) parts.push(`note=${q(r.note)}`)
+    out.push(parts.join(' '))
+  })
 
   const rooms = [...doc.rooms].sort((a, b) => a.walkOrder - b.walkOrder || a.code.localeCompare(b.code))
   const pins = doc.pins ?? []
@@ -288,6 +308,7 @@ const LABEL_RE = /^([A-Za-z0-9_]+)-([0-9]+)$/
 /** Survey label: wall "SE-2", diagonal "SE-D", ceiling "SE-H". */
 const MEAS_LABEL_RE = /^([A-Za-z0-9_]+)-([0-9]+|[DHdh])$/
 const WALL_TYPES: WallType[] = ['bearing', 'partition', 'exterior']
+const SURFACE_SOURCES: SurfaceReferenceSource[] = ['dpe', 'carrez', 'boutin', 'deed', 'listing', 'other']
 
 type Tok =
   | { t: 'word'; v: string }
@@ -474,6 +495,8 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
   const pins: Pin[] = []
   let pinCounter = 0
   let tapeCounter = 0
+  let apartmentDefaultCeilingCm: number | undefined
+  const references: SurfaceReference[] = []
 
   const seenCodes = new Set<string>()
   let currentRoom: Room | null = null
@@ -877,6 +900,72 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
       continue
     }
 
+    if (kw === 'apartment') {
+      if (indented) throw new DslParseError(lineNo, '"apartment" must start at the beginning of a line')
+      cur.next()
+      if (cur.done) throw new DslParseError(lineNo, '"apartment" needs at least one attribute (e.g. "apartment ceiling 250")')
+      while (!cur.done) {
+        const aTok = cur.next()
+        if (aTok.t !== 'word') throw cur.err(`expected an apartment attribute but found ${tokDesc(aTok)}`)
+        if (aTok.v !== 'ceiling') throw new DslParseError(lineNo, `unknown apartment attribute "${aTok.v}"`)
+        // Accept both "ceiling 250" and "ceiling=250".
+        const eq = cur.peek()
+        if (eq && eq.t === 'punct' && eq.v === '=') cur.next()
+        const cm = cur.num()
+        if (!(cm > 0)) throw new DslParseError(lineNo, 'apartment ceiling must be positive')
+        apartmentDefaultCeilingCm = cm
+      }
+      continue
+    }
+
+    if (kw === 'ref') {
+      if (indented) throw new DslParseError(lineNo, '"ref" must start at the beginning of a line')
+      cur.next()
+      const srcTok = cur.next()
+      if (srcTok.t !== 'word' || !SURFACE_SOURCES.includes(srcTok.v as SurfaceReferenceSource)) {
+        throw new DslParseError(
+          lineNo,
+          `invalid reference source ${tokDesc(srcTok)} (expected ${SURFACE_SOURCES.join(', ')})`,
+        )
+      }
+      const surfaceM2 = cur.num()
+      if (!(surfaceM2 > 0)) throw new DslParseError(lineNo, 'reference surface must be positive')
+      const ref: SurfaceReference = {
+        id: defaultReferenceId(references.length),
+        source: srcTok.v as SurfaceReferenceSource,
+        surfaceM2,
+      }
+      // Optional positional label right after the surface.
+      const maybeLabel = cur.peek()
+      if (maybeLabel && maybeLabel.t === 'str') {
+        cur.next()
+        ref.label = maybeLabel.v
+      }
+      while (!cur.done) {
+        const t = cur.next()
+        if (t.t !== 'word') throw cur.err(`expected a reference attribute but found ${tokDesc(t)}`)
+        cur.expectPunct('=')
+        const v = cur.next()
+        if (t.v === 'id') {
+          if (v.t !== 'word') throw cur.err(`expected a reference id but found ${tokDesc(v)}`)
+          ref.id = v.v
+        } else if (t.v === 'room') {
+          if (v.t !== 'word') throw cur.err('room= expects a room code')
+          ref.roomCode = v.v
+        } else if (t.v === 'date') {
+          if (v.t !== 'str' && v.t !== 'word') throw cur.err(`expected a date for date= but found ${tokDesc(v)}`)
+          ref.date = v.v
+        } else if (t.v === 'note') {
+          if (v.t !== 'str') throw cur.err(`expected a quoted string for note= but found ${tokDesc(v)}`)
+          ref.note = v.v
+        } else {
+          throw new DslParseError(lineNo, `unknown reference attribute "${t.v}"`)
+        }
+      }
+      references.push(ref)
+      continue
+    }
+
     throw new DslParseError(lineNo, `unknown statement "${kw}"`)
   }
 
@@ -891,6 +980,14 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
     roomNotes,
     tapes,
     pins,
+    ...(apartmentDefaultCeilingCm !== undefined || references.length > 0
+      ? {
+          apartment: {
+            ...(apartmentDefaultCeilingCm !== undefined ? { defaultCeilingCm: apartmentDefaultCeilingCm } : {}),
+            references,
+          },
+        }
+      : {}),
   })
   return doc
 }

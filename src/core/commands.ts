@@ -17,10 +17,29 @@ import {
   type Wall,
 } from '../model/geometry'
 import { nextRoomCode, surveyIds } from '../model/survey'
-import type { PlanDoc, Room, Vec, Vertex, WallElement, WallProps, WallType } from '../model/types'
+import type {
+  Apartment,
+  PlanDoc,
+  Room,
+  SurfaceReference,
+  Vec,
+  Vertex,
+  WallElement,
+  WallProps,
+  WallType,
+} from '../model/types'
 import { defaultElement, overflows } from '../features/elements/geometry'
 import { DEFAULT_THICKNESS, wallProps } from '../features/rooms/walls'
-import { ElementKindSchema, ElementVariantSchema, parsePlan, type PlanDocV1, VecSchema, WallTypeSchema } from './schema'
+import {
+  ElementKindSchema,
+  ElementVariantSchema,
+  IsoDateSchema,
+  parsePlan,
+  SurfaceReferenceSourceSchema,
+  type PlanDocV1,
+  VecSchema,
+  WallTypeSchema,
+} from './schema'
 import { findSharedWalls } from './queries'
 
 const EPS = 0.05
@@ -276,6 +295,38 @@ const AddTapeSchema = z.object({
   roomCode: z.string().min(1).optional(),
 })
 
+/** A surface reference as sent by a client: the id is optional and generated when missing. */
+const SurfaceReferenceInputSchema = z.object({
+  id: z.string().min(1).optional(),
+  source: SurfaceReferenceSourceSchema,
+  label: z.string().optional(),
+  surfaceM2: z.number().finite().positive(),
+  roomCode: z.string().min(1).optional(),
+  date: IsoDateSchema.optional(),
+  note: z.string().optional(),
+})
+
+const SetApartmentSchema = z
+  .object({
+    type: z.literal('set_apartment'),
+    /** Apartment default height in cm; null removes it. */
+    defaultCeilingCm: z.number().finite().positive().nullable().optional(),
+    /** Full replacement of the reference list (ids are generated when missing). */
+    references: z.array(SurfaceReferenceInputSchema).optional(),
+    /** Append one reference. */
+    addReference: SurfaceReferenceInputSchema.optional(),
+    /** Remove one reference by id. */
+    removeReferenceId: z.string().min(1).optional(),
+  })
+  .refine(
+    (v) =>
+      v.defaultCeilingCm !== undefined ||
+      v.references !== undefined ||
+      v.addReference !== undefined ||
+      v.removeReferenceId !== undefined,
+    { message: 'set_apartment requires defaultCeilingCm, references, addReference or removeReferenceId' },
+  )
+
 export const CommandSchema = z.discriminatedUnion('type', [
   AddRoomSchema,
   UpdateRoomSchema,
@@ -295,6 +346,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
   SetRoomNoteSchema,
   AddPinSchema,
   AddTapeSchema,
+  SetApartmentSchema,
 ])
 
 export type Command = z.infer<typeof CommandSchema>
@@ -1486,7 +1538,75 @@ export function apply(rawDoc: PlanDoc, rawCommand: unknown): ApplyResult {
         warnings,
       }
     }
+
+    case 'set_apartment': {
+      const existing = doc.apartment ?? {}
+      let references: SurfaceReference[] = existing.references ? [...existing.references] : []
+
+      if (cmd.references !== undefined) {
+        references = cmd.references.map((r) => normalizeReference(r))
+        const seen = new Set<string>()
+        for (const r of references) {
+          if (seen.has(r.id)) throw new CommandError('DUPLICATE_REFERENCE_ID', `Reference id "${r.id}" appears twice.`)
+          seen.add(r.id)
+        }
+      }
+
+      if (cmd.addReference) {
+        const added = normalizeReference(cmd.addReference)
+        if (references.some((r) => r.id === added.id)) {
+          throw new CommandError('DUPLICATE_REFERENCE_ID', `Reference id "${added.id}" already exists.`)
+        }
+        references = [...references, added]
+      }
+
+      if (cmd.removeReferenceId !== undefined) {
+        if (!references.some((r) => r.id === cmd.removeReferenceId)) {
+          throw new CommandError('REFERENCE_NOT_FOUND', `No surface reference with id "${cmd.removeReferenceId}".`)
+        }
+        references = references.filter((r) => r.id !== cmd.removeReferenceId)
+      }
+
+      // Unknown room codes are kept (the room may come later) but reported.
+      for (const r of references) {
+        if (r.roomCode && !doc.rooms.some((room) => room.code === r.roomCode)) {
+          warnings.push({
+            code: 'UNKNOWN_ROOM_CODE',
+            message: `Surface reference ${r.id} points to unknown room code "${r.roomCode}".`,
+            details: { referenceId: r.id, roomCode: r.roomCode },
+          })
+        }
+      }
+
+      const apartment: Apartment = { ...existing, references }
+      if (cmd.defaultCeilingCm === null) delete apartment.defaultCeilingCm
+      else if (cmd.defaultCeilingCm !== undefined) apartment.defaultCeilingCm = cmd.defaultCeilingCm
+
+      return {
+        doc: { ...doc, apartment },
+        result: {
+          defaultCeilingCm: apartment.defaultCeilingCm ?? null,
+          references,
+          referenceCount: references.length,
+        },
+        warnings,
+      }
+    }
   }
+}
+
+/** Drop undefined optional fields and give the reference a stable id when it has none. */
+function normalizeReference(r: z.infer<typeof SurfaceReferenceInputSchema>): SurfaceReference {
+  const ref: SurfaceReference = {
+    id: r.id ?? uid('ref'),
+    source: r.source,
+    surfaceM2: r.surfaceM2,
+  }
+  if (r.label !== undefined) ref.label = r.label
+  if (r.roomCode !== undefined) ref.roomCode = r.roomCode
+  if (r.date !== undefined) ref.date = r.date
+  if (r.note !== undefined) ref.note = r.note
+  return ref
 }
 
 /**

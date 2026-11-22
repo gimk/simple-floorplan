@@ -232,3 +232,60 @@ describe('dsl: planToDsl / dslToPlan', () => {
     expect(doc.tapes[0].label).toBe('check')
   })
 })
+
+describe('dsl: apartment data', () => {
+  function apartmentDoc(): PlanDocV1 {
+    return applyBatch(sampleDoc(), [
+      { type: 'set_apartment', defaultCeilingCm: 250 },
+      {
+        type: 'set_apartment',
+        addReference: { id: 'ref_0', source: 'dpe', surfaceM2: 62.4, label: 'DPE 2023', date: '2023-04-01' },
+      },
+      {
+        type: 'set_apartment',
+        addReference: { id: 'ref_carrez', source: 'carrez', surfaceM2: 60.1, roomCode: 'SE', note: 'excludes lower 1.8 m' },
+      },
+    ]).doc
+  }
+
+  it('writes apartment ceiling and reference lines', () => {
+    const dsl = planToDsl(apartmentDoc())
+    expect(dsl).toContain('apartment ceiling 250')
+    expect(dsl).toContain('ref dpe 62.4 "DPE 2023" date="2023-04-01"')
+    expect(dsl).toContain('ref carrez 60.1 id=ref_carrez room=SE note="excludes lower 1.8 m"')
+    // The deterministic id (ref_0) is omitted, like pins and tapes.
+    expect(dsl).not.toContain('id=ref_0')
+    // Apartment lines come before the rooms.
+    expect(dsl.indexOf('apartment ceiling')).toBeLessThan(dsl.indexOf('room SE'))
+  })
+
+  it('round-trips the apartment block', () => {
+    const doc = apartmentDoc()
+    const back = dslToPlan(planToDsl(doc), undefined, { now: NOW })
+    expect(back.apartment).toEqual(doc.apartment)
+    expect(planToDsl(back)).toBe(planToDsl(doc))
+  })
+
+  it('parses both "ceiling 250" and "ceiling=250" and a missing apartment block', () => {
+    const a = dslToPlan('plan "T"\napartment ceiling 250', undefined, { now: NOW })
+    const b = dslToPlan('plan "T"\napartment ceiling=250', undefined, { now: NOW })
+    expect(a.apartment?.defaultCeilingCm).toBe(250)
+    expect(b.apartment).toEqual(a.apartment)
+    expect(dslToPlan('plan "T"', undefined, { now: NOW }).apartment).toBeUndefined()
+  })
+
+  it('reports invalid apartment and ref lines', () => {
+    const line = (text: string) => {
+      try { dslToPlan(text); return null } catch (err) { return err as DslParseError }
+    }
+    expect(line('plan "T"\napartment')?.line).toBe(2)
+    expect(line('plan "T"\napartment floor 250')?.message).toMatch(/unknown apartment attribute/)
+    expect(line('plan "T"\nref tax 62.4')?.message).toMatch(/invalid reference source/)
+    expect(line('plan "T"\nref dpe 0')?.message).toMatch(/surface must be positive/)
+    expect(line('plan "T"\nref dpe 62.4 foo=1')?.message).toMatch(/unknown reference attribute/)
+    // Indented outside a room block: the generic indentation error wins.
+    expect(line('plan "T"\n  ref dpe 62.4')?.message).toMatch(/indented line outside of a room block/)
+    expect(line('plan "T"\nroom SE "L" rect(0,0 400x300)\n  ref dpe 62.4')?.message).toMatch(/must start at the beginning/)
+    expect(line('plan "T"\nroom SE "L" rect(0,0 400x300)\n  apartment ceiling 250')?.message).toMatch(/must start at the beginning/)
+  })
+})
