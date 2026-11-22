@@ -13,9 +13,9 @@ export function UpdateToast() {
   }, [])
   if (!update) return null
   return (
-    <div role="status" className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-neutral-100 dark:text-neutral-900">
+    <div role="status" className="fixed bottom-16 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-neutral-100 dark:text-neutral-900">
       <span>Update available</span>
-      <button className="h-9 rounded-md bg-orange-600 px-3 font-semibold text-white" onClick={() => void update()}>Reload</button>
+      <button className="h-9 rounded-md bg-orange-700 px-3 font-semibold text-white hover:bg-orange-800" onClick={() => void update()}>Reload</button>
       <button className="h-9 px-2 opacity-70" onClick={() => setUpdate(null)}>Later</button>
     </div>
   )

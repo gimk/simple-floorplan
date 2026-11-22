@@ -10,6 +10,7 @@ import { SNAP_PX, isUnplaced, placePin, snapToPlan, tapeLabel, tracedCm } from '
 import { PinEditor } from './PinEditor'
 import { selectAnnot, useAnnotSel, type AnnotSel } from './selection'
 import { parseCm } from '../measure/logic'
+import { undoToast } from '../toast'
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement ||
@@ -36,8 +37,8 @@ function DimLine({ a, b, label, selected, onDown }: { a: Vec; b: Vec; label: str
       ))}
       <text
         x={mx + nx * px(10)} y={my + ny * px(10)} transform={`rotate(${ang} ${mx + nx * px(10)} ${my + ny * px(10)})`}
-        textAnchor="middle" dominantBaseline="central" fontSize={px(12)} fill={TAPE} stroke="white" strokeWidth={px(3)} paintOrder="stroke"
-        pointerEvents="none" className="font-mono font-semibold"
+        textAnchor="middle" dominantBaseline="central" fontSize={px(12)} fill={TAPE} strokeWidth={px(3)} paintOrder="stroke"
+        pointerEvents="none" className="font-mono font-semibold stroke-[#f6f7f5] dark:stroke-[#12161b]"
       >{label}</text>
     </g>
   )
@@ -49,7 +50,7 @@ function PinIcon({ pin, n, selected, onDown }: { pin: Pin; n?: number; selected:
   return (
     <g transform={`translate(${pin.at.x} ${pin.at.y})`} onPointerDown={onDown} style={{ cursor: onDown ? 'pointer' : undefined }}>
       <circle r={px(18)} fill="transparent" />
-      <circle r={r} fill={PIN} stroke={selected ? '#1b2430' : 'white'} strokeWidth={px(selected ? 3 : 2)} />
+      <circle r={r} fill={PIN} stroke={selected ? '#f97316' : 'white'} strokeWidth={px(selected ? 3 : 2)} />
       <text textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill="white" pointerEvents="none" className="font-semibold">
         {n ?? (pin.photoKeys.length > 0 ? '▣' : '•')}
       </text>
@@ -69,9 +70,13 @@ export function AnnotationsLayer() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.key !== 'Delete' && e.key !== 'Backspace') || isTyping(e.target)) return
       const sel = useAnnotSel.getState().sel
-      if (sel?.kind === 'tape') removeTape(sel.id)
-      else if (sel?.kind === 'pin') removePin(sel.id)
-      else return
+      if (sel?.kind === 'tape') {
+        removeTape(sel.id)
+        undoToast('Tape deleted', () => useDoc.temporal.getState().undo())
+      } else if (sel?.kind === 'pin') {
+        removePin(sel.id)
+        undoToast('Pin deleted', () => useDoc.temporal.getState().undo())
+      } else return
       e.preventDefault()
       selectAnnot(null)
     }
@@ -104,6 +109,20 @@ export function TapeTool() {
   const [a, setA] = useState<Vec | null>(null)
   const [hover, setHover] = useState<Vec | null>(null)
   const snap = (e: React.PointerEvent) => snapToPlan(toWorld(e.clientX, e.clientY), rooms, px(SNAP_PX))
+
+  useEffect(() => {
+    if (!a) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setA(null)
+        setHover(null)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [a])
 
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return
@@ -149,40 +168,53 @@ export function TapePanel() {
   const selection = useAnnotSel((s) => s.sel)
   const tape = useDoc((s): TapeMeasure | undefined => (selection?.kind === 'tape' ? s.doc.tapes.find((t) => t.id === selection.id) : undefined))
   const [draft, setDraft] = useState<string | null>(null)
-  useEffect(() => setDraft(null), [tape?.id])
+  const [noteDraft, setNoteDraft] = useState<string | null>(null)
+  useEffect(() => { setDraft(null); setNoteDraft(null) }, [tape?.id])
   if (!tape) return null
   const shown = draft ?? (tape.actualCm != null ? fmtCm(tape.actualCm) : '')
   const bad = draft != null && Number.isNaN(parseCm(draft))
+  const commitLen = () => {
+    if (draft === null) return
+    const n = parseCm(draft)
+    if (n == null) patchTape(tape.id, { actualCm: undefined }, false)
+    else if (!Number.isNaN(n)) patchTape(tape.id, { actualCm: n }, false)
+    setDraft(null)
+  }
+  const commitNote = () => {
+    if (noteDraft === null) return
+    const next = noteDraft || undefined
+    if (next !== tape.note) patchTape(tape.id, { note: next }, false)
+    setNoteDraft(null)
+  }
   return (
-    <div className={box}>
-      <b className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-4" style={{ background: TAPE }} /> Tape</b>
+    <section className={box}>
+      <h2 className="flex items-center gap-1.5 text-sm font-semibold"><span className="inline-block h-0.5 w-4" style={{ background: TAPE }} /> Tape</h2>
       <p className="font-mono">Traced {fmtCm(tracedCm(tape))} cm</p>
       <label className="flex flex-col gap-1">
-        <span className="text-xs text-slate-500">Real length (cm)</span>
+        <span className="text-xs text-slate-500 dark:text-slate-400">Real length (cm)</span>
         <input
-          inputMode="decimal" aria-label="Real length" value={shown} aria-invalid={bad}
-          onChange={(e) => {
-            const t = e.target.value; setDraft(t)
-            const n = parseCm(t)
-            if (n == null) patchTape(tape.id, { actualCm: undefined }, false)
-            else if (!Number.isNaN(n)) patchTape(tape.id, { actualCm: n }, false)
-          }}
-          onBlur={() => setDraft(null)}
-          className={`h-9 rounded-md border bg-transparent px-2 font-mono ${bad ? 'border-red-500' : 'border-black/15 dark:border-white/20'}`}
+          type="text" inputMode="decimal" aria-label="Real length" value={shown} aria-invalid={bad}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitLen}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          className={`h-9 rounded-md border bg-white px-2 font-mono dark:bg-[#12161b] ${bad ? 'border-red-500' : 'border-black/15 dark:border-white/20'}`}
         />
       </label>
       <label className="flex flex-col gap-1">
-        <span className="text-xs text-slate-500">Note</span>
+        <span className="text-xs text-slate-500 dark:text-slate-400">Note</span>
         <input
-          aria-label="Tape note" value={tape.note ?? ''} onChange={(e) => patchTape(tape.id, { note: e.target.value || undefined }, false)}
-          className="h-9 rounded-md border border-black/15 bg-transparent px-2 dark:border-white/20"
+          aria-label="Tape note" value={noteDraft ?? (tape.note ?? '')}
+          onChange={(e) => setNoteDraft(e.target.value)}
+          onBlur={commitNote}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          className="h-9 rounded-md border border-black/15 bg-white px-2 dark:border-white/20 dark:bg-[#12161b]"
         />
       </label>
       <button
-        type="button" onClick={() => { removeTape(tape.id); selectAnnot(null) }}
-        className="flex h-9 items-center justify-center gap-1.5 rounded-md border border-black/15 hover:bg-black/5 dark:border-white/20 dark:hover:bg-white/10"
+        type="button" onClick={() => { removeTape(tape.id); selectAnnot(null); undoToast('Tape deleted', () => useDoc.temporal.getState().undo()) }}
+        className="flex h-9 items-center justify-center gap-1.5 rounded-md border border-red-600/40 font-medium text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400"
       ><Trash2 size={14} /> Delete tape</button>
-    </div>
+    </section>
   )
 }
 
@@ -192,10 +224,10 @@ export function PinPanel() {
   const pin = useDoc((s) => (selection?.kind === 'pin' ? (s.doc.pins ?? []).find((p) => p.id === selection.id) : undefined))
   if (!pin) return null
   return (
-    <div className={box}>
-      <b className="flex items-center gap-1.5"><MapPin size={14} style={{ color: PIN }} /> Pin</b>
-      <PinEditor pin={pin} silent={false} onDeleted={() => selectAnnot(null)} />
-    </div>
+    <section className={box}>
+      <h2 className="flex items-center gap-1.5 text-sm font-semibold"><MapPin size={14} style={{ color: PIN }} /> Pin</h2>
+      <PinEditor pin={pin} silent={false} compact onDeleted={() => selectAnnot(null)} />
+    </section>
   )
 }
 

@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { House, Plus, Trash2 } from 'lucide-react'
 import { uid, useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Selection, SurfaceReference, SurfaceReferenceSource } from '../../model/types'
+import { useAnnotSel } from '../annotations/selection'
+import { undoToast } from '../toast'
 import {
   apartmentTotals,
   compareReference,
@@ -15,14 +17,14 @@ import {
 } from './logic'
 
 const box = 'rounded-lg border border-black/10 p-2 text-sm dark:border-white/10'
-const input = 'h-8 w-full rounded-md border border-black/15 bg-white px-2 text-sm dark:border-white/15 dark:bg-[#12161b]'
+const input = 'h-9 w-full rounded-md border border-black/15 bg-white px-2 text-sm dark:border-white/15 dark:bg-[#12161b]'
 const label = 'flex flex-col gap-0.5 text-xs text-slate-500 dark:text-slate-400'
 const btn =
-  'flex h-8 items-center justify-center gap-1 rounded-md border border-black/10 px-2 text-sm hover:bg-black/5 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/10'
+  'flex h-9 items-center justify-center gap-1 rounded-md border border-black/10 px-2 text-sm hover:bg-black/5 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/10'
 
 const LEVEL_CLASS: Record<ComparisonLevel, string> = {
   ok: 'text-emerald-700 dark:text-emerald-400',
-  warn: 'text-amber-600 dark:text-amber-400',
+  warn: 'text-amber-700 dark:text-amber-400',
   bad: 'text-red-600 dark:text-red-400',
   unknown: 'text-slate-500 dark:text-slate-400',
 }
@@ -101,7 +103,7 @@ function CeilingField({ value }: { value: number | null }) {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
         }}
       />
-      {bad && <span className="text-red-600">Enter a positive height, e.g. 250</span>}
+      {bad && <span role="alert" className="text-red-600 dark:text-red-400">Enter a positive height, e.g. 250</span>}
     </label>
   )
 }
@@ -131,10 +133,13 @@ function ReferenceRow({ doc, reference }: { doc: PlanDoc; reference: SurfaceRefe
           </p>
         </div>
         <button
-          className="rounded-md p-1 hover:bg-black/5 dark:hover:bg-white/10"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-red-600 hover:bg-red-500/10 max-md:h-11 max-md:w-11 dark:text-red-400"
           title="Delete this reference"
           aria-label={`Delete reference ${SOURCE_LABELS[ref.source]}${ref.label ? ` ${ref.label}` : ''}`}
-          onClick={() => removeReference(ref.id)}
+          onClick={() => {
+            removeReference(ref.id)
+            undoToast('Reference deleted', () => useDoc.temporal.getState().undo())
+          }}
         >
           <Trash2 size={14} />
         </button>
@@ -208,7 +213,7 @@ function ReferenceForm({ doc }: { doc: PlanDoc }) {
           onChange={(e) => setSurface(e.target.value)}
         />
       </label>
-      {bad && <span className="text-xs text-red-600">Enter a positive surface, e.g. 62,4</span>}
+      {bad && <span role="alert" className="text-xs text-red-600 dark:text-red-400">Enter a positive surface, e.g. 62,4</span>}
       <label className={label}>
         <span>Room (optional)</span>
         <select className={input} aria-label="Room for this reference" value={roomCode} onChange={(e) => setRoomCode(e.target.value)}>
@@ -315,7 +320,7 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
           </ul>
         )}
         <p className="text-xs opacity-60">
-          Green ≤ 2 %, amber ≤ 5 %, red &gt; 5 %. Loi Carrez excludes surfaces under 1.80 m height, so a small difference is normal.
+          Green ≤ 2 %, amber ≤ 5 %, red &gt; 5 %. Loi Carrez excludes surfaces under 1,80 m height, so a small difference is normal.
         </p>
         <ReferenceForm doc={doc} />
       </div>
@@ -327,5 +332,7 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
 export function ApartmentPanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
+  const annotSel = useAnnotSel((s) => s.sel)
+  if (annotSel !== null) return null
   return <ApartmentCard doc={doc} selection={selection} />
 }

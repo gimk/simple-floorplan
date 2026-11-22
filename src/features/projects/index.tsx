@@ -1,5 +1,5 @@
 // Projects: header title button + dialog (list, create, open, rename, delete).
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronDown, Cloud, FolderOpen, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { emptyDoc, uid, useDoc } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
@@ -66,6 +66,18 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
 
   const refresh = useCallback(() => { void loadList().then(setItems) }, [])
   useEffect(refresh, [refresh])
+  const prevFocus = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    prevFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      prevFocus.current?.focus()
+    }
+  }, [onClose])
 
   const run = async (fn: () => Promise<void>, closeAfter = false) => {
     setBusy(true); setError('')
@@ -73,19 +85,19 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-16" onClick={onClose}>
-      <div role="dialog" aria-label="Projects" className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl bg-white p-4 shadow-xl dark:bg-[#1b2128]" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-16" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label="Projects" className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-black/10 bg-white p-4 shadow-xl dark:border-white/15 dark:bg-[#1b2128]" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center">
           <h2 className="flex-1 text-lg font-semibold">Projects</h2>
-          <button className={iconBtn} aria-label="Close" onClick={onClose}><X size={18} /></button>
+          <button autoFocus className={iconBtn} aria-label="Close" onClick={onClose}><X size={18} /></button>
         </div>
 
         <form className="mb-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); const t = newName.trim() || 'New apartment'; setNewName(''); void run(() => createProject(t), true) }}>
-          <input className={`${field} min-w-0 flex-1`} placeholder="New project name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-          <button type="submit" disabled={busy} className="flex h-9 items-center gap-1 rounded-md bg-orange-600 px-3 text-sm font-semibold text-white disabled:opacity-50"><Plus size={16} /> New</button>
+          <input aria-label="New project name" className={`${field} min-w-0 flex-1`} placeholder="New project name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <button type="submit" disabled={busy} className="flex h-9 items-center gap-1 rounded-md bg-orange-700 px-3 text-sm font-semibold text-white hover:bg-orange-800 disabled:opacity-50"><Plus size={16} /> New</button>
         </form>
 
-        {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+        {error && <p role="alert" className="mb-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
         <ul className="min-h-0 flex-1 overflow-y-auto">
           {items === null && <li className="p-2 text-sm opacity-60">Loading…</li>}
@@ -95,7 +107,7 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
               <li key={p.id} className={`flex items-center gap-1 rounded-md px-2 py-1 ${current ? 'bg-orange-600/10' : ''}`}>
                 {rename !== null && current ? (
                   <form className="flex min-w-0 flex-1 gap-1" onSubmit={(e) => { e.preventDefault(); const t = rename.trim(); setRename(null); if (t) void run(() => renameCurrent(t)) }}>
-                    <input autoFocus className={`${field} min-w-0 flex-1`} value={rename} onChange={(e) => setRename(e.target.value)} />
+                    <input aria-label="Project name" autoFocus className={`${field} min-w-0 flex-1`} value={rename} onChange={(e) => setRename(e.target.value)} />
                     <button type="submit" className="h-9 rounded-md px-2 text-sm font-semibold text-orange-700 dark:text-orange-400">Save</button>
                   </form>
                 ) : (
@@ -135,12 +147,13 @@ export function ProjectTitleButton() {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <button className="flex h-9 min-w-0 items-center gap-1 rounded-md px-2 font-semibold hover:bg-black/5 dark:hover:bg-white/10" title="Projects" onClick={() => setOpen(true)}>
-        <h1 className="truncate">{title || 'Untitled'}</h1>
-        <ChevronDown size={16} className="shrink-0 opacity-60" />
-      </button>
+      <h1 className="min-w-0">
+        <button className="flex h-9 max-w-full min-w-0 items-center gap-1 rounded-md px-2 font-semibold hover:bg-black/5 dark:hover:bg-white/10" title="Projects" onClick={() => setOpen(true)}>
+          <span className="truncate">{title || 'Untitled'}</span>
+          <ChevronDown size={16} className="shrink-0 opacity-60" />
+        </button>
+      </h1>
       {open && <ProjectsDialog onClose={() => setOpen(false)} />}
-      <UpdateToast />
     </>
   )
 }

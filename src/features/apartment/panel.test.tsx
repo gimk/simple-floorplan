@@ -44,7 +44,7 @@ describe('ApartmentCard', () => {
     expect(html).toContain('Used for rooms without their own height.')
     expect(html).toContain('1 room(s) override it.')
     expect(html).toContain('No reference yet.')
-    expect(html).toContain('Loi Carrez excludes surfaces under 1.80 m height')
+    expect(html).toContain('Loi Carrez excludes surfaces under 1,80 m height')
     expect(html).toContain('aria-label="Default ceiling height in centimeters"')
   })
 

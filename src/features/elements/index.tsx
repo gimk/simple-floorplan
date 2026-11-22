@@ -10,7 +10,7 @@ import { undoToast } from '../toast'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { ElementSymbol, symbolExtent } from './Symbol'
 import {
-  KIND_LABEL, VARIANTS, clampOffset, defaultElement, defaultVariant, elementFrame, nearestWall, offsetFromEnd,
+  KIND_LABEL, VARIANT_LABEL, VARIANTS, clampOffset, defaultElement, defaultVariant, elementFrame, nearestWall, offsetFromEnd,
   offsetFromEndToStart, overflows, placeOffset, snapTo, wallThickness,
 } from './geometry'
 
@@ -148,7 +148,7 @@ export function ElementsLayer() {
             {selected && (
               <rect
                 x={-pad / 2} y={y0 - pad / 2} width={el.widthCm + pad} height={y1 - y0 + pad}
-                fill="none" stroke="#f59e0b" strokeWidth={px(2)} strokeDasharray={`${px(5)} ${px(3)}`} pointerEvents="none"
+                fill="none" stroke="#f97316" strokeWidth={px(2)} strokeDasharray={`${px(5)} ${px(3)}`} pointerEvents="none"
               />
             )}
           </g>
@@ -223,21 +223,21 @@ function KindPicker() {
   const opts = VARIANTS[kind]
   const current = variants[kind] ?? defaultVariant(kind)
   const chip = (active: boolean) =>
-    `min-h-9 rounded-md px-3 text-sm ${active ? 'bg-violet-600 text-white' : 'bg-zinc-100 text-zinc-800 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700'}`
+    `min-h-9 rounded-md px-3 text-sm ${active ? 'bg-orange-700 text-white' : 'bg-slate-100 text-slate-800 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700'}`
   return createPortal(
     <div
-      className="fixed left-1/2 top-16 z-40 flex max-w-[95vw] -translate-x-1/2 flex-col gap-1.5 rounded-xl border border-zinc-200 bg-white/95 p-1.5 shadow-lg backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95"
+      className="fixed left-1/2 top-16 z-40 flex max-w-[95vw] -translate-x-1/2 flex-col gap-1.5 rounded-xl border border-black/10 bg-white/95 p-1.5 shadow-lg backdrop-blur dark:border-white/15 dark:bg-[#1b2128]/95"
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div className="flex flex-wrap justify-center gap-1">
         {KINDS.map((k) => (
-          <button key={k} type="button" className={chip(k === kind)} onClick={() => set({ placeKind: k })}>{KIND_LABEL[k]}</button>
+          <button key={k} type="button" aria-pressed={k === kind} className={chip(k === kind)} onClick={() => set({ placeKind: k })}>{KIND_LABEL[k]}</button>
         ))}
       </div>
       {opts.length > 0 && (
         <div className="flex flex-wrap justify-center gap-1">
           {opts.map((v) => (
-            <button key={v} type="button" className={chip(v === current)} onClick={() => setVariant(kind, v)}>{v}</button>
+            <button key={v} type="button" aria-pressed={v === current} className={chip(v === current)} onClick={() => setVariant(kind, v)}>{VARIANT_LABEL[v]}</button>
           ))}
         </div>
       )}
@@ -248,22 +248,36 @@ function KindPicker() {
 
 // ---------- Panel ----------
 
-function NumField({ label, value, onCommit, step = 1, min }: { label: string; value: number; onCommit: (v: number) => void; step?: number; min?: number }) {
-  const [text, setText] = useState(String(Math.round(value * 10) / 10))
-  useEffect(() => setText(String(Math.round(value * 10) / 10)), [value])
+function NumField({ label, value, onCommit, min }: { label: string; value: number; onCommit: (v: number) => void; min?: number }) {
+  const [text, setText] = useState(fmtCm(value))
+  useEffect(() => setText(fmtCm(value)), [value])
   const commit = () => {
     const n = parseFloat(text.replace(',', '.'))
     if (Number.isFinite(n) && (min === undefined || n >= min)) { if (n !== value) onCommit(n) }
-    else setText(String(Math.round(value * 10) / 10))
+    else setText(fmtCm(value))
   }
   return (
     <label className="flex flex-col gap-0.5 text-xs text-slate-500 dark:text-slate-400">
       {label}
       <input
-        type="number" inputMode="decimal" step={step} value={text}
+        type="text" inputMode="decimal" value={text}
         onChange={(e) => setText(e.target.value)} onBlur={commit}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
         className="h-9 w-full rounded-md border border-black/15 bg-white px-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100"
+      />
+    </label>
+  )
+}
+
+function NoteField({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const [text, setText] = useState(value)
+  useEffect(() => setText(value), [value])
+  const commit = () => { if (text !== value) onCommit(text) }
+  return (
+    <label className={fieldLabel}>Note
+      <textarea
+        rows={2} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
+        className="rounded-md border border-black/15 bg-white p-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100"
       />
     </label>
   )
@@ -294,7 +308,7 @@ export function ElementsPanel() {
 
   return (
     <section className="flex flex-col gap-2 rounded-lg border border-black/10 p-2 text-sm dark:border-white/10">
-      <h3 className="font-semibold text-slate-900 dark:text-slate-100">Element · wall {wallLabel}{wall ? ` (${fmtCm(L)} cm)` : ''}</h3>
+      <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Element · wall {wallLabel}{wall ? ` (${fmtCm(L)} cm)` : ''}</h2>
       <div className="grid grid-cols-2 gap-2">
         <label className={fieldLabel}>Kind
           <select className={selectCls} value={el.kind} onChange={(e) => {
@@ -308,7 +322,7 @@ export function ElementsPanel() {
         {variants.length > 0 && (
           <label className={fieldLabel}>Variant
             <select className={selectCls} value={el.variant ?? variants[0]} onChange={(e) => patch({ variant: e.target.value as ElementVariant })}>
-              {variants.map((v) => <option key={v} value={v}>{v}</option>)}
+              {variants.map((v) => <option key={v} value={v}>{VARIANT_LABEL[v]}</option>)}
             </select>
           </label>
         )}
@@ -339,16 +353,11 @@ export function ElementsPanel() {
           </label>
         </div>
       )}
-      <label className={fieldLabel}>Note
-        <textarea
-          rows={2} value={el.note ?? ''} onChange={(e) => patch({ note: e.target.value })}
-          className="rounded-md border border-black/15 bg-white p-2 text-sm text-slate-900 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100"
-        />
-      </label>
+      <NoteField value={el.note ?? ''} onCommit={(note) => patch({ note: note || undefined })} />
       <button
         type="button"
         aria-label="Delete element"
-        className="flex min-h-9 items-center justify-center gap-2 rounded-md bg-red-600 px-3 text-sm text-white hover:bg-red-700"
+        className="flex min-h-9 items-center justify-center gap-2 rounded-md border border-red-600/40 px-3 text-sm font-medium text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400"
         onClick={() => {
           update((d) => ({ ...d, elements: d.elements.filter((x) => x.id !== el.id) }))
           useUi.getState().select(null)

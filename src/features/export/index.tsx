@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Calculator, Copy, Download } from 'lucide-react'
+import { planToDxf } from '../../core/dxf'
 import { useDoc } from '../../model/store'
 import { calcAll, calcCsvRows, DEFAULT_INPUTS, type CalcInputs } from './calc'
 import { download, slug, toCsv } from './csv'
@@ -8,7 +9,7 @@ import { buildPlanSvg, svgToCanvas, toDataUrl } from './svgExport'
 
 const btn = 'flex h-9 items-center justify-center gap-1 rounded-md border border-black/10 px-2 text-sm hover:bg-black/5 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/10'
 const box = 'rounded-lg border border-black/10 p-2 text-sm dark:border-white/10'
-const field = 'h-9 w-16 rounded-md border border-black/15 bg-transparent px-2 text-sm dark:border-white/20'
+const field = 'h-9 w-full rounded-md border border-black/15 bg-white px-2 text-sm dark:border-white/20 dark:bg-[#12161b]'
 
 export function ExportPanel() {
   const doc = useDoc((s) => s.doc)
@@ -16,7 +17,8 @@ export function ExportPanel() {
   const [a3, setA3] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const hasBg = !!doc.background
+  const hasBg = !!doc.background?.visible
+  const bgHidden = !!doc.background && !doc.background.visible
   const name = slug(doc.title)
 
   const run = (label: string, fn: () => Promise<void>) => async () => {
@@ -25,7 +27,7 @@ export function ExportPanel() {
   }
   const opts = async () => {
     const bg = doc.background
-    const on = withBg && !!bg
+    const on = withBg && !!bg?.visible
     return { background: on, backgroundHref: on && bg ? await toDataUrl(bg.src) : undefined }
   }
 
@@ -43,6 +45,7 @@ export function ExportPanel() {
     const { exportPlanPdf } = await import('./pdfExport')
     download(`${name}.pdf`, await exportPlanPdf(doc, { ...(await opts()), size: a3 ? 'a3' : 'a4' }))
   })
+  const dxf = run('dxf', async () => download(`${name}.dxf`, new Blob([planToDxf(doc)], { type: 'application/dxf' })))
   const csv = run('csv', async () => download(`${name}-survey.csv`, new Blob(['﻿' + surveyCsv(doc)], { type: 'text/csv;charset=utf-8' })))
   const spdf = run('spdf', async () => {
     const { exportSurveyPdf } = await import('./pdfExport')
@@ -53,42 +56,58 @@ export function ExportPanel() {
     <details className={box}>
       <summary className="flex cursor-pointer items-center gap-2 font-semibold"><Download size={16} /> Export</summary>
       <div className="mt-2 flex flex-col gap-2">
-        <label className={`flex items-center gap-2 ${hasBg ? '' : 'opacity-50'}`}>
-          <input type="checkbox" disabled={!hasBg} checked={withBg} onChange={(e) => setWithBg(e.target.checked)} /> Include background image
+        <label className={`flex cursor-pointer items-center gap-2 ${hasBg ? '' : 'opacity-50'}`}>
+          <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" disabled={!hasBg} checked={withBg && hasBg} onChange={(e) => setWithBg(e.target.checked)} />
+          Include background image{bgHidden ? ' (hidden)' : ''}
         </label>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={a3} onChange={(e) => setA3(e.target.checked)} /> PDF size A3 (default A4)</label>
-        <div className="grid grid-cols-3 gap-1">
+        <label className="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={a3} onChange={(e) => setA3(e.target.checked)} /> PDF size A3 (default A4)
+        </label>
+        <div className="grid grid-cols-4 gap-1">
           <button className={btn} disabled={!!busy} onClick={svg}>SVG</button>
           <button className={btn} disabled={!!busy} onClick={png}>PNG</button>
           <button className={btn} disabled={!!busy} onClick={pdf}>PDF</button>
+          <button className={btn} disabled={!!busy} onClick={dxf}>DXF</button>
         </div>
         <div className="grid grid-cols-2 gap-1">
           <button className={btn} disabled={!!busy} onClick={csv}>Survey CSV</button>
           <button className={btn} disabled={!!busy} onClick={spdf}>Survey PDF</button>
         </div>
         {busy && <p className="text-xs opacity-70">Exporting…</p>}
-        {err && <p className="text-xs text-red-600">{err}</p>}
+        {err && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{err}</p>}
       </div>
     </details>
   )
 }
 
 const fx = (v: number | null, d = 2) => (v === null ? '–' : v.toFixed(d).replace('.', ','))
+const fmtInp = (v: number) => String(v).replace('.', ',')
 
 export function CalculatorsPanel() {
   const doc = useDoc((s) => s.doc)
   const [inp, setInp] = useState<CalcInputs>(DEFAULT_INPUTS)
+  const [drafts, setDrafts] = useState<Record<keyof CalcInputs, string>>({
+    wastePct: fmtInp(DEFAULT_INPUTS.wastePct),
+    coats: fmtInp(DEFAULT_INPUTS.coats),
+    coverage: fmtInp(DEFAULT_INPUTS.coverage),
+  })
   const [copied, setCopied] = useState(false)
+  const [copyErr, setCopyErr] = useState('')
   const { rows, totals } = calcAll(doc, inp)
   const set = (k: keyof CalcInputs) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = parseFloat(e.target.value.replace(',', '.'))
+    const raw = e.target.value
+    setDrafts((d) => ({ ...d, [k]: raw }))
+    const v = parseFloat(raw.replace(',', '.'))
     setInp((s) => ({ ...s, [k]: Number.isFinite(v) && v >= 0 ? v : 0 }))
   }
   const copy = async () => {
+    setCopyErr('')
     try {
       await navigator.clipboard.writeText(toCsv(calcCsvRows(rows, totals)))
       setCopied(true); setTimeout(() => setCopied(false), 1500)
-    } catch { /* clipboard blocked */ }
+    } catch {
+      setCopyErr('Clipboard blocked by browser')
+    }
   }
   const th = 'px-1 py-1 text-right font-medium'
   const td = 'px-1 py-1 text-right tabular-nums'
@@ -98,9 +117,9 @@ export function CalculatorsPanel() {
       <summary className="flex cursor-pointer items-center gap-2 font-semibold"><Calculator size={16} /> Calculators</summary>
       <div className="mt-2 flex flex-col gap-2">
         <div className="grid grid-cols-3 gap-1 text-xs">
-          <label className="flex flex-col gap-1">Waste %<input className={field} inputMode="decimal" defaultValue={inp.wastePct} onChange={set('wastePct')} /></label>
-          <label className="flex flex-col gap-1">Coats<input className={field} inputMode="decimal" defaultValue={inp.coats} onChange={set('coats')} /></label>
-          <label className="flex flex-col gap-1">m²/L<input className={field} inputMode="decimal" defaultValue={inp.coverage} onChange={set('coverage')} /></label>
+          <label className="flex flex-col gap-1">Waste %<input className={field} inputMode="decimal" value={drafts.wastePct} onChange={set('wastePct')} /></label>
+          <label className="flex flex-col gap-1">Coats<input className={field} inputMode="decimal" value={drafts.coats} onChange={set('coats')} /></label>
+          <label className="flex flex-col gap-1">m²/L<input className={field} inputMode="decimal" value={drafts.coverage} onChange={set('coverage')} /></label>
         </div>
         {rows.length === 0 ? <p className="text-xs opacity-70">No rooms yet.</p> : (
           <div className="overflow-x-auto">
@@ -121,7 +140,7 @@ export function CalculatorsPanel() {
                     <td className={td}>{fx(r.flooringM2)}</td>
                     <td className={td}>{fx(r.baseboardM)}</td>
                     {r.wallM2 === null
-                      ? <td className="px-1 py-1 text-right text-orange-600" colSpan={2}>set ceiling height</td>
+                      ? <td className="px-1 py-1 text-right text-orange-700 dark:text-orange-400" colSpan={2}>set ceiling height</td>
                       : <><td className={td}>{fx(r.wallM2)}</td><td className={td}>{fx(r.paintL)}</td></>}
                   </tr>
                 ))}
@@ -137,9 +156,10 @@ export function CalculatorsPanel() {
             </table>
           </div>
         )}
-        {totals.missingCeiling > 0 && <p className="text-xs text-orange-600">{totals.missingCeiling} room(s) without ceiling height: not in wall/paint totals.</p>}
+        {totals.missingCeiling > 0 && <p className="text-xs text-orange-700 dark:text-orange-400">{totals.missingCeiling} room(s) without ceiling height: not in wall/paint totals.</p>}
         <p className="text-xs opacity-60">Units: m², m, litres. Outdoor rooms excluded. Verified lengths are used when present.</p>
         <button className={btn} onClick={copy}><Copy size={14} /> {copied ? 'Copied' : 'Copy as CSV'}</button>
+        {copyErr && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{copyErr}</p>}
       </div>
     </details>
   )

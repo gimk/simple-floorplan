@@ -34,13 +34,14 @@ function Field({ title, value, onCommit, type = 'text', errorText, disabled, suf
         className={`${input} ${bad ? 'border-red-500' : ''}`}
         type="text"
         inputMode={type === 'number' ? 'decimal' : undefined}
+        aria-invalid={bad}
         value={text}
         disabled={disabled}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
       />
-      {bad && <span className="text-red-600">{errorText ?? 'Invalid value'}</span>}
+      {bad && <span role="alert" className="text-red-600 dark:text-red-400">{errorText ?? 'Invalid value'}</span>}
     </label>
   )
 }
@@ -129,7 +130,9 @@ export function RoomsPanel() {
   const typeBtn = (t: WallType, text: string) => (
     <button
       key={t}
-      className={`h-9 flex-1 rounded-md border text-xs ${props?.type === t ? 'border-orange-600 bg-orange-600 text-white' : 'border-black/15 hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10'}`}
+      type="button"
+      aria-pressed={props?.type === t}
+      className={`h-9 flex-1 rounded-md border text-xs ${props?.type === t ? 'border-orange-700 bg-orange-700 text-white' : 'border-black/15 hover:bg-black/5 dark:border-white/15 dark:hover:bg-white/10'}`}
       onClick={() => wall && setWallType(room.id, wall.start.id, t)}
     >{text}</button>
   )
@@ -138,14 +141,14 @@ export function RoomsPanel() {
     <div className="flex flex-col gap-3">
       {wall && props && (
         <section className={`${box} flex flex-col gap-2`}>
-          <h2 className="font-semibold">Wall {room.code}-{wall.index + 1}</h2>
+          <h2 className="text-sm font-semibold">Wall {room.code}-{wall.index + 1}</h2>
           <div className="flex gap-1">{typeBtn('bearing', 'Bearing')}{typeBtn('partition', 'Partition')}{typeBtn('exterior', 'Exterior')}</div>
           <Field title="Thickness" suffix="cm" type="number" value={fmtCm(props.thicknessCm)}
             onCommit={(v) => { const n = num(v); if (n === null || n < 1 || n > 200) return false; setWall(room.id, wall.start.id, { thicknessCm: n }) }} />
           <Field title="Length" suffix="cm" type="number" value={fmtCm(wall.length)} disabled={!!props.locked}
             onCommit={(v) => { const n = num(v); if (n === null || n < 1) return false; setWallLength(room.id, wall.start.id, n) }} />
-          <label className="flex min-h-9 items-center gap-2">
-            <input type="checkbox" checked={!!props.locked} onChange={(e) => setWall(room.id, wall.start.id, { locked: e.target.checked })} />
+          <label className="flex min-h-9 cursor-pointer items-center gap-2">
+            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!props.locked} onChange={(e) => setWall(room.id, wall.start.id, { locked: e.target.checked })} />
             Locked (cannot be resized)
           </label>
           <p className="text-xs text-slate-500 dark:text-slate-400">Key B: bearing / partition. Length moves the end vertex.</p>
@@ -164,8 +167,8 @@ export function RoomsPanel() {
       )}
       <section className={`${box} flex flex-col gap-2`}>
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Room</h2>
-          <button className="flex h-9 w-9 items-center justify-center rounded-md text-red-600 hover:bg-red-500/10" title="Delete room" aria-label={`Delete room ${room.name}`}
+          <h2 className="text-sm font-semibold">Room</h2>
+          <button className="flex h-9 w-9 items-center justify-center rounded-md text-red-600 hover:bg-red-500/10 dark:text-red-400" title="Delete room" aria-label={`Delete room ${room.name}`}
             onClick={() => {
               update((d) => deleteRoom(d, room.id))
               useUi.getState().select(null)
@@ -191,8 +194,8 @@ export function RoomsPanel() {
         {!ownCeiling && apartmentCeilingCm !== null && apartmentCeilingCm > 0 && (
           <p className="text-xs text-slate-500 dark:text-slate-400">Apartment default: {fmtCm(apartmentCeilingCm)} cm</p>
         )}
-        <label className="flex min-h-9 items-center gap-2">
-          <input type="checkbox" checked={!!room.outdoor} onChange={(e) => patchRoom(room.id, { outdoor: e.target.checked })} />
+        <label className="flex min-h-9 cursor-pointer items-center gap-2">
+          <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={!!room.outdoor} onChange={(e) => patchRoom(room.id, { outdoor: e.target.checked })} />
           Outdoor (balcony, terrace)
         </label>
         <div className="flex flex-col gap-1.5 border-t border-black/10 pt-2 dark:border-white/10">
@@ -203,8 +206,8 @@ export function RoomsPanel() {
           <button disabled={!allRooms.some((r) => verifiedWalls({ measurements }, r).length)}
             className="min-h-9 rounded-md border border-black/15 px-2 text-sm hover:bg-black/5 disabled:opacity-40 dark:border-white/15 dark:hover:bg-white/10"
             onClick={() => runApply(true)}>Apply to all rooms</button>
-          <label className="flex min-h-9 items-center gap-2">
-            <input type="checkbox" disabled={!verified.length} checked={allLocked}
+          <label className="flex min-h-9 cursor-pointer items-center gap-2">
+            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" disabled={!verified.length} checked={allLocked}
               onChange={(e) => update((d) => setVerifiedLocked(d, room.id, e.target.checked))} />
             Lock verified walls
           </label>
@@ -212,8 +215,8 @@ export function RoomsPanel() {
           {applyNote && <p className="text-xs text-slate-700 dark:text-slate-200">{applyNote}</p>}
         </div>
         <dl className="grid grid-cols-2 gap-x-2 text-xs text-slate-500 dark:text-slate-400">
-          <dt>Area</dt><dd className="text-right text-slate-800 dark:text-slate-100">{roomAreaM2(room).toFixed(2).replace('.', ',')} m²</dd>
-          <dt>Perimeter</dt><dd className="text-right text-slate-800 dark:text-slate-100">{fmtCm(perimeter(room.vertices))} cm</dd>
+          <dt>Area</dt><dd className="text-right tabular-nums text-slate-800 dark:text-slate-100">{roomAreaM2(room).toFixed(2).replace('.', ',')} m²</dd>
+          <dt>Perimeter</dt><dd className="text-right tabular-nums text-slate-800 dark:text-slate-100">{fmtCm(perimeter(room.vertices))} cm</dd>
         </dl>
       </section>
     </div>

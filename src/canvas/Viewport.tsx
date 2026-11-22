@@ -64,10 +64,16 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
   }, [])
 
   useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (e.code === 'Space' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) setSpace(true) }
+    const down = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return
+      if (e.target instanceof Element && e.target.closest('input, textarea, select, button, [contenteditable]')) return
+      e.preventDefault()
+      setSpace(true)
+    }
     const up = (e: KeyboardEvent) => { if (e.code === 'Space') setSpace(false) }
-    window.addEventListener('keydown', down); window.addEventListener('keyup', up)
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+    const blur = () => setSpace(false)
+    window.addEventListener('keydown', down); window.addEventListener('keyup', up); window.addEventListener('blur', blur)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur) }
   }, [])
 
   // Pan / pinch handled in CAPTURE phase so they win over tools when appropriate.

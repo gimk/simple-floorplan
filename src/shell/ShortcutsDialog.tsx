@@ -1,6 +1,6 @@
 // Keyboard shortcuts dialog (plan 7.2 #23): opened with `?` or the header button,
 // closed with Esc, the close button, or a backdrop click.
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 
 const ROWS: [string, string][] = [
@@ -24,13 +24,23 @@ const ROWS: [string, string][] = [
 ]
 
 export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const prevFocus = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.defaultPrevented) onClose()
+    if (!open) {
+      prevFocus.current?.focus()
+      prevFocus.current = null
+      return
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    prevFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [open, onClose])
 
   if (!open) return null
@@ -50,6 +60,7 @@ export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () 
           <h2 className="text-base font-semibold">Keyboard shortcuts</h2>
           <button
             type="button"
+            autoFocus
             className="flex h-9 w-9 items-center justify-center rounded-md hover:bg-black/5 dark:hover:bg-white/10"
             aria-label="Close shortcuts dialog"
             onClick={onClose}

@@ -135,6 +135,7 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
 
   // ----- elements -----
   for (const e of doc.elements ?? []) {
+    if (!(typeof e.widthCm === 'number' && Number.isFinite(e.widthCm) && e.widthCm > 0)) continue
     const room = doc.rooms.find((r) => r.id === e.roomId)
     const wall = room && wallByStart(room, e.wallStart)
     if (!room || !wall) continue

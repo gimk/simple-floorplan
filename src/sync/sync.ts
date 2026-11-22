@@ -31,6 +31,7 @@ export type ConnState = 'connecting' | 'online' | 'offline' | 'locked' | 'no-ser
 type SyncState = { conn: ConnState; detail?: string }
 
 let syncState: SyncState = { conn: 'connecting' }
+export const getSyncState = (): SyncState => syncState
 const listeners = new Set<() => void>()
 const notify = () => listeners.forEach((l) => l())
 const setSync = (s: SyncState) => { syncState = s; notify() }
@@ -64,10 +65,11 @@ let pullTimer: ReturnType<typeof setTimeout> | null = null
 let snapTimer: ReturnType<typeof setTimeout> | null = null
 
 // ---------- passcode ----------
-export function setPasscode(p: string | null) {
+export function setPasscode(p: string | null): Promise<void> {
   ls.set(PASS_KEY, p)
   api.setPasscode(p)
-  if (!connected) void connect()
+  if (!connected) return connect()
+  return Promise.resolve()
 }
 api.setPasscode(ls.get(PASS_KEY))
 

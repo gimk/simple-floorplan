@@ -17,8 +17,19 @@ export function SnapPopover() {
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setOpen(false)
+      }
+    }
     document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey, true)
+    }
   }, [open])
 
   const check = (k: 'grid' | 'angles' | 'vertices') => (
@@ -33,18 +44,20 @@ export function SnapPopover() {
     </label>
   )
 
+  const anyOn = snap.grid || snap.angles || snap.vertices
   return (
     <div className="relative" ref={ref}>
       <button
         type="button"
-        className={`flex h-9 items-center gap-1 rounded-md px-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 ${snap.grid || snap.angles || snap.vertices ? '' : 'opacity-60'}`}
+        className={`relative flex h-9 items-center gap-1 rounded-md px-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 ${anyOn ? '' : 'opacity-60'}`}
         aria-label="Snap settings"
+        aria-haspopup="dialog"
         aria-expanded={open}
-        aria-pressed={snap.grid || snap.angles || snap.vertices}
         title="Snap settings"
         onClick={() => setOpen((o) => !o)}
       >
         <Magnet size={16} />
+        {anyOn && <span className="h-1.5 w-1.5 rounded-full bg-orange-700 dark:bg-orange-400" aria-hidden="true" />}
       </button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-black/10 bg-white p-3 shadow-lg dark:border-white/15 dark:bg-[#1b2128]">

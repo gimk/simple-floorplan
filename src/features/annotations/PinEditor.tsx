@@ -1,24 +1,42 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Camera, Trash2, X } from 'lucide-react'
+import { useDoc } from '../../model/store'
+import { undoToast } from '../toast'
 import { patchPin, removePin } from './actions'
 import { fileToPhoto } from './photo'
 import { usePhotoUrl } from '../../sync/photos'
 import type { Pin } from '../../model/types'
 
-const field = 'w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-[15px] dark:border-white/20 dark:bg-[#12161b]'
-
 /** One pin photo: data/blob URLs render directly, R2 keys are fetched via usePhotoUrl. */
 function PhotoThumb({ src, alt }: { src: string; alt: string }) {
   const url = usePhotoUrl(src)
-  if (!url) return <span className="flex size-full items-center justify-center p-1 text-center text-[11px] text-slate-500">Loading photo…</span>
+  if (!url) return <span className="flex size-full items-center justify-center p-1 text-center text-[11px] text-slate-500 dark:text-slate-400">Loading photo…</span>
   return <img src={url} alt={alt} className="size-full object-cover" />
 }
 
 /** Text, photos and delete for one pin. Edits are silent; `silent` only controls whether delete is an undo step. */
-export function PinEditor({ pin, silent = true, onDeleted, label }: { pin: Pin; silent?: boolean; onDeleted?: () => void; label?: string }) {
+export function PinEditor({ pin, silent = true, compact = false, onDeleted, label }: { pin: Pin; silent?: boolean; compact?: boolean; onDeleted?: () => void; label?: string }) {
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [armed, setArmed] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+
+  const field = `w-full rounded-lg border border-black/15 bg-white px-3 py-2 dark:border-white/20 dark:bg-[#12161b] ${compact ? 'text-sm' : 'text-[15px]'}`
+  const btnH = compact ? 'h-9' : 'min-h-11'
+
+  const onDelete = () => {
+    if (silent && !armed) {
+      setArmed(true)
+      timer.current = window.setTimeout(() => setArmed(false), 3000)
+      return
+    }
+    window.clearTimeout(timer.current)
+    removePin(pin.id, silent)
+    if (!silent) undoToast('Pin deleted', () => useDoc.temporal.getState().undo())
+    onDeleted?.()
+  }
 
   const addFiles = async (files: FileList | null) => {
     if (!files?.length) return
@@ -51,7 +69,7 @@ export function PinEditor({ pin, silent = true, onDeleted, label }: { pin: Pin; 
               <button
                 type="button" aria-label={`Delete photo ${i + 1}`}
                 onClick={() => patchPin(pin.id, { photoKeys: pin.photoKeys.filter((_, j) => j !== i) })}
-                className="absolute right-0.5 top-0.5 flex size-9 items-center justify-center rounded-full bg-black/60 text-white"
+                className={`absolute right-0.5 top-0.5 flex items-center justify-center rounded-full bg-black/60 text-white ${compact ? 'size-8' : 'size-11'}`}
               ><X size={16} /></button>
             </li>
           ))}
@@ -59,16 +77,16 @@ export function PinEditor({ pin, silent = true, onDeleted, label }: { pin: Pin; 
       )}
       {error && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{error}</p>}
       <div className="flex flex-wrap gap-2">
-        <input ref={input} type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => void addFiles(e.target.files)} />
+        <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => void addFiles(e.target.files)} />
         <button
           type="button" disabled={busy} onClick={() => input.current?.click()}
-          className="flex min-h-11 items-center gap-1.5 rounded-lg border border-orange-600 px-3 text-sm font-semibold text-orange-700 disabled:opacity-50 dark:border-orange-400 dark:text-orange-400"
+          className={`flex ${btnH} items-center gap-1.5 rounded-lg border border-orange-600 px-3 text-sm font-semibold text-orange-700 disabled:opacity-50 dark:border-orange-400 dark:text-orange-400`}
         ><Camera size={16} /> {busy ? 'Adding…' : 'Add photo'}</button>
         <span className="flex-1" />
         <button
-          type="button" onClick={() => { removePin(pin.id, silent); onDeleted?.() }}
-          className="flex min-h-11 items-center gap-1.5 rounded-lg border border-black/15 px-3 text-sm font-semibold text-slate-600 dark:border-white/20 dark:text-slate-300"
-        ><Trash2 size={16} /> Delete pin</button>
+          type="button" onClick={onDelete}
+          className={`flex ${btnH} items-center gap-1.5 rounded-lg border px-3 text-sm font-semibold ${armed ? 'border-orange-700 bg-orange-700 text-white' : 'border-red-600/40 text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400'}`}
+        ><Trash2 size={16} /> {armed ? 'Tap to confirm' : 'Delete pin'}</button>
       </div>
     </div>
   )

@@ -15,6 +15,19 @@ export const KIND_LABEL: Record<ElementKind, string> = {
   door: 'Door', window: 'Window', opening: 'Opening', cupboard: 'Cupboard', radiator: 'Radiator', other: 'Other',
 }
 
+export const VARIANT_LABEL: Record<ElementVariant, string> = {
+  single: 'Single swing',
+  double: 'Double swing',
+  sliding: 'Sliding',
+  pocket: 'Pocket',
+  standard: 'Standard',
+  french: 'French window',
+  fixed: 'Fixed',
+  'wall-cabinet': 'Wall cabinet',
+  recessed: 'Recessed',
+  wardrobe: 'Wardrobe',
+}
+
 export const defaultVariant = (kind: ElementKind): ElementVariant | undefined => VARIANTS[kind][0]
 
 /** Wall thickness: explicit value, else by wall type (bearing 25, exterior 30, partition 10). */

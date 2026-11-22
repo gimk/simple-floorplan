@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Camera, MapPin } from 'lucide-react'
 import { fmtCm, roomWalls } from '../../model/geometry'
 import { addPin, patchPin } from '../annotations/actions'
@@ -31,12 +31,19 @@ function PinSheet({ doc, room, pin, onClose }: { doc: PlanDoc; room: Room; pin: 
   const walls = roomWalls(room)
   const pins = roomPins(doc, room.id)
   const off = pinOffset(doc, room, pin)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
   return (
-    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50 sm:items-center" role="dialog" aria-modal="true" aria-label="Pin">
-      <div className="flex max-h-[92vh] w-full max-w-[560px] flex-col gap-3 overflow-auto rounded-t-2xl bg-white p-4 dark:bg-[#1b2128] sm:rounded-2xl">
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50 sm:items-center" role="dialog" aria-modal="true" aria-label="Pin" onClick={onClose}>
+      <div className="flex max-h-[92vh] w-full max-w-[560px] flex-col gap-3 overflow-auto rounded-t-2xl border border-black/10 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] dark:border-white/15 dark:bg-[#1b2128] sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <b className="text-base">Pin {pins.findIndex((p) => p.id === pin.id) + 1} · {room.name}</b>
-          <button type="button" onClick={onClose} className="min-h-11 rounded-lg bg-orange-600 px-4 text-sm font-semibold text-white">Done</button>
+          <button type="button" onClick={onClose} className="min-h-11 rounded-lg bg-orange-700 px-4 text-sm font-semibold text-white">Done</button>
         </div>
         <p className="text-[13px] text-slate-500 dark:text-slate-400">Tap the drawing near the wall where the pin goes, or pick the wall and the distance below.</p>
         <MiniDrawing

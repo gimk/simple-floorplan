@@ -1,8 +1,9 @@
 // OWNER: measure agent. Contract: keep this export name.
-import { useEffect, useState } from 'react'
-import { ArrowDownCircle, Monitor, Sun } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowDownCircle, Eye, KeyRound, Monitor, Sun } from 'lucide-react'
 import { useDoc, useUi } from '../../model/store'
 import { allSurveyIds, roomsInWalkOrder } from '../../model/survey'
+import { getSyncState, setPasscode, useSyncState } from '../../sync/sync'
 import { loadDemoApartment } from './demo'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
 import { inputId } from './actions'
@@ -41,6 +42,21 @@ export function MeasureMode() {
   const [sunlight, setSunlight] = useState(() => readFlag('measure-sunlight', false))
   useWakeLock(keepOn)
 
+  const sync = useSyncState()
+  const [unlocking, setUnlocking] = useState(false)
+  const [passErr, setPassErr] = useState('')
+  const lastFocusedRef = useRef<string | null>(null)
+  useEffect(() => {
+    const onFocusIn = (e: FocusEvent) => {
+      if (e.target instanceof HTMLElement && e.target.id.startsWith('m-')) lastFocusedRef.current = e.target.id
+    }
+    document.addEventListener('focusin', onFocusIn)
+    return () => document.removeEventListener('focusin', onFocusIn)
+  }, [])
+  useEffect(() => {
+    if (sync.conn !== 'locked') { setPassErr(''); setUnlocking(false) }
+  }, [sync.conn])
+
   const toggle = (key: string, set: (v: boolean) => void) => (v: boolean) => {
     set(v)
     try { localStorage.setItem(key, v ? '1' : '0') } catch { /* private mode */ }
@@ -58,13 +74,22 @@ export function MeasureMode() {
   /** Focus the next empty survey input after the currently focused one (wraps around). */
   const jumpNextUnmeasured = () => {
     const active = document.activeElement
-    const current = active instanceof HTMLElement && active.id.startsWith('m-') ? active.id.slice(2) : null
+    const activeId = active instanceof HTMLElement && active.id.startsWith('m-') ? active.id : lastFocusedRef.current
+    const current = activeId ? activeId.slice(2) : null
     const nx = nextUnmeasuredLabel(doc, labels, current)
     if (!nx) return
     const code = nx.slice(0, nx.lastIndexOf('-'))
-    document.getElementById(`room-${code}`)?.scrollIntoView({ block: 'start' })
-    const el = document.getElementById(inputId(nx)) as HTMLInputElement | null
-    if (el) { el.focus(); el.select(); el.scrollIntoView({ block: 'center' }) }
+    const focusTarget = () => {
+      document.getElementById(`room-${code}`)?.scrollIntoView({ block: 'start' })
+      const el = document.getElementById(inputId(nx)) as HTMLInputElement | null
+      if (el) { el.focus(); el.select(); el.scrollIntoView({ block: 'center' }) }
+    }
+    if (!document.getElementById(inputId(nx))) {
+      setFilter('all')
+      requestAnimationFrame(focusTarget)
+    } else {
+      focusTarget()
+    }
   }
 
   return (
@@ -73,17 +98,19 @@ export function MeasureMode() {
       <header className="sticky top-0 z-10 border-b border-slate-300 bg-white/95 pt-[env(safe-area-inset-top)] backdrop-blur dark:border-slate-700 dark:bg-[#1b2128]/95">
         <div className="mx-auto max-w-[560px] px-4 pb-2 pt-1.5">
           <div className="flex items-center gap-2">
-            <h1 className="min-w-0 flex-1 truncate text-[15px] font-bold">{doc.title}</h1>
+            <h1 className="min-w-0 flex-1 truncate text-[15px] font-bold">{doc.title || 'Untitled'}</h1>
             <span className="flex-none font-mono text-sm text-slate-500 dark:text-slate-400" aria-label="Measured of total">{done} / {total}</span>
-            <VoiceButton labels={labels} />
             <button
-              type="button" onClick={jumpNextUnmeasured} aria-label="Next unmeasured field"
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={jumpNextUnmeasured}
+              aria-label="Next unmeasured field"
               title="Next unmeasured"
-              className="flex h-9 min-w-9 flex-none items-center justify-center rounded-lg border border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300"
+              className="flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg border border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300"
             ><ArrowDownCircle size={17} /></button>
             <button
               type="button" onClick={() => useUi.getState().setMode('edit')}
-              className="flex h-9 flex-none items-center gap-1.5 rounded-lg border border-orange-600 px-2.5 text-[13px] font-semibold text-orange-700 dark:border-orange-400 dark:text-orange-400"
+              className="flex min-h-11 flex-none items-center gap-1.5 rounded-lg border border-orange-600 px-2.5 text-[13px] font-semibold text-orange-700 dark:border-orange-400 dark:text-orange-400"
             ><Monitor size={15} /> Edit Mode</button>
           </div>
           <div
@@ -92,25 +119,56 @@ export function MeasureMode() {
           >
             <div className="h-full bg-green-600 transition-[width] motion-reduce:transition-none dark:bg-green-400" style={{ width: `${total ? (100 * done) / total : 0}%` }} />
           </div>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate text-xs text-slate-500 dark:text-slate-400">{status}</span>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            {sync.conn === 'locked' ? (
+              <form
+                className="relative flex min-w-0 flex-1 items-center gap-1"
+                onSubmit={async (e) => {
+                  e.preventDefault()
+                  const v = new FormData(e.currentTarget).get('p')
+                  if (!v || unlocking) return
+                  setPassErr('')
+                  setUnlocking(true)
+                  await setPasscode(String(v))
+                  setUnlocking(false)
+                  if (getSyncState().conn === 'locked') setPassErr('Passcode rejected')
+                }}
+              >
+                <KeyRound size={15} className="shrink-0 text-orange-700 dark:text-orange-400" />
+                <input
+                  name="p" type="password" placeholder="Passcode" autoComplete="current-password" aria-label="Sync passcode"
+                  className="min-h-11 w-24 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-[#12161b]"
+                />
+                <button type="submit" disabled={unlocking} className="min-h-11 rounded-lg bg-orange-700 px-2.5 text-xs font-semibold text-white hover:bg-orange-800 disabled:opacity-50">
+                  {unlocking ? '…' : 'Unlock'}
+                </button>
+                {passErr && (
+                  <span role="alert" className="absolute left-0 top-full z-20 mt-1 rounded bg-red-100 px-2 py-0.5 text-xs text-red-800 shadow dark:bg-red-900/60 dark:text-red-200">
+                    {passErr}
+                  </span>
+                )}
+              </form>
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-xs text-slate-500 dark:text-slate-400">{status}</span>
+            )}
+            <VoiceButton labels={labels} />
             <span role="group" aria-label="Filter rooms" className="flex flex-none overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
               {FILTERS.map((f) => (
                 <button
                   key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}
-                  className={`min-h-9 px-2 text-xs font-semibold ${filter === f.id ? 'bg-orange-600 text-white' : 'bg-white text-slate-600 dark:bg-[#12161b] dark:text-slate-300'}`}
+                  className={`min-h-11 px-2.5 text-xs font-semibold ${filter === f.id ? 'bg-orange-700 text-white' : 'bg-white text-slate-600 dark:bg-[#12161b] dark:text-slate-300'}`}
                 >{f.label}</button>
               ))}
             </span>
             <button
               type="button" onClick={() => toggle('measure-keep-screen-on', setKeepOn)(!keepOn)}
-              aria-pressed={keepOn} title="Keep screen on"
-              className={`flex h-9 min-w-9 flex-none items-center justify-center rounded-lg border ${keepOn ? 'border-green-700 text-green-700 dark:border-green-400 dark:text-green-400' : 'border-slate-300 text-slate-400 dark:border-slate-600'}`}
-            >🔒</button>
+              aria-pressed={keepOn} aria-label="Keep screen on" title="Keep screen on"
+              className={`flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg border ${keepOn ? 'border-green-700 text-green-700 dark:border-green-400 dark:text-green-400' : 'border-slate-300 text-slate-400 dark:border-slate-600'}`}
+            ><Eye size={16} /></button>
             <button
               type="button" onClick={() => toggle('measure-sunlight', setSunlight)(!sunlight)}
               aria-pressed={sunlight} aria-label="Sunlight high-contrast mode" title="Sunlight (high contrast)"
-              className={`flex h-9 min-w-9 flex-none items-center justify-center rounded-lg border ${sunlight ? 'border-yellow-500 bg-yellow-300 text-black' : 'border-slate-300 text-slate-500 dark:border-slate-600 dark:text-slate-400'}`}
+              className={`flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg border ${sunlight ? 'border-yellow-500 bg-yellow-300 text-black' : 'border-slate-300 text-slate-500 dark:border-slate-600 dark:text-slate-400'}`}
             ><Sun size={16} /></button>
           </div>
         </div>

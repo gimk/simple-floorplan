@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { roomWalls } from '../../model/geometry'
+import { fmtCm, roomWalls } from '../../model/geometry'
 import { nowIso, uid, useDoc } from '../../model/store'
 import type { ElementKind, PlanDoc, Room, WallElement } from '../../model/types'
 import { KIND_FIELDS, KIND_LABEL, sizesForKind, wallRefLength } from './logic'
@@ -104,7 +104,7 @@ function Item({ room, el }: { room: Room; el: WallElement }) {
       </div>
       {over && wall && (
         <p role="alert" className="rounded-lg bg-orange-100 px-3 py-2 text-[13px] font-semibold text-orange-900 dark:bg-orange-950 dark:text-orange-200">
-          This item does not fit: from start + width = {Math.round((el.offsetCm + (el.widthCm ?? 0)) * 10) / 10} cm, but wall {room.code}-{wall.index + 1} is {Math.round((ref ?? 0) * 10) / 10} cm ({doc.measurements[`${room.code}-${wall.index + 1}`] != null ? 'measured' : 'planned'}).
+          This item does not fit: from start + width = {fmtCm(el.offsetCm + (el.widthCm ?? 0))} cm, but wall {room.code}-{wall.index + 1} is {fmtCm(ref ?? 0)} cm ({doc.measurements[`${room.code}-${wall.index + 1}`] != null ? 'measured' : 'planned'}).
         </p>
       )}
       <input

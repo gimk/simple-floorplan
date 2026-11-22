@@ -8,7 +8,6 @@ import { forcedWallStarts, useDragInfo } from './draginfo'
 import { selectHole, useActiveHole } from './holes'
 import { locked, onRoomDown, onWallDouble, onWallDown } from './interaction'
 import { surveyIds } from '../../model/survey'
-import { ToastHost } from '../toast'
 import { polygonPath, polylinePath, wallFaces, wallQuads } from './wallOutline'
 import { RoomNameEditor } from './RoomNameEditor'
 import { wallProps } from './walls'
@@ -82,7 +81,6 @@ export function RoomsLayer() {
 
   return (
     <g>
-      <ToastHost />
       <defs>
         <pattern id="rooms-bearing-stripes" patternUnits="userSpaceOnUse" width={stripeTile} height={stripeTile} patternTransform="rotate(45)">
           <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
@@ -146,8 +144,10 @@ export function RoomsLayer() {
         const p = wallProps(r, w.start.id)
         if (!p.locked) return null
         const off = p.thicknessCm / 2 + px(9)
-        const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off
-        const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
+        const dimShown = layers.dimensions && (w.length * zoom >= 55 || forcedWalls.has(w.start.id))
+        const tan = dimShown ? px(32) : 0
+        const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off + w.dir.x * tan
+        const my = (w.start.y + w.end.y) / 2 + w.inward.y * off + w.dir.y * tan
         const s = px(5)
         return (
           <g key={'lock' + r.id + w.start.id} transform={`translate(${mx} ${my})`}

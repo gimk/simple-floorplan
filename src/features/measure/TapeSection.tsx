@@ -11,9 +11,16 @@ const text = 'min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 t
 
 function MarkSheet({ doc, room, tape, onClose }: { doc: PlanDoc; room: Room; tape: TapeMeasure; onClose: () => void }) {
   const [a, setA] = useState<Vec | null>(null)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose() }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
   return (
-    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50 sm:items-center" role="dialog" aria-modal="true" aria-label="Mark tape points">
-      <div className="flex max-h-[92vh] w-full max-w-[560px] flex-col gap-3 overflow-auto rounded-t-2xl bg-white p-4 dark:bg-[#1b2128] sm:rounded-2xl">
+    <div className="fixed inset-0 z-30 flex items-end justify-center bg-black/50 sm:items-center" role="dialog" aria-modal="true" aria-label="Mark tape points" onClick={onClose}>
+      <div className="flex max-h-[92vh] w-full max-w-[560px] flex-col gap-3 overflow-auto rounded-t-2xl border border-black/10 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] dark:border-white/15 dark:bg-[#1b2128] sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <b className="text-base">{tape.label || 'Tape'} · {a ? 'tap point B' : 'tap point A'}</b>
           <button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-slate-300 px-4 text-sm font-semibold dark:border-slate-600">Cancel</button>

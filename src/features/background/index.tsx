@@ -159,16 +159,17 @@ export function BackgroundPanel() {
     onKeyUp: endSlider,
   }
 
+  const [rotDraft, setRotDraft] = useState<string | null>(null)
   const label = 'flex items-center gap-2'
   const row = 'flex h-9 items-center gap-2'
   const inputCls =
-    'h-9 w-full rounded-md border border-black/10 bg-transparent px-2 text-sm dark:border-white/10'
+    'h-9 w-full rounded-md border border-black/10 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#12161b]'
 
   return (
     <section className="rounded-lg border border-black/10 p-2 text-sm dark:border-white/10">
-      <div className="flex h-9 items-center gap-2 font-semibold">
+      <h2 className="flex h-9 items-center gap-2 text-sm font-semibold">
         <ImagePlus size={16} /> Background
-      </div>
+      </h2>
       <input
         ref={fileRef}
         type="file"
@@ -188,7 +189,8 @@ export function BackgroundPanel() {
             {pdfPick.name} · {pdfPick.numPages} pages
           </span>
           <select
-            className="h-7 rounded border border-black/10 bg-transparent text-xs dark:border-white/10"
+            aria-label="PDF page"
+            className="h-7 rounded border border-black/10 bg-white text-xs dark:border-white/10 dark:bg-[#12161b]"
             value={pdfPick.page}
             onChange={(e) => setPdfPick({ ...pdfPick, page: Number(e.target.value) })}
           >
@@ -214,7 +216,8 @@ export function BackgroundPanel() {
       )}
       {!bg ? (
         <button
-          className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-md bg-orange-600 px-2 text-sm text-white hover:bg-orange-700"
+          data-action="import-background"
+          className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-md bg-orange-700 px-2 text-sm text-white hover:bg-orange-800"
           onClick={() => fileRef.current?.click()}
         >
           <ImagePlus size={16} /> Import image or PDF
@@ -222,18 +225,19 @@ export function BackgroundPanel() {
       ) : (
         <div className="mt-2 flex flex-col gap-2">
           <div className="text-xs opacity-70">
-            Scale: 1 px = {bg.cmPerPx.toFixed(3)} cm · {(100 / bg.cmPerPx).toFixed(1)} px/m
+            Scale: 1 px = {bg.cmPerPx.toFixed(3).replace('.', ',')} cm · {(100 / bg.cmPerPx).toFixed(1).replace('.', ',')} px/m
           </div>
 
           <div>
             <div className="flex justify-between"><span>Opacity</span><span>{Math.round(bg.opacity * 100)}%</span></div>
             <input
               type="range"
+              aria-label="Background opacity"
               min={10}
               max={80}
               step={1}
               value={Math.round(bg.opacity * 100)}
-              className="h-9 w-full accent-orange-600"
+              className="h-9 w-full accent-orange-700"
               {...sliderHandlers}
               onChange={(e) => {
                 const v = Number(e.target.value) / 100
@@ -264,7 +268,7 @@ export function BackgroundPanel() {
           </div>
 
           <div>
-            <div className="flex justify-between"><span>Rotation</span><span>{bg.rotationDeg.toFixed(1)}°</span></div>
+            <div className="flex justify-between"><span>Rotation</span><span>{bg.rotationDeg.toFixed(1).replace('.', ',')}°</span></div>
             <div className="flex items-center gap-2">
               <input
                 type="range"
@@ -273,7 +277,7 @@ export function BackgroundPanel() {
                 step={0.1}
                 value={bg.rotationDeg}
                 aria-label="Rotation in degrees"
-                className="h-9 w-full accent-orange-600"
+                className="h-9 w-full accent-orange-700"
                 {...sliderHandlers}
                 onChange={(e) => {
                   const v = normalizeDeg(Number(e.target.value))
@@ -281,18 +285,23 @@ export function BackgroundPanel() {
                 }}
               />
               <input
-                type="number"
-                min={-180}
-                max={180}
-                step={0.1}
-                value={bg.rotationDeg}
+                type="text"
+                inputMode="decimal"
+                value={rotDraft ?? bg.rotationDeg.toFixed(1).replace('.', ',')}
                 aria-label="Rotation value in degrees"
                 className={`${inputCls} w-20`}
-                onChange={(e) => {
-                  const raw = parseCommaNumber(e.target.value)
-                  const v = Number.isFinite(raw) ? normalizeDeg(raw) : 0
-                  update((d) => (d.background ? { ...d, background: { ...d.background, rotationDeg: v } } : d))
+                onChange={(e) => setRotDraft(e.target.value)}
+                onBlur={() => {
+                  if (rotDraft !== null) {
+                    const raw = parseCommaNumber(rotDraft)
+                    if (Number.isFinite(raw)) {
+                      const v = normalizeDeg(raw)
+                      update((d) => (d.background ? { ...d, background: { ...d.background, rotationDeg: v } } : d))
+                    }
+                    setRotDraft(null)
+                  }
                 }}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
               />
               <button
                 type="button"
@@ -317,13 +326,13 @@ export function BackgroundPanel() {
 
           <div className="flex gap-2">
             <button
-              className="flex h-9 flex-1 items-center justify-center gap-1 rounded-md bg-orange-600 px-2 text-sm text-white hover:bg-orange-700"
+              className="flex h-9 flex-1 items-center justify-center gap-1 rounded-md bg-orange-700 px-2 text-sm text-white hover:bg-orange-800"
               onClick={() => setTool('calibrate')}
             >
               <Crosshair size={16} /> Calibrate scale
             </button>
             <button
-              className="flex h-9 items-center justify-center gap-1 rounded-md border border-black/10 px-2 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10"
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-red-600/40 text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-400"
               title="Remove image"
               aria-label="Remove background image"
               onClick={() => {
@@ -335,6 +344,7 @@ export function BackgroundPanel() {
             </button>
           </div>
           <button
+            data-action="import-background"
             className="flex h-9 w-full items-center justify-center gap-2 rounded-md border border-black/10 px-2 hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/10"
             onClick={() => fileRef.current?.click()}
           >
@@ -394,7 +404,7 @@ export function CalibrateTool() {
 
   const d = pts.length === 2 ? dist(pts[0], pts[1]) : 0
   const inputCls =
-    'h-9 w-full rounded-md border border-black/10 bg-transparent px-2 text-sm dark:border-white/10'
+    'h-9 w-full rounded-md border border-black/10 bg-white px-2 text-sm dark:border-white/10 dark:bg-[#12161b]'
   const bannerText = !bg
     ? 'Import a background image first (sidebar → Background).'
     : pts.length === 0
@@ -456,23 +466,23 @@ export function CalibrateTool() {
             <div className="text-xs opacity-70">Measured on image: {fmtCm(d)} cm</div>
             <div className="flex gap-2">
               <input
-                type="number"
-                min={0}
-                step="any"
+                type="text"
+                inputMode="decimal"
+                aria-label="Real length"
                 required
                 autoFocus
                 value={len}
                 onChange={(e) => setLen(e.target.value)}
-                placeholder="Real length"
+                placeholder="Real length (e.g. 4,25)"
                 className={inputCls}
               />
-              <select value={unit} onChange={(e) => setUnit(e.target.value as 'cm' | 'm')} className={`${inputCls} w-20`}>
+              <select aria-label="Length unit" value={unit} onChange={(e) => setUnit(e.target.value as 'cm' | 'm')} className={`${inputCls} w-20`}>
                 <option value="cm">cm</option>
                 <option value="m">m</option>
               </select>
             </div>
             <div className="flex gap-2">
-              <button type="submit" className="h-9 flex-1 rounded-md bg-orange-600 text-white hover:bg-orange-700">
+              <button type="submit" className="h-9 flex-1 rounded-md bg-orange-700 text-white hover:bg-orange-800">
                 Apply
               </button>
               <button

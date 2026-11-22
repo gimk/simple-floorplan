@@ -3,20 +3,22 @@
 import { Maximize2, Minus, Plus } from 'lucide-react'
 import { useUi } from '../model/store'
 import { fitToDoc } from './fit'
-import { clampZoom, fmtScale, scaleBarStep } from './viewMath'
+import { clampZoom, fmtScale, MAX_ZOOM, MIN_ZOOM, scaleBarStep } from './viewMath'
 
-/** Zoom centered on the canvas, keeping the world point at the center fixed. */
-function zoomBy(factor: number) {
+/** Zoom to `targetZoom` centered on the canvas, keeping the world point at the center fixed. */
+function zoomTo(targetZoom: number) {
   const svg = document.querySelector('svg[data-testid="floorplan-canvas"]')
   const r = svg?.getBoundingClientRect()
   const cx = (r?.left ?? 0) + (r?.width ?? window.innerWidth) / 2
   const cy = (r?.top ?? 0) + (r?.height ?? window.innerHeight) / 2
   const v = useUi.getState().view
-  const z = clampZoom(v.zoom * factor)
+  const z = clampZoom(targetZoom)
   const wx = v.x + (cx - (r?.left ?? 0)) / v.zoom
   const wy = v.y + (cy - (r?.top ?? 0)) / v.zoom
   useUi.getState().set({ view: { zoom: z, x: wx - (cx - (r?.left ?? 0)) / z, y: wy - (cy - (r?.top ?? 0)) / z } })
 }
+
+const zoomBy = (factor: number) => zoomTo(useUi.getState().view.zoom * factor)
 
 export function ZoomControls() {
   const zoom = useUi((s) => s.view.zoom)
@@ -24,22 +26,22 @@ export function ZoomControls() {
   const barPx = Math.max(8, stepCm * zoom)
   const pct = `${Math.round(zoom * 100)}%`
 
-  const btn = 'flex h-8 min-w-8 items-center justify-center rounded-md hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40'
+  const btn = 'flex h-8 min-w-8 items-center justify-center rounded-md hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40 max-md:h-11 max-md:min-w-11'
   return (
     <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1 rounded-full border border-black/10 bg-white/95 px-2 py-1 shadow-md dark:border-white/15 dark:bg-[#1b2128]/95">
-      <button type="button" className={btn} aria-label="Zoom out" onClick={() => zoomBy(1 / 1.25)}>
+      <button type="button" className={btn} aria-label="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(1 / 1.25)}>
         <Minus size={16} />
       </button>
       <button
         type="button"
-        className="h-8 min-w-12 rounded-md px-1 text-center text-xs tabular-nums hover:bg-black/5 dark:hover:bg-white/10"
+        className="h-8 min-w-12 rounded-md px-1 text-center text-xs tabular-nums hover:bg-black/5 max-md:h-11 dark:hover:bg-white/10"
         aria-label="Reset zoom to 100%"
         title="Reset zoom to 100%"
-        onClick={() => useUi.getState().set({ view: { ...useUi.getState().view, zoom: 1 } })}
+        onClick={() => zoomTo(1)}
       >
         {pct}
       </button>
-      <button type="button" className={btn} aria-label="Zoom in" onClick={() => zoomBy(1.25)}>
+      <button type="button" className={btn} aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1.25)}>
         <Plus size={16} />
       </button>
       <button type="button" className={`${btn} gap-1 px-2 text-xs`} aria-label="Fit plan to view (0)" title="Fit plan to view (0)" onClick={() => fitToDoc()}>

@@ -2,10 +2,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import {
-  DoorOpen, Hand, Keyboard, Layers as LayersIcon, MousePointer2, MapPin, PanelRightClose, PanelRightOpen,
+  DoorOpen, Hand, Keyboard, Layers as LayersIcon, MousePointer2, MapPin, MoreVertical, PanelRightClose, PanelRightOpen,
   PenTool, Ruler, Scissors, Square, SquareDashed, Undo2, Redo2, Smartphone, Crosshair, Cloud, CloudOff, KeyRound,
 } from 'lucide-react'
-import { setPasscode, startSync, useSyncState, useSyncStatusText } from './sync/sync'
+import { getSyncState, setPasscode, startSync, useSyncState, useSyncStatusText } from './sync/sync'
 import { Viewport } from './canvas/Viewport'
 import { useDoc, useUi, type Layers } from './model/store'
 import type { ToolId } from './model/types'
@@ -13,10 +13,11 @@ import { BackgroundLayer, BackgroundPanel, CalibrateTool } from './features/back
 import { RoomsLayer, RoomsPanel, RoomTools } from './features/rooms'
 import { ElementsLayer, ElementsPanel, PlaceElementTool } from './features/elements'
 import { MeasureMode } from './features/measure'
-import { ProjectTitleButton } from './features/projects'
+import { ProjectTitleButton, UpdateToast } from './features/projects'
 import { CalculatorsPanel, ExportPanel } from './features/export'
 import { AnnotationsLayer, PinPanel, PinTool, TapePanel, TapeTool } from './features/annotations'
 import { ApartmentPanel } from './features/apartment'
+import { ToastHost } from './features/toast'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { EmptyState } from './shell/EmptyState'
 import { ZoomControls } from './shell/ZoomControls'
@@ -115,8 +116,8 @@ function LayerToggles() {
       <summary className="flex cursor-pointer items-center gap-2 font-semibold"><LayersIcon size={16} /> Layers</summary>
       <div className="mt-2 flex flex-col gap-1">
         {(Object.keys(LAYER_LABELS) as (keyof Layers)[]).map((k) => (
-          <label key={k} className="flex items-center gap-2">
-            <input type="checkbox" checked={layers[k]} onChange={(e) => set({ layers: { ...layers, [k]: e.target.checked } })} />
+          <label key={k} className="flex cursor-pointer items-center gap-2">
+            <input type="checkbox" className="h-4 w-4 cursor-pointer accent-orange-700" checked={layers[k]} onChange={(e) => set({ layers: { ...layers, [k]: e.target.checked } })} />
             {LAYER_LABELS[k]}
           </label>
         ))}
@@ -128,31 +129,48 @@ function LayerToggles() {
 function SyncBadge() {
   const s = useSyncState()
   const { text, warn } = useSyncStatusText()
-  const [attempted, setAttempted] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [err, setErr] = useState('')
-  // #16: after a submit, a still-locked state means the passcode was rejected.
+  const [showStatus, setShowStatus] = useState(false)
+  const badgeRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
-    if (s.conn === 'locked') { if (attempted) setErr('Passcode rejected — still locked.') }
-    else { setErr(''); setAttempted(false) }
-  }, [s.conn, attempted])
+    if (s.conn !== 'locked') { setErr(''); setChecking(false) }
+  }, [s.conn])
+
+  useEffect(() => {
+    if (!showStatus) return
+    const onDown = (e: MouseEvent) => {
+      if (badgeRef.current && !badgeRef.current.contains(e.target as Node)) setShowStatus(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showStatus])
+
   if (s.conn === 'locked') {
     return (
       <div className="relative">
         <form
           className="flex items-center gap-1"
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault()
             const v = new FormData(e.currentTarget).get('p')
-            if (v) { setErr(''); setAttempted(true); setPasscode(String(v)) }
+            if (!v || checking) return
+            setErr('')
+            setChecking(true)
+            await setPasscode(String(v))
+            setChecking(false)
+            // If still locked after connect() resolved, the passcode was rejected.
+            if (getSyncState().conn === 'locked') setErr('Passcode rejected — still locked.')
           }}
         >
-          <KeyRound size={16} className="text-orange-600" />
+          <KeyRound size={16} className="shrink-0 text-orange-700 dark:text-orange-400" />
           <input
             name="p" type="password" placeholder="Passcode" autoComplete="current-password" aria-label="Sync passcode"
-            className="h-8 w-28 rounded-md border border-black/15 bg-transparent px-2 text-sm dark:border-white/20"
+            className="h-8 w-24 rounded-md border border-black/15 bg-transparent px-2 text-sm sm:w-28 dark:border-white/20"
           />
-          <button type="submit" className="h-8 rounded-md bg-orange-600 px-2 text-xs text-white hover:bg-orange-700" aria-label="Submit passcode">
-            Unlock
+          <button type="submit" disabled={checking} className="h-8 rounded-md bg-orange-700 px-2 text-xs text-white hover:bg-orange-800 disabled:opacity-50" aria-label="Submit passcode">
+            {checking ? '…' : 'Unlock'}
           </button>
         </form>
         {err && (
@@ -164,15 +182,30 @@ function SyncBadge() {
     )
   }
   return (
-    <span title={text} className={`flex items-center gap-1 text-xs ${warn ? 'text-orange-600' : 'text-emerald-700 dark:text-emerald-400'}`}>
-      {warn ? <CloudOff size={16} /> : <Cloud size={16} />}
-      <span className="hidden max-w-56 truncate md:inline">{text}</span>
-    </span>
+    <div className="relative" ref={badgeRef}>
+      <button
+        type="button"
+        title={text}
+        aria-label={text}
+        onClick={() => setShowStatus((v) => !v)}
+        className={`flex h-9 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10 ${warn ? 'text-orange-700 dark:text-orange-400' : 'text-emerald-700 dark:text-emerald-400'}`}
+      >
+        {warn ? <CloudOff size={16} /> : <Cloud size={16} />}
+        <span className="hidden max-w-56 truncate md:inline">{text}</span>
+      </button>
+      {showStatus && (
+        <div role="status" className="absolute right-0 top-full z-50 mt-1 whitespace-nowrap rounded-md border border-black/10 bg-white px-2.5 py-1.5 text-xs shadow-lg md:hidden dark:border-white/15 dark:bg-[#1b2128]">
+          {text}
+        </div>
+      )}
+    </div>
   )
 }
 
 export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
   useShortcuts(() => setShortcutsOpen(true))
   useUrlModeSync()
   useEffect(() => startSync(), [])
@@ -186,36 +219,82 @@ export default function App() {
   const canRedo = useStore(useDoc.temporal, (s) => s.futureStates.length > 0)
   // #11: sidebar open by default on wide screens; an overlay drawer below 768 px.
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(min-width: 768px)')
+    const onChange = (e: MediaQueryListEvent) => setSidebarOpen(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  useEffect(() => {
+    if (!moreOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setMoreOpen(false) }
+    }
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey, true)
+    return () => { document.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey, true) }
+  }, [moreOpen])
 
   const btn = 'flex h-9 items-center gap-1 rounded-md px-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent'
 
   return (
     <div className="flex h-full flex-col">
       {mode === 'edit' && (
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-black/10 bg-white px-3 dark:border-white/10 dark:bg-[#1b2128]">
-          <ProjectTitleButton />
-          <div className="flex-1" />
+        <header className="flex h-12 shrink-0 items-center gap-1 border-b border-black/10 bg-white px-2 sm:gap-2 sm:px-3 dark:border-white/10 dark:bg-[#1b2128]">
+          <div className="min-w-0 flex-1">
+            <ProjectTitleButton />
+          </div>
           <SyncBadge />
           <button
-            className={btn} title="Undo (Ctrl+Z)" aria-label="Undo"
+            className={btn} title="Undo (Ctrl/Cmd+Z)" aria-label="Undo"
             disabled={!canUndo} onClick={() => useDoc.temporal.getState().undo()}
           >
             <Undo2 size={16} />
           </button>
           <button
-            className={btn} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"
+            className={btn} title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo"
             disabled={!canRedo} onClick={() => useDoc.temporal.getState().redo()}
           >
             <Redo2 size={16} />
           </button>
           <SnapPopover />
-          <ThemeToggle />
-          <button
-            className={btn} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"
-            aria-haspopup="dialog" onClick={() => setShortcutsOpen(true)}
-          >
-            <Keyboard size={16} />
-          </button>
+          <div className="hidden items-center gap-1 sm:flex">
+            <ThemeToggle />
+            <button
+              className={btn} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"
+              aria-haspopup="dialog" onClick={() => setShortcutsOpen(true)}
+            >
+              <Keyboard size={16} />
+            </button>
+          </div>
+          <div className="relative sm:hidden" ref={moreRef}>
+            <button
+              type="button"
+              className={btn}
+              aria-label="More options"
+              aria-expanded={moreOpen}
+              aria-haspopup="menu"
+              onClick={() => setMoreOpen((o) => !o)}
+            >
+              <MoreVertical size={16} />
+            </button>
+            {moreOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1 flex flex-col gap-1 rounded-lg border border-black/10 bg-white p-1.5 shadow-lg dark:border-white/15 dark:bg-[#1b2128]">
+                <ThemeToggle />
+                <button
+                  type="button"
+                  className={btn}
+                  onClick={() => { setMoreOpen(false); setShortcutsOpen(true) }}
+                >
+                  <Keyboard size={16} /> <span>Shortcuts</span>
+                </button>
+              </div>
+            )}
+          </div>
           <button
             className={btn} title="Toggle sidebar" aria-label="Toggle sidebar" aria-pressed={sidebarOpen}
             onClick={() => setSidebarOpen((o) => !o)}
@@ -237,7 +316,7 @@ export default function App() {
         <div className="min-h-0 flex-1 overflow-auto"><MeasureMode /></div>
       ) : (
         <div className="flex min-h-0 flex-1">
-          <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-black/10 bg-white py-2 dark:border-white/10 dark:bg-[#1b2128]" aria-label="Tools">
+          <nav className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-black/10 bg-white py-2 max-md:w-13 dark:border-white/10 dark:bg-[#1b2128]" aria-label="Tools">
             {TOOLS.map(({ id, label, key, icon: Icon }) => (
               <button
                 key={id}
@@ -246,7 +325,7 @@ export default function App() {
                 aria-pressed={tool === id}
                 data-tool={id}
                 onClick={() => setTool(id)}
-                className={`flex h-9 w-9 items-center justify-center rounded-md ${tool === id ? 'bg-orange-600 text-white' : 'hover:bg-black/5 dark:hover:bg-white/10'}`}
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md max-md:h-11 max-md:w-11 ${tool === id ? 'bg-orange-700 text-white' : 'hover:bg-black/5 dark:hover:bg-white/10'}`}
               >
                 <Icon size={18} />
               </button>
@@ -257,7 +336,7 @@ export default function App() {
               <CanvasGrid />
               {layers.background && <BackgroundLayer />}
               <RoomsLayer />
-              {layers.openings && <ElementsLayer />}
+              <ElementsLayer />
               {layers.notes && <AnnotationsLayer />}
             </Viewport>
             <EmptyState />
@@ -284,6 +363,8 @@ export default function App() {
         </div>
       )}
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <ToastHost />
+      <UpdateToast />
     </div>
   )
 }

@@ -56,7 +56,7 @@ export function ToastHost() {
   return createPortal(
     <div
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 left-1/2 z-50 flex w-auto max-w-[95vw] -translate-x-1/2 flex-col items-center gap-2"
+      className="pointer-events-none fixed bottom-16 left-1/2 z-50 flex w-auto max-w-[95vw] -translate-x-1/2 flex-col items-center gap-2"
     >
       {toasts.map((t) => (
         <div
@@ -67,7 +67,7 @@ export function ToastHost() {
           {t.actionLabel && (
             <button
               type="button"
-              className="min-h-9 rounded-md bg-orange-600 px-3 text-sm font-semibold text-white hover:bg-orange-700"
+              className="min-h-9 rounded-md bg-orange-700 px-3 text-sm font-semibold text-white hover:bg-orange-800"
               onClick={() => {
                 t.onAction?.()
                 dismiss(t.id)

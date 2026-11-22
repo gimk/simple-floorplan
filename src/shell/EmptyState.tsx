@@ -4,11 +4,9 @@ import { House, ImagePlus, Square } from 'lucide-react'
 import { useDoc, useUi } from '../model/store'
 import { loadDemoApartment } from '../features/measure/demo'
 
-/** Click the Background panel's "Import image or PDF" button (owned by another feature). */
+/** Click the Background panel's import button (owned by another feature). */
 function focusBackgroundImport() {
-  const btn = [...document.querySelectorAll('button')].find((b) =>
-    b.textContent?.includes('Import image or PDF') || b.textContent?.includes('Replace image'),
-  )
+  const btn = document.querySelector<HTMLButtonElement>('button[data-action="import-background"]')
   btn?.click()
 }
 
