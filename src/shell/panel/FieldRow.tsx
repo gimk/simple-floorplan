@@ -12,10 +12,12 @@ export type FieldRowProps = {
   labelWidth?: string
   children: ReactNode
   className?: string
+  /** Label above, control at full width. Use for segmented controls with long labels. */
+  stacked?: boolean
 }
 
-export function FieldRow({ label, htmlFor, hint, labelWidth = 'w-24', children, className }: FieldRowProps) {
-  const labelCls = `shrink-0 text-xs text-slate-500 dark:text-slate-400 ${labelWidth}`
+export function FieldRow({ label, htmlFor, hint, labelWidth = 'w-24', children, className, stacked }: FieldRowProps) {
+  const labelCls = `shrink-0 text-xs text-slate-500 dark:text-slate-400 ${stacked ? 'w-full' : labelWidth}`
   const labelContent = (
     <>
       {label}
@@ -31,7 +33,7 @@ export function FieldRow({ label, htmlFor, hint, labelWidth = 'w-24', children, 
       ) : (
         <span className={labelCls}>{labelContent}</span>
       )}
-      <div className="min-w-32 flex-1">{children}</div>
+      <div className={stacked ? 'w-full' : 'min-w-32 flex-1'}>{children}</div>
     </div>
   )
 }

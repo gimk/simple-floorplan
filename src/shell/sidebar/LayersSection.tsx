@@ -33,7 +33,7 @@ export function LayersSection() {
           />
         ))}
       </div>
-      <FieldRow label="Renovation">
+      <FieldRow label="Renovation" stacked>
         <Segmented
           ariaLabel="Renovation view"
           options={RENOVATION_OPTIONS}

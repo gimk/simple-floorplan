@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
 import { fmtCm, innerWallLengths, roomAreaM2, roomInnerRing, roomWalls } from '../../model/geometry'
+import { planPrecision, shownLength } from '../../model/precision'
 import { selectedItems, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, Selection, WallAlign, WallProps, WallStatus, WallType } from '../../model/types'
@@ -278,10 +279,10 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
       {wall && props && (
         <PanelSection title={group ? `${group.length} walls` : `Wall ${room.code}-${wall.index + 1}`}>
           {group && <EmptyHint>{group.map(wallLabel).join(', ')}. Changes apply to all of them.</EmptyHint>}
-          <FieldRow label="Type">
+          <FieldRow label="Type" stacked>
             <Segmented ariaLabel="Wall type" options={WALL_TYPES} value={props.type} onChange={(t) => setWallTypes(targets, t as WallType)} />
           </FieldRow>
-          <FieldRow label="Renovation">
+          <FieldRow label="Renovation" stacked>
             <Segmented
               ariaLabel="Wall status"
               options={WALL_STATUSES}
@@ -308,7 +309,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
               }}
             />
           </FieldRow>
-          <FieldRow label="In line on">
+          <FieldRow label="In line on" stacked>
             <Segmented
               ariaLabel="Line of the wall that lines up with the next walls"
               options={WALL_ALIGNS}
@@ -321,7 +322,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
               id="wall-length"
               name="length"
               unit="cm"
-              value={Math.round(innerWallLengths(room)[wall.index] * 10) / 10}
+              value={shownLength(innerWallLengths(room)[wall.index], planPrecision(doc))}
               min={1}
               disabled={!!props.locked}
               onCommit={(v) => {
@@ -497,7 +498,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
                       <span className={`shrink-0 rounded px-1 text-[11px] ${WALL_TYPE_CHIP[row.type]}`}>{row.typeLabel}</span>
                       <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
                         {row.verifiedCm === null ? (
-                          <span className={MUTED}>{fmtCm(row.lengthCm)}</span>
+                          <span className={MUTED}>{fmtCm(shownLength(row.lengthCm, planPrecision(doc)))}</span>
                         ) : (
                           <span className="text-emerald-700 dark:text-emerald-400">
                             {fmtCm(row.verifiedCm)}

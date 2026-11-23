@@ -15,3 +15,6 @@ export const roundTo = (v: number, step: number): number => {
 }
 
 export const roundVec = (p: Vec, step: number): Vec => ({ x: roundTo(p.x, step), y: roundTo(p.y, step) })
+
+/** Length as shown to the user: rounded to the plan step (0.1 cm when rounding is off). */
+export const shownLength = (v: number, step: number): number => roundTo(v, step > 0 ? step : 0.1)

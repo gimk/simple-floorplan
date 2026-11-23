@@ -3,6 +3,7 @@ import { useViewport } from '../../canvas/Viewport'
 import { fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
+import { planPrecision, shownLength } from '../../model/precision'
 import type { Room, Vec } from '../../model/types'
 import { selfIntersects } from './crossing'
 import { forcedWallStarts, useDragInfo } from './draginfo'
@@ -40,6 +41,7 @@ export function RoomsLayer() {
   const renovationView = useUi((s) => s.renovationView)
   const tool = useUi((s) => s.tool)
   const measurements = useDoc((s) => s.doc.measurements)
+  const step = useDoc((s) => planPrecision(s.doc))
   const activeHole = useActiveHole()
   const crossing = useMemo(
     () => new Set(rooms.filter((r) => selfIntersects(r.vertices) || r.holes.some(selfIntersects)).map((r) => r.id)),
@@ -273,7 +275,7 @@ export function RoomsLayer() {
               transform={`rotate(${ang} ${mx} ${my})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
               strokeWidth={px(3)} strokeLinejoin="round" fontWeight={verified ? 600 : undefined}
               className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${verified ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
-              {verified ? `✓ ${fmtCm(m.actualCm)}` : fmtCm(Math.round(inner[w.index] * 10) / 10)}
+              {verified ? `✓ ${fmtCm(m.actualCm)}` : fmtCm(shownLength(inner[w.index], step))}
             </text>
           )
         })
