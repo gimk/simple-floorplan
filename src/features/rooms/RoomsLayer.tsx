@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
-import { fmtCm, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
+import { fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { Room, Vec } from '../../model/types'
@@ -254,6 +254,8 @@ export function RoomsLayer() {
       {display.map(label)}
       {layers.dimensions && rooms.map((r) => {
         const labels = new Map(surveyIds(r).filter((x) => x.kind === 'wall').map((x) => [x.wallStart, x.label]))
+        // Lengths shown are inside faces, like the values measured on site.
+        const inner = innerWallLengths(r)
         return roomWalls(r).map((w) => {
           // Always show lengths of walls attached to the dragged vertex/wall (7.2 #22).
           if (w.length * zoom < 55 && !forcedWalls.has(w.start.id)) return null
@@ -271,7 +273,7 @@ export function RoomsLayer() {
               transform={`rotate(${ang} ${mx} ${my})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
               strokeWidth={px(3)} strokeLinejoin="round" fontWeight={verified ? 600 : undefined}
               className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${verified ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
-              {verified ? `✓ ${fmtCm(m.actualCm)}` : fmtCm(w.length)}
+              {verified ? `✓ ${fmtCm(m.actualCm)}` : fmtCm(Math.round(inner[w.index] * 10) / 10)}
             </text>
           )
         })

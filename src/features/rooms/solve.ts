@@ -1,6 +1,6 @@
 // Solver for "Apply measured lengths": new room outline from verified wall lengths and diagonal. Pure, cm.
 // No store or DOM imports: the API worker (core/commands.ts) uses this file too.
-import { cross, dot, len, norm, roomWalls, sub } from '../../model/geometry'
+import { cross, dot, halfThicknesses, innerRing, len, norm, roomWalls, sub } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
 import type { PlanDoc, Room, Vec } from '../../model/types'
 
@@ -95,8 +95,11 @@ type Corner = { prev: number; at: number; next: number; kind: 'right' | 'straigh
  * unit edges), straight corner 10 x mean length (cross of unit edges), other corner 0.05 x mean length
  * (turn angle in radians), unmeasured wall 0.01.
  */
-export function solveRoomLsq(room: Room, measured: (number | null)[], diagonalCm?: number | null): Solved {
+export function solveRoomLsq(room: Room, measured: (number | null)[], diagonalCm?: number | null, centre: (number | null)[] = []): Solved {
   const n = room.vertices.length
+  // Measured values are inside faces: compare them with the outline moved in by half the walls.
+  const half = halfThicknesses(room)
+  const inner = (v: Vec[]) => innerRing(v, half)
   const w = roomWalls(room)
   const drawn: Vec[] = room.vertices.map((v) => ({ x: v.x, y: v.y }))
   const drawnLen = w.map((x) => x.length)
@@ -129,13 +132,16 @@ export function solveRoomLsq(room: Room, measured: (number | null)[], diagonalCm
 
   const residuals = (p: number[]): number[] => {
     const v = toPoints(p)
+    const q = inner(v)
     const out: number[] = []
     for (let i = 0; i < n; i++) {
       const e = len(sub(v[(i + 1) % n], v[i]))
-      const L = measured[i]
-      out.push(L != null ? e - L : (e - drawnLen[i]) * 0.01)
+      const L = measured[i], C = centre[i]
+      if (L != null) out.push(len(sub(q[(i + 1) % n], q[i])) - L)
+      else if (C != null) out.push(e - C)
+      else out.push((e - drawnLen[i]) * 0.01)
     }
-    if (diag) out.push(len(sub(v[diag.j], v[diag.i])) - diag.cm)
+    if (diag) out.push(len(sub(q[diag.j], q[diag.i])) - diag.cm)
     for (const c of corners) {
       const a = norm(sub(v[c.at], v[c.prev])), b = norm(sub(v[c.next], v[c.at]))
       if (c.kind === 'right') out.push(dot(a, b) * c.meanLen * 10)
@@ -192,35 +198,43 @@ export function solveRoomLsq(room: Room, measured: (number | null)[], diagonalCm
   }
 
   const pts = toPoints(p)
+  const qs = inner(pts)
   const fit: SolveResidual[] = []
   for (let i = 0; i < n; i++) {
     const m = measured[i]
     if (m == null) continue
-    const solvedCm = len(sub(pts[(i + 1) % n], pts[i]))
+    const solvedCm = len(sub(qs[(i + 1) % n], qs[i]))
     fit.push({ index: i, measuredCm: m, solvedCm, diffCm: m - solvedCm })
   }
   if (diag) {
-    const solvedCm = len(sub(pts[diag.j], pts[diag.i]))
+    const solvedCm = len(sub(qs[diag.j], qs[diag.i]))
     fit.push({ index: 'D', measuredCm: diag.cm, solvedCm, diffCm: diag.cm - solvedCm })
   }
   const rms = fit.length ? Math.sqrt(fit.reduce((s, x) => s + x.diffCm * x.diffCm, 0) / fit.length) : 0
   return { points: pts, closingErrorCm: rms, oppositeDiffCm: 0, mode: 'lsq', residuals: fit }
 }
 
-/** Solve the room outline from its measured walls and (optional) measured diagonal. */
-export function solveRoom(room: Room, measured: (number | null)[], diagonalCm?: number | null): Solved {
-  return solveRoomLsq(room, measured, diagonalCm)
+/**
+ * Solve the room outline (wall centre lines) from its measured walls and diagonal (inside faces),
+ * and optional centre line lengths of shared walls measured from the next room.
+ */
+export function solveRoom(room: Room, measured: (number | null)[], diagonalCm?: number | null, centre?: (number | null)[]): Solved {
+  return solveRoomLsq(room, measured, diagonalCm, centre)
 }
 
-/** Corners closer than this (cm) make two walls of different rooms the same wall. */
-export const TWIN_TOL_CM = 3
+/**
+ * Corners closer than this (cm) make two walls of different rooms the same wall. Solving a room
+ * from inside faces can move a corner by about one wall thickness before its neighbour is solved.
+ */
+export const TWIN_TOL_CM = 15
 
 export type TwinValue = { index: number; cm: number; label: string }
 
 /**
  * Walls of `room` with no value of their own whose twin (the same wall seen from the next room:
- * both ends at the same place) has one. Both sides of a shared wall have the same length, so the
- * solver uses the twin's value. These walls are not locked: the value belongs to the other room.
+ * both ends at the same place) has one. The two inside faces of a shared wall can differ (the
+ * walls at their ends can have different thicknesses), but the centre line is the same: `cm` is the
+ * twin's centre line length, which the solver keeps. These walls are not locked.
  */
 export function twinValues(doc: Pick<PlanDoc, 'measurements' | 'rooms'>, room: Room): TwinValue[] {
   const own = new Set(verifiedWalls(doc, room).map((v) => v.index))
@@ -237,7 +251,11 @@ export function twinValues(doc: Pick<PlanDoc, 'measurements' | 'rooms'>, room: R
         const c = r.vertices[v.index], d = r.vertices[(v.index + 1) % m]
         return (near(a, c) && near(b, d)) || (near(a, d) && near(b, c))
       })
-      if (hit) { out.push({ index: i, cm: hit.cm, label: hit.label }); return }
+      if (hit) {
+        const c = r.vertices[hit.index], d = r.vertices[(hit.index + 1) % m]
+        out.push({ index: i, cm: Math.hypot(d.x - c.x, d.y - c.y), label: hit.label })
+        return
+      }
     }
   })
   return out

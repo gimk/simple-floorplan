@@ -51,10 +51,11 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm
-  // A shared wall with no value here takes the value measured from the next room.
-  for (const t of twinValues(doc, room)) measured[t.index] = t.cm
+  // A shared wall with no value here keeps the centre line of the wall measured from the next room.
+  const centre: (number | null)[] = room.vertices.map(() => null)
+  for (const t of twinValues(doc, room)) centre[t.index] = t.cm
   const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
-  const solved = solveRoom(room, measured, diagonalCm)
+  const solved = solveRoom(room, measured, diagonalCm, centre)
 
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })
   if (walls.some((x) => x.length < 1)) return { doc, report: none(room, 'A wall would collapse') }
@@ -96,10 +97,12 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
  * they read that value for their side of the wall, so both sides keep the same length.
  */
 export function applyMeasuredNear(doc: PlanDoc, roomId: string): { doc: PlanDoc; reports: ApplyReport[] } {
+  // Find the neighbours before the room moves: solving it can move its corners by a wall thickness.
+  const before = doc.rooms.find((r) => r.id === roomId)
+  const near = before ? measuredNeighbours(doc, before).map((r) => r.id) : []
   const first = applyMeasured(doc, roomId)
-  const room = first.doc.rooms.find((r) => r.id === roomId)
-  if (!room || first.report.mode === 'none') return { doc: first.doc, reports: [first.report] }
-  const rest = applyMeasuredAll(first.doc, measuredNeighbours(first.doc, room).map((r) => r.id))
+  if (first.report.mode === 'none') return { doc: first.doc, reports: [first.report] }
+  const rest = applyMeasuredAll(first.doc, near)
   return { doc: rest.doc, reports: [first.report, ...rest.reports] }
 }
 

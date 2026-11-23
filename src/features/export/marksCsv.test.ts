@@ -32,8 +32,9 @@ describe('survey CSV: photo marks', () => {
     const lines = csv.split('\r\n')
     expect(lines).toContain(MARK_HEAD.join(','))
     expect(lines).toContain('1,SE,1,250,,')
-    // SE-1 is the first wall (400 cm planned), so the value of that row is 400.
-    expect(lines).toContain('1,SE,1,400,SE-1,window')
+    // SE-1 is the first wall. Its inside face runs from the inside corner (15, 5) to (395, 5): 380 cm.
+    // The room is a triangle, so the acute corner at (0, 0) is cut by the diagonal wall.
+    expect(lines).toContain('1,SE,1,380,SE-1,window')
   })
 
   it('keeps the survey and items tables first', () => {

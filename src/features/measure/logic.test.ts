@@ -92,11 +92,13 @@ describe('room filters', () => {
     expect(roomHasMissing(doc([r], m({ 'SE-1': 300 })), r)).toBe(true)
   })
   it('roomIsFlagged on discrepancy over 2 cm', () => {
-    expect(roomIsFlagged(doc([r], m({ 'SE-1': 300, 'SE-2': 400, 'SE-3': 300, 'SE-4': 400, 'SE-D': 500, 'SE-H': 250 })), r)).toBe(false)
-    expect(roomIsFlagged(doc([r], m({ 'SE-1': 310, 'SE-2': 400, 'SE-3': 300, 'SE-4': 400, 'SE-D': 500, 'SE-H': 250 })), r)).toBe(true)
+    // Planned values are inside faces (10 cm walls): 300 - 10 = 290, 400 - 10 = 390, diagonal sqrt(290² + 390²) = 486.0.
+    expect(roomIsFlagged(doc([r], m({ 'SE-1': 290, 'SE-2': 390, 'SE-3': 290, 'SE-4': 390, 'SE-D': 486, 'SE-H': 250 })), r)).toBe(false)
+    expect(roomIsFlagged(doc([r], m({ 'SE-1': 310, 'SE-2': 390, 'SE-3': 290, 'SE-4': 390, 'SE-D': 486, 'SE-H': 250 })), r)).toBe(true) // 310 vs 290 planned
   })
   it('roomIsFlagged on squareness warning', () => {
-    const sq = m({ 'SE-1': 300, 'SE-2': 400, 'SE-3': 300, 'SE-4': 400, 'SE-D': 510, 'SE-H': 250 })
+    // Walls match their inside-face plan (290 / 390), so only the diagonal is off: 510 vs 486.
+    const sq = m({ 'SE-1': 290, 'SE-2': 390, 'SE-3': 290, 'SE-4': 390, 'SE-D': 510, 'SE-H': 250 })
     expect(roomIsFlagged(doc([r], sq), r)).toBe(true)
   })
   it('not flagged without planned value or measurements', () => {

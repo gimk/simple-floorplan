@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptyDoc } from '../../model/store'
-import { roomAreaM2, roomWalls } from '../../model/geometry'
+import { innerWallLengths, roomAreaM2, roomWalls } from '../../model/geometry'
 import type { Measurement, PlanDoc, Room, WallElement } from '../../model/types'
 import { applyMeasured, applyMeasuredAll, isRectilinear, isRightAngledQuad, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
 import { newEdgeCrosses, selfIntersects } from './crossing'
@@ -17,6 +17,8 @@ const withRoom = (pts = rectPoints(P(0, 0), P(400, 300))) => {
   return { doc: { ...d, rooms: [room] } as PlanDoc, room }
 }
 const len = (r: Room) => roomWalls(r).map((w) => w.length)
+/** Inside face length of each wall: measured values are compared with these. */
+const inner = (r: Room) => innerWallLengths(r)
 
 describe('selfIntersects', () => {
   it('accepts simple polygons', () => {
@@ -142,7 +144,8 @@ describe('collinear vertices survive slice and cutout', () => {
     const { doc, mid } = withMid()
     const r = cutDoc(doc, rectPoints(P(300, 200), P(450, 350)))!
     expect(r.doc.rooms[0].vertices.map((v) => v.id)).toContain(mid)
-    expect(roomAreaM2(r.doc.rooms[0])).toBeCloseTo(12 - 1 * 1, 5) // 100 x 100 cm removed
+    // Inside outline: 290 x 290 (x 5..295, y 5..295) plus a 100 x 190 strip (x 295..395, y 5..195) = 103 100 cm2
+    expect(roomAreaM2(r.doc.rooms[0])).toBeCloseTo(10.31, 5)
   })
 })
 
@@ -175,10 +178,11 @@ describe('applyMeasured', () => {
     expect(r.report.residuals.find((x) => x.index === 2)?.diffCm).toBeCloseTo(2, 0)
     expect(r.report.rmsCm).toBeCloseTo(Math.sqrt((4 + 4 + 0) / 3), 1)
     const out = r.doc.rooms[0]
-    expect(len(out)[0]).toBeCloseTo(412, 0)
-    expect(len(out)[2]).toBeCloseTo(412, 0)
-    expect(len(out)[1]).toBeCloseTo(305)
-    expect(len(out)[3]).toBeCloseTo(305)
+    // Inside faces: (410 + 414) / 2 = 412 for walls 1 and 3; walls 2 and 4 are 305 inside.
+    expect(inner(out)[0]).toBeCloseTo(412, 0)
+    expect(inner(out)[2]).toBeCloseTo(412, 0)
+    expect(inner(out)[1]).toBeCloseTo(305)
+    expect(inner(out)[3]).toBeCloseTo(305)
     expect(isRightAngledQuad(out)).toBe(true)
     expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
     // |residual| 2 > 0.5: wall 1 is not locked. Wall 2 (305) fits exactly and is locked.
@@ -193,14 +197,15 @@ describe('applyMeasured', () => {
     expect(r.report.residuals.find((x) => x.index === 'D')?.diffCm).toBeGreaterThan(3)
     expect(r.report.diagonal?.diffCm).toBeGreaterThan(3)
     // The diagonal is a weight-1 constraint, like the walls: wall 0 gives way by a few cm.
-    expect(Math.abs(len(r.doc.rooms[0])[0] - 400)).toBeLessThan(5)
+    expect(Math.abs(inner(r.doc.rooms[0])[0] - 400)).toBeLessThan(5)
   })
   it('rectangle: unmeasured pair keeps its size', () => {
     const { doc, room } = withRoom()
     const r = applyMeasured({ ...doc, measurements: { 'R1-2': meas('R1-2', 320) } }, room.id)
     const out = r.doc.rooms[0]
+    // Unmeasured wall 0 keeps its drawn centre line (400). Measured wall 1 is 320 on its inside face.
     expect(len(out)[0]).toBeCloseTo(400)
-    expect(len(out)[1]).toBeCloseTo(320)
+    expect(inner(out)[1]).toBeCloseTo(320)
   })
   it('does nothing without verified values', () => {
     const { doc, room } = withRoom()
@@ -218,7 +223,8 @@ describe('applyMeasured', () => {
     // Right angles at v0, v1 and v4 fix both measured walls at once: no fit error.
     expect(r.report.closingErrorCm).toBeCloseTo(0, 1)
     const out = r.doc.rooms[0]
-    const l = len(out)
+    // Inside faces: 410 and 304 (right angles at both ends, so centre line = inside + 10).
+    const l = inner(out)
     expect(l[0]).toBeCloseTo(410, 2)
     expect(l[4]).toBeCloseTo(304, 2)
     // closed: polygon still has its 5 vertices and v0 did not move
@@ -253,10 +259,10 @@ describe('applyMeasured', () => {
     expect(r.report.mode).toBe('lsq')
     const out = r.doc.rooms[0]
     expect(isRectilinear(out)).toBe(true)
-    const l = len(out)
+    const l = inner(out)
     expect(l[0]).toBeCloseTo(410, 1)
     expect(l[5]).toBeCloseTo(304, 1)
-    // x: 410 = wall 3 + wall 5 (were 200 + 200); y: 304 = wall 2 + wall 4 (were 150 + 150)
+    // Inside outline closes: x of wall 0 (410) = x of walls 2 + 4; y of wall 5 (304) = y of walls 1 + 3.
     expect(l[2] + l[4]).toBeCloseTo(410, 1)
     expect(l[1] + l[3]).toBeCloseTo(304, 1)
     expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
@@ -271,7 +277,7 @@ describe('applyMeasured', () => {
     expect(r.report.closingErrorCm).toBeCloseTo(Math.sqrt(0.5), 1)
     const out = r.doc.rooms[0]
     expect(isRectilinear(out)).toBe(true)
-    const l = len(out)
+    const l = inner(out)
     // 3 cm over the 3 x walls: 403 -> 402, 200 -> 201, 200 -> 201
     expect(l[0]).toBeCloseTo(402, 1)
     expect(l[2]).toBeCloseTo(201, 1)
@@ -291,8 +297,12 @@ describe('applyMeasured', () => {
     const [aOut, bOut] = r.doc.rooms
     expect(isRightAngledQuad(aOut)).toBe(true)
     expect(isRightAngledQuad(bOut)).toBe(true)
-    expect(len(aOut)).toEqual([380, 280, 380, 280].map((x) => expect.closeTo(x)))
-    expect(len(bOut)).toEqual([290, 270, 290, 270].map((x) => expect.closeTo(x)))
+    // Inside faces. A: 380 x 280. B measures 270 high, but its left wall is A's right wall (centre 280 + 10 = 290).
+    // The two values disagree (B 280 vs 290 on the centre line): B is fitted between them (275 inside) and the
+    // difference is reported as fit error.
+    expect(inner(aOut)).toEqual([380, 280, 380, 280].map((x) => expect.closeTo(x)))
+    expect(inner(bOut)).toEqual([290, 275, 290, 275].map((x) => expect.closeTo(x, 0)))
+    expect(r.reports[1].rmsCm).toBeGreaterThan(2)
   })
   it('moves shared corners of a neighbour room, and applyMeasuredAll is one doc', () => {
     const d0 = emptyDoc()
@@ -302,9 +312,10 @@ describe('applyMeasured', () => {
     const r = applyMeasuredAll(doc)
     expect(r.reports.map((x) => x.mode)).toEqual(['lsq', 'none'])
     const bOut = r.doc.rooms[1]
-    expect(bOut.vertices[0].x).toBeCloseTo(420, 1)
+    // A wall 1 inside 420 = centre line 420 + 10 = 430. B's shared corners follow it.
+    expect(bOut.vertices[0].x).toBeCloseTo(430, 1)
     expect(bOut.vertices[0].y).toBeCloseTo(0, 5)
-    expect(bOut.vertices[3].x).toBeCloseTo(420, 1)
+    expect(bOut.vertices[3].x).toBeCloseTo(430, 1)
     expect(bOut.vertices[3].y).toBeCloseTo(300, 5)
     expect(bOut.vertices[1]).toMatchObject({ x: 700, y: 0 })
   })

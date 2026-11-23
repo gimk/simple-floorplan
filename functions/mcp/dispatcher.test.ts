@@ -210,7 +210,8 @@ describe('MCP JSON-RPC dispatcher', () => {
 
     // 4. Queries: get_plan, get_unmeasured, validate_plan, find_shared_walls
     const summary = await call('get_plan', { projectId, format: 'summary' })
-    expect(summary.structuredContent?.totalIndoorAreaM2).toBe(21)
+    // Inside faces (10 cm walls). SE 400 x 300 -> 390 x 290 = 11.31 m². CU 300 x 300 -> 290 x 290 = 8.41 m². Sum 19.72 m².
+    expect(summary.structuredContent?.totalIndoorAreaM2).toBe(19.72)
 
     const fullJson = await call('get_plan', { projectId, format: 'json' })
     expect((fullJson.structuredContent?.rooms as unknown[]).length).toBe(2)

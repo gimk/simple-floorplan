@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { roomAreaM2 } from '../../model/geometry'
+import { area } from '../../model/geometry'
 import { emptyDoc } from '../../model/store'
 import type { Pin, PlanDoc, Room, Vec, WallProps } from '../../model/types'
 import { makeRoom, rectPoints } from './ops'
@@ -125,7 +125,8 @@ describe('scaleRoom', () => {
     const r = scaleRoom({ ...doc, pins: [pin('p1', 100, 100, a.id)] }, a.id, anchor, { sx: 2, sy: 1 })
     expect(at(r, a, 2)).toEqual({ x: 800, y: 300 })
     expect(at(r, a, 3)).toEqual({ x: 0, y: 300 })
-    expect(roomAreaM2(r.rooms[0])).toBeCloseTo(24)
+    // Geometry op: check the centre-line outline, 800 x 300 cm = 24 m² (not the inside face).
+    expect(area(r.rooms[0].vertices) / 10000).toBeCloseTo(24)
     expect(r.pins![0].at).toEqual({ x: 200, y: 100 })
     expect(at(r, b, 0)).toEqual({ x: 400, y: 0 }) // other rooms untouched
   })

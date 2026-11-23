@@ -75,9 +75,9 @@ describe('RoomsPanelView', () => {
 
   it('shows the stats, with the volume from the apartment default ceiling', () => {
     const html = render({ kind: 'room', roomId: 'r1' })
-    expect(html).toContain('12,00 m²') // area
-    expect(html).toContain('1400 cm') // perimeter
-    expect(html).toContain('30,00 m³') // 12 m² × 2,50 m
+    expect(html).toContain('11,31 m²') // inside face: 390 x 290 cm
+    expect(html).toContain('1360 cm') // perimeter on the inside faces: 2 × (390 + 290)
+    expect(html).toContain('28,27 m³') // 11.31 m² × 2,50 m = 28.275, shown rounded down (binary float 28.27499...)
     expect(html).toContain('(apartment default)')
     expect(html).toContain('placeholder="250"')
     expect(html).toContain('Apartment default: 250 cm')
@@ -85,7 +85,7 @@ describe('RoomsPanelView', () => {
 
   it('uses the room ceiling and drops the inherited hint when it has one', () => {
     const html = render({ kind: 'room', roomId: 'r1' }, doc({ rooms: [rect({ ceilingCm: 270 })] }))
-    expect(html).toContain('32,40 m³') // 12 m² × 2,70 m
+    expect(html).toContain('30,54 m³') // 11.31 m² × 2,70 m = 30.537
     expect(html).not.toContain('(apartment default)')
     expect(html).not.toContain('Apartment default:')
   })

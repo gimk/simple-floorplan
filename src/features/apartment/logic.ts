@@ -1,6 +1,6 @@
 // Pure apartment-level helpers (zero React, zero DOM, no store imports):
 // totals for the panels/queries and the plan-vs-document surface comparison.
-import { roomAreaM2, roomWalls } from '../../model/geometry'
+import { innerWallLengths, roomAreaM2 } from '../../model/geometry'
 import type { PlanDoc, Room, SurfaceReference, SurfaceReferenceSource } from '../../model/types'
 import { effectiveCeilingCm, hasOwnCeiling } from '../export/calc'
 import { docProgress } from '../measure/logic'
@@ -63,7 +63,8 @@ export function apartmentTotals(doc: PlanDoc): ApartmentTotals {
     outdoorRoomCount: outdoor.length,
     indoorAreaM2: round2(totalAreaM2(indoor)),
     outdoorAreaM2: round2(totalAreaM2(outdoor)),
-    wallPerimeterM: round2(indoor.reduce((s, r) => s + roomWalls(r).reduce((a, w) => a + w.length, 0), 0) / 100),
+    // Inside faces, like the takeoffs (paint, baseboards).
+    wallPerimeterM: round2(indoor.reduce((s, r) => s + innerWallLengths(r).reduce((a, l) => a + l, 0), 0) / 100),
     defaultCeilingCm: doc.apartment?.defaultCeilingCm ?? null,
     roomsWithOwnCeiling: doc.rooms.filter((r) => hasOwnCeiling(r)).length,
     roomsWithoutCeiling,

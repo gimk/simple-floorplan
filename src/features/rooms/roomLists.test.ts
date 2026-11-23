@@ -33,7 +33,8 @@ describe('wallRows', () => {
     expect(rows.map((r) => r.label)).toEqual(['SE-1', 'SE-2', 'SE-3', 'SE-4'])
     expect(rows.map((r) => r.index)).toEqual([0, 1, 2, 3])
     expect(rows.map((r) => r.wallStart)).toEqual(['v0', 'v1', 'v2', 'v3'])
-    expect(rows.map((r) => Math.round(r.lengthCm))).toEqual([400, 300, 400, 300])
+    // Inside faces: each wall moved in by 5 cm (default 10 cm walls), so 390 x 290.
+    expect(rows.map((r) => Math.round(r.lengthCm))).toEqual([390, 290, 390, 290])
   })
 
   it('defaults to a partition, and reads the stored props', () => {

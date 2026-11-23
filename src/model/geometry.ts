@@ -19,9 +19,9 @@ export const signedArea = (pts: Vec[]) => {
 }
 export const area = (pts: Vec[]) => Math.abs(signedArea(pts))
 
-/** Room area in m², holes subtracted. */
+/** Room floor area in m²: inside the walls (inside faces), holes subtracted. */
 export const roomAreaM2 = (r: Room) =>
-  (area(r.vertices) - r.holes.reduce((s, h) => s + area(h), 0)) / 10000
+  (area(roomInnerRing(r)) - r.holes.reduce((s, h) => s + area(h), 0)) / 10000
 
 export const centroid = (pts: Vec[]): Vec => {
   const a = signedArea(pts)
@@ -156,4 +156,61 @@ export function labelPlacement(rings: Vec[][], w: number, h: number, m = 0): { p
     if (p) return { p, vertical }
   }
   return { p: pickSpot(c, spots) ?? c, vertical: false }
+}
+
+// ---------- inside faces ----------
+// A room outline is the centre line of its walls. On site, walls are measured on their face
+// inside the room: each wall line moved into the room by half its thickness. The inside
+// outline joins these moved lines at their crossings.
+
+/** Thickness of a wall when the room has no props for it (partition). */
+export const DEFAULT_WALL_CM = 10
+
+/** Half thickness of each wall of the room, in wall order. */
+export const halfThicknesses = (r: Room): number[] =>
+  r.vertices.map((v) => (r.walls[v.id]?.thicknessCm ?? DEFAULT_WALL_CM) / 2)
+
+/**
+ * Inside outline of a polygon whose edge i (pts[i] -> pts[i+1]) is moved into the polygon by
+ * half[i]. Vertex k of the result is the inside corner at pts[k].
+ */
+export function innerRing(pts: Vec[], half: number[]): Vec[] {
+  const n = pts.length
+  if (n < 3) return pts.map((p) => ({ x: p.x, y: p.y }))
+  const s = signedArea(pts) > 0 ? 1 : -1
+  const degenerate = pts.map((a, i) => dist(a, pts[(i + 1) % n]) < 1e-6)
+  if (degenerate.every(Boolean)) return pts.map((p) => ({ x: p.x, y: p.y }))
+  const lines = pts.map((a, i) => {
+    const b = pts[(i + 1) % n]
+    const d = norm(sub(b, a))
+    const inward = { x: -d.y * s, y: d.x * s }
+    return { p: add(a, mul(inward, half[i] ?? 0)), d }
+  })
+  // A zero-length wall (two corners at the same place) has no direction: it takes the line of
+  // the next real wall, so the corner before it is the crossing of the two real walls.
+  for (let i = n - 1, guard = 0; guard < 2 * n; guard++, i = (i + n - 1) % n) {
+    if (degenerate[i]) lines[i] = lines[(i + 1) % n]
+  }
+  const out = pts.map((_, k) => {
+    const A = lines[(k + n - 1) % n], B = lines[k]
+    const den = cross(A.d, B.d)
+    // Straight corner (or folded back): no crossing, use the moved point of the next wall.
+    if (Math.abs(den) < 1e-9) return B.p
+    const t = cross(sub(B.p, A.p), B.d) / den
+    return add(A.p, mul(A.d, t))
+  })
+  // The corner after a zero-length wall is the same inside corner as the one before it.
+  for (let k = 0, guard = 0; guard < 2 * n; guard++, k = (k + 1) % n) {
+    if (degenerate[k]) out[(k + 1) % n] = out[k]
+  }
+  return out
+}
+
+/** Inside outline of a room (its vertices moved in by half the wall thicknesses). */
+export const roomInnerRing = (r: Room): Vec[] => innerRing(r.vertices, halfThicknesses(r))
+
+/** Length of each wall on its inside face, in wall order. */
+export const innerWallLengths = (r: Room): number[] => {
+  const q = roomInnerRing(r)
+  return q.map((p, i) => dist(p, q[(i + 1) % q.length]))
 }

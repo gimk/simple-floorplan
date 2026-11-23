@@ -52,7 +52,7 @@ describe('RoomsTable', () => {
     const html = renderToStaticMarkup(<RoomsTable doc={doc()} />)
     expect(html).toContain('Séjour')
     expect(html).toContain('(SE)')
-    expect(html).toContain('12,00 m²') // 400 x 300 cm
+    expect(html).toContain('11,31 m²') // inside face 390 x 290 cm = 11.31 m²
     expect(html).toContain('265 cm')
     expect(html).toContain('✓ 1/5') // one of four walls plus the height measured
   })
@@ -73,8 +73,8 @@ describe('RoomsTable', () => {
     const html = renderToStaticMarkup(<RoomsTable doc={d} />)
     expect(html).toContain('outdoor')
     expect(html).toContain('Outdoor')
-    // One row per room (12,00 m² each), then the indoor total and the outdoor subtotal.
-    expect(html.match(/12,00 m²/g)?.length).toBe(4)
+    // One row per room (11,31 m² each), then the indoor total and the outdoor subtotal.
+    expect(html.match(/11,31 m²/g)?.length).toBe(4)
   })
 })
 
@@ -82,9 +82,9 @@ describe('DimensionsTable', () => {
   it('shows the measured value, the plan value and the gap', () => {
     const html = renderToStaticMarkup(<DimensionsTable doc={doc()} />)
     expect(html).toContain('SE-1')
-    expect(html).toContain('400 cm')
+    expect(html).toContain('390 cm') // plan: inside face 400 - 2 x 5 cm
     expect(html).toContain('402 cm')
-    expect(html).toContain('2 cm')
+    expect(html).toContain('12 cm') // gap 402 - 390
     expect(html).toContain('1 of 5 dimensions measured on site')
   })
 

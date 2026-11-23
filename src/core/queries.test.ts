@@ -35,10 +35,12 @@ describe('queries & SVG export', () => {
       roomCount: number
       takeoff: { totals: { floorM2: number; baseboardM: number; paintL: number } }
     }
-    expect(res.totalIndoorAreaM2).toBe(18)
-    expect(res.totalOutdoorAreaM2).toBe(4)
+    // Inside faces. SE: walls 5 cm, SE-3 25 cm (12.5 cm inside). Inside 390 x 282.5 = 11.02 m².
+    // CU: 190 x 290 = 5.51 m². Sum 16.53 m². BA (outdoor): 390 x 90 = 3.51 m².
+    expect(res.totalIndoorAreaM2).toBe(16.53)
+    expect(res.totalOutdoorAreaM2).toBe(3.51)
     expect(res.roomCount).toBe(3)
-    expect(res.takeoff.totals.floorM2).toBe(18)
+    expect(res.takeoff.totals.floorM2).toBe(16.53)
     expect(res.takeoff.totals.baseboardM).toBeGreaterThan(20)
     expect(res.takeoff.totals.paintL).toBeGreaterThan(0)
   })
@@ -132,7 +134,7 @@ describe('queries & SVG export', () => {
       elements: unknown[]
     }
     expect(res.code).toBe('SE')
-    expect(res.areaM2).toBe(12)
+    expect(res.areaM2).toBe(11.02) // inside 390 x 282.5 cm = 11.0175 m²
     expect(res.walls).toHaveLength(4)
     expect(res.elements).toHaveLength(1)
   })
@@ -199,7 +201,8 @@ describe('queries: apartment default ceiling height', () => {
     }
     expect(room.ceilingCm).toBe(250)
     expect(room.takeoff.ceilingCm).toBe(250)
-    expect(room.takeoff.wallM2).toBeCloseTo(14 * 2.5 - 0, 5)
+    // Inside perimeter 2 x (390 + 290) = 1360 cm, times 2.5 m ceiling.
+    expect(room.takeoff.wallM2).toBeCloseTo(13.6 * 2.5 - 0, 5)
   })
 
   it('leaves the height unknown when there is no default', () => {

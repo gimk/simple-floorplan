@@ -5,7 +5,9 @@ import { csvEscape, toCsv } from './csv'
 import { surveyCsv } from './surveyExport'
 import { buildPlanSvg, fitStandardScale } from './svgExport'
 
-// 400 x 300 cm room, 250 cm ceiling, one door 90x210, one window 100x120.
+// 400 x 300 cm room (centre line), 250 cm ceiling, one door 90x210, one window 100x120.
+// Default wall thickness is 10 cm, so the inside face is 390 x 290 cm
+// (each wall moved in by 5 cm). Inside wall lengths: 390, 290, 390, 290.
 const mkRoom = (over: Partial<Room> = {}): Room => ({
   id: 'r1', code: 'SE', name: 'Living', walkOrder: 0, ceilingCm: 250, holes: [], walls: {},
   vertices: [{ id: 'a', x: 0, y: 0 }, { id: 'b', x: 400, y: 0 }, { id: 'c', x: 400, y: 300 }, { id: 'd', x: 0, y: 300 }],
@@ -23,23 +25,25 @@ const mkDoc = (room = mkRoom()): PlanDoc => ({
 describe('calc', () => {
   it('computes floor, flooring, baseboard, walls, paint', () => {
     const r = calcRoom(mkDoc(), mkRoom(), DEFAULT_INPUTS)
-    expect(r.floorM2).toBeCloseTo(12)
-    expect(r.flooringM2).toBeCloseTo(13.2)
-    expect(r.perimeterM).toBeCloseTo(14)
-    expect(r.baseboardM).toBeCloseTo(13.1) // 14 - 0.9 door
-    const walls = 14 * 2.5 - 0.9 * 2.1 - 1 * 1.2
+    expect(r.floorM2).toBeCloseTo(11.31) // 390 x 290 = 11.31 m²
+    expect(r.flooringM2).toBeCloseTo(12.441) // 11.31 x 1.1 (10 % waste)
+    expect(r.perimeterM).toBeCloseTo(13.6) // 2 x (390 + 290) = 1360 cm
+    expect(r.baseboardM).toBeCloseTo(12.7) // 13.6 - 0.9 door
+    const walls = 13.6 * 2.5 - 0.9 * 2.1 - 1 * 1.2 // inside perimeter x 2.5 m ceiling, minus openings
     expect(r.wallM2).toBeCloseTo(walls)
     expect(r.paintL).toBeCloseTo((walls * 2) / 10)
   })
   it('subtracts holes from floor area', () => {
     const room = mkRoom({ holes: [[{ id: 'h1', x: 0, y: 0 }, { id: 'h2', x: 100, y: 0 }, { id: 'h3', x: 100, y: 100 }, { id: 'h4', x: 0, y: 100 }]] })
-    expect(calcRoom(mkDoc(room), room, DEFAULT_INPUTS).floorM2).toBeCloseTo(11)
+    // Inside area 11.31 m² minus the 1 m² hole (holes are not moved).
+    expect(calcRoom(mkDoc(room), room, DEFAULT_INPUTS).floorM2).toBeCloseTo(10.31)
   })
   it('uses verified lengths and ceiling', () => {
     const d = mkDoc()
     d.measurements = { 'SE-1': { label: 'SE-1', actualCm: 410, updatedAt: now }, 'SE-H': { label: 'SE-H', actualCm: 260, updatedAt: now } }
     const r = calcRoom(d, d.rooms[0], DEFAULT_INPUTS)
-    expect(r.perimeterM).toBeCloseTo(14.1)
+    // Verified SE-1 = 410, other inside walls 290 + 390 + 290 = 1380 cm.
+    expect(r.perimeterM).toBeCloseTo(13.8)
     expect(r.ceilingCm).toBe(260)
   })
   it('flags missing ceiling and keeps it out of totals', () => {
@@ -82,7 +86,7 @@ describe('calc: effectiveCeilingCm', () => {
     const doc: PlanDoc = { ...mkDoc(room), apartment: { defaultCeilingCm: 200 } }
     const r = calcRoom(doc, room, DEFAULT_INPUTS)
     expect(r.ceilingCm).toBe(200)
-    expect(r.wallM2).toBeCloseTo(14 * 2 - 0.9 * 2.1 - 1 * 1.2)
+    expect(r.wallM2).toBeCloseTo(13.6 * 2 - 0.9 * 2.1 - 1 * 1.2) // 13.6 m perimeter x 2 m ceiling
     const { totals } = calcAll(doc, DEFAULT_INPUTS)
     expect(totals.missingCeiling).toBe(0)
   })
@@ -107,8 +111,9 @@ describe('csv', () => {
     d.measurements = { 'SE-1': { label: 'SE-1', actualCm: 405, updatedAt: now } }
     const csv = surveyCsv(d)
     expect(csv.split('\r\n')[0]).toBe('room code,room name,id,kind,planned cm,measured cm,diff cm,status,notes')
-    expect(csv).toContain('SE,Living,SE-1,wall,400,405,5,verified,')
-    expect(csv).toContain('SE,Living,SE-2,wall,300,,,estimated,')
+    // Inside face: SE-1 planned 390 (not 400), diff 405 - 390 = 15. SE-2 planned 290 (not 300).
+    expect(csv).toContain('SE,Living,SE-1,wall,390,405,15,verified,')
+    expect(csv).toContain('SE,Living,SE-2,wall,290,,,estimated,')
     expect(csv).toContain('SE,Living,SE-H,height,250')
     expect(csv).toContain('room,wall label,type,from start cm')
     expect(csv).toContain('SE,SE-1,Door (single),10,90,210')
@@ -129,7 +134,7 @@ describe('svg', () => {
     expect(svg).toContain('2 m')
     expect(svg).toContain('Test, &quot;flat&quot;')
     expect(svg).toContain('2026-02-03')
-    expect(svg).toContain('12,00 m²')
+    expect(svg).toContain('11,31 m²') // inside area 390 x 290
     expect(svg).toMatch(/fill="#15803d"[^>]*data-dim="SE-1"/)
     expect(svg).toContain('405')
   })

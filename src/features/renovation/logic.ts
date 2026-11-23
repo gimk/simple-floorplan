@@ -12,7 +12,7 @@
 //
 // Merged outlines are computed here, for display only: the document keeps both rooms.
 import polygonClipping from 'polygon-clipping'
-import { cross, dot, roomAreaM2, roomWalls, sub } from '../../model/geometry'
+import { cross, dot, innerWallLengths, roomAreaM2, roomWalls, sub } from '../../model/geometry'
 import type { PlanDoc, Room, Vec, WallStatus, WallType } from '../../model/types'
 import { wallProps } from '../rooms/walls'
 
@@ -190,14 +190,28 @@ function unionPieces(members: Room[]): Piece[] {
   return members.map((r) => [r.vertices, ...(r.holes ?? [])])
 }
 
+/** Floor under the demolished walls between the members, m² (one side of each wall counted). */
+function demolishedFloorM2(members: Room[]): number {
+  let cm2 = 0
+  for (const l of demolishedLinks(members)) {
+    const room = members.find((r) => r.id === l.roomId)
+    if (!room) continue
+    const w = roomWalls(room).find((x) => x.start.id === l.wallStart)
+    if (!w) continue
+    cm2 += innerWallLengths(room)[w.index] * wallProps(room, l.wallStart).thicknessCm
+  }
+  return cm2 / 10000
+}
+
 const group = (members: Room[]): DisplayRoom => ({
   id: members[0].id,
   roomIds: members.map((r) => r.id),
   codes: members.map((r) => r.code),
   // Combined name, e.g. "Séjour + Cuisine".
   name: members.map((r) => r.name).join(' + '),
-  // Summed area: what the two rooms are worth together (display only, the data is untouched).
-  areaM2: members.reduce((s, r) => s + roomAreaM2(r), 0),
+  // Summed area: what the rooms are worth together, plus the floor under each demolished wall
+  // (its inside face length × its thickness). Display only, the data is untouched.
+  areaM2: members.reduce((s, r) => s + roomAreaM2(r), 0) + demolishedFloorM2(members),
   outdoor: members.every((r) => r.outdoor),
   merged: true,
   pieces: unionPieces(members),

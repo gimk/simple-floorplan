@@ -139,13 +139,14 @@ describe('photo marks: values', () => {
 
   it('prefers the measured value of the linked survey ID', () => {
     const d = doc({ measurements: { 'SE-2': { label: 'SE-2', actualCm: 298, updatedAt: '' } } })
-    // SE-2 is the second wall of the polygon: (400,0) -> (400,300) = 300 cm planned.
+    // SE-2 is the second wall of the polygon: centre line 300 cm, inside face 300 - 10 = 290 cm planned.
     expect(markValueCm(mark({ label: 'SE-2' }), d)).toBe(298)
-    expect(markValueCm(mark({ label: 'SE-2' }), doc())).toBe(300)
+    expect(markValueCm(mark({ label: 'SE-2' }), doc())).toBe(290)
   })
 
   it('falls back to the planned value and then to the typed one', () => {
-    expect(markValueCm(mark({ label: 'SE-1' }), doc())).toBe(400)
+    // SE-1 planned: inside face 400 - 10 = 390 cm (default 10 cm walls).
+    expect(markValueCm(mark({ label: 'SE-1' }), doc())).toBe(390)
     expect(markValueCm(mark({ label: 'SE-9' }), doc())).toBeNull()
     expect(markValueCm(mark({ label: 'SE-9', valueCm: 120 }), doc())).toBe(120)
   })
@@ -166,7 +167,7 @@ describe('photo marks: values', () => {
   })
 
   it('summarises a mark for lists', () => {
-    expect(markSummary(mark({ label: 'SE-1' }), doc())).toBe('SE-1 · 400 cm')
+    expect(markSummary(mark({ label: 'SE-1' }), doc())).toBe('SE-1 · 390 cm')
     expect(markSummary(mark({ valueCm: 90 }), doc())).toBe('90 cm')
     expect(markSummary(mark({ label: 'NOPE' }), doc())).toBe('NOPE')
     expect(markSummary(mark(), doc())).toBe('')
@@ -180,7 +181,7 @@ describe('photo marks: values', () => {
     const options = surveyOptionsForPin(pin(), d)
     expect(options.map((o) => o.value)).toEqual(['SE-1', 'SE-2', 'SE-3', 'SE-4', 'SE-D', 'SE-H'])
     expect(options[0].label).toBe('SE-1 · 402 cm') // measured wins
-    expect(options[1].label).toBe('SE-2 · 300 cm')
+    expect(options[1].label).toBe('SE-2 · 290 cm')
     expect(surveyOptionsForPin(pin({ roomId: undefined }), d)).toEqual([])
   })
 })
@@ -195,7 +196,7 @@ describe('photo marks: CSV rows', () => {
     })
     expect(markRows(d)).toEqual([
       { pin: 1, roomCode: 'SE', photoIndex: 2, valueCm: 120.3, label: '', note: 'pipe' },
-      { pin: 1, roomCode: 'SE', photoIndex: 2, valueCm: 400, label: 'SE-1', note: '' },
+      { pin: 1, roomCode: 'SE', photoIndex: 2, valueCm: 390, label: 'SE-1', note: '' },
       { pin: 2, roomCode: '', photoIndex: 1, valueCm: null, label: '', note: '' },
     ])
   })

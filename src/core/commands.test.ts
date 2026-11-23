@@ -26,7 +26,8 @@ describe('commands: room lifecycle', () => {
       ceilingCm: 265,
     })
     expect(r1.doc.rooms).toHaveLength(1)
-    expect(r1.result.areaM2).toBe(12)
+    // Inside faces with 10 cm walls: (400 - 10) x (300 - 10) = 390 x 290 cm = 11.31 m2
+    expect(r1.result.areaM2).toBe(11.31)
     expect(r1.result.walls).toEqual(['SE-1', 'SE-2', 'SE-3', 'SE-4'])
 
     const r2 = apply(r1.doc, {
@@ -40,7 +41,8 @@ describe('commands: room lifecycle', () => {
       ],
     })
     expect(r2.doc.rooms).toHaveLength(2)
-    expect(r2.result.areaM2).toBe(2)
+    // Inside triangle: inradius r = 20000 / s = 58.58 cm (s = 341.42), inside r - 5 = 53.58, area = 20000 x (53.58 / 58.58)^2 = 16 731 cm2
+    expect(r2.result.areaM2).toBe(1.67)
   })
 
   it('update_room renames code and migrates measurements and roomNotes', () => {
@@ -137,7 +139,8 @@ describe('commands: geometry ops (slice, cutout, merge)', () => {
       roomCode: 'CU',
       rect: { x: 0, y: 0, w: 100, h: 100 },
     })
-    expect(roomAreaM2(res.doc.rooms[0])).toBeCloseTo(8, 2)
+    // Inside outline: 290 x 290 minus the 100 x 100 notch at the inside corner: 84 100 - 10 000 = 74 100 cm2
+    expect(roomAreaM2(res.doc.rooms[0])).toBeCloseTo(7.41, 2)
   })
 
   it('merge_rooms unions two adjacent rooms, drops shared-wall elements, and blocks bearing walls unless overridden', () => {
@@ -171,7 +174,7 @@ describe('commands: geometry ops (slice, cutout, merge)', () => {
     expect(merged.doc.rooms).toHaveLength(1)
     expect(merged.doc.rooms[0].code).toBe('SE')
     expect(merged.doc.rooms[0].name).toBe('Open Living')
-    expect(roomAreaM2(merged.doc.rooms[0])).toBeCloseTo(18, 2)
+    expect(roomAreaM2(merged.doc.rooms[0])).toBeCloseTo(17.11, 2) // inside: 590 × 290 (centre line 600 × 300)
     // Shared-wall door dropped; outer-wall window kept
     expect(merged.doc.elements.map((e) => e.id)).toEqual(['el_win'])
     expect(merged.result.elementsRemovedOnSharedWall).toHaveLength(1)
@@ -199,8 +202,8 @@ describe('commands: geometry ops (slice, cutout, merge)', () => {
     }).doc
     const merged = apply(doc, { type: 'merge_rooms', roomCodes: ['A', 'B'] })
     expect(merged.doc.rooms).toHaveLength(1)
-    // 300*300 + 200*300 + 10*300 = 153000 cm2 = 15.3 m2
-    expect(roomAreaM2(merged.doc.rooms[0])).toBeCloseTo(15.3, 1)
+    // Centre outline 510 x 300. Inside faces: (510 - 10) x (300 - 10) = 500 x 290 = 145 000 cm2 = 14.50 m2
+    expect(roomAreaM2(merged.doc.rooms[0])).toBeCloseTo(14.5, 2)
   })
 })
 
@@ -285,8 +288,9 @@ describe('commands: walls, vertices, elements, measurements, notes, pins, tapes'
 
     const applied = apply(doc, { type: 'apply_measurements', roomCode: 'CU', lockVerifiedWalls: true })
     const walls = roomWalls(applied.doc.rooms[0])
-    expect(walls[0].length).toBeCloseTo(310, 1)
-    expect(walls[1].length).toBeCloseTo(205, 1)
+    // Measured values are inside faces: centre line = inside + 10 (5 cm per end, square corners).
+    expect(walls[0].length).toBeCloseTo(320, 1) // 310 inside
+    expect(walls[1].length).toBeCloseTo(215, 1) // 205 inside
     expect(applied.doc.rooms[0].walls[walls[0].start.id]?.locked).toBe(true)
 
     const cleared = apply(applied.doc, { type: 'clear_measurement', label: 'CU-H' })
@@ -384,13 +388,14 @@ describe('commands: happy path for every command type', () => {
 
   it('cutout_room', () => {
     const res = apply(twoRooms(), { type: 'cutout_room', roomCode: 'SE', rect: { x: 0, y: 0, w: 100, h: 100 } })
-    expect(roomAreaM2(res.doc.rooms.find((r) => r.code === 'SE')!)).toBeCloseTo(11, 1)
+    // Inside outline: 103 100 cm2 = 10.31 m2 (see cutout_room in the geometry section)
+    expect(roomAreaM2(res.doc.rooms.find((r) => r.code === 'SE')!)).toBeCloseTo(10.31, 2)
   })
 
   it('merge_rooms (by roomIds)', () => {
     const res = apply(twoRooms(), { type: 'merge_rooms', roomIds: ['r-se', 'r-cu'], keepCode: 'SE' })
     expect(res.doc.rooms).toHaveLength(1)
-    expect(roomAreaM2(res.doc.rooms[0])).toBeCloseTo(18, 2)
+    expect(roomAreaM2(res.doc.rooms[0])).toBeCloseTo(17.11, 2) // inside: 590 × 290
   })
 
   it('set_wall_props', () => {
@@ -451,8 +456,9 @@ describe('commands: happy path for every command type', () => {
     doc = apply(doc, { type: 'set_measurement', label: 'SE-2', actualCm: 310 }).doc
     const res = apply(doc, { type: 'apply_measurements', roomIds: ['r-se'] })
     const walls = roomWalls(res.doc.rooms.find((r) => r.code === 'SE')!)
-    expect(walls[0].length).toBeCloseTo(410, 1)
-    expect(walls[1].length).toBeCloseTo(310, 1)
+    // Inside values 410 and 310: centre line = inside + 10
+    expect(walls[0].length).toBeCloseTo(420, 1)
+    expect(walls[1].length).toBeCloseTo(320, 1)
     expect(res.doc.rooms[0].walls[walls[0].start.id]?.locked).toBe(true)
     expect(res.result.reports).toHaveLength(1)
   })

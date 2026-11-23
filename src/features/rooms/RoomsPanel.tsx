@@ -3,7 +3,7 @@
 // All lengths are cm. One undo step per edit, comma decimals.
 import { useEffect, useMemo, useState } from 'react'
 import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
-import { fmtCm, roomAreaM2, roomWalls } from '../../model/geometry'
+import { fmtCm, innerWallLengths, roomAreaM2, roomInnerRing, roomWalls } from '../../model/geometry'
 import { selectedItems, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, Selection, WallProps, WallStatus, WallType } from '../../model/types'
@@ -26,7 +26,7 @@ import {
 import { undoToast } from '../toast'
 import { applyMeasuredAll, applyMeasuredNear, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
 import { useActiveHole } from './holes'
-import { deleteRoom, moveHoleVertex, moveVertices, movableLinked, perimeter, setRoomCode, vertexLocked } from './ops'
+import { deleteRoom, moveHoleVertex, moveVertices, movableLinked, setRoomCode, vertexLocked } from './ops'
 import { elementRows, wallElementRows, wallRows, WALL_TYPE_CHIP, type ElementRow } from './roomLists'
 import { wallProps } from './walls'
 
@@ -77,12 +77,14 @@ const fmtDiffCm = (d: number) => `${d >= 0 ? '+' : '−'}${fmtCm(Math.abs(Math.r
 
 /** Measured values of a room against its plan: rms of (measured − plan), and the diagonal check. */
 export function fitCheck(doc: Pick<PlanDoc, 'measurements'>, room: Room) {
-  const walls = roomWalls(room)
-  const diffs = verifiedWalls(doc, room).map((v) => v.cm - walls[v.index].length)
+  // Inside faces: measured values are taken inside the room.
+  const q = roomInnerRing(room)
+  const inner = innerWallLengths(room)
+  const diffs = verifiedWalls(doc, room).map((v) => v.cm - inner[v.index])
   let diagonal: { measuredCm: number; planCm: number } | undefined
   const dm = doc.measurements[`${room.code}-D`]?.actualCm
   if (room.diagonal && dm && dm > 0) {
-    const a = room.vertices[room.diagonal[0]], b = room.vertices[room.diagonal[1]]
+    const a = q[room.diagonal[0]], b = q[room.diagonal[1]]
     if (a && b) { diagonal = { measuredCm: dm, planCm: Math.hypot(b.x - a.x, b.y - a.y) }; diffs.push(dm - diagonal.planCm) }
   }
   if (!diffs.length) return null
@@ -95,6 +97,7 @@ function wallGroup(items: SelItem[]): WallRef[] | null {
   return walls.length > 1 ? walls : null
 }
 
+/** Set the inside face length of a wall: its end vertex moves along the wall. */
 function setWallLength(roomId: string, startId: string, length: number) {
   update((d) => ({
     ...d,
@@ -102,7 +105,9 @@ function setWallLength(roomId: string, startId: string, length: number) {
       if (r.id !== roomId) return r
       const w = roomWalls(r).find((x) => x.start.id === startId)
       if (!w) return r
-      const end = { x: w.start.x + w.dir.x * length, y: w.start.y + w.dir.y * length }
+      // Centre line = inside face + the part at the corners (kept as it is now).
+      const centre = length + (w.length - innerWallLengths(r)[w.index])
+      const end = { x: w.start.x + w.dir.x * centre, y: w.start.y + w.dir.y * centre }
       return { ...r, vertices: r.vertices.map((v) => (v.id === w.end.id ? { ...v, ...end } : v)) }
     }),
   }))
@@ -270,7 +275,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
               id="wall-length"
               name="length"
               unit="cm"
-              value={wall.length}
+              value={Math.round(innerWallLengths(room)[wall.index] * 10) / 10}
               min={1}
               disabled={!!props.locked}
               onCommit={(v) => {
@@ -408,7 +413,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
         <StatGrid
           items={[
             { label: 'Area', value: `${formatM2(areaM2)} m²` },
-            { label: 'Perimeter', value: `${fmtCm(perimeter(room.vertices))} cm` },
+            { label: 'Perimeter', value: `${fmtCm(Math.round(innerWallLengths(room).reduce((a, l) => a + l, 0) * 10) / 10)} cm` },
             { label: 'Volume', value: ceiling === null ? '—' : `${formatM2((areaM2 * ceiling) / 100)} m³` },
             {
               label: 'Ceiling',

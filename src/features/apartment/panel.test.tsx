@@ -38,8 +38,9 @@ describe('ApartmentCard', () => {
   it('shows the totals, the default ceiling and the reference hint', () => {
     const html = render()
     expect(html).toContain('Apartment')
-    expect(html).toContain('18,00') // indoor floor area
-    expect(html).toContain('4,00') // outdoor, reported separately
+    // Inside faces: SE 11.31 + CU 5.51 = 16.82 m² indoor; BA 3.51 m² outdoor.
+    expect(html).toContain('16,82') // indoor floor area
+    expect(html).toContain('3,51') // outdoor, reported separately
     expect(html).toContain('value="250"') // default ceiling input
     expect(html).toContain('Used for rooms without their own height.')
     expect(html).toContain('1 room(s) override it.')
@@ -54,7 +55,7 @@ describe('ApartmentCard', () => {
       apartment: {
         defaultCeilingCm: 250,
         references: [
-          { id: 'r1', source: 'carrez', surfaceM2: 18, label: 'Carrez 2023' },
+          { id: 'r1', source: 'carrez', surfaceM2: 16.82, label: 'Carrez 2023' },
           { id: 'r2', source: 'dpe', surfaceM2: 20 },
           { id: 'r3', source: 'boutin', surfaceM2: 12, roomCode: 'SE' },
         ],
@@ -64,10 +65,10 @@ describe('ApartmentCard', () => {
     expect(html).toContain('Loi Carrez')
     expect(html).toContain('Carrez 2023')
     expect(html).toContain('m² reported')
-    expect(html).toContain('text-emerald-700') // 0 %
-    expect(html).toContain('text-red-600') // -10 %
+    expect(html).toContain('text-emerald-700') // 0 % (16.82 vs 16.82)
+    expect(html).toContain('text-red-600') // (16.82 - 20) / 20 = -15.9 %
     expect(html).toContain('room SE')
-    expect(html).toContain('−2,00 m² (−10,00 %)')
+    expect(html).toContain('−3,18 m² (−15,90 %)') // 16.82 - 20
     expect(html).toContain('aria-label="Delete reference Loi Carrez Carrez 2023"')
   })
 

@@ -1,6 +1,6 @@
 // Survey IDs for Measuring Mode (see docs/plan.md 2.5.1).
 // CODE-1..n = walls in polygon order, CODE-D = diagonal (if room.diagonal), CODE-H = ceiling height.
-import { dist, roomWalls } from './geometry'
+import { dist, roomInnerRing, roomWalls } from './geometry'
 import type { PlanDoc, Room } from './types'
 
 export type SurveyId = {
@@ -28,12 +28,15 @@ const plannedCeilingCm = (r: Room, defaultCeilingCm?: number): number | undefine
  * known, so `<CODE>-H` shows the height that takeoffs really use (see effectiveCeilingCm).
  */
 export const surveyIds = (r: Room, defaultCeilingCm?: number): SurveyId[] => {
+  // Planned values are inside faces (corners moved in by half the walls), like on-site values.
+  const q = roomInnerRing(r)
   const ids: SurveyId[] = roomWalls(r).map((w) => ({
-    label: `${r.code}-${w.index + 1}`, roomId: r.id, kind: 'wall', wallStart: w.start.id, plannedCm: w.length,
+    label: `${r.code}-${w.index + 1}`, roomId: r.id, kind: 'wall', wallStart: w.start.id,
+    plannedCm: dist(q[w.index], q[(w.index + 1) % q.length]),
   }))
   if (r.diagonal) {
     const [i, j] = r.diagonal
-    const a = r.vertices[i], b = r.vertices[j]
+    const a = q[i], b = q[j]
     if (a && b) ids.push({ label: `${r.code}-D`, roomId: r.id, kind: 'diagonal', plannedCm: dist(a, b) })
   }
   ids.push({ label: `${r.code}-H`, roomId: r.id, kind: 'height', plannedCm: plannedCeilingCm(r, defaultCeilingCm) })

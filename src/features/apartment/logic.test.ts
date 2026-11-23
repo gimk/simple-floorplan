@@ -19,7 +19,12 @@ const rect = (code: string, x: number, y: number, w: number, h: number, over: Pa
   ...over,
 })
 
-/** SE 4x3 m (12 m²), CU 2x3 m (6 m²), BA balcony 4x1 m outdoor (4 m²). */
+/**
+ * Centre lines: SE 4x3 m, CU 2x3 m, BA balcony 4x1 m outdoor.
+ * Inside faces (default 10 cm walls, each line moved in by 5 cm):
+ * SE 390 x 290 = 11.31 m², CU 190 x 290 = 5.51 m², BA 390 x 90 = 3.51 m².
+ * Inside perimeters: SE 2 x (390 + 290) = 13.6 m, CU 2 x (190 + 290) = 9.6 m.
+ */
 const mkDoc = (over: Partial<PlanDoc> = {}): PlanDoc => ({
   projectId: 'p1',
   title: 'Apt',
@@ -49,17 +54,19 @@ describe('apartment: totals', () => {
     expect(t.roomCount).toBe(3)
     expect(t.indoorRoomCount).toBe(2)
     expect(t.outdoorRoomCount).toBe(1)
-    expect(t.indoorAreaM2).toBe(18)
-    expect(t.outdoorAreaM2).toBe(4)
-    expect(t.wallPerimeterM).toBe(24) // 14 (SE) + 10 (CU), outdoor excluded
-    expect(totalAreaM2(mkDoc().rooms)).toBeCloseTo(22)
+    expect(t.indoorAreaM2).toBe(16.82) // 11.31 + 5.51
+    expect(t.outdoorAreaM2).toBe(3.51)
+    // Inside-face perimeters, like the takeoffs: 13.6 (SE) + 9.6 (CU).
+    expect(t.wallPerimeterM).toBe(23.2)
+    expect(totalAreaM2(mkDoc().rooms)).toBeCloseTo(20.33) // 11.31 + 5.51 + 3.51
   })
 
   it('computes the volume from the effective ceiling and reports missing heights', () => {
-    expect(apartmentTotals(mkDoc()).volumeM3).toBeCloseTo(12 * 2.6) // only SE has a height
+    expect(apartmentTotals(mkDoc()).volumeM3).toBe(29.41) // only SE has a height: 11.31 x 2.6 = 29.406
     const withDefault = apartmentTotals(mkDoc({ apartment: { defaultCeilingCm: 200 } }))
     expect(withDefault.defaultCeilingCm).toBe(200)
-    expect(withDefault.volumeM3).toBeCloseTo(12 * 2.6 + 6 * 2) // SE keeps its own height
+    // SE keeps its own height: 11.31 x 2.6 = 29.406; CU takes the default: 5.51 x 2 = 11.02. Sum 40.426.
+    expect(withDefault.volumeM3).toBe(40.43)
     expect(withDefault.roomsWithOwnCeiling).toBe(1)
     expect(withDefault.roomsWithoutCeiling).toBe(0)
     expect(apartmentTotals(mkDoc()).roomsWithoutCeiling).toBe(1)
@@ -87,9 +94,9 @@ describe('apartment: totals', () => {
 
 describe('apartment: compareReference', () => {
   it('compares with the whole indoor area when no room is given', () => {
-    const c = compareReference(mkDoc(), ref({ surfaceM2: 18 }))
+    const c = compareReference(mkDoc(), ref({ surfaceM2: 16.82 }))
     expect(c.scope).toBe('apartment')
-    expect(c.planM2).toBe(18)
+    expect(c.planM2).toBe(16.82)
     expect(c.diffM2).toBe(0)
     expect(c.diffPct).toBe(0)
     expect(c.level).toBe('ok')
@@ -97,24 +104,25 @@ describe('apartment: compareReference', () => {
   })
 
   it('compares with one room when roomCode is set', () => {
-    const c = compareReference(mkDoc(), ref({ surfaceM2: 12, roomCode: 'SE' }))
+    const c = compareReference(mkDoc(), ref({ surfaceM2: 11.31, roomCode: 'SE' }))
     expect(c.scope).toBe('room')
-    expect(c.planM2).toBe(12)
+    expect(c.planM2).toBeCloseTo(11.31)
     expect(c.level).toBe('ok')
   })
 
   it('colours the difference: green ≤ 2 %, amber ≤ 5 %, red > 5 %', () => {
     const doc = mkDoc()
-    expect(compareReference(doc, ref({ surfaceM2: 18.3 })).level).toBe('ok') // -1.6 %
-    expect(compareReference(doc, ref({ surfaceM2: 18.5 })).level).toBe('warn') // -2.7 %
-    expect(compareReference(doc, ref({ surfaceM2: 17.2 })).level).toBe('warn') // +4.7 %
-    expect(compareReference(doc, ref({ surfaceM2: 20 })).level).toBe('bad') // -10 %
+    // Plan is 16.82 m² (indoor). Percent is (plan - ref) / ref.
+    expect(compareReference(doc, ref({ surfaceM2: 17.1 })).level).toBe('ok') // (16.82 - 17.1) / 17.1 = -1.6 %
+    expect(compareReference(doc, ref({ surfaceM2: 17.5 })).level).toBe('warn') // -3.9 %
+    expect(compareReference(doc, ref({ surfaceM2: 16.1 })).level).toBe('warn') // +4.5 %
+    expect(compareReference(doc, ref({ surfaceM2: 20 })).level).toBe('bad') // -15.9 %
   })
 
   it('reports the signed difference in m² and %', () => {
-    const c = compareReference(mkDoc(), ref({ surfaceM2: 16 }))
-    expect(c.diffM2).toBe(2)
-    expect(c.diffPct).toBe(12.5)
+    const c = compareReference(mkDoc(), ref({ surfaceM2: 15 }))
+    expect(c.diffM2).toBe(1.82) // 16.82 - 15
+    expect(c.diffPct).toBe(12.1) // 1.82 / 15 = 12.13 %
     expect(c.level).toBe('bad')
   })
 

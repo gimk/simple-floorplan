@@ -694,10 +694,11 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm
-  // A shared wall with no value here takes the value measured from the next room.
-  for (const t of twinValues(doc, room)) measured[t.index] = t.cm
+  // A shared wall with no value here keeps the centre line of the wall measured from the next room.
+  const centre: (number | null)[] = room.vertices.map(() => null)
+  for (const t of twinValues(doc, room)) centre[t.index] = t.cm
   const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
-  const solved = solveRoom(room, measured, diagonalCm)
+  const solved = solveRoom(room, measured, diagonalCm, centre)
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })
   if (walls.some((x) => x.length < 1)) {
     return {

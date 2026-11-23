@@ -1,6 +1,6 @@
 // Pure row builders for the lists of the room panel: the walls of a room, the elements
 // of a room, and the elements of one wall. No React, no store, units are cm.
-import { roomWalls } from '../../model/geometry'
+import { innerWallLengths, roomWalls } from '../../model/geometry'
 import type { PlanDoc, Room, WallElement, WallType } from '../../model/types'
 import { KIND_LABEL, VARIANT_LABEL } from '../elements/geometry'
 import { verifiedWalls } from './apply'
@@ -46,6 +46,7 @@ export type WallRow = {
 /** One row per wall of the room, in polygon order. */
 export function wallRows(doc: DocWalls, room: Room): WallRow[] {
   const verified = new Map(verifiedWalls(doc, room).map((v) => [v.wallStart, v.cm]))
+  const inner = innerWallLengths(room)
   return roomWalls(room).map((w) => {
     const props = wallProps(room, w.start.id)
     return {
@@ -54,7 +55,8 @@ export function wallRows(doc: DocWalls, room: Room): WallRow[] {
       label: `${room.code}-${w.index + 1}`,
       type: props.type,
       typeLabel: WALL_TYPE_LABEL[props.type],
-      lengthCm: w.length,
+      // Inside face, like the values measured on site.
+      lengthCm: inner[w.index],
       verifiedCm: verified.get(w.start.id) ?? null,
       locked: !!props.locked,
     }

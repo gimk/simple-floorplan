@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dot, norm, roomWalls, sub } from '../../model/geometry'
+import { dot, innerWallLengths, norm, roomWalls, sub } from '../../model/geometry'
 import type { Room } from '../../model/types'
 import { solveRoom, solveRoomLsq } from './solve'
 
@@ -21,6 +21,9 @@ function roomOf(pts: { x: number; y: number }[], diagonal?: [number, number]): R
 
 const lengths = (pts: { x: number; y: number }[]) => roomWalls({ ...roomOf(pts) }).map((w) => w.length)
 
+/** Inside face length of each wall (default 10 cm walls): measured values are compared with these. */
+const innerLengths = (pts: { x: number; y: number }[]) => innerWallLengths(roomOf(pts))
+
 /** Dot of the two edges at each corner: 0 for a right angle. */
 function cornerDots(pts: { x: number; y: number }[]): number[] {
   const n = pts.length
@@ -36,7 +39,8 @@ describe('solveRoomLsq', () => {
     const s = solveRoom(roomOf(drawn), [410, 305, 414, 305])
     expect(s.mode).toBe('lsq')
     for (const d of cornerDots(s.points)) expect(Math.abs(d)).toBeLessThan(1e-3)
-    const l = lengths(s.points)
+    // Inside faces meet in the middle: (410 + 414) / 2 = 412. Centre line = 412 + 10 = 422.
+    const l = innerLengths(s.points)
     expect(l[0]).toBeCloseTo(412, 0)
     expect(l[2]).toBeCloseTo(412, 0)
     const r0 = s.residuals.find((x) => x.index === 0)!
@@ -52,9 +56,10 @@ describe('solveRoomLsq', () => {
     for (const d of cornerDots(s.points)) expect(Math.abs(d)).toBeLessThan(1e-3)
     const dr = s.residuals.find((x) => x.index === 'D')!
     expect(dr.measuredCm).toBe(510)
+    // Inside corners of exact 400 x 300 walls: diagonal = sqrt(400^2 + 300^2) = 500, so 510 is 10 cm too long.
     // Walls and diagonal share the error: the diagonal residual is about +6.7 (measured minus solved).
     expect(Math.abs(dr.diffCm - 6.7)).toBeLessThan(1.5)
-    const l = lengths(s.points)
+    const l = innerLengths(s.points)
     expect(Math.abs(l[0] - 400)).toBeLessThan(3)
     expect(Math.abs(l[1] - 300)).toBeLessThan(3)
   })
@@ -63,7 +68,7 @@ describe('solveRoomLsq', () => {
     const drawn = [P(0, 0), P(400, 0), P(400, 150), P(200, 150), P(200, 300), P(0, 300)]
     const s = solveRoom(roomOf(drawn), [410, null, null, null, null, 304])
     for (const d of cornerDots(s.points)) expect(Math.abs(d)).toBeLessThan(1e-3)
-    const l = lengths(s.points)
+    const l = innerLengths(s.points)
     expect(Math.abs(l[0] - 410)).toBeLessThan(0.1)
     expect(Math.abs(l[5] - 304)).toBeLessThan(0.1)
     expect(s.points).toHaveLength(6)
@@ -83,7 +88,7 @@ describe('solveRoomLsq', () => {
   it('5. free polygon with one slanted wall: slanted wall stays slanted, measured wall holds', () => {
     const drawn = [P(0, 0), P(400, 0), P(400, 150), P(200, 300), P(0, 300)]
     const s = solveRoom(roomOf(drawn), [410, null, null, null, null])
-    const l = lengths(s.points)
+    const l = innerLengths(s.points)
     expect(Math.abs(l[0] - 410)).toBeLessThan(0.5)
     const slant = norm(sub(s.points[3], s.points[2]))
     expect(Math.abs(dot(slant, P(1, 0)))).toBeLessThan(0.99)
@@ -94,7 +99,7 @@ describe('solveRoomLsq', () => {
     const drawn = [P(0, 0), P(376, 0), P(376, 330), P(0, 330)]
     const s = solveRoomLsq(roomOf(drawn, [0, 2]), [371, 289, 371, 289], 468)
     for (const d of cornerDots(s.points)) expect(Math.abs(d)).toBeLessThan(1e-3)
-    const l = lengths(s.points)
+    const l = innerLengths(s.points)
     expect(Math.abs(l[0] - 371)).toBeLessThan(1)
     expect(Math.abs(l[1] - 289)).toBeLessThan(1)
     // The diagonal of 371 x 289 is 470.3: the fit reports the diagonal residual (measured minus solved).

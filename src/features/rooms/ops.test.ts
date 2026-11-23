@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { emptyDoc } from '../../model/store'
-import { roomAreaM2 } from '../../model/geometry'
-import type { PlanDoc, WallElement } from '../../model/types'
+import { area } from '../../model/geometry'
+import type { PlanDoc, Room, WallElement } from '../../model/types'
 import { cutDoc, deleteRoom, insertVertex, makeRoom, rectPoints, removeVertex, setRoomCode, sliceDoc } from './ops'
 
 const docWithRoom = () => {
@@ -9,6 +9,12 @@ const docWithRoom = () => {
   const room = makeRoom(d, rectPoints({ x: 0, y: 0 }, { x: 400, y: 300 }))
   return { doc: { ...d, rooms: [room] } as PlanDoc, room }
 }
+/**
+ * Area of the CENTRE-LINE polygon minus holes, in m². These geometry-op tests check the
+ * outline itself, so they use the centre line, not the inside face (roomAreaM2).
+ * Example: 400 x 300 cm -> 12 m².
+ */
+const cl = (r: Room) => (area(r.vertices) - r.holes.reduce((s, h) => s + area(h), 0)) / 10000
 const el = (roomId: string, wallStart: string, offsetCm: number, widthCm = 80): WallElement => ({
   id: 'e' + offsetCm + wallStart, roomId, wallStart, kind: 'door', offsetCm, widthCm, createdAt: '', updatedAt: '',
 })
@@ -18,7 +24,7 @@ describe('makeRoom', () => {
     const { room } = docWithRoom()
     expect(room.code).toBe('R1')
     expect(room.diagonal).toEqual([0, 2])
-    expect(roomAreaM2(room)).toBeCloseTo(12)
+    expect(cl(room)).toBeCloseTo(12)
   })
 })
 
@@ -27,7 +33,7 @@ describe('sliceDoc', () => {
     const { doc, room } = docWithRoom()
     const r = sliceDoc(doc, { x: 200, y: -50 }, { x: 200, y: 350 })!
     expect(r.doc.rooms).toHaveLength(2)
-    const areas = r.doc.rooms.map(roomAreaM2).sort()
+    const areas = r.doc.rooms.map(cl).sort()
     expect(areas[0]).toBeCloseTo(6)
     expect(areas[1]).toBeCloseTo(6)
     expect(new Set(r.doc.rooms.map((x) => x.code)).size).toBe(2)
@@ -60,7 +66,7 @@ describe('sliceDoc', () => {
     const { doc } = docWithRoom()
     const r = sliceDoc(doc, { x: -10, y: -10 }, { x: 410, y: 310 })!
     expect(r.doc.rooms).toHaveLength(2)
-    expect(r.doc.rooms.map(roomAreaM2).reduce((a, b) => a + b, 0)).toBeCloseTo(12)
+    expect(r.doc.rooms.map(cl).reduce((a, b) => a + b, 0)).toBeCloseTo(12)
   })
 })
 
@@ -71,7 +77,7 @@ describe('cutDoc', () => {
     expect(r.doc.rooms).toHaveLength(1)
     expect(r.doc.rooms[0].holes).toHaveLength(1)
     expect(r.doc.rooms[0].vertices).toHaveLength(4)
-    expect(roomAreaM2(r.doc.rooms[0])).toBeCloseTo(11)
+    expect(cl(r.doc.rooms[0])).toBeCloseTo(11) // 12 - 1 m² hole
   })
   it('reshapes the outline when the cutout crosses the boundary', () => {
     const { doc, room } = docWithRoom()
@@ -79,7 +85,7 @@ describe('cutDoc', () => {
     expect(r.doc.rooms).toHaveLength(1)
     expect(r.doc.rooms[0].holes).toHaveLength(0)
     expect(r.doc.rooms[0].vertices).toHaveLength(6)
-    expect(roomAreaM2(r.doc.rooms[0])).toBeCloseTo(12 - 1)
+    expect(cl(r.doc.rooms[0])).toBeCloseTo(12 - 1)
     expect(r.doc.rooms[0].id).toBe(room.id)
   })
   it('returns null when the cutout is outside every room', () => {

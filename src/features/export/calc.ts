@@ -1,5 +1,5 @@
 // Pure material calculators. World units are cm; outputs are m / m² / litres.
-import { roomAreaM2, roomWalls } from '../../model/geometry'
+import { innerWallLengths, roomAreaM2, roomWalls } from '../../model/geometry'
 import type { PlanDoc, Room, WallElement } from '../../model/types'
 
 export type CalcInputs = { wastePct: number; coats: number; coverage: number }
@@ -22,12 +22,14 @@ export type RoomCalc = {
   paintL: number | null
 }
 
-/** Wall length: verified value if present, else traced. */
-export const effectiveWallLengths = (doc: PlanDoc, room: Room): number[] =>
-  roomWalls(room).map((w) => {
+/** Wall length on its inside face: verified value if present, else traced. */
+export const effectiveWallLengths = (doc: PlanDoc, room: Room): number[] => {
+  const inner = innerWallLengths(room)
+  return roomWalls(room).map((w) => {
     const m = doc.measurements?.[`${room.code}-${w.index + 1}`]
-    return m && m.actualCm > 0 ? m.actualCm : w.length
+    return m && m.actualCm > 0 ? m.actualCm : inner[w.index]
   })
+}
 
 /**
  * Ceiling height used for takeoffs, in cm, or null when unknown.

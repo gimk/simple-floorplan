@@ -102,7 +102,8 @@ describe('renovation: merged rooms', () => {
       expect(rooms.map((r) => r.name)).toEqual(['Séjour', 'Cuisine'])
       expect(rooms.every((r) => !r.merged)).toBe(true)
     }
-    expect(renovationRooms(doc, 'before')[0].areaM2).toBeCloseTo(12, 2)
+    // Inside face: 390 x 290 cm = 11.31 m² (default 10 cm walls).
+    expect(renovationRooms(doc, 'before')[0].areaM2).toBeCloseTo(11.31, 2)
   })
 
   it('shows one merged room with a summed area after the works', () => {
@@ -114,7 +115,9 @@ describe('renovation: merged rooms', () => {
     expect(merged.name).toBe('Séjour + Cuisine')
     expect(merged.roomIds).toEqual(['a', 'b'])
     expect(merged.codes).toEqual(['SE', 'CU'])
-    expect(merged.areaM2).toBeCloseTo(18, 2)
+    // Add-up check on inside faces: SE 11.31 + CU 5.51 (190 x 290) = 16.82.
+    // 11.31 + 5.51 + the floor under the demolished wall (290 inside × 10 thick = 0.29) = 17.11 (= 590 × 290).
+    expect(merged.areaM2).toBeCloseTo(17.11, 2)
     expect(merged.id).toBe('a') // a click selects the first room of the group
     // Display only: the document keeps both rooms.
     expect(doc.rooms).toHaveLength(2)
@@ -147,8 +150,9 @@ describe('renovation: merged rooms', () => {
     const after = renovationRooms(doc, 'after')
     expect(after).toHaveLength(1)
     expect(after[0].codes).toEqual(['A', 'B', 'C'])
+    // Inside faces: 3 × 190 × 190 = 10.83, plus the floor under the two demolished walls (2 × 190 × 10 = 0.38) = 11.21 (= 590 × 190).
     expect(after[0].name).toBe('Un + Deux + Trois')
-    expect(after[0].areaM2).toBeCloseTo(12, 2)
+    expect(after[0].areaM2).toBeCloseTo(11.21, 2)
   })
 
   it('keeps rooms that only touch through a kept wall apart', () => {
@@ -183,15 +187,16 @@ describe('renovation: areas', () => {
         room('o', 'BA', 'Balcon', [[0, 300], [400, 300], [400, 400], [0, 400]], {}, { outdoor: true }),
       ],
     }
-    expect(renovationTotals(doc, 'before')).toEqual({ areaM2: 18, rooms: 2 })
-    expect(renovationTotals(doc, 'after')).toEqual({ areaM2: 18, rooms: 1 })
+    // Inside faces: SE 11.31 + CU 5.51 = 16.82 before. After, the demolished wall adds 290 × 10 = 0.29 (17.11). The balcony is outdoor.
+    expect(renovationTotals(doc, 'before')).toEqual({ areaM2: 16.82, rooms: 2 })
+    expect(renovationTotals(doc, 'after')).toEqual({ areaM2: 17.11, rooms: 1 })
   })
 
   it('gives before / after totals and nothing without a status', () => {
     expect(renovationSummary(flat())).toBeNull()
     const summary = renovationSummary(flat({ se: { 1: demolish } }))
     expect(summary).not.toBeNull()
-    expect(summary!.before).toEqual({ areaM2: 18, rooms: 2 })
-    expect(summary!.after).toEqual({ areaM2: 18, rooms: 1 })
+    expect(summary!.before).toEqual({ areaM2: 16.82, rooms: 2 })
+    expect(summary!.after).toEqual({ areaM2: 17.11, rooms: 1 })
   })
 })

@@ -33,7 +33,8 @@ describe('shared walls', () => {
     const d = twoRooms()
     const [a, b] = d.rooms
     const doc = { ...d, measurements: { [label(d, a.code)]: meas(label(d, a.code), 302) } }
-    expect(twinValues(doc, b)).toEqual([expect.objectContaining({ cm: 302, label: label(d, a.code) })])
+    // The twin value is the CENTRE LINE of room A's wall (A is not solved yet): 0..300, so 300, not the 302 inside value.
+    expect(twinValues(doc, b)).toEqual([expect.objectContaining({ cm: 300, label: label(d, a.code) })])
     expect(twinValues(doc, a)).toEqual([])
   })
 
@@ -46,8 +47,9 @@ describe('shared walls', () => {
     const doc = { ...d, measurements: { [la]: meas(la, 302), [bTop]: meas(bTop, 300) } }
     expect(measuredNeighbours(doc, a).map((r) => r.id)).toEqual([b.id])
     const out = applyMeasuredNear(doc, a.id)
-    expect(sharedLen(out.doc, a.code)).toBeCloseTo(302, 1)
-    expect(sharedLen(out.doc, b.code)).toBeCloseTo(302, 1)
+    // A's inside face 302 = centre line 302 + 5 + 5 = 312. B must match the centre line of the shared wall.
+    expect(sharedLen(out.doc, a.code)).toBeCloseTo(312, 1)
+    expect(sharedLen(out.doc, b.code)).toBeCloseTo(312, 1)
     expect(out.reports).toHaveLength(2)
   })
 
