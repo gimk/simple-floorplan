@@ -3,7 +3,7 @@
 // value, press Enter, and the plan takes it in and the list is calculated again.
 // The measured values that do not fit the plan come first: measure them again.
 import { Crosshair } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { fmtCm } from '../../model/geometry'
 import { nowIso, useDoc, useUi } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
@@ -14,6 +14,28 @@ import { parseCm } from '../measure/logic'
 import type { SurfaceMode } from '../rooms/globalSolve'
 import { scheduleAutoApply } from '../rooms/measureRules'
 import { suggestMeasurements, type Remeasure, type Suggestion } from '../rooms/suggest'
+
+/** UI state that shows one survey label on the plan (null clears the highlight). */
+export const hoverUi = (
+  label: string | null,
+  diagonal: { roomId: string; pair: [number, number] } | null = null,
+) => ({ hoverLabel: label, hoverDiagonal: diagonal })
+
+/**
+ * Hover of one line: the plan highlights that element (wall, thickness, diagonal).
+ * A touch screen has no hover, so only a mouse or a pen shows it. The field of the line does the
+ * same on focus, so a value being typed in is always visible on the plan.
+ */
+function useRowHover(label: string, diagonal: { roomId: string; pair: [number, number] } | null = null) {
+  const set = useUi((s) => s.set)
+  const enter = () => set(hoverUi(label, diagonal))
+  const leave = () => set(hoverUi(null))
+  const onPointerEnter = (e: ReactPointerEvent) => { if (e.pointerType !== 'touch') enter() }
+  const onPointerLeave = (e: ReactPointerEvent) => { if (e.pointerType !== 'touch') leave() }
+  // A line that goes away (the list is calculated again) must not leave a highlight behind.
+  useEffect(() => () => set(hoverUi(null)), [set])
+  return { onPointerEnter, onPointerLeave, onFieldEnter: enter, onFieldLeave: leave }
+}
 
 /** Select the wall (or the room, for a diagonal) on the plan. */
 function showOnPlan(s: Suggestion) {
@@ -46,7 +68,13 @@ function saveValue(s: Suggestion, cm: number) {
 }
 
 /** Number field of one line: Enter or blur with a valid value saves it. */
-function ValueField({ label, onSave }: { label: string; onSave: (cm: number) => void }) {
+function ValueField({ label, onSave, onEnter, onLeave }: {
+  label: string
+  onSave: (cm: number) => void
+  /** The plan highlights this value while the field has the focus. */
+  onEnter?: () => void
+  onLeave?: () => void
+}) {
   const [draft, setDraft] = useState('')
   const cm = parseCm(draft)
   const bad = draft.trim() !== '' && !Number.isFinite(cm)
@@ -77,7 +105,8 @@ function ValueField({ label, onSave }: { label: string; onSave: (cm: number) => 
             save()
           }
         }}
-        onBlur={save}
+        onBlur={() => { save(); onLeave?.() }}
+        onFocus={onEnter}
         className={INPUT_BARE}
       />
     </span>
@@ -89,8 +118,14 @@ function ValueField({ label, onSave }: { label: string; onSave: (cm: number) => 
  * the first row; the reason under the label.
  */
 function SuggestionRow({ s }: { s: Suggestion }) {
+  // A diagonal of a room that has no pair yet needs the pair: the label alone cannot give it.
+  const hover = useRowHover(
+    s.label,
+    s.kind === 'diagonal' && s.diagonal ? { roomId: s.roomId, pair: s.diagonal } : null,
+  )
   return (
-    <li data-measure-suggestion={s.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11">
+    <li data-measure-suggestion={s.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11"
+      data-hover-row={s.label} onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave}>
       <IconButton label="Show on plan" icon={<Crosshair size={16} />} onClick={() => showOnPlan(s)} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="font-mono text-xs">{s.label}</span>
@@ -103,15 +138,19 @@ function SuggestionRow({ s }: { s: Suggestion }) {
       >
         ±{fmtCm(s.nowSdCm)}<span className={`ml-0.5 text-[11px] ${MUTED}`}>cm</span>
       </span>
-      <ValueField label={s.label} onSave={(cm) => saveValue(s, cm)} />
+      <ValueField label={s.label} onSave={(cm) => saveValue(s, cm)}
+        onEnter={hover.onFieldEnter} onLeave={hover.onFieldLeave} />
     </li>
   )
 }
 
 /** A measured value that does not fit the plan: the old value, the plan value and a field for the new one. */
 function RemeasureRow({ r }: { r: Remeasure }) {
+  // The pair of a diagonal comes from the room itself: a remeasured value is on the plan already.
+  const hover = useRowHover(r.label)
   return (
-    <li data-measure-again={r.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11">
+    <li data-measure-again={r.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11"
+      data-hover-row={r.label} onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave}>
       <span className="flex min-w-0 flex-1 flex-col text-xs text-amber-700 dark:text-amber-300">
         <span>Measure again: <span className="font-mono">{r.label}</span></span>
         <span className="text-[11px] leading-tight">measured {fmtCm(r.measuredCm)}, plan says {fmtCm(r.solvedCm)}</span>
@@ -119,6 +158,8 @@ function RemeasureRow({ r }: { r: Remeasure }) {
       <ValueField
         label={r.label}
         onSave={(cm) => setMeasurement(r.label, cm, useUi.getState().measureSource)}
+        onEnter={hover.onFieldEnter}
+        onLeave={hover.onFieldLeave}
       />
     </li>
   )

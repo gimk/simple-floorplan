@@ -37,7 +37,12 @@ const cuisine = (): Room => ({
 
 const doc = (rooms: Room[]): PlanDoc => ({ ...emptyDoc(), rooms })
 
-type Over = { tab?: SidebarTab; layers?: Partial<Layers>; mode?: 'edit' | 'measure'; zoom?: number; rooms?: Room[] }
+type Over = {
+  tab?: SidebarTab; layers?: Partial<Layers>; mode?: 'edit' | 'measure'; zoom?: number; rooms?: Room[]
+  /** Survey label under the pointer in the Solve tab list, e.g. 'CU-2'. */
+  hoverLabel?: string | null
+  hoverDiagonal?: { roomId: string; pair: [number, number] } | null
+}
 
 /** Set the stores as the app would, then draw the plan (zoom 1 = 1 cm per screen px). */
 const setup = (over: Over = {}) => {
@@ -47,6 +52,8 @@ const setup = (over: Over = {}) => {
     tool: 'select',
     selection: null,
     multi: [],
+    hoverLabel: over.hoverLabel ?? null,
+    hoverDiagonal: over.hoverDiagonal ?? null,
     view: { x: 0, y: 0, zoom: over.zoom ?? 1 },
   })
   applyState(useSidebar, { tab: over.tab ?? 'inspect' })
@@ -56,9 +63,56 @@ const setup = (over: Over = {}) => {
 }
 
 beforeEach(() => {
-  applyState(useUi, { layers: BASE_LAYERS, mode: 'edit', tool: 'select', selection: null, multi: [] })
+  applyState(useUi, {
+    layers: BASE_LAYERS, mode: 'edit', tool: 'select', selection: null, multi: [],
+    hoverLabel: null, hoverDiagonal: null,
+  })
   applyState(useSidebar, { tab: 'inspect' })
   applyState(useDoc, { doc: doc([]) })
+})
+
+describe('hover highlight (Solve tab list)', () => {
+  it('draws no highlight when nothing is hovered', () => {
+    expect(setup()).not.toContain('data-hover-highlight')
+  })
+
+  it('highlights the wall of a wall label', () => {
+    const html = setup({ hoverLabel: 'CU-2' })
+    expect(html).toContain('data-hover-highlight="wall"')
+    expect(html).toContain('data-hover-label="CU-2"')
+    // The line runs on the centre line of wall 2: cu-v1 (400,0) to cu-v2 (400,300).
+    expect(html).toContain('x1="400" y1="0" x2="400" y2="300"')
+    expect(html).toContain('stroke-orange-500/40 dark:stroke-orange-400/45')
+  })
+
+  it('highlights the wall of a thickness label', () => {
+    const html = setup({ hoverLabel: 'CU-3-T' })
+    expect(html).toContain('data-hover-highlight="wall"')
+    expect(html).toContain('data-hover-label="CU-3-T"')
+    // Wall 3: cu-v2 (400,300) to cu-v3 (0,300).
+    expect(html).toContain('x1="400" y1="300" x2="0" y2="300"')
+  })
+
+  it('highlights the diagonal of the room, with its planned length', () => {
+    // 400 x 300 cm inside the walls: the diagonal of corners 0 and 2 is about 500 cm.
+    const html = setup({ hoverLabel: 'CU-D', rooms: [{ ...cuisine(), diagonal: [0, 2] }] })
+    expect(html).toContain('data-hover-highlight="diagonal"')
+    expect(html).toContain('data-hover-length="CU-D"')
+    expect(html).toMatch(/data-hover-length="CU-D"[\s\S]*?cm<\/text>/)
+    expect(html).toContain('data-hover-label="CU-D"')
+  })
+
+  it('uses the diagonal pair of the suggestion when the room has none', () => {
+    const html = setup({ hoverLabel: 'CU-D', hoverDiagonal: { roomId: 'r-cu', pair: [1, 3] } })
+    expect(html).toContain('data-hover-highlight="diagonal"')
+  })
+
+  it('ignores a diagonal pair of another room and unknown labels', () => {
+    expect(setup({ hoverLabel: 'CU-D', hoverDiagonal: { roomId: 'other', pair: [0, 2] } }))
+      .not.toContain('data-hover-highlight')
+    expect(setup({ hoverLabel: 'ZZ-1' })).not.toContain('data-hover-highlight')
+    expect(setup({ hoverLabel: 'CU-H' })).not.toContain('data-hover-highlight')
+  })
 })
 
 describe('room codes on the plan (layer auto)', () => {

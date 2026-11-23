@@ -168,6 +168,17 @@ type UiState = {
    * It sets the weight of the value in the solver. Memory only: no other UI setting persists.
    */
   measureSource: MeasureSource
+  /**
+   * Survey label under the pointer, e.g. 'CU-6' (wall), 'CU-D' (diagonal), 'SE-1-T' (thickness).
+   * The plan highlights that element (see features/rooms/hoverTarget.ts). null = nothing hovered.
+   * Generic on purpose: the Solve tab sets it now, Measuring Mode uses it later.
+   */
+  hoverLabel: string | null
+  /**
+   * Diagonal of a suggestion whose room has no `diagonal` pair yet: the label alone cannot give
+   * the two corners. RoomsLayer uses it when `hoverLabel` ends with '-D'. null = none.
+   */
+  hoverDiagonal: { roomId: string; pair: [number, number] } | null
   /** Viewport: world point at screen origin + zoom (screen px per cm). */
   view: { x: number; y: number; zoom: number }
   setMode: (m: Mode) => void
@@ -204,6 +215,8 @@ export const useUi = create<UiState>()((set) => ({
   },
   renovationView: 'both',
   measureSource: 'tape',
+  hoverLabel: null,
+  hoverDiagonal: null,
   view: { x: -100, y: -100, zoom: 1 },
   setMode: (mode) => set({ mode, tool: 'select', selection: null, multi: [] }),
   setTool: (tool) => set({ tool }),

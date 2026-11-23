@@ -1,6 +1,7 @@
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { PlanDoc, Room } from '../../model/types'
+import { hoverUi } from './MeasureNext'
 import { SolvePanel, SolvePanelView } from './SolvePanel'
 
 const rect = (over: Partial<Room> = {}): Room => ({
@@ -252,5 +253,23 @@ describe('SolvePanel preview', () => {
     expect(html).toContain('SE corner 3')
     expect(html).toContain('SE-1/SB-3')
     expect(html).toContain('Snap thicknesses not found by the data to usual values')
+  })
+})
+
+describe('Measure next: hover shows the element on the plan', () => {
+  it('marks every line with its survey label, to set the hover state', () => {
+    const html = render(doc())
+    // A browser-only event: the label of the row is the part a test can read.
+    expect(html).toContain('data-hover-row="SE-1"')
+  })
+
+  it('gives the UI store the label of the line, and the diagonal pair of a diagonal', () => {
+    expect(hoverUi('SE-1')).toEqual({ hoverLabel: 'SE-1', hoverDiagonal: null })
+    expect(hoverUi('SE-1-T')).toEqual({ hoverLabel: 'SE-1-T', hoverDiagonal: null })
+    expect(hoverUi('SE-D', { roomId: 'r1', pair: [0, 2] })).toEqual({
+      hoverLabel: 'SE-D', hoverDiagonal: { roomId: 'r1', pair: [0, 2] },
+    })
+    // Leaving a line clears both.
+    expect(hoverUi(null)).toEqual({ hoverLabel: null, hoverDiagonal: null })
   })
 })

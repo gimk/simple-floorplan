@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
-import { fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
+import { dist, fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import { measuredText, planPrecision, shownLength } from '../../model/precision'
@@ -17,6 +17,7 @@ import { wallProps } from './walls'
 import { piecesPath, renovationRooms, wallAppearance, type DisplayRoom } from '../renovation/logic'
 import { useSidebar } from '../../shell/sidebar/store'
 import { modeLayerVisible } from '../../shell/view/layers'
+import { hoverTarget } from './hoverTarget'
 
 const pathOf = (rings: Vec[][]) =>
   rings.map((r) => 'M' + r.map((p) => `${p.x} ${p.y}`).join('L') + 'Z').join('')
@@ -50,6 +51,22 @@ export function RoomsLayer() {
   const showCodes = modeLayerVisible(layers, 'roomCodes', ctx)
   const showWallNumbers = modeLayerVisible(layers, 'wallLabels', ctx)
   const measurements = useDoc((s) => s.doc.measurements)
+  // Element under the pointer in the Solve tab list ('CU-6', 'CU-D', 'SE-1-T'): shown here.
+  const hoverLabel = useUi((s) => s.hoverLabel)
+  const hoverDiagonal = useUi((s) => s.hoverDiagonal)
+  const hover = useMemo(() => {
+    const t = hoverTarget({ rooms }, hoverLabel, hoverDiagonal?.pair)
+    // A pair from another room must not highlight this room's diagonal.
+    if (t?.kind === 'diagonal' && hoverDiagonal && hoverDiagonal.roomId !== t.roomId) return null
+    return t
+  }, [rooms, hoverLabel, hoverDiagonal])
+  // A hovered wall with its geometry: the highlight follows the wall thickness.
+  const hoverWall = useMemo(() => {
+    if (hover?.kind !== 'wall') return null
+    const room = rooms.find((r) => r.id === hover.roomId)
+    const w = room ? roomWalls(room).find((x) => x.start.id === hover.wallStart) : undefined
+    return room && w ? { w, thicknessCm: wallProps(room, w.start.id).thicknessCm } : null
+  }, [hover, rooms])
   const step = useDoc((s) => planPrecision(s.doc))
   const activeHole = useActiveHole()
   const crossing = useMemo(
@@ -278,6 +295,29 @@ export function RoomsLayer() {
             data-selected-wall={r.id + ':' + q.startId}
             strokeWidth={px(2)} className="fill-orange-500/35 stroke-orange-500" />
         )))}
+
+      {/* hover highlight: the element of the survey label under the pointer in the Solve tab list
+          (and later in Measuring Mode). Drawn above the walls, and it takes no pointer event. */}
+      {hoverWall && (
+        <line x1={hoverWall.w.start.x} y1={hoverWall.w.start.y} x2={hoverWall.w.end.x} y2={hoverWall.w.end.y}
+          pointerEvents="none" strokeLinecap="round" data-hover-highlight="wall" data-hover-label={hoverLabel ?? ''}
+          strokeWidth={Math.max(hoverWall.thicknessCm, px(10)) + px(4)}
+          className="stroke-orange-500/40 dark:stroke-orange-400/45" />
+      )}
+      {hover?.kind === 'diagonal' && (
+        <g pointerEvents="none" data-hover-highlight="diagonal" data-hover-label={hover.label}>
+          <line x1={hover.a.x} y1={hover.a.y} x2={hover.b.x} y2={hover.b.y}
+            strokeWidth={px(3)} strokeLinecap="round" strokeDasharray={`${px(8)} ${px(5)}`}
+            className="stroke-orange-500/90 dark:stroke-orange-400/90" />
+          {/* Planned length of the diagonal: what the tape should read on site. */}
+          <text x={(hover.a.x + hover.b.x) / 2} y={(hover.a.y + hover.b.y) / 2}
+            textAnchor="middle" dominantBaseline="middle" fontSize={px(12)} fontWeight={600}
+            strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round" data-hover-length={hover.label}
+            className="fill-orange-700 stroke-white dark:fill-orange-200 dark:stroke-slate-900">
+            {fmtCm(dist(hover.a, hover.b))} cm
+          </text>
+        </g>
+      )}
 
       {/* "In line on": the line of each selected wall that lines up with the walls that continue it */}
       {selWalls.size > 0 && rooms.map((r) => roomWalls(r).filter((w) => selWalls.has(r.id + ':' + w.start.id)).map((w) => {
