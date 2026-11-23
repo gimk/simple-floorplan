@@ -6,10 +6,16 @@
 import { roomInnerRing, roomWalls } from '../../model/geometry'
 import { labelRoomCode, parseThicknessLabel } from '../../model/survey'
 import type { PlanDoc, Room, Vec } from '../../model/types'
+import { parseWallValueLabel } from '../../model/wallValues'
 
 export type HoverTarget =
   /** A wall of a room, given by the start vertex id (the key of `room.walls`). */
   | { kind: 'wall'; roomId: string; wallStart: string; label: string }
+  /**
+   * A stored wall ('W12-C', 'W12-E'), given by its two node positions: the centre line of the wall
+   * is drawn between them. `outside` is true for an outside face value.
+   */
+  | { kind: 'storedWall'; wallId: string; a: Vec; b: Vec; label: string; outside: boolean }
   /**
    * The survey diagonal of a room, between two INSIDE corners (see roomInnerRing): the same two
    * points that the measured value of the diagonal uses.
@@ -49,11 +55,24 @@ export const diagonalTarget = (
  * for a room that has no `room.diagonal` yet. Without it, the pair comes from the room.
  */
 export function hoverTarget(
-  doc: Pick<PlanDoc, 'rooms'>,
+  doc: Pick<PlanDoc, 'rooms' | 'walls' | 'nodes'>,
   label: string | null,
   pair?: [number, number],
 ): HoverTarget {
   if (!label) return null
+  // A stored wall: 'W12-C' (centre line) or 'W12-E' (outside face). Drawn between its two nodes.
+  const wallValue = parseWallValueLabel(label)
+  if (wallValue) {
+    const wall = (doc.walls ?? []).find((w) => w.id === wallValue.wallId)
+    const na = wall ? (doc.nodes ?? []).find((n) => n.id === wall.a) : undefined
+    const nb = wall ? (doc.nodes ?? []).find((n) => n.id === wall.b) : undefined
+    if (!wall || !na || !nb) return null
+    return {
+      kind: 'storedWall', wallId: wall.id,
+      a: { x: na.x, y: na.y }, b: { x: nb.x, y: nb.y }, label,
+      outside: wallValue.kind === 'outside',
+    }
+  }
   const code = labelRoomCode(label)
   if (!code) return null
   const room = roomByCode(doc, code)

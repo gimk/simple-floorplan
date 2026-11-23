@@ -18,14 +18,25 @@
 // what `suggest.ts` scores (docs/walls-plan.md phase 2b).
 import { innerWallLengths } from '../../model/geometry'
 import { buildWallGraph, type GraphConflict } from '../../model/wallGraph'
-import type { PlanDoc, Room, SurfaceReference, Vec, WallAlign } from '../../model/types'
+import type { PlanDoc, Room, StoredNode, StoredWall, SurfaceReference, Vec, WallAlign } from '../../model/types'
 import { thicknessLabel } from '../../model/survey'
+import { outsideFaceSide, parseWallValueLabel, wallEnds, wallValueLabel, type RoomWallRef } from '../../model/wallValues'
 import { sourceSigmaCm } from '../../model/measureSource'
 import { SOURCE_LABELS } from '../apartment/logic'
 import { wallProps } from './walls'
 
 /** How the solver uses the surface references. */
 export type SurfaceMode = 'off' | 'guide' | 'match'
+
+/**
+ * What the solver reads from a document. The stored wall graph (`walls` / `nodes`) is optional:
+ * without it, the centre and outside face values of stored walls (W12-C, W12-E) have no row.
+ */
+export type SolveDoc = Pick<PlanDoc, 'rooms' | 'measurements'> & {
+  apartment?: PlanDoc['apartment']
+  nodes?: StoredNode[]
+  walls?: StoredWall[]
+}
 
 export type GlobalOptions = {
   /** Two opposite walls of two rooms closer than this (cm) are the same wall. */
@@ -107,7 +118,7 @@ export type WallGroup = {
   rooms: number
 }
 
-export type GlobalResidual = { label: string; kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align' | 'surface'; measuredCm: number; solvedCm: number; diffCm: number
+export type GlobalResidual = { label: string; kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align' | 'surface' | 'centre' | 'outside'; measuredCm: number; solvedCm: number; diffCm: number
   /** Accuracy of the row (cm, or cm² for a surface). */
   sigmaCm: number }
 
@@ -196,6 +207,8 @@ type Built = {
   meta: { label: string; kind: GlobalResidual['kind'] }[]
   skipped: { label: string; reason: string }[]
   surfaceEntries: SurfaceEntry[]
+  /** Centre and outside face length of each stored wall, as expressions of the unknowns. */
+  wallLins: Map<string, { centre?: Lin; outside?: Lin }>
   x0: number[]
   label: (e: Edge) => string
   conflicts: GraphConflict[]
@@ -320,7 +333,7 @@ function cholSolve(L: number[][], b: number[]): number[] {
   return x
 }
 
-function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): Built {
+function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
   // The references come from the options, or from the document (doc.apartment.references).
   const o = { ...DEFAULTS, ...options, references: options.references ?? doc.apartment?.references ?? [] }
   const rooms = doc.rooms
@@ -476,6 +489,86 @@ function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, 
     }
   })
 
+  // ---- centre line and outside face values of stored walls (docs/walls-plan.md phase 5b) ----
+  // W12-C: the length between the CENTRE lines of the perpendicular walls at its two ends.
+  // W12-E: the length between their OUTSIDE faces, that is the outside corner to outside corner:
+  //   length = s * (coordB - coordA) + (tA + tB) / 2
+  // with s = +1 when the wall goes toward larger x (horizontal) or larger y (vertical), coordA /
+  // coordB the centre lines of the two end walls and tA / tB their thicknesses. The half thickness
+  // of each end wall is added because the outside face of the end wall is half a thickness past
+  // its centre line, away from the wall.
+  // A centre value read on a plan has no source more often than not: no source counts as 'plan'.
+  const wallLins = new Map<string, { centre?: Lin; outside?: Lin }>()
+  const storedNodes: StoredNode[] = doc.nodes ?? []
+  const storedWalls: StoredWall[] = doc.walls ?? []
+  const nodeAt = new Map(storedNodes.map((n) => [n.id, n]))
+  // A value of a wall has a row only when the document has the stored wall graph.
+  if (!storedWalls.length) {
+    for (const label of Object.keys(doc.measurements)) {
+      if (parseWallValueLabel(label)) skipped.push({ label, reason: 'the plan has no stored wall graph' })
+    }
+  }
+  for (const wall of storedWalls) {
+    const na = nodeAt.get(wall.a), nb = nodeAt.get(wall.b)
+    if (!na || !nb) continue
+    const dx = nb.x - na.x, dy = nb.y - na.y
+    const centreCm = Math.hypot(dx, dy)
+    if (centreCm < 1) continue
+    const centreLabel = wallValueLabel(wall.id, 'centre')
+    const outsideLabel = wallValueLabel(wall.id, 'outside')
+    const centreValue = doc.measurements[centreLabel]?.actualCm
+    const outsideValue = doc.measurements[outsideLabel]?.actualCm
+    const hasCentre = !!centreValue && Number.isFinite(centreValue) && centreValue > 0
+    const hasOutside = !!outsideValue && Number.isFinite(outsideValue) && outsideValue > 0
+    const entry: { centre?: Lin; outside?: Lin } = {}
+    wallLins.set(wall.id, entry)
+    // Only horizontal or vertical walls can carry a row (scope of the solver).
+    const vertical = Math.abs(dy) <= 1
+    const horizontal = Math.abs(dx) <= 1
+    if (!vertical && !horizontal) {
+      const reason = 'wall is not horizontal or vertical'
+      if (hasCentre) skipped.push({ label: centreLabel, reason })
+      if (hasOutside) skipped.push({ label: outsideLabel, reason })
+      continue
+    }
+    const ends = wallEnds(rooms, storedNodes, wall)
+    const groupAt = (ref: RoomWallRef | null) => {
+      if (!ref) return null
+      const e = edgeOf[ref.roomIndex]?.[ref.index]
+      return e && e.orient !== 'o' && e.group >= 0 ? groupVars[e.group] ?? null : null
+    }
+    const gA = groupAt(ends.a), gB = groupAt(ends.b)
+    const endReason = !ends.a || !ends.b
+      ? 'no perpendicular wall at one end of this wall'
+      : 'a wall at its end is not horizontal or vertical'
+    // s: +1 when the wall goes toward larger x (horizontal) or larger y (vertical).
+    const s = (vertical ? Math.sign(dy) : Math.sign(dx)) || 1
+    // The expressions are built for every wall, also without a value: a suggestion needs them.
+    if (gA && gB) {
+      entry.centre = lin(0, [gB.coord, s], [gA.coord, -s])
+      entry.outside = lin(0, [gB.coord, s], [gA.coord, -s], [gB.thick, 0.5], [gA.thick, 0.5])
+    }
+    if (hasCentre) {
+      if (!entry.centre) skipped.push({ label: centreLabel, reason: endReason })
+      else {
+        // No source counts as 'plan': the value of a centre line is usually read on a plan.
+        const sigma = sourceSigmaCm(doc.measurements[centreLabel]?.source ?? 'plan') * o.measureSigmaCm
+        rows.push({ kind: 'lin', l: entry.centre, target: centreValue!, sigma })
+        meta.push({ label: centreLabel, kind: 'centre' })
+      }
+    }
+    if (hasOutside) {
+      if (!outsideFaceSide(wall, centreCm)) {
+        skipped.push({ label: outsideLabel, reason: 'the wall has no outside face on its whole length' })
+      } else if (!entry.outside) skipped.push({ label: outsideLabel, reason: endReason })
+      else {
+        const sigma = sourceSigmaCm(doc.measurements[outsideLabel]?.source) * o.measureSigmaCm
+        rows.push({ kind: 'lin', l: entry.outside, target: outsideValue!, sigma })
+        meta.push({ label: outsideLabel, kind: 'outside' })
+      }
+    }
+  }
+
   // ---- surface references (docs/walls-plan.md phase 2) ----
   // One row per reference: the area of the inside face polygon of its room, or the sum of the
   // inside areas of every indoor room. Sigma is a small % of the surface, so a measured wall
@@ -549,7 +642,7 @@ function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, 
     }
   }
 
-  return { o, rooms, edgeOf, groupVars, corners, rows, priors, meta, skipped, surfaceEntries, x0, label, conflicts: graph.conflicts }
+  return { o, rooms, edgeOf, groupVars, corners, rows, priors, meta, skipped, surfaceEntries, wallLins, x0, label, conflicts: graph.conflicts }
 }
 
 // ---- Gauss-Newton ----
@@ -638,7 +731,8 @@ function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; i
     return { label: meta[k].label, kind: meta[k].kind, measuredCm: row.target, solvedCm: solved, diffCm: row.target - solved, sigmaCm: row.sigma }
   })
   // Surface rows are in cm² and they are weak: they stay out of rmsCm.
-  const fit = residuals.filter((r) => r.kind === 'wall' || r.kind === 'diagonal')
+  // A centre or outside face value is a length of the plan too: it counts in rmsCm.
+  const fit = residuals.filter((r) => r.kind === 'wall' || r.kind === 'diagonal' || r.kind === 'centre' || r.kind === 'outside')
   const rmsCm = fit.length ? Math.sqrt(fit.reduce((s, r) => s + r.diffCm ** 2, 0) / fit.length) : 0
   const out: Record<string, Vec[]> = {}
   const inner: Record<string, Vec[]> = {}
@@ -665,7 +759,7 @@ function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; i
 export const GLOBAL_SOLVE_DEFAULTS: Required<GlobalOptions> = DEFAULTS
 
 /** All rooms in one least-squares fit. Same result as before the model was split out. */
-export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): GlobalSolved {
+export function solveGlobal(doc: SolveDoc, options: GlobalOptions = {}): GlobalSolved {
   const b = buildModel(doc, options)
   return reportModel(b, fitModel(b))
 }
@@ -690,6 +784,10 @@ export type CandidateQuantity =
   | { kind: 'wall'; roomId: string; wallIndex: number }
   | { kind: 'diagonal'; roomId: string; i: number; j: number }
   | { kind: 'thickness'; groupId: number }
+  /** Centre line length of a stored wall (label 'W12-C'). */
+  | { kind: 'centre'; wallId: string }
+  /** Outside face length of a stored facade wall (label 'W12-E'). */
+  | { kind: 'outside'; wallId: string }
 
 /** Value of a quantity at x (cm, or cm² for a surface), with its unscaled gradient. */
 export type QuantityAtX = { value: number; grad: Grad }
@@ -716,7 +814,7 @@ export type SolveModel = {
  * Same fit as solveGlobal, and the model behind it: the covariance of the unknowns (from `chol`)
  * and the gradient of a candidate row score how much a new measurement would help.
  */
-export function solveGlobalWithModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): SolveModel {
+export function solveGlobalWithModel(doc: SolveDoc, options: GlobalOptions = {}): SolveModel {
   const b = buildModel(doc, options)
   const fitted = fitModel(b)
   const solved = reportModel(b, fitted)
@@ -726,6 +824,10 @@ export function solveGlobalWithModel(doc: Pick<PlanDoc, 'rooms' | 'measurements'
     if (q.kind === 'thickness') {
       const g = b.groupVars[q.groupId]
       return g ? { value: x[g.thick], grad: [[g.thick, 1]] } : null
+    }
+    if (q.kind === 'centre' || q.kind === 'outside') {
+      const l = b.wallLins.get(q.wallId)?.[q.kind]
+      return l ? { value: evalLin(l, x), grad: mergeGrad(l.t) } : null
     }
     const ri = b.rooms.findIndex((r) => r.id === q.roomId)
     if (ri < 0) return null

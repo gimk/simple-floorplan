@@ -8,10 +8,17 @@ import type { OldMeasurement, PlanDoc, Room } from '../../model/types'
 
 const day = (iso: string) => iso.slice(0, 10)
 
+/**
+ * Old values of stored walls that are not in the plan any more ('W12-C', 'W12-E'): their values
+ * have no room code, because a wall does not belong to one room.
+ */
+export const oldOfRemovedWalls = (doc: PlanDoc): OldMeasurement[] =>
+  (doc.oldMeasurements ?? []).filter((e) => e.roomCode === '')
+
 /** Old values of rooms that are not in the plan any more. */
 export const oldOfDeletedRooms = (doc: PlanDoc): OldMeasurement[] => {
   const codes = new Set(doc.rooms.map((r) => r.code))
-  return (doc.oldMeasurements ?? []).filter((e) => !codes.has(e.roomCode))
+  return (doc.oldMeasurements ?? []).filter((e) => e.roomCode !== '' && !codes.has(e.roomCode))
 }
 
 function Entry({ e }: { e: OldMeasurement }) {
@@ -49,6 +56,26 @@ export function DeletedRoomsOldValues({ doc }: { doc: PlanDoc }) {
   return (
     <details className="rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-[#1b2128]">
       <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">Old values of deleted rooms ({list.length})</summary>
+      <ul className="mt-2 flex flex-col gap-1.5">{list.map((e, i) => <Entry key={`${e.label}-${e.updatedAt}-${i}`} e={e} />)}</ul>
+    </details>
+  )
+}
+
+/**
+ * "Old values of removed walls" of the Measuring Mode panel: the centre ('W12-C') and outside
+ * face ('W12-E') values of a wall that the plan does not have any more. Nothing when there are none.
+ */
+export function RemovedWallsOldValues({ doc }: { doc: PlanDoc }) {
+  const list = oldOfRemovedWalls(doc)
+  if (!list.length) return null
+  return (
+    <details className="rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-[#1b2128]">
+      <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">
+        Old values of removed walls ({list.length})
+      </summary>
+      <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+        Values of a wall that is not in the plan any more. They are kept until you delete them.
+      </p>
       <ul className="mt-2 flex flex-col gap-1.5">{list.map((e, i) => <Entry key={`${e.label}-${e.updatedAt}-${i}`} e={e} />)}</ul>
     </details>
   )

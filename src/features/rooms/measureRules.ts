@@ -7,6 +7,7 @@
 import { graphRule } from '../../model/graphRule'
 import { appendOld, REASON_WORDS, renameOldCode, renamedCodes } from '../../model/oldMeasurements'
 import { relabelMeasurements } from '../../model/relabel'
+import { removedWallValues } from '../../model/wallValues'
 import { addDocRule, nowIso, useDoc, type DocRule } from '../../model/store'
 import { toast } from '../toast'
 import { applyMeasuredNear, describeReport } from './apply'
@@ -42,11 +43,27 @@ const relabelRule: DocRule = (prev, next) => {
   return { ...next, measurements: res.measurements, ...(old ? { oldMeasurements: old } : {}) }
 }
 
+/**
+ * Values of a stored wall leave `measurements` when the wall is gone (label 'W12-C' / 'W12-E').
+ * They go to `doc.oldMeasurements` with the reason 'wall-removed' and no room code: the value of a
+ * wall does not belong to one room. A wall that keeps its id keeps its values.
+ */
+const wallValueRule: DocRule = (prev, next) => {
+  if (prev.walls === next.walls) return next
+  // The graph rule runs before this one: `prev.walls` are the old ids, `next.walls` the new ones.
+  const moved = removedWallValues(prev, next)
+  if (!moved) return next
+  const old = appendOld(next.oldMeasurements ?? prev.oldMeasurements, moved.dropped, nowIso())
+  return { ...next, measurements: moved.measurements, ...(old ? { oldMeasurements: old } : {}) }
+}
+
 /** Install the rules once, at app start (not in the read-only share viewer). */
 export function installMeasureRules() {
   addDocRule(relabelRule)
   // The stored wall graph follows the rooms (after the relabel rule: ids stay stable).
   addDocRule(graphRule)
+  // The values of a wall that the new graph does not have any more (after the graph rule).
+  addDocRule(wallValueRule)
 }
 
 // ---------- auto-apply after a wall value is entered ----------

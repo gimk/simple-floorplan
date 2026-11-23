@@ -1,9 +1,13 @@
 // Survey IDs for Measuring Mode (see docs/plan.md 2.5.1).
 // CODE-1..n = walls in polygon order, CODE-D = diagonal (if room.diagonal), CODE-H = ceiling height,
 // CODE-n-T = thickness of wall n (optional, measured at a door or window frame).
+// W12-C / W12-E = centre line and outside face of a stored wall (optional, phase 5b).
 import { DEFAULT_WALL_CM, dist, roomInnerRing, roomWalls } from './geometry'
-import type { PlanDoc, Room } from './types'
+import type { PlanDoc, Room, StoredNode, StoredWall } from './types'
 import { ownsWall } from './wallSides'
+import {
+  outsideFaceSide, wallCentreCm, wallOutsidePlanCm, wallValueLabel, type WallValueKind,
+} from './wallValues'
 
 export type SurveyId = {
   label: string
@@ -93,3 +97,49 @@ export const nextRoomCode = (d: PlanDoc) => {
   while (used.has(`R${n}`)) n++
   return `R${n}`
 }
+
+// ---------- values of a stored wall (docs/walls-plan.md phase 5b) ----------
+
+/**
+ * A value of one stored wall: 'W12-C' (centre line, usually from the architect plan) or 'W12-E'
+ * (outside face length of a facade wall). Both are optional: a plan is complete without them.
+ */
+export type WallSurveyId = {
+  label: string
+  kind: WallValueKind
+  /** Stable id of the stored wall, e.g. 'W12'. */
+  wallId: string
+  /** Value from the traced plan. For the outside face: centre + half of the two end thicknesses. */
+  plannedCm?: number
+  optional?: boolean
+}
+
+/**
+ * The wall values of one stored wall: its centre length, and its outside face length when the wall
+ * has an outside face on its whole length. `plannedCm` comes from the drawing, never from a solve.
+ */
+export function wallValueIds(
+  d: { rooms: Room[]; nodes?: StoredNode[] },
+  wall: StoredWall,
+): WallSurveyId[] {
+  const nodes = d.nodes ?? []
+  const centre = wallCentreCm(nodes, wall)
+  if (centre === null) return []
+  const out: WallSurveyId[] = [
+    { label: wallValueLabel(wall.id, 'centre'), kind: 'centre', wallId: wall.id, plannedCm: centre, optional: true },
+  ]
+  if (outsideFaceSide(wall, centre)) {
+    out.push({
+      label: wallValueLabel(wall.id, 'outside'), kind: 'outside', wallId: wall.id,
+      plannedCm: wallOutsidePlanCm(d.rooms, nodes, wall) ?? centre, optional: true,
+    })
+  }
+  return out
+}
+
+/**
+ * Every wall value of the plan, in the order of the stored walls: W1-C, W1-E, W2-C... These are
+ * optional values, so they are not part of `allSurveyIds` (progress of the rooms).
+ */
+export const wallSurveyIds = (d: Pick<PlanDoc, 'rooms' | 'walls' | 'nodes'>): WallSurveyId[] =>
+  (d.walls ?? []).flatMap((w) => wallValueIds(d, w))

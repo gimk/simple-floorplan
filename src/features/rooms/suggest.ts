@@ -14,13 +14,18 @@
 // Pure: no store, no side effect. The panel writes the value the user types.
 import type { PlanDoc } from '../../model/types'
 import { sourceSigmaCm } from '../../model/measureSource'
-import { thicknessIds } from '../../model/survey'
+import { thicknessIds, wallSurveyIds } from '../../model/survey'
+import { firstRoomFace, parseWallValueLabel } from '../../model/wallValues'
 import {
   covarianceTimes, GLOBAL_SOLVE_DEFAULTS, solveGlobalWithModel,
-  type CandidateQuantity, type GlobalOptions, type Grad, type SolveModel,
+  type CandidateQuantity, type GlobalOptions, type Grad, type SolveDoc, type SolveModel,
 } from './globalSolve'
 
-export type SuggestionKind = 'wall' | 'diagonal' | 'thickness'
+/**
+ * Kinds of suggestion. 'outside' is the outside face length of a facade wall ('W12-E'): the only
+ * wall value measured on site. A centre value ('W12-C') comes from the plan, so it is not offered.
+ */
+export type SuggestionKind = 'wall' | 'diagonal' | 'thickness' | 'outside'
 
 export type Suggestion = {
   /** Survey ID the user types: "SE-2", "SE-D", "SE-6-T". */
@@ -71,6 +76,8 @@ type Candidate = {
   diagonal?: [number, number]
   plannedCm: number
   grad: Grad
+  /** A facade length that would find the thickness of an exterior wall (undetermined today). */
+  findsThickness?: boolean
 }
 
 const NO_SUGGESTIONS: Suggestion[] = []
@@ -107,7 +114,7 @@ function pickDiagonal(model: SolveModel, roomId: string, n: number, current?: [n
 }
 
 /** Every target of the plan that has no value yet, with its gradient at the solved x. */
-function buildCandidates(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, model: SolveModel): Candidate[] {
+function buildCandidates(doc: SolveDoc, model: SolveModel): Candidate[] {
   const out: Candidate[] = []
   // Room wall -> group id, from the report (a group lists the labels of its room walls).
   const groupOfLabel = new Map<string, number>()
@@ -156,14 +163,38 @@ function buildCandidates(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, model: So
       }
     }
   }
+  // Facade lengths ('W12-E'): measurable on site from outside. They are the values that find the
+  // thickness of an exterior wall that no loop crosses. A centre value ('W12-C') is a plan value,
+  // so it is never offered here.
+  const undetermined = new Set<number>()
+  model.solved.groups.forEach((g) => {
+    const v = model.groupVars[g.id]?.thick
+    if (!g.determined && v !== undefined) undetermined.add(v)
+  })
+  for (const s of wallSurveyIds(doc)) {
+    if (s.kind !== 'outside' || hasValue(doc, s.label)) continue
+    const wall = (doc.walls ?? []).find((w) => w.id === s.wallId)
+    const face = wall ? firstRoomFace(wall) : null
+    if (!wall || !face) continue
+    const q = model.quantity({ kind: 'outside', wallId: s.wallId })
+    if (!q) continue
+    out.push({
+      q: { kind: 'outside', wallId: s.wallId },
+      label: s.label, kind: 'outside', roomId: face.roomId, wallStart: face.wallStart,
+      plannedCm: q.value, grad: q.grad,
+      // A half thickness of an undetermined wall in the row means the value finds that thickness.
+      findsThickness: q.grad.some(([v, k]) => undetermined.has(v) && Math.abs(k) > 0.01),
+    })
+  }
   return out
 }
 
 const dot = (g: Grad, v: number[]) => g.reduce((s, [i, k]) => s + k * v[i], 0)
 
 /** Short reason for a suggestion, in the words of the plan. */
-function reasonFor(kind: SuggestionKind, nowSdCm: number, determined?: boolean): string {
+function reasonFor(kind: SuggestionKind, nowSdCm: number, determined?: boolean, findsThickness?: boolean): string {
   if (kind === 'thickness' && determined === false) return 'thickness not found by the data'
+  if (kind === 'outside' && findsThickness) return 'facade length: finds the exterior wall thickness'
   if (nowSdCm > 5) return 'position only from the drawing'
   return 'check value (adds redundancy)'
 }
@@ -172,10 +203,7 @@ function reasonFor(kind: SuggestionKind, nowSdCm: number, determined?: boolean):
  * Greedy list of the best measurements, and the measured values that do not fit.
  * Pure: the same document and options always give the same list.
  */
-export function suggestMeasurements(
-  doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>,
-  opts: SuggestOptions = {},
-): SuggestResult {
+export function suggestMeasurements(doc: SolveDoc, opts: SuggestOptions = {}): SuggestResult {
   const limit = Math.max(0, Math.floor(opts.limit ?? 10))
   const sigma = opts.sigmaCm ?? 1
   const minGain = opts.minGainCm ?? 0.25
@@ -186,9 +214,12 @@ export function suggestMeasurements(
   // the accuracy of their SOURCE). A locked wall has a very small row sigma (it holds the plan), so
   // the row sigma is not used here: a 0.3 cm difference on a locked wall is not an error.
   const scale = opts.measureSigmaCm ?? GLOBAL_SOLVE_DEFAULTS.measureSigmaCm
-  const sourceSigma = (label: string) => sourceSigmaCm(doc.measurements[label]?.source) * scale
+  // A centre value with no source counts as 'plan' (the same rule as the solver row).
+  const sourceOf = (label: string) =>
+    doc.measurements[label]?.source ?? (parseWallValueLabel(label)?.kind === 'centre' ? 'plan' : undefined)
+  const sourceSigma = (label: string) => sourceSigmaCm(sourceOf(label)) * scale
   const remeasure: Remeasure[] = model.solved.residuals
-    .filter((r) => (r.kind === 'wall' || r.kind === 'diagonal') && Math.abs(r.diffCm) > 3 * sourceSigma(r.label))
+    .filter((r) => (r.kind === 'wall' || r.kind === 'diagonal' || r.kind === 'centre' || r.kind === 'outside') && Math.abs(r.diffCm) > 3 * sourceSigma(r.label))
     .map((r) => ({ label: r.label, measuredCm: r.measuredCm, solvedCm: r.solvedCm, diffCm: r.diffCm }))
     .sort((a, b) => Math.abs(b.diffCm) - Math.abs(a.diffCm) || a.label.localeCompare(b.label))
 
@@ -239,7 +270,7 @@ export function suggestMeasurements(
       nowSdCm,
       plannedCm: picked.c.plannedCm,
       gain: pickGain,
-      reason: reasonFor(picked.c.kind, nowSdCm, determined),
+      reason: reasonFor(picked.c.kind, nowSdCm, determined, picked.c.findsThickness),
     })
 
     // C <- C - (C g)(C g)ᵀ / (s² + gᵀ C g), so the other candidates lose what this one brings.

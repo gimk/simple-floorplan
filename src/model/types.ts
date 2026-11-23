@@ -128,7 +128,11 @@ export type StoredFace = {
  */
 export type StoredWall = { id: string; a: string; b: string; faces: StoredFace[] }
 
-/** A value that left `doc.measurements` (wall split or removed, room deleted). Kept until the user deletes it. */
+/**
+ * A value that left `doc.measurements` (wall split or removed, room deleted). Kept until the user
+ * deletes it. `roomCode` is the room the value belonged to; it is '' for a value of a stored wall
+ * ('W12-C', 'W12-E'), because a wall does not belong to one room.
+ */
 export type OldMeasurement = Measurement & {
   roomCode: string
   reason: 'wall-split' | 'wall-removed' | 'room-deleted'

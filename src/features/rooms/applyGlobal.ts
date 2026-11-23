@@ -65,7 +65,7 @@ export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc:
   // Corners and thicknesses take the precision of the plan; 0.1 cm when the user turned it off.
   const step = planPrecision(doc) || 0.1
   const snap = (v: number) => roundTo(v, step)
-  const fit = solved.residuals.filter((r) => r.kind === 'wall' || r.kind === 'diagonal')
+  const fit = solved.residuals.filter((r) => r.kind === 'wall' || r.kind === 'diagonal' || r.kind === 'centre' || r.kind === 'outside')
   const worst = fit.reduce<(typeof fit)[number] | null>((a, r) => (!a || Math.abs(r.diffCm) > Math.abs(a.diffCm) ? r : a), null)
   const found = solved.groups.filter((g) => g.determined)
   const report: GlobalReport = {

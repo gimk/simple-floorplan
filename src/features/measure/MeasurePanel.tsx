@@ -8,7 +8,8 @@ import type { Room } from '../../model/types'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged, roomProgress } from './logic'
 import { focusMeasureField, selectionRoomId } from './focusField'
 import { FilterGroup, SyncLine, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
-import { DeletedRoomsOldValues } from './OldValues'
+import { FacadeSection } from './FacadeCard'
+import { DeletedRoomsOldValues, RemovedWallsOldValues } from './OldValues'
 import { RoomCard } from './RoomCard'
 import { useWakeLock } from './useWakeLock'
 
@@ -117,6 +118,8 @@ export function MeasurePanel() {
             ))}
         </div>
       )}
+      <FacadeSection doc={doc} />
+      <RemovedWallsOldValues doc={doc} />
       <DeletedRoomsOldValues doc={doc} />
     </div>
   )

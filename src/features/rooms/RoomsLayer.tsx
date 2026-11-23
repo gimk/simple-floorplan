@@ -20,6 +20,31 @@ import { modeLayerVisible } from '../../shell/view/layers'
 import { hoverTarget } from './hoverTarget'
 import { focusMeasureField } from '../measure/focusField'
 import { inputId } from '../measure/actions'
+import { outsideFaceSide, storedWallOfRoomWall, wallCentreCm, wallValueLabel } from '../../model/wallValues'
+import type { Wall } from '../../model/geometry'
+import type { StoredNode, StoredWall } from '../../model/types'
+
+/**
+ * 'W12-E' when a click in Measuring Mode lands on the OUTSIDE half of a facade wall; null when it
+ * lands on the room side, or when the wall has no outside face (the room wall field is used then).
+ */
+function outsideFaceLabelAt(
+  e: { clientX: number; clientY: number },
+  vp: { toWorld: (x: number, y: number) => Vec },
+  roomId: string,
+  wall: Wall,
+  doc: { rooms: Room[]; walls?: StoredWall[]; nodes?: StoredNode[] },
+): string | null {
+  // The room is on the side of `inward`: the other side of the centre line is the outside half.
+  const p = vp.toWorld(e.clientX, e.clientY)
+  const side = (p.x - wall.start.x) * wall.inward.x + (p.y - wall.start.y) * wall.inward.y
+  if (side >= 0) return null
+  const stored = storedWallOfRoomWall(doc, roomId, wall.start.id)
+  if (!stored) return null
+  const centreCm = wallCentreCm(doc.nodes ?? [], stored)
+  if (centreCm === null || !outsideFaceSide(stored, centreCm)) return null
+  return wallValueLabel(stored.id, 'outside')
+}
 
 const pathOf = (rings: Vec[][]) =>
   rings.map((r) => 'M' + r.map((p) => `${p.x} ${p.y}`).join('L') + 'Z').join('')
@@ -53,15 +78,17 @@ export function RoomsLayer() {
   const showCodes = modeLayerVisible(layers, 'roomCodes', ctx)
   const showWallNumbers = modeLayerVisible(layers, 'wallLabels', ctx)
   const measurements = useDoc((s) => s.doc.measurements)
-  // Element under the pointer in the Solve tab list ('CU-6', 'CU-D', 'SE-1-T'): shown here.
+  const storedWalls = useDoc((s) => s.doc.walls)
+  const storedNodes = useDoc((s) => s.doc.nodes)
+  // Element under the pointer in the Solve tab list ('CU-6', 'CU-D', 'SE-1-T', 'W12-E'): shown here.
   const hoverLabel = useUi((s) => s.hoverLabel)
   const hoverDiagonal = useUi((s) => s.hoverDiagonal)
   const hover = useMemo(() => {
-    const t = hoverTarget({ rooms }, hoverLabel, hoverDiagonal?.pair)
+    const t = hoverTarget({ rooms, walls: storedWalls, nodes: storedNodes }, hoverLabel, hoverDiagonal?.pair)
     // A pair from another room must not highlight this room's diagonal.
     if (t?.kind === 'diagonal' && hoverDiagonal && hoverDiagonal.roomId !== t.roomId) return null
     return t
-  }, [rooms, hoverLabel, hoverDiagonal])
+  }, [rooms, storedWalls, storedNodes, hoverLabel, hoverDiagonal])
   // A hovered wall with its geometry: the highlight follows the wall thickness.
   const hoverWall = useMemo(() => {
     if (hover?.kind !== 'wall') return null
@@ -313,6 +340,23 @@ export function RoomsLayer() {
           strokeWidth={Math.max(hoverWall.thicknessCm, px(10)) + px(4)}
           className="stroke-orange-500/40 dark:stroke-orange-400/45" />
       )}
+      {hover?.kind === 'storedWall' && (
+        <g pointerEvents="none" data-hover-highlight="stored-wall" data-hover-label={hover.label}>
+          {/* Centre line of the stored wall: the line the two values of the wall are measured on. */}
+          <line x1={hover.a.x} y1={hover.a.y} x2={hover.b.x} y2={hover.b.y}
+            strokeWidth={px(12)} strokeLinecap="round"
+            className="stroke-orange-500/35 dark:stroke-orange-400/40" />
+          <line x1={hover.a.x} y1={hover.a.y} x2={hover.b.x} y2={hover.b.y}
+            strokeWidth={px(2)} strokeLinecap="round" strokeDasharray={hover.outside ? `${px(9)} ${px(5)}` : undefined}
+            className="stroke-orange-500/90 dark:stroke-orange-400/90" />
+          <text x={(hover.a.x + hover.b.x) / 2} y={(hover.a.y + hover.b.y) / 2}
+            textAnchor="middle" dominantBaseline="middle" fontSize={px(12)} fontWeight={600}
+            strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round" data-hover-length={hover.label}
+            className="fill-orange-700 stroke-white dark:fill-orange-200 dark:stroke-slate-900">
+            {hover.outside ? 'outside ' : ''}{fmtCm(dist(hover.a, hover.b))} cm
+          </text>
+        </g>
+      )}
       {hover?.kind === 'diagonal' && (
         <g pointerEvents="none" data-hover-highlight="diagonal" data-hover-label={hover.label}>
           <line x1={hover.a.x} y1={hover.a.y} x2={hover.b.x} y2={hover.b.y}
@@ -446,7 +490,10 @@ export function RoomsLayer() {
               if (e.button !== 0 || !e.isPrimary) return
               // The panel opens the card of the room; then the field takes the focus.
               useUi.getState().select({ kind: 'room', roomId: r.id })
-              focusMeasureField(wallLabel)
+              // A facade wall: a click on its OUTSIDE half opens the outside face field (W12-E).
+              // The room side, and every other wall, opens the room wall field.
+              const outside = outsideFaceLabelAt(e, vp, r.id, w, { rooms, walls: storedWalls, nodes: storedNodes })
+              focusMeasureField(outside ?? wallLabel)
             }} />
         )
       }))}

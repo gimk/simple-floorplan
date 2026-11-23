@@ -1,11 +1,17 @@
 // Inspect card for one wall (or a Shift + click group of walls): type, renovation state,
 // thickness, line, length, lock, and the elements on the wall. The header steps to the
 // previous / next wall of the same room (docs/sidebar-plan-3.md step 4).
+import { useMemo } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { innerWallLengths, roomWalls } from '../../model/geometry'
+import { fmtCm, innerWallLengths, roomWalls } from '../../model/geometry'
 import { planPrecision, shownLength } from '../../model/precision'
 import { useUi } from '../../model/store'
-import type { PlanDoc, Room, WallAlign, WallStatus, WallType } from '../../model/types'
+import type { PlanDoc, Room, StoredWall, WallAlign, WallStatus, WallType } from '../../model/types'
+import {
+  outsideFaceSide, storedWallOfRoomWall, wallCentreCm, wallOutsidePlanCm, wallValueLabel,
+} from '../../model/wallValues'
+import { setMeasurement } from '../measure/actions'
+import { solveGlobal } from './globalSolve'
 import { EmptyHint, FieldRow, IconButton, NumberField, PanelSection, Segmented, SwitchRow } from '../../shell/panel'
 import {
   WALL_ALIGNS,
@@ -36,6 +42,8 @@ export function WallCard({ doc, room, wallStart, group }: {
   const walls = roomWalls(room)
   const wall = walls.find((w) => w.start.id === wallStart)
   const props = wall ? wallProps(room, wall.start.id) : undefined
+  // The stored wall this room wall is part of: it holds the centre and outside face values.
+  const stored = storedWallOfRoomWall(doc, room.id, wallStart)
   if (!wall || !props) return null
 
   const select = useUi.getState().select
@@ -112,6 +120,7 @@ export function WallCard({ doc, room, wallStart, group }: {
             }}
           />
         </FieldRow>}
+        {!group && stored && <StoredWallValues doc={doc} wall={stored} />}
         <SwitchRow
           name="wallLocked"
           label="Locked (cannot be resized)"
@@ -134,6 +143,82 @@ export function WallCard({ doc, room, wallStart, group }: {
               : <EmptyHint>No door, window or fixture on this wall.</EmptyHint>
           })()}
         </PanelSection>
+      )}
+    </>
+  )
+}
+
+/**
+ * Values of the stored wall (docs/walls-plan.md phase 5b): the CENTRE line length, read on the
+ * architect plan, and the OUTSIDE face length of a facade wall, measured on site from outside.
+ * Labels 'W12-C' and 'W12-E': one value per wall, shared by the two rooms on its sides.
+ */
+function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
+  const nodes = doc.nodes ?? []
+  const centreCm = wallCentreCm(nodes, wall)
+  const centreLabel = wallValueLabel(wall.id, 'centre')
+  const outsideLabel = wallValueLabel(wall.id, 'outside')
+  const centreValue = doc.measurements[centreLabel]?.actualCm
+  const outsideValue = doc.measurements[outsideLabel]?.actualCm
+  const outsidePlanCm = wallOutsidePlanCm(doc.rooms, nodes, wall)
+  const facade = centreCm !== null && outsideFaceSide(wall, centreCm) !== null
+  // Source of the outside value, picked in Measuring Mode. The centre value is a plan value.
+  const measureSource = useUi((s) => s.measureSource)
+  // What the solver says these values are now (a centre value with no source counts as 'plan').
+  const solved = useMemo(() => {
+    if (centreValue == null && outsideValue == null) return null
+    return new Map(solveGlobal(doc).residuals.map((r) => [r.label, r]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc])
+  const solvedLine = (label: string, measuredCm: number) => {
+    const r = solved?.get(label)
+    return (
+      <EmptyHint>
+        Measured {fmtCm(measuredCm)}{r ? ` · Solved ${fmtCm(r.solvedCm)}` : ' · not used by the solve'}
+      </EmptyHint>
+    )
+  }
+  return (
+    <>
+      {/* One wall of the plan: its values are shared by the two rooms on its sides. */}
+      <p className="mt-1 font-mono text-xs font-semibold text-slate-600 dark:text-slate-300" data-wall-values={wall.id}>
+        Wall {wall.id}
+      </p>
+      <FieldRow label="Centre (plan)" htmlFor={`wall-${wall.id}-centre`} hint="node to node">
+        <NumberField
+          id={`wall-${wall.id}-centre`}
+          name="wallCentre"
+          unit="cm"
+          value={centreValue ?? null}
+          placeholder={centreCm !== null ? fmtCm(centreCm) : undefined}
+          min={1}
+          onCommit={(v) => {
+            if (v !== null && !(v > 0)) return false
+            setMeasurement(centreLabel, v, 'plan')
+            return true
+          }}
+        />
+      </FieldRow>
+      {centreValue != null && solvedLine(centreLabel, centreValue)}
+      {facade && (
+        <>
+          <FieldRow label="Outside face" htmlFor={`wall-${wall.id}-outside`} hint="corner to corner">
+            <NumberField
+              id={`wall-${wall.id}-outside`}
+              name="wallOutside"
+              unit="cm"
+              value={outsideValue ?? null}
+              placeholder={outsidePlanCm !== null ? fmtCm(outsidePlanCm) : undefined}
+              min={1}
+              onCommit={(v) => {
+                if (v !== null && !(v > 0)) return false
+                setMeasurement(outsideLabel, v, measureSource)
+                return true
+              }}
+            />
+          </FieldRow>
+          {outsideValue != null && solvedLine(outsideLabel, outsideValue)}
+        </>
       )}
     </>
   )
