@@ -4,25 +4,49 @@
 //     and a toast says which walls to measure again.
 //  2. When a wall value is entered, its room is solved again from all its values ("Apply
 //     measured lengths" for that room), a short time after the typing stops.
+import { graphRule } from '../../model/graphRule'
+import { appendOld, REASON_WORDS, renameOldCode, renamedCodes } from '../../model/oldMeasurements'
 import { relabelMeasurements } from '../../model/relabel'
 import { addDocRule, nowIso, useDoc, type DocRule } from '../../model/store'
 import { toast } from '../toast'
 import { applyMeasuredNear, describeReport } from './apply'
 
+/** Toast text for the walls that must be measured again, e.g. 'Measure again: SE-2 (wall split). The old value is kept in the room card.' */
+export function measureAgainText(dropped: { label: string; reason: 'wall-split' | 'wall-removed' | 'room-deleted' }[]): string {
+  const groups = new Map<string, string[]>()
+  for (const d of dropped) groups.set(REASON_WORDS[d.reason], [...(groups.get(REASON_WORDS[d.reason]) ?? []), d.label])
+  const parts = [...groups].map(([reason, labels]) => `${labels.join(', ')} (${reason})`)
+  return `Measure again: ${parts.join('; ')}. The old value${dropped.length > 1 ? 's are' : ' is'} kept in the room card.`
+}
+
 const relabelRule: DocRule = (prev, next) => {
-  const res = relabelMeasurements(prev, next, nowIso())
-  if (!res) return next
-  if (res.dropped.length) {
-    const text = `Measure again: ${res.dropped.join(', ')} (wall split or removed).`
+  const now = nowIso()
+  // A renamed room: its old values follow the new code.
+  let old = next.oldMeasurements ?? prev.oldMeasurements
+  for (const r of renamedCodes(prev, next)) old = renameOldCode(old, r.from, r.to)
+  const res = relabelMeasurements(prev, next, now)
+  if (!res) return old === next.oldMeasurements ? next : { ...next, oldMeasurements: old }
+  // The values that leave `measurements` are kept in `oldMeasurements`, never lost.
+  old = appendOld(old, res.droppedValues, now)
+  const again = res.droppedValues.filter((d) => res.dropped.includes(d.measurement.label) && d.reason !== 'room-deleted')
+  if (again.length) {
+    const text = measureAgainText(again.map((d) => ({ label: d.measurement.label, reason: d.reason })))
     // A toast is another store: show it after this update, not inside it.
     queueMicrotask(() => toast(text, { durationMs: 8000 }))
   }
-  return { ...next, measurements: res.measurements }
+  const gone = res.droppedValues.filter((d) => d.reason === 'room-deleted')
+  if (gone.length) {
+    const code = gone[0].roomCode
+    queueMicrotask(() => toast(`Room ${code} deleted. ${gone.length} measured value${gone.length > 1 ? 's are' : ' is'} kept under "Old values".`, { durationMs: 8000 }))
+  }
+  return { ...next, measurements: res.measurements, ...(old ? { oldMeasurements: old } : {}) }
 }
 
 /** Install the rules once, at app start (not in the read-only share viewer). */
 export function installMeasureRules() {
   addDocRule(relabelRule)
+  // The stored wall graph follows the rooms (after the relabel rule: ids stay stable).
+  addDocRule(graphRule)
 }
 
 // ---------- auto-apply after a wall value is entered ----------

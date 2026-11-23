@@ -7,6 +7,7 @@ import { loadDemoApartment } from './demo'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
 import { inputId } from './actions'
 import { Overview } from './Overview'
+import { DeletedRoomsOldValues } from './OldValues'
 import { RoomCard } from './RoomCard'
 import { useWakeLock } from './useWakeLock'
 import { FilterGroup, SyncLine, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
@@ -134,6 +135,7 @@ export function MeasureMode() {
               </p>
             )}
             {rooms.map((r) => <RoomCard key={r.id} doc={doc} room={r} allLabels={labels} />)}
+            <DeletedRoomsOldValues doc={doc} />
           </>
         )}
       </main>

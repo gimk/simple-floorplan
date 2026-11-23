@@ -14,7 +14,7 @@ import { OPENAPI_SPEC } from './openapi'
 import { mcpRoutes } from './routes/mcp'
 import { accessMiddleware, registerAccessRoutes } from './auth'
 import { syncProjectTitle } from './routes/projectTitle'
-import { commitDoc, loadProjectDoc, type ProjectRow } from './store'
+import { carryOldMeasurements, commitDoc, loadProjectDoc, type ProjectRow } from './store'
 import { checkUpload, parseCaps, uploadWindowStartIso } from '../src/core/caps'
 
 /** Bindings and vars this API needs. The Worker entry adds the ASSETS binding. */
@@ -203,10 +203,21 @@ app.put('/projects/:id/snapshot', async (c) => {
   }
   const version = latestVersion + 1
   const now = nowIso()
+  // An old client does not know `oldMeasurements` and does not send it: keep the ones of the
+  // last snapshot, so an old cached client can never erase the kept values.
+  let carried: unknown = undefined
+  if (snapshotData.oldMeasurements === undefined && latestVersion > 0) {
+    const prevSnap = await c.env.DB.prepare(
+      'SELECT data_json FROM floorplan_snapshots WHERE project_id = ? AND version = ?',
+    )
+      .bind(id, latestVersion)
+      .first<{ data_json: string }>()
+    carried = carryOldMeasurements(prevSnap?.data_json)
+  }
   await c.env.DB.prepare(
     'INSERT INTO floorplan_snapshots (id, project_id, data_json, version, created_at) VALUES (?, ?, ?, ?, ?)',
   )
-    .bind(crypto.randomUUID(), id, JSON.stringify({ ...snapshotData, projectId: id }), version, now)
+    .bind(crypto.randomUUID(), id, JSON.stringify({ ...snapshotData, ...(carried ? { oldMeasurements: carried } : {}), projectId: id }), version, now)
     .run()
   // Keep the projects list in sync: projects.title (and a default name) follow the snapshot title.
   await syncProjectTitle(c.env.DB, id, snapshotData.title, now)

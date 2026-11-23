@@ -98,6 +98,27 @@ export const MeasurementSchema = z.object({
   source: MeasureSourceSchema.optional(),
 })
 
+/** Stored wall graph (phase 5a). All optional: older documents have none. */
+export const StoredNodeSchema = z.object({ id: z.string().min(1), x: z.number().finite(), y: z.number().finite() })
+export const StoredFaceSchema = z.object({
+  side: z.enum(['L', 'R']),
+  roomId: z.string().optional(),
+  wallStart: z.string().optional(),
+  from: z.number().finite(),
+  to: z.number().finite(),
+})
+export const StoredWallSchema = z.object({
+  id: z.string().min(1),
+  a: z.string().min(1),
+  b: z.string().min(1),
+  faces: z.array(StoredFaceSchema),
+})
+export const OldMeasurementSchema = MeasurementSchema.extend({
+  roomCode: z.string(),
+  reason: z.enum(['wall-split', 'wall-removed', 'room-deleted']),
+  droppedAt: z.string(),
+})
+
 export const TapeMeasureSchema = z.object({
   id: z.string().min(1),
   a: VecSchema,
@@ -167,6 +188,9 @@ export const PlanDocV1Schema = z.object({
   tapes: z.array(TapeMeasureSchema).default([]),
   pins: z.array(PinSchema).default([]),
   apartment: ApartmentSchema.optional(),
+  nodes: z.array(StoredNodeSchema).optional(),
+  walls: z.array(StoredWallSchema).optional(),
+  oldMeasurements: z.array(OldMeasurementSchema).optional(),
 })
 
 export type PlanDocV1 = PlanDoc & { schemaVersion: 1; pins: NonNullable<PlanDoc['pins']> }
@@ -186,6 +210,9 @@ export const SnapshotPutBodySchema = z.object({
   measurements: z.record(z.string(), MeasurementSchema).optional(),
   roomNotes: z.record(z.string(), z.string()).optional(),
   apartment: ApartmentSchema.optional(),
+  nodes: z.array(StoredNodeSchema).optional(),
+  walls: z.array(StoredWallSchema).optional(),
+  oldMeasurements: z.array(OldMeasurementSchema).optional(),
 })
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>

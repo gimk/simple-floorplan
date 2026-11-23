@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { temporal } from 'zundo'
 import type { ElementKind, MeasureSource, Mode, PlanDoc, Selection, ToolId } from './types'
 import type { RenovationView } from '../features/renovation/logic'
+import { ensureStoredGraph } from './graphRule'
 import { toggleItem, type SelItem } from './selection'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
 
@@ -69,7 +70,8 @@ export const useDoc = create<DocState>()(
         set((s) => ({ doc: (opts?.remote ? fn : local(fn))(s.doc) }))
         silent = false
       },
-      replace: (d) => set({ doc: d }),
+      // A loaded doc without walls gets them here (migration); rooms and values are not touched.
+      replace: (d) => set({ doc: ensureStoredGraph(d) }),
     }),
     {
       partialize: (s) => ({ doc: s.doc }),
@@ -109,7 +111,7 @@ export async function hydrate(): Promise<void> {
   try {
     const saved = await loadInitialDoc()
     if (saved) {
-      useDoc.setState({ doc: { ...emptyDoc(), ...saved } })
+      useDoc.setState({ doc: ensureStoredGraph({ ...emptyDoc(), ...saved }) })
       useDoc.temporal.getState().clear()
     }
   } catch { /* start with the empty doc */ }

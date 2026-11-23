@@ -15,6 +15,7 @@
 // - Many projects: version / since keys are per project, outbox jobs carry their projectId,
 //   and `openDoc()` switches the whole app to another project.
 import { useEffect, useState } from 'react'
+import { ensureStoredGraph } from '../model/graphRule'
 import { useDoc, useUi } from '../model/store'
 import type { BackgroundImage, Measurement, PlanDoc } from '../model/types'
 import * as api from './api'
@@ -140,7 +141,7 @@ function diffAndEnqueue(next: PlanDoc, prev: PlanDoc) {
   }
   const pinsChanged = (next as { pins?: unknown }).pins !== (prev as { pins?: unknown }).pins
   if (pinsChanged) void uploadPhotos()
-  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || next.apartment !== prev.apartment || pinsChanged) {
+  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || next.apartment !== prev.apartment || next.oldMeasurements !== prev.oldMeasurements || next.walls !== prev.walls || pinsChanged) {
     // Debounce: drags produce many updates.
     if (snapTimer) clearTimeout(snapTimer)
     snapTimer = setTimeout(() => { void queue.enqueue('snapshot', '', null) }, 1500)
@@ -312,7 +313,8 @@ async function connect() {
         try { background = { ...background, src: await loadBackgroundFromR2(background) } } catch { /* show without image */ }
       }
       if (stale()) return
-      applyServer(() => ({ ...rest, background }))
+      // A server doc with no walls (or older rooms) gets its stored graph here, as on load.
+      applyServer(() => ensureStoredGraph({ ...rest, background }))
       setVersion(d.projectId, v)
     } else if (server.version === 0 || server.version < version || localPending) {
       // First upload, or local geometry is ahead: push everything we have.

@@ -18,6 +18,20 @@ export type LoadedProjectDoc = {
   version: number
 }
 
+/**
+ * Old values of the last snapshot, to keep when a client sends a snapshot WITHOUT the field (an old
+ * cached client does not know it). Returns undefined when there is nothing to carry.
+ */
+export function carryOldMeasurements(prevDataJson: string | undefined): unknown[] | undefined {
+  if (!prevDataJson) return undefined
+  try {
+    const prev = JSON.parse(prevDataJson) as { oldMeasurements?: unknown }
+    return Array.isArray(prev.oldMeasurements) && prev.oldMeasurements.length ? prev.oldMeasurements : undefined
+  } catch {
+    return undefined // corrupt previous snapshot: nothing to carry
+  }
+}
+
 /** Thrown by commitDoc when baseVersion does not match the loaded version (routes answer 409). */
 export class VersionConflictError extends Error {
   latestVersion: number
@@ -88,6 +102,10 @@ export async function loadProjectDoc(db: D1Database, id: string): Promise<Loaded
     tapes: Array.isArray(base.tapes) ? base.tapes : [],
     pins: Array.isArray(base.pins) ? base.pins : [],
     ...(base.apartment ? { apartment: base.apartment } : {}),
+    // Stored wall graph and old values (phase 5a): doc fields in the snapshot JSON, like rooms.
+    ...(Array.isArray(base.nodes) ? { nodes: base.nodes } : {}),
+    ...(Array.isArray(base.walls) ? { walls: base.walls } : {}),
+    ...(Array.isArray(base.oldMeasurements) ? { oldMeasurements: base.oldMeasurements } : {}),
     measurements,
     roomNotes,
   })

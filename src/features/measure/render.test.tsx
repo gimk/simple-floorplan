@@ -104,3 +104,24 @@ it('draws a door in the room it opens into, with its arc inside that room', () =
   expect(seHtml).toContain(ADJACENT_DASH)
   expect(SWING_ARC.test(seHtml)).toBe(false)
 })
+
+it('shows Old values (n) in the room card, and the old values of deleted rooms', async () => {
+  const { DeletedRoomsOldValues } = await import('./OldValues')
+  const old = (label: string, roomCode: string, reason: 'wall-split' | 'room-deleted') =>
+    ({ label, actualCm: 412, updatedAt: '2026-11-01T10:00:00.000Z', roomCode, reason, droppedAt: '2026-11-23T12:00:00.000Z' })
+  const doc: PlanDoc = { ...emptyDoc(), rooms: demoRooms(), oldMeasurements: [old('SE-2', 'SE', 'wall-split'), old('ZZ-1', 'ZZ', 'room-deleted')] }
+  const se = doc.rooms.find((r) => r.code === 'SE')!
+  const en = doc.rooms.find((r) => r.code === 'EN')!
+  // renderToString puts comment markers between text parts.
+  const text = (h: string) => h.replace(/<!-- -->/g, '')
+  const html = text(renderToString(<RoomCard doc={doc} room={se} allLabels={[]} />))
+  expect(html).toContain('Old values (1)')
+  expect(html).toContain('Delete old value SE-2')
+  expect(html).toContain('wall split')
+  expect(html).toContain('2026-11-23')
+  expect(renderToString(<RoomCard doc={doc} room={en} allLabels={[]} />)).not.toContain('Old values')
+  const panel = text(renderToString(<DeletedRoomsOldValues doc={doc} />))
+  expect(panel).toContain('Old values of deleted rooms (1)')
+  expect(panel).toContain('ZZ-1')
+  expect(panel).not.toContain('SE-2')
+})

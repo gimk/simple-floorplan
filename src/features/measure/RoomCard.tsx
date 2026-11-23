@@ -10,6 +10,7 @@ import { inputId, setMeasurement } from './actions'
 import { flushAutoApply, wallLabelRoom } from '../rooms/measureRules'
 import { MiniDrawing } from './MiniDrawing'
 import { NumField } from './NumField'
+import { RoomOldValues } from './OldValues'
 import { PinsSection } from './PinsSection'
 import { TapeSection } from './TapeSection'
 import { roomPins, isUnplaced, tapeLabel } from '../annotations/logic'
@@ -129,6 +130,8 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
           </div>
         </details>
       )}
+
+      <RoomOldValues doc={doc} room={room} />
 
       {square && (
         <p role="status" className={`rounded-lg px-3 py-2 text-sm ${square.ok ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300' : 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200'}`}>

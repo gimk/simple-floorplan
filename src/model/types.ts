@@ -108,6 +108,33 @@ export type Measurement = {
   source?: MeasureSource
 }
 
+/** Stored junction of the wall graph (docs/walls-plan.md, phase 5a). Centre line, cm. */
+export type StoredNode = { id: string; x: number; y: number }
+
+/** One side of a stored wall, seen from one room (no roomId = outside). */
+export type StoredFace = {
+  side: 'L' | 'R'
+  roomId?: string
+  /** Start vertex id of the room wall that makes this face (with roomId, it is the match key). */
+  wallStart?: string
+  /** Distance along the wall from node a, cm. */
+  from: number
+  to: number
+}
+
+/**
+ * Stored wall with a stable id (W1, W2...). Thickness, type and status stay in `room.walls` for
+ * now: the rooms are still the editing source. nodes/walls are DERIVED data, kept in sync by a doc rule.
+ */
+export type StoredWall = { id: string; a: string; b: string; faces: StoredFace[] }
+
+/** A value that left `doc.measurements` (wall split or removed, room deleted). Kept until the user deletes it. */
+export type OldMeasurement = Measurement & {
+  roomCode: string
+  reason: 'wall-split' | 'wall-removed' | 'room-deleted'
+  droppedAt: string
+}
+
 export type TapeMeasure = {
   id: string
   a: Vec
@@ -190,6 +217,11 @@ export type PlanDoc = {
   roomNotes: Record<string, string> // keyed by room code
   tapes: TapeMeasure[]
   pins?: Pin[]
+  /** Stored wall graph (phase 5a). Absent in older documents: rebuilt on load. */
+  nodes?: StoredNode[]
+  walls?: StoredWall[]
+  /** Values of split or removed walls and of deleted rooms. Only the user removes entries. */
+  oldMeasurements?: OldMeasurement[]
   /** Optional apartment-level data. Absent in older documents. */
   apartment?: Apartment
 }

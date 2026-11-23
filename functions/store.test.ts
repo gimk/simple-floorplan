@@ -2,7 +2,7 @@
 // in-memory D1 stub that understands exactly the SQL statements the module issues.
 import { describe, expect, it } from 'vitest'
 import { parsePlan, type PlanDocV1 } from '../src/core/schema'
-import { commitDoc, loadProjectDoc, VersionConflictError } from './store'
+import { carryOldMeasurements, commitDoc, loadProjectDoc, VersionConflictError } from './store'
 
 // ---------- tiny in-memory D1 stub ----------
 
@@ -372,5 +372,53 @@ describe('functions/store.ts (shared D1 persistence)', () => {
     await commitDoc(db as unknown as D1Database, 'p4', v0, makeDoc('p4'), undefined, extra as unknown as D1PreparedStatement[])
     expect(db.idempotencyKeys.get('p4|key-1')!.response_json).toBe('{"ok":true}')
     expect(db.snapshots.filter((s) => s.project_id === 'p4')).toHaveLength(1)
+  })
+
+  it('commitDoc stores and loadProjectDoc returns nodes, walls and oldMeasurements (round trip)', async () => {
+    const db = new FakeDB()
+    addProject(db, 'g1')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'g1'))!
+    expect(v0.doc.walls).toBeUndefined()
+    const nodes = [{ id: 'N1', x: 0, y: 0 }, { id: 'N2', x: 300, y: 0 }]
+    const walls = [{
+      id: 'W1', a: 'N1', b: 'N2',
+      faces: [{ side: 'R' as const, roomId: 'r1', wallStart: 'v0', from: 0, to: 300 }, { side: 'L' as const, from: 0, to: 300 }],
+    }]
+    const oldMeasurements = [{
+      label: 'SE-2', actualCm: 412, updatedAt: '2026-11-01T10:00:00.000Z', source: 'laser' as const,
+      roomCode: 'SE', reason: 'wall-split' as const, droppedAt: '2026-11-23T12:00:00.000Z',
+    }]
+    const doc = makeDoc('g1', { nodes, walls, oldMeasurements })
+    await commitDoc(db as unknown as D1Database, 'g1', v0, doc)
+    // The snapshot JSON holds them, like rooms.
+    const snap = JSON.parse(String(db.snapshots[0].data_json))
+    expect(snap.nodes).toEqual(nodes)
+    expect(snap.walls).toEqual(walls)
+    expect(snap.oldMeasurements).toEqual(oldMeasurements)
+    const loaded = await loadProjectDoc(db as unknown as D1Database, 'g1')
+    expect(loaded!.doc.nodes).toEqual(nodes)
+    expect(loaded!.doc.walls).toEqual(walls)
+    expect(loaded!.doc.oldMeasurements).toEqual(oldMeasurements)
+  })
+
+  it('snapshot versions are appended (old values stay in every version after the move)', async () => {
+    const db = new FakeDB()
+    addProject(db, 'g2')
+    const old = [{ label: 'SE-2', actualCm: 412, updatedAt: 'a', roomCode: 'SE', reason: 'room-deleted' as const, droppedAt: 'b' }]
+    let prev = (await loadProjectDoc(db as unknown as D1Database, 'g2'))!
+    await commitDoc(db as unknown as D1Database, 'g2', prev, makeDoc('g2', { oldMeasurements: old }))
+    prev = (await loadProjectDoc(db as unknown as D1Database, 'g2'))!
+    await commitDoc(db as unknown as D1Database, 'g2', prev, { ...prev.doc, title: 'next' })
+    expect(db.snapshots.filter((x) => x.project_id === 'g2').map((x) => x.version)).toEqual([1, 2])
+    expect(JSON.parse(String(db.snapshots[1].data_json)).oldMeasurements).toEqual(old)
+  })
+
+  it('carryOldMeasurements keeps the old values for a client that does not send them', () => {
+    const old = [{ label: 'SE-2', actualCm: 412 }]
+    expect(carryOldMeasurements(JSON.stringify({ rooms: [], oldMeasurements: old }))).toEqual(old)
+    expect(carryOldMeasurements(JSON.stringify({ rooms: [] }))).toBeUndefined()
+    expect(carryOldMeasurements(JSON.stringify({ oldMeasurements: [] }))).toBeUndefined()
+    expect(carryOldMeasurements(undefined)).toBeUndefined()
+    expect(carryOldMeasurements('not json')).toBeUndefined()
   })
 })
