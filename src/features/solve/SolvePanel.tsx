@@ -2,6 +2,7 @@
 // (docs/sidebar-plan-3.md). In workflow order: Progress of each room, Settings (precision,
 // keep locked), Actions (apply to all rooms, solve whole plan), and the last report.
 // The report lives in the UI store, so it stays when the selection changes.
+import { useEffect, useRef, useState } from 'react'
 import { Crosshair, Lock, Ruler } from 'lucide-react'
 import { fmtCm } from '../../model/geometry'
 import { DEFAULT_PRECISION_CM, planPrecision } from '../../model/precision'
@@ -9,7 +10,7 @@ import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
 import { BTN, CheckboxRow, EmptyHint, FieldRow, MUTED, PanelSection, Segmented } from '../../shell/panel'
 import { applyMeasuredAll, describeReport, verifiedWalls } from '../rooms/apply'
-import { applyGlobal, describeGlobal } from '../rooms/applyGlobal'
+import { applyGlobal, describeGlobal, previewGlobal, type GlobalPreview } from '../rooms/applyGlobal'
 import type { SurfaceMode } from '../rooms/globalSolve'
 import { MeasureNext } from './MeasureNext'
 import { progressRows, progressTotals, type ProgressRow } from './logic'
@@ -45,6 +46,19 @@ function KeepLockedToggle() {
       label="Keep locked walls when solving the whole plan"
       checked={on}
       onChange={(checked) => useUi.getState().set({ solveKeepLocked: checked })}
+    />
+  )
+}
+
+/** "Solve whole plan" option: snap thicknesses that the data does not find (UI setting, off by default). */
+function SnapThicknessToggle() {
+  const on = useUi((s) => s.solveSnapThickness)
+  return (
+    <CheckboxRow
+      name="solveSnapThickness"
+      label="Snap thicknesses not found by the data to usual values"
+      checked={on}
+      onChange={(checked) => useUi.getState().set({ solveSnapThickness: checked })}
     />
   )
 }
@@ -139,9 +153,68 @@ function ProgressRows({ rows }: { rows: readonly ProgressRow[] }) {
   )
 }
 
+/** Moves larger than this are counted in the preview line (cm). */
+const BIG_MOVE_CM = 1
+
+const fmt1 = (v: number) => v.toFixed(1).replace('.', ',')
+
+/** Plain text of the preview headline: "3 corners move more than 1 cm, the largest 4,2 cm (SE corner 3)". */
+export function previewHeadline(p: GlobalPreview): string {
+  const big = p.moves.filter((m) => m.distCm > BIG_MOVE_CM)
+  if (!big.length) return 'No corner moves more than 1 cm.'
+  const top = big[0]
+  return `${big.length} ${big.length === 1 ? 'corner moves' : 'corners move'} more than 1 cm, the largest ${fmt1(top.distCm)} cm (${top.code} corner ${top.vertexIndex + 1})`
+}
+
+/** The preview block: headline, thickness changes, top 5 moves, Apply and Cancel. */
+export function GlobalPreviewBlock({ preview, onApply, onCancel }: {
+  preview: GlobalPreview
+  onApply: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div data-solve-preview className="flex flex-col gap-1 rounded-md border border-slate-300 p-2 text-xs dark:border-slate-600">
+      <p data-solve-preview-headline>{previewHeadline(preview)}</p>
+      {preview.thicknessChanges.length > 0 && (
+        <ul data-solve-preview-thickness className="list-disc pl-4">
+          {preview.thicknessChanges.map((t) => (
+            <li key={t.walls.join('/')}>
+              Thickness {t.walls.join('/')}: {fmt1(t.fromCm)} cm to {fmt1(t.toCm)} cm
+            </li>
+          ))}
+        </ul>
+      )}
+      {preview.moves.length > 0 && (
+        <ul data-solve-preview-moves className="list-disc pl-4">
+          {preview.moves.slice(0, 5).map((m) => (
+            <li key={`${m.roomId}:${m.vertexIndex}`}>
+              {m.code} corner {m.vertexIndex + 1}: {fmt1(m.distCm)} cm
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex gap-2">
+        <button type="button" data-solve-preview-apply className={BTN} onClick={onApply}>Apply</button>
+        <button type="button" data-solve-preview-cancel className={BTN} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  )
+}
+
 /** Actions of the whole plan; disabled when no room has a verified wall length. */
-function Actions({ doc }: { doc: PlanDoc }) {
+function Actions({ doc, initialPreview }: { doc: PlanDoc; initialPreview?: GlobalPreview | null }) {
   const anyVerified = doc.rooms.some((r) => verifiedWalls(doc, r).length > 0)
+  const [preview, setPreview] = useState<GlobalPreview | null>(initialPreview ?? null)
+
+  // A change of the document makes the preview old: clear it (not at the first render).
+  const first = useRef(true)
+  useEffect(() => {
+    if (first.current) {
+      first.current = false
+      return
+    }
+    setPreview(null)
+  }, [doc])
 
   const runApplyAll = () => {
     const current = useDoc.getState().doc
@@ -153,14 +226,20 @@ function Actions({ doc }: { doc: PlanDoc }) {
       : 'No room has verified wall lengths.')
   }
 
-  const runGlobal = () => {
+  const globalOpts = () => ({
+    keepLocked: useUi.getState().solveKeepLocked,
+    surfaceMode: useUi.getState().solveSurfaceMode,
+    snapThickness: useUi.getState().solveSnapThickness,
+  })
+
+  const showPreview = () => setPreview(previewGlobal(useDoc.getState().doc, globalOpts()))
+
+  const applyPreview = () => {
     const current = useDoc.getState().doc
-    const r = applyGlobal(current, {
-      keepLocked: useUi.getState().solveKeepLocked,
-      surfaceMode: useUi.getState().solveSurfaceMode,
-    })
+    const r = applyGlobal(current, globalOpts())
     if (r.doc !== current) update(() => r.doc)
     setReport(describeGlobal(r.report))
+    setPreview(null)
   }
 
   return (
@@ -171,23 +250,26 @@ function Actions({ doc }: { doc: PlanDoc }) {
       <button
         className={BTN}
         disabled={!anyVerified}
-        onClick={runGlobal}
-        title="Solve all rooms together: shared walls, wall thicknesses and walls in line. Keeps all measured values; other walls move to fit."
+        onClick={showPreview}
+        title="Solve all rooms together: shared walls, wall thicknesses and walls in line. Keeps all measured values; other walls move to fit. Shows a preview first."
       >
         Solve whole plan
       </button>
+      {preview && <GlobalPreviewBlock preview={preview} onApply={applyPreview} onCancel={() => setPreview(null)} />}
       {!anyVerified && <EmptyHint>No verified wall length in any room. Measure a room in Measuring Mode first.</EmptyHint>}
     </>
   )
 }
 
 /** The whole tab from plain data, so it can be rendered without the stores (tests, SSR). */
-export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode }: {
+export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode, preview }: {
   doc: PlanDoc
   report: string | null
   /** Current surface reference mode (default: the value of the UI store). */
   surfaceMode?: SurfaceMode
   onSurfaceMode?: (m: SurfaceMode) => void
+  /** Preview to show at the first render (tests); the panel makes its own when the user clicks. */
+  preview?: GlobalPreview | null
 }) {
   const rows = progressRows(doc)
   const mode = surfaceMode ?? useUi.getState().solveSurfaceMode
@@ -212,6 +294,7 @@ export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode }: {
           Default 0,5 cm. Off keeps the exact result.
         </EmptyHint>
         <KeepLockedToggle />
+        <SnapThicknessToggle />
         <SurfaceModeRow
           mode={mode}
           hasReferences={(doc.apartment?.references ?? []).length > 0}
@@ -222,7 +305,7 @@ export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode }: {
       <MeasureNext doc={doc} surfaceMode={mode} />
 
       <PanelSection id="solve-actions" title="Actions" icon={<Crosshair size={16} />}>
-        <Actions doc={doc} />
+        <Actions doc={doc} initialPreview={preview} />
       </PanelSection>
 
       {report !== null && (

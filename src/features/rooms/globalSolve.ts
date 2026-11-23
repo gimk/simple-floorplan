@@ -17,6 +17,7 @@
 // normal matrix at that x, and the gradient of any value that a new measurement could add. That is
 // what `suggest.ts` scores (docs/walls-plan.md phase 2b).
 import { innerWallLengths } from '../../model/geometry'
+import { buildWallGraph, type GraphConflict } from '../../model/wallGraph'
 import type { PlanDoc, Room, SurfaceReference, Vec, WallAlign } from '../../model/types'
 import { thicknessLabel } from '../../model/survey'
 import { sourceSigmaCm } from '../../model/measureSource'
@@ -137,6 +138,8 @@ export type GlobalSolved = {
   surfaces: GlobalSurface[]
   skipped: { label: string; reason: string }[]
   iterations: number
+  /** Rooms that overlap or nearly touch, found by the wall graph. */
+  conflicts: GraphConflict[]
 }
 
 /** a + sum coef * x[var] */
@@ -195,6 +198,7 @@ type Built = {
   surfaceEntries: SurfaceEntry[]
   x0: number[]
   label: (e: Edge) => string
+  conflicts: GraphConflict[]
 }
 
 /**
@@ -349,45 +353,16 @@ function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, 
     }))
   })
 
-  // ---- walls: union of room walls that are the same wall ----
-  // Candidate pairs, nearest first. A merge is refused when the wall would get two faces on one
-  // side that are not in line (the drawing is not precise, so the first, nearest pairs win).
-  const parent = edges.map((_, i) => i)
-  const members = edges.map((_, i) => [i])
-  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
-  const fits = (ga: number[], gb: number[]) => ga.every((a) => gb.every((b) => {
-    const A = edges[a], B = edges[b]
-    const d = Math.abs(A.coord - B.coord)
-    return A.side === B.side ? d <= o.alignTolCm : d <= o.pairTolCm
-  }))
-  const union = (a: number, b: number) => {
-    const ra = find(a), rb = find(b)
-    if (ra === rb || !fits(members[ra], members[rb])) return
-    parent[ra] = rb
-    members[rb].push(...members[ra])
+  // ---- walls: one wall group per axis-aligned wall of the wall graph ----
+  // The graph (src/model/wallGraph.ts) does the grouping: facing walls of two rooms and in-line
+  // walls of one room. The group of a room wall is the wall of its first face.
+  const graph = buildWallGraph(rooms, { pairTolCm: o.pairTolCm, alignTolCm: o.alignTolCm })
+  const wallKeyOf = (e: Edge): string => {
+    const fi = graph.roomFaces[rooms[e.room].id]?.[e.index]?.faceIndexes[0]
+    const wallId = fi === undefined ? undefined : graph.faces[fi]?.wallId
+    // A wall with no face (zero length) keeps its own group.
+    return wallId ?? `own:${e.room}:${e.index}`
   }
-  const MIN_OVERLAP = 20
-  const pairs: [number, number, number][] = []
-  for (let a = 0; a < edges.length; a++) {
-    const A = edges[a]
-    if (A.orient === 'o') continue
-    for (let b = a + 1; b < edges.length; b++) {
-      const B = edges[b]
-      if (B.orient !== A.orient || B.room === A.room) continue
-      const overlap = Math.min(A.hi, B.hi) - Math.max(A.lo, B.lo)
-      const d = Math.abs(A.coord - B.coord)
-      // Opposite sides: the wall is between the two rooms. Same side: two rooms on top of each other.
-      // Walls that continue each other on one line stay separate walls (their thickness can
-      // change): they are kept in line by their reference lines, below.
-      if (A.side !== B.side && overlap > MIN_OVERLAP && d <= o.pairTolCm) pairs.push([d, a, b])
-    }
-  }
-  // Two walls of one room in line (a straight corner) are one wall.
-  edgeOf.forEach((es) => es.forEach((e, i) => {
-    const f = es[(i + 1) % es.length]
-    if (e.orient !== 'o' && e.orient === f.orient && Math.abs(e.coord - f.coord) < 1) pairs.push([0, edges.indexOf(e), edges.indexOf(f)])
-  }))
-  pairs.sort((p, q) => p[0] - q[0]).forEach(([, a, b]) => union(a, b))
 
   // ---- unknowns ----
   const x0: number[] = []
@@ -400,14 +375,14 @@ function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, 
   }
   const label = (e: Edge) => `${rooms[e.room].code}-${e.index + 1}`
   const groupVars: GroupVar[] = []
-  const rootToGroup = new Map<number, number>()
-  edges.forEach((e, i) => {
+  const keyToGroup = new Map<string, number>()
+  edges.forEach((e) => {
     if (e.orient === 'o') return
-    const root = find(i)
-    let g = rootToGroup.get(root)
+    const key = wallKeyOf(e)
+    let g = keyToGroup.get(key)
     if (g === undefined) {
       g = groupVars.length
-      rootToGroup.set(root, g)
+      keyToGroup.set(key, g)
       groupVars.push({ coord: -1, thick: -1, edges: [], orient: e.orient, drawn: 0, prior: 0, k: 0, drawnRef: 0, lo: 0, hi: 0 })
     }
     e.group = g
@@ -574,7 +549,7 @@ function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, 
     }
   }
 
-  return { o, rooms, edgeOf, groupVars, corners, rows, priors, meta, skipped, surfaceEntries, x0, label }
+  return { o, rooms, edgeOf, groupVars, corners, rows, priors, meta, skipped, surfaceEntries, x0, label, conflicts: graph.conflicts }
 }
 
 // ---- Gauss-Newton ----
@@ -683,7 +658,7 @@ function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; i
       diffPct: ((afterM2 - e.referenceM2) / e.referenceM2) * 100,
     }
   })
-  return { groups, residuals, rmsCm, rooms: out, inner, surfaces, skipped, iterations }
+  return { groups, residuals, rmsCm, rooms: out, inner, surfaces, skipped, iterations, conflicts: b.conflicts }
 }
 
 /** Defaults of the solver, for callers that must use the same sigmas (see the suggestions). */

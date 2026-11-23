@@ -227,3 +227,30 @@ describe('SolvePanel measure next', () => {
     expect(html).not.toContain('data-measure-list')
   })
 })
+
+describe('SolvePanel preview', () => {
+  const preview = {
+    moves: [
+      { roomId: 'r1', code: 'SE', vertexIndex: 2, dxCm: 4, dyCm: 1.3, distCm: 4.2 },
+      { roomId: 'r1', code: 'SE', vertexIndex: 0, dxCm: 1.5, dyCm: 0, distCm: 1.5 },
+      { roomId: 'r1', code: 'SE', vertexIndex: 1, dxCm: 0.5, dyCm: 0, distCm: 0.5 },
+    ],
+    thicknessChanges: [{ walls: ['SE-1', 'SB-3'], fromCm: 10, toCm: 7 }],
+    report: { rooms: 1, rmsCm: 0, lockedKept: 0, foundThicknesses: [], surfaces: [] },
+  }
+
+  it('shows no preview block by default', () => {
+    expect(renderToString(<SolvePanelView doc={verifiedDoc()} report={null} />)).not.toContain('data-solve-preview')
+  })
+
+  it('shows the headline, the changes, the top moves, Apply and Cancel', () => {
+    const html = renderToString(<SolvePanelView doc={verifiedDoc()} report={null} preview={preview} />)
+    expect(html).toContain('data-solve-preview-apply')
+    expect(html).toContain('data-solve-preview-cancel')
+    expect(html).toContain('2 corners move')
+    expect(html).toContain('4,2')
+    expect(html).toContain('SE corner 3')
+    expect(html).toContain('SE-1/SB-3')
+    expect(html).toContain('Snap thicknesses not found by the data to usual values')
+  })
+})

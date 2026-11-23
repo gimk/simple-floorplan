@@ -91,7 +91,8 @@ type Measurement = { label: string; actualCm: number; updatedAt: string
 - **Outliers**: list measurements with a large residual (|r| > 3 sigma), with an option to ignore
   them for one run.
 - **Snap thicknesses** (option): walls that the data does not determine snap to usual values
-  (5, 7, 10, 15, 20, 30 cm).
+  (5, 7, 10, 15, 20, 30 cm). To do: today the snap is applied after the fit, so the corners use
+  the thickness before the snap; the fit must run again with the snapped thicknesses fixed.
 - **Preview before apply**: list walls that move more than X cm; Apply or Cancel.
 
 ### Suggested measurements (next best measurement)

@@ -1,6 +1,7 @@
 // "Solve whole plan": all rooms in one fit (globalSolve.ts), then the plan takes the result. Pure, cm.
 import { planPrecision, roundTo } from '../../model/precision'
 import type { PlanDoc } from '../../model/types'
+import type { GraphConflict } from '../../model/wallGraph'
 import { solveGlobal, type GlobalSolved, type GlobalSurface, type SurfaceMode } from './globalSolve'
 import { wallProps } from './walls'
 
@@ -15,6 +16,8 @@ export type GlobalReport = {
   worst?: { label: string; diffCm: number }
   /** Before / after area of each surface reference (empty when the mode is 'off'). */
   surfaces: GlobalSurface[]
+  /** Rooms that overlap or nearly touch (from the wall graph): the user should check them. */
+  conflicts?: { roomCodes: string[]; kind: GraphConflict['kind']; detail: string }[]
 }
 
 export type GlobalApplyOptions = {
@@ -23,7 +26,25 @@ export type GlobalApplyOptions = {
   surfaceMode?: SurfaceMode
   /** Accuracy of a surface reference, in % of its surface. Default 1.5. */
   surfaceSigmaPct?: number
+  /** A wall that the data does not determine, but that moved from its prior, gets a usual thickness. Default false. */
+  snapThickness?: boolean
 }
+
+/** Usual wall thicknesses (cm) for the snap option. */
+export const USUAL_THICKNESSES_CM = [5, 7, 10, 15, 20, 30]
+
+/** The usual thickness nearest to a value (the smaller one on a tie). */
+export function nearestUsualThickness(cm: number): number {
+  return USUAL_THICKNESSES_CM.reduce((best, t) => (Math.abs(t - cm) < Math.abs(best - cm) ? t : best))
+}
+
+/** A thickness change of one wall (all its room walls): from the prior to the value written. */
+export type ThicknessChange = { walls: string[]; fromCm: number; toCm: number }
+
+/** One corner move, in cm. */
+export type CornerMove = { roomId: string; code: string; vertexIndex: number; dxCm: number; dyCm: number; distCm: number }
+
+export type GlobalPreview = { moves: CornerMove[]; thicknessChanges: ThicknessChange[]; report: GlobalReport }
 
 const round1 = (v: number) => roundTo(v, 0.1)
 
@@ -34,7 +55,7 @@ const fmt1 = (v: number) => v.toFixed(1).replace('.', ',')
  * Solve every room together and move all corners to the result. Thicknesses that the values
  * found are written to the walls (both sides). Returns the same doc when nothing can be solved.
  */
-export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc: PlanDoc; report: GlobalReport; solved: GlobalSolved } {
+export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc: PlanDoc; report: GlobalReport; solved: GlobalSolved; thicknessChanges: ThicknessChange[] } {
   const solved = solveGlobal(doc, {
     keepLocked: opts.keepLocked ?? true,
     surfaceMode: opts.surfaceMode ?? 'off',
@@ -54,13 +75,23 @@ export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc:
     foundThicknesses: found.map((g) => ({ walls: g.walls, cm: round1(g.thicknessCm) })),
     ...(worst && Math.abs(worst.diffCm) > 1 ? { worst: { label: worst.label, diffCm: worst.diffCm } } : {}),
     surfaces: solved.surfaces,
+    conflicts: pairConflicts(doc, solved.conflicts ?? []),
   }
   const ok = doc.rooms.every((r) => solved.rooms[r.id]?.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)))
-  if (!ok || !fit.length) return { doc, report, solved }
+  if (!ok || !fit.length) return { doc, report, solved, thicknessChanges: [] }
 
   // Thickness of each room wall from the walls the values found ("SE-4" -> cm).
+  // A wall that the data does not determine, but that moved from its prior, can snap to a usual value.
   const thick = new Map<string, number>()
-  for (const g of found) for (const w of g.walls) thick.set(w, snap(g.thicknessCm))
+  const thicknessChanges: ThicknessChange[] = []
+  for (const g of solved.groups) {
+    let cm: number | null = null
+    if (g.determined) cm = snap(g.thicknessCm)
+    else if (opts.snapThickness && Math.abs(g.thicknessCm - g.priorThicknessCm) > 0.01) cm = nearestUsualThickness(g.thicknessCm)
+    if (cm === null || !(cm > 0)) continue
+    for (const w of g.walls) thick.set(w, cm)
+    if (Math.abs(cm - g.priorThicknessCm) >= 0.05) thicknessChanges.push({ walls: g.walls, fromCm: round1(g.priorThicknessCm), toCm: round1(cm) })
+  }
   const rooms = doc.rooms.map((r) => {
     const pts = solved.rooms[r.id]
     const walls = { ...r.walls }
@@ -70,7 +101,41 @@ export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc:
     })
     return { ...r, walls, vertices: r.vertices.map((v, i) => ({ ...v, x: snap(pts[i].x), y: snap(pts[i].y) })) }
   })
-  return { doc: { ...doc, rooms }, report, solved }
+  return { doc: { ...doc, rooms }, report, solved, thicknessChanges }
+}
+
+/** Graph conflicts with room codes instead of room ids, one per pair of rooms and kind. */
+function pairConflicts(doc: PlanDoc, list: GraphConflict[]): NonNullable<GlobalReport['conflicts']> {
+  const codeOf = (id: string) => doc.rooms.find((r) => r.id === id)?.code ?? id
+  const seen = new Set<string>()
+  const out: NonNullable<GlobalReport['conflicts']> = []
+  for (const c of list) {
+    const roomCodes = [...new Set(c.roomIds.map(codeOf))]
+    const key = `${c.kind}:${roomCodes.join('+')}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ roomCodes, kind: c.kind, detail: c.detail })
+  }
+  return out
+}
+
+/**
+ * Show what "Solve whole plan" would do, with no change to the document: every corner move
+ * (largest first) and the thickness changes.
+ */
+export function previewGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): GlobalPreview {
+  const r = applyGlobal(doc, opts)
+  const moves: CornerMove[] = []
+  r.doc.rooms.forEach((room, ri) => {
+    const before = doc.rooms[ri]
+    room.vertices.forEach((v, i) => {
+      const dxCm = v.x - before.vertices[i].x, dyCm = v.y - before.vertices[i].y
+      const distCm = Math.hypot(dxCm, dyCm)
+      if (distCm > 1e-9) moves.push({ roomId: room.id, code: room.code, vertexIndex: i, dxCm, dyCm, distCm })
+    })
+  })
+  moves.sort((a, b) => b.distCm - a.distCm)
+  return { moves, thicknessChanges: r.thicknessChanges, report: r.report }
 }
 
 /**
@@ -95,5 +160,9 @@ export function describeGlobal(r: GlobalReport): string {
     : 'no thickness found from the values (measure CODE-n-T at a door frame)')
   const lines = [parts.join('; ') + '.']
   for (const s of r.surfaces ?? []) lines.push(describeSurface(s))
+  for (const c of r.conflicts ?? []) {
+    const what = c.kind === 'same-side-overlap' ? 'overlap' : 'touch without sharing one wall'
+    lines.push(`Check: rooms ${c.roomCodes.join(' and ')} ${what} (${c.detail})`)
+  }
   return lines.join('\n')
 }

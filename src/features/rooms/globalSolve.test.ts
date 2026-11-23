@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Measurement, PlanDoc, Room, SurfaceReference } from '../../model/types'
-import { applyGlobal, describeGlobal, type GlobalReport } from './applyGlobal'
+import { applyGlobal, describeGlobal, previewGlobal, type GlobalReport } from './applyGlobal'
 import { solveGlobal, type SurfaceMode } from './globalSolve'
 
 const room = (id: string, pts: [number, number][], diagonal?: [number, number]): Room => ({
@@ -337,5 +337,79 @@ describe('solveGlobal measurement sources', () => {
     const s = solveGlobal({ rooms: one, measurements: m })
     expect(s.residuals.find((r) => r.label === 'S-1')!.sigmaCm).toBe(1)
     expect(s.residuals.find((r) => r.label === 'S-2')!.sigmaCm).toBe(3)
+  })
+})
+
+const fullDoc = (rs: Room[], m: Record<string, Measurement>): PlanDoc =>
+  ({ projectId: 'p', title: 't', rooms: rs, elements: [], measurements: m, roomNotes: {}, tapes: [], pins: [], apartment: { defaultCeilingCm: 250, precisionCm: 0 } }) as unknown as PlanDoc
+
+describe('solveGlobal on the wall graph', () => {
+  it('reports no conflict for the test plan', () => {
+    expect(solveGlobal({ rooms, measurements }).conflicts).toEqual([])
+  })
+
+  it('reports two overlapping rooms, and prints them', () => {
+    const rs = [
+      room('SB', [[0, 0], [300, 0], [300, 300], [0, 300]]),
+      room('SE', [[100, 0], [400, 0], [400, 300], [100, 300]]),
+    ]
+    const s = solveGlobal({ rooms: rs, measurements: meas({}) })
+    expect(s.conflicts.length).toBeGreaterThan(0)
+    const d = fullDoc(rs, meas({ 'SB-1': 290 }))
+    const { report } = applyGlobal(d)
+    expect(describeGlobal(report)).toContain('Check: rooms SB and SE overlap')
+  })
+})
+
+describe('applyGlobal snapThickness', () => {
+  // Two rooms side by side, the shared wall is drawn 12.3 cm. Only room A is measured on its width,
+  // so the data pulls the shared wall a little but cannot determine it.
+  const withThick = (cm: number) => {
+    const a = room('A', [[0, 0], [300, 0], [300, 300], [0, 300]])
+    const b = room('B', [[300, 0], [600, 0], [600, 300], [300, 300]])
+    a.walls = { [a.vertices[1].id]: { type: 'partition', thicknessCm: cm } }
+    b.walls = { [b.vertices[3].id]: { type: 'partition', thicknessCm: cm } }
+    return fullDoc([a, b], meas({ 'A-1': 280, 'B-1': 270, 'A-2': 285 }))
+  }
+  const thickOf = (d: PlanDoc) => d.rooms[0].walls[d.rooms[0].vertices[1].id].thicknessCm
+
+  it('snaps an undetermined thickness that moved to the nearest usual value', () => {
+    const d = withThick(12.3)
+    const s = solveGlobal(d)
+    const g = s.groups.find((x) => x.walls.includes('A-2'))!
+    expect(g.determined).toBe(false)
+    expect(Math.abs(g.thicknessCm - 12.3)).toBeGreaterThan(0.01)
+    expect(thickOf(applyGlobal(d).doc)).toBeCloseTo(12.3, 6)
+    expect(thickOf(applyGlobal(d, { snapThickness: true }).doc)).toBe(10)
+  })
+
+  it('keeps a determined thickness', () => {
+    const d = fullDoc(rooms, measurements)
+    const r = applyGlobal(d, { snapThickness: true })
+    const g = r.solved.groups.find((x) => x.walls.includes('B-3'))!
+    expect(g.determined).toBe(true)
+    const wall = r.doc.rooms.find((x) => x.id === 'B')!
+    expect(wall.walls[wall.vertices[2].id].thicknessCm).toBeCloseTo(8, 0)
+  })
+})
+
+describe('previewGlobal', () => {
+  const d = fullDoc(rooms, measurements)
+  const p = previewGlobal(d, { snapThickness: true })
+
+  it('lists the moves, largest first, and agrees with applyGlobal', () => {
+    expect(p.moves.length).toBeGreaterThan(0)
+    for (let i = 1; i < p.moves.length; i++) expect(p.moves[i - 1].distCm).toBeGreaterThanOrEqual(p.moves[i].distCm)
+    const applied = applyGlobal(d, { snapThickness: true }).doc
+    const m = p.moves[0]
+    const ri = d.rooms.findIndex((r) => r.id === m.roomId)
+    expect(applied.rooms[ri].vertices[m.vertexIndex].x - d.rooms[ri].vertices[m.vertexIndex].x).toBeCloseTo(m.dxCm, 9)
+    expect(m.distCm).toBeCloseTo(Math.hypot(m.dxCm, m.dyCm), 9)
+  })
+
+  it('lists the thickness changes and the report, and leaves the doc alone', () => {
+    expect(p.thicknessChanges.some((t) => t.walls.includes('B-3') && Math.abs(t.toCm - 8) < 0.6)).toBe(true)
+    expect(p.report.rooms).toBe(3)
+    expect(d.rooms[0].vertices[1].x).toBe(304)
   })
 })
