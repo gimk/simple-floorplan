@@ -182,6 +182,22 @@ value of the face that room SE sees. Measuring Mode still shows values room by r
   stays the label, so the server table and sync do not change; new nullable column `target_json`).
   The label (`EN-3`) is for display and is recalculated from the room face order.
 
+### Architecture (decided at the start of 5c)
+- The doc keeps `rooms[]` in the v1 shape (vertices + walls props) as a CALCULATED VIEW, plus the
+  source: `doc.nodes`, `doc.walls` (StoredWall + props: thicknessCm, type, status, align, locked)
+  and `room.cycle` (ordered faces `{ wallId, side, from, to, cornerId }`; `cornerId` = the vertex
+  id of the corner at the face start, kept from v1 so labels, elements, pins and walls props keyed
+  by vertex id stay valid). `StoredWall.faces` stays, derived from the cycles plus outside spans.
+- `materializeRooms(doc)`: walls + cycles -> rooms[] (vertices on centre lines, walls props from
+  the wall). Pure. Used after every wall edit and on load.
+- Two-way sync rule (local edits and server commands):
+  - rooms changed and walls not -> `applyRoomPolygon` for each changed room, then materialize;
+  - walls/nodes changed and rooms not -> materialize;
+  - both changed -> walls win, then materialize.
+  So every existing tool and command keeps working; new wall-level edits write walls directly.
+- `schemaVersion: 2` marks a converted doc. The saved JSON keeps the materialized rooms too (easy
+  rollback, readable by the .sfp export and the server queries).
+
 ### Write path: an adapter, not a rewrite of every tool
 - Tools and commands that compute a room polygon (rectangle, polygon, slice, cutout, merge,
   API/MCP/CLI commands, .sfp import) keep their logic. Their write step becomes
