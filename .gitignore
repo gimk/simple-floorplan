@@ -32,3 +32,4 @@ dist-ssr
 # Agent work files
 .agent-results/
 .agent-tasks/
+backups/

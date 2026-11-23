@@ -157,6 +157,64 @@ Rooms stay the editing source. Traced walls are a drawing aid that becomes rooms
 - **Room tool stays** (rectangle, polygon).
 - **Cleanup** (old plans): merge walls that overlap or almost touch, with a report (later).
 
+## Phase 5c: walls as the editing source
+
+A wall between two rooms is ONE wall. Each room sees one face of it. A room value (`SE-2`) is the
+value of the face that room SE sees. Measuring Mode still shows values room by room.
+
+### Model (schema v2)
+- `doc.nodes`, `doc.walls` are the source: a wall = two nodes, thickness, type, status, align,
+  locked. `room.faces` = closed cycle of `{ wallId, side, from, to }` in walk order; the corners
+  and `room.walls` are CALCULATED (read layer), so read-only features (exports, solver, measuring,
+  surfaces) keep working unchanged during the change.
+- **Faces cut differently on the two sides** (example: wall between Entree and Couloir). One wall
+  can hold, on side L, one face of room EN over its whole length, and on side R, two or three faces
+  of room CO (cut by T junctions of other walls). Rules:
+  - a face is a span `[from, to]` along its wall, per room side; two sides do not need the same cuts;
+  - a room wall value (`EN-3`) is the length of ONE face of that room, never of the whole wall
+    unless the face covers it;
+  - the solver measures a face between the face lines of the walls at its two ends ON THAT SIDE
+    (the T junction walls of the CO side do not cut the EN face);
+  - the conversion keeps every room value on the face that has the same span as the old room wall.
+  - Tests: a corridor wall with 3 doors / T walls on one side and one long face on the other, with
+    values on both sides; split and merge of such walls; relabel.
+- **Measurements get a target**: `{ wallId, side, roomId, from, to }` stored with the value (key
+  stays the label, so the server table and sync do not change; new nullable column `target_json`).
+  The label (`EN-3`) is for display and is recalculated from the room face order.
+
+### Write path: an adapter, not a rewrite of every tool
+- Tools and commands that compute a room polygon (rectangle, polygon, slice, cutout, merge,
+  API/MCP/CLI commands, .sfp import) keep their logic. Their write step becomes
+  `applyRoomPolygon(doc, roomId, polygon)`: reuse the walls under the polygon edges, split walls at
+  new T junctions, create new walls, never move a wall of another room except where the edit says so.
+- Drags are rewritten on the graph: a corner drag moves a node, a wall drag moves a wall (both
+  rooms follow), a room drag moves its own walls (shared walls: as today, Shift = this room only).
+
+### Conversion (v1 -> v2) = the cleanup
+- Built from the stored graph of phase 5a. Two copies of one wall that differ (lines apart, other
+  thickness, other type) are merged: line = mean, thickness = max, type and props of the first room
+  in walk order. A REPORT lists each merge ("EN|CO: lines 1,5 cm apart, thickness 10/12 -> 12").
+- Same areas (within 0,05 m2), same labels, same values, same targets: test on every real project.
+  A local test reads `backups/*.sql` when it exists (never committed) and converts every snapshot.
+
+### Safety
+- Backup before the start: `backups/d1-2026-11-23.sql` (2 projects, 100 snapshots, 65 values;
+  sha256 3f6537...91ea7a). Not in git.
+- During 5c the server does not prune snapshots saved before the conversion.
+- Old clients: the server refuses a v1 snapshot for a project already in v2 (409 "Update the app"),
+  and the app reloads itself on that answer.
+- Devices: open each device online once before the switch so local changes are synced.
+- R2 (photos, background) does not change.
+
+### Steps (each one tested, committed, pushed)
+1. v2 types, read layer (rooms from walls), conversion v1 -> v2 with report, tests (faces cut
+   differently on two sides; real projects from the backup). No UI change, no switch yet.
+2. Measurement targets: resolver, relabel by target, D1 column `target_json`, sync.
+3. Write adapter `applyRoomPolygon`, then the drags on the graph; all tools and commands use them.
+4. The switch: docs stay v2 after load; server guard; no pruning of v1 snapshots; conversion
+   report shown once per project.
+5. Phase 7 (doors and windows on walls).
+
 ## Phases
 Each phase is one or more agent rounds. Commit after each round (tsc, tests, build pass).
 
@@ -190,13 +248,11 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
 5b. **Wall values (done 2026-11-23)**: centre `W12-C` and facade `W12-E` lengths on stored walls, in
    the solver (a facade length finds an exterior wall thickness), Measure next (facade only), the
    Inspect wall card and a Facade section in Measuring Mode. Values of a removed wall go to old values.
-5c. **Walls as the editing source** (NOT started, to decide): tools edit `doc.walls` / `doc.nodes`;
-   `room.vertices` and `room.walls` become calculated. About 6,500 lines of editing code
-   (interaction, tools, ops, commands, dsl). High risk, little visible gain while the derived graph
-   keeps ids stable; phase 6 can output rooms without it.
+5c. **Walls as the editing source** (decided 2026-11-23, before 7; 8 becomes part of it). See the
+   section "Phase 5c" below.
 6. **Wall tool and Make room.**
-7. **Elements on walls**: `wallId` + offset from node `a`; migrate; update clearance and export.
-8. **Cleanup tool** for old plans; remove the transition layer.
+7. **Elements on walls** (after 5c): `wallId` + offset from node `a`; migrate; update clearance and export.
+8. **Cleanup tool**: done by the 5c conversion (report of merged copies). Remove the transition layer.
 
 ## Risks
 - `src/model/types.ts` is shared by every feature. Phases 1-4 do not change `Room`.
