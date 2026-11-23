@@ -25,12 +25,8 @@ import * as queue from './queue'
 
 const PASS_KEY = 'simple-floorplan:passcode'
 
-/** Body of one measurement job. The source is left out when the value has none (tape). */
-const measurementPayload = (m: Measurement): api.MeasurementPut => ({
-  actualCm: m.actualCm,
-  updatedAt: m.updatedAt,
-  ...(m.source ? { source: m.source } : {}),
-})
+/** Body of one measurement job: source and target are left out when the value has none. */
+const measurementPayload = (m: Measurement): api.MeasurementPut => api.measurementPutBody(m)
 const LEGACY_VERSION_KEY = 'simple-floorplan:version'
 const LEGACY_SINCE_KEY = 'simple-floorplan:since'
 const CONNECT_RETRY_MS = 30_000
@@ -253,7 +249,14 @@ async function pull() {
       applyServer((doc) => {
         const measurements = { ...doc.measurements }
         for (const m of ch.measurements)
-          measurements[m.label] = { label: m.label, actualCm: m.actualCm, updatedAt: m.updatedAt, ...(m.source ? { source: m.source } : {}) }
+          measurements[m.label] = {
+            label: m.label,
+            actualCm: m.actualCm,
+            updatedAt: m.updatedAt,
+            ...(m.source ? { source: m.source } : {}),
+            // The server leaves the target out when the value has none.
+            ...(m.target ? { target: m.target } : {}),
+          }
         const roomNotes = { ...doc.roomNotes }
         for (const n of ch.notes) roomNotes[n.roomCode] = n.text
         let elements = doc.elements

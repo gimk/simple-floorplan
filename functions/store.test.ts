@@ -67,7 +67,7 @@ class FakeDB {
 
   all(sql: string, args: unknown[]): Row[] {
     const q = this.norm(sql)
-    if (q.startsWith('SELECT label, actual_cm, updated_at, source FROM measurements WHERE project_id = ?')) {
+    if (q.startsWith('SELECT label, actual_cm, updated_at, source, target_json FROM measurements WHERE project_id = ?')) {
       return [...this.measurements.values()].filter((r) => r.project_id === args[0])
     }
     if (q.startsWith('SELECT data_json FROM survey_items WHERE project_id = ? AND deleted = 0')) {
@@ -100,6 +100,7 @@ class FakeDB {
         actual_cm: args[2],
         updated_at: args[3],
         source: args[4], // nullable: NULL means "no source" (tape)
+        target_json: args[5], // nullable: NULL means "no target" (phase 5c)
       })
       return
     }
@@ -425,6 +426,68 @@ describe('functions/store.ts (shared D1 persistence)', () => {
     expect(JSON.parse(String(db.snapshots[0].data_json)).traces).toEqual(traces)
     const loaded = await loadProjectDoc(db as unknown as D1Database, 'g3')
     expect(loaded!.doc.traces).toEqual(traces)
+  })
+
+  it('carries the measurement target through the table (round trip) and NULL target = no target', async () => {
+    const db = new FakeDB()
+    addProject(db, 't1')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 't1'))!
+    const face = { wallId: 'W12', side: 'L' as const, roomId: 'room_SE', from: 0, to: 412, kind: 'face' as const }
+    const doc1 = makeDoc('t1', {
+      measurements: {
+        'SE-2': { label: 'SE-2', actualCm: 412, updatedAt: '2026-11-21T01:00:00.000Z', source: 'laser', target: face },
+        'SE-3': { label: 'SE-3', actualCm: 300, updatedAt: '2026-11-21T01:00:00.000Z' },
+      },
+    })
+    await commitDoc(db as unknown as D1Database, 't1', v0, doc1)
+
+    // The column holds the JSON text of the target, or NULL when the value has none.
+    expect(db.measurements.get('t1|SE-2')!.target_json).toBe(JSON.stringify(face))
+    expect(db.measurements.get('t1|SE-3')!.target_json).toBeNull()
+
+    const v1 = (await loadProjectDoc(db as unknown as D1Database, 't1'))!
+    expect(v1.doc.measurements['SE-2'].target).toEqual(face)
+    expect(v1.doc.measurements['SE-2'].source).toBe('laser')
+    // NULL in the database is no target in JSON.
+    expect(v1.doc.measurements['SE-3'].target).toBeUndefined()
+
+    // A target-only change is a change: the value and its updatedAt stay the same.
+    const doc2 = makeDoc('t1', {
+      measurements: {
+        ...doc1.measurements,
+        'SE-2': { ...doc1.measurements['SE-2'], target: { ...face, side: 'R' as const, to: 300 } },
+      },
+    })
+    await commitDoc(db as unknown as D1Database, 't1', v1, doc2)
+    expect(JSON.parse(String(db.measurements.get('t1|SE-2')!.target_json))).toEqual({ ...face, side: 'R', to: 300 })
+    const v2 = (await loadProjectDoc(db as unknown as D1Database, 't1'))!
+    expect(v2.doc.measurements['SE-2'].target).toEqual({ ...face, side: 'R', to: 300 })
+    expect(v2.doc.measurements['SE-2'].actualCm).toBe(412)
+
+    // A removed target is written as NULL.
+    const doc3 = makeDoc('t1', {
+      measurements: { 'SE-2': { label: 'SE-2', actualCm: 412, updatedAt: '2026-11-21T01:00:00.000Z', source: 'laser' } },
+    })
+    await commitDoc(db as unknown as D1Database, 't1', v2, doc3)
+    expect(db.measurements.get('t1|SE-2')!.target_json).toBeNull()
+    const v3 = (await loadProjectDoc(db as unknown as D1Database, 't1'))!
+    expect(v3.doc.measurements['SE-2'].target).toBeUndefined()
+  })
+
+  it('an unreadable target_json gives no target and never fails the read', async () => {
+    const db = new FakeDB()
+    addProject(db, 't2')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 't2'))!
+    await commitDoc(
+      db as unknown as D1Database,
+      't2',
+      v0,
+      makeDoc('t2', { measurements: { 'SE-2': { label: 'SE-2', actualCm: 412, updatedAt: '2026-11-21T01:00:00.000Z' } } }),
+    )
+    db.measurements.get('t2|SE-2')!.target_json = '{not json'
+    const loaded = await loadProjectDoc(db as unknown as D1Database, 't2')
+    expect(loaded!.doc.measurements['SE-2'].actualCm).toBe(412)
+    expect(loaded!.doc.measurements['SE-2'].target).toBeUndefined()
   })
 
   it('carryOldMeasurements keeps the old values for a client that does not send them', () => {

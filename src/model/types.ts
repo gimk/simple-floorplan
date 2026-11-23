@@ -34,6 +34,12 @@ export type Room = {
   name: string
   /** Polygon, in order. Wall i goes from vertices[i] to vertices[(i+1) % n]. */
   vertices: Vertex[]
+  /**
+   * Faces of this room, in polygon order (schema v2, docs/walls-plan.md phase 5c). One entry per
+   * room wall. `vertices` and `walls` are then a CALCULATED view (materializeRooms). Absent in v1
+   * documents, where the polygon itself is the source.
+   */
+  cycle?: RoomFace[]
   /** Cutouts (shafts, columns) inside the room. */
   holes: Vertex[][]
   /** Keyed by the start vertex id of the wall. Missing = default partition. */
@@ -99,6 +105,24 @@ export type MeasureStatus = 'estimated' | 'verified'
 /** How an on-site value was measured. It sets the weight of the value in the solver. */
 export type MeasureSource = 'tape' | 'laser' | 'plan' | 'other'
 
+/**
+ * Stored target of one value (docs/walls-plan.md phase 5c): the wall face, centre line,
+ * thickness or diagonal it measures. The label stays the key of the value.
+ */
+export type MeasureTarget = {
+  wallId: string
+  /** L = left of the wall from node a to node b. R = right. */
+  side: 'L' | 'R'
+  /** Room that sees this face. Missing = outside (facade). */
+  roomId?: string
+  /** Start of the face along the wall from node a, cm. Missing = from node a. */
+  from?: number
+  /** End of the face along the wall from node a, cm. Missing = to node b. */
+  to?: number
+  /** What the value measures. Missing = 'face'. */
+  kind?: 'face' | 'centre' | 'outside' | 'thickness' | 'diagonal'
+}
+
 /** On-site value for one survey ID such as "SE-2", "SE-D", "SE-H". */
 export type Measurement = {
   label: string
@@ -106,6 +130,8 @@ export type Measurement = {
   updatedAt: string
   /** How the value was measured. Missing = 'tape'. */
   source?: MeasureSource
+  /** What the value measures on the wall graph (phase 5c). Missing = not resolved yet. */
+  target?: MeasureTarget
 }
 
 /** Stored junction of the wall graph (docs/walls-plan.md, phase 5a). Centre line, cm. */
@@ -123,10 +149,69 @@ export type StoredFace = {
 }
 
 /**
- * Stored wall with a stable id (W1, W2...). Thickness, type and status stay in `room.walls` for
- * now: the rooms are still the editing source. nodes/walls are DERIVED data, kept in sync by a doc rule.
+ * One face of one stored wall, seen from one room, in the order of the room polygon
+ * (schema v2, docs/walls-plan.md phase 5c). The two sides of a wall are cut independently: side L
+ * can hold ONE face of one room while side R holds three faces (T junctions, corridor).
  */
-export type StoredWall = { id: string; a: string; b: string; faces: StoredFace[] }
+export type RoomFace = {
+  /** Stable id of the stored wall, e.g. 'W12'. */
+  wallId: string
+  /** L = left of node a -> node b, R = right of it. */
+  side: 'L' | 'R'
+  /** Distance along the wall from node a to the start of this face, cm. */
+  from: number
+  /** Distance along the wall from node a to the end of this face, cm. */
+  to: number
+  /** Id of the room corner at the START of this face in room order (kept from v1). */
+  cornerId: string
+}
+
+/**
+ * Stored wall with a stable id (W1, W2...).
+ * In a v1 document thickness, type and status stay in `room.walls` and nodes/walls are DERIVED data.
+ * In a v2 document (`schemaVersion: 2`) the wall holds its own properties and is the source.
+ */
+export type StoredWall = {
+  id: string
+  a: string
+  b: string
+  faces: StoredFace[]
+  /** Wall properties. Always set in a v2 document. */
+  thicknessCm?: number
+  type?: WallType
+  status?: WallStatus
+  align?: WallAlign
+  locked?: boolean
+}
+
+/** One wall that the v1 -> v2 conversion merged from copies that differ (docs/walls-plan.md 5c). */
+export type ConversionReportEntry = {
+  /** Stable id of the merged wall. */
+  wallId: string
+  /** Room codes of the copies, in walk order, without repetition. */
+  rooms: string[]
+  /** Spread of the drawn lines of the copies, cm (0 when they are on one line). */
+  linesApartCm: number
+  /** Thickness of each copy, in walk order. */
+  thicknesses: number[]
+  /** Type of each copy, in walk order. */
+  types: WallType[]
+  /** Values kept on the wall. */
+  chosen: WallProps
+}
+
+/** What the v1 -> v2 conversion did. Counts only, plus one entry per merged wall that differed. */
+export type ConversionReport = {
+  entries: ConversionReportEntry[]
+  counts: {
+    rooms: number
+    walls: number
+    /** Walls made of more than one room wall (a wall between two rooms, or an in-line merge). */
+    sharedWalls: number
+    /** Room walls that gave no face (a wall of zero length): the room is left as v1. */
+    droppedRoomWalls: number
+  }
+}
 
 /**
  * A value that left `doc.measurements` (wall split or removed, room deleted). Kept until the user
@@ -214,6 +299,11 @@ export type Apartment = {
 export type PlanDoc = {
   projectId: string
   title: string
+  /**
+   * 1 (or absent) = rooms are the editing source. 2 = walls are the editing source
+   * (docs/walls-plan.md phase 5c). Absent in old documents.
+   */
+  schemaVersion?: 1 | 2
   background?: BackgroundImage
   rooms: Room[]
   elements: WallElement[]

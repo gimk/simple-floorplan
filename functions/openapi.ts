@@ -368,6 +368,24 @@ export const OPENAPI_SPEC = {
                     enum: ['tape', 'laser', 'plan', 'other'],
                     description: 'How the value was measured. Default and missing value are tape.',
                   },
+                  target: {
+                    type: ['object', 'null'],
+                    description:
+                      'What the value measures on the wall graph (phase 5c). Missing or unknown: the stored target is kept. null removes it.',
+                    properties: {
+                      wallId: { type: 'string' },
+                      side: { type: 'string', enum: ['L', 'R'] },
+                      roomId: { type: 'string', description: 'Room that sees the face. Missing = outside.' },
+                      from: { type: 'number', description: 'Face start along the wall from node a, cm.' },
+                      to: { type: 'number', description: 'Face end along the wall from node a, cm.' },
+                      kind: {
+                        type: 'string',
+                        enum: ['face', 'centre', 'outside', 'thickness', 'diagonal'],
+                        description: 'What the value measures. Missing = face.',
+                      },
+                    },
+                    required: ['wallId', 'side'],
+                  },
                 },
               },
             },

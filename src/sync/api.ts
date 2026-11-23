@@ -1,6 +1,6 @@
 // Typed fetch client for the API (functions/app.ts, served by functions/worker.ts).
 // All routes live under /api (Vite proxies /api to wrangler on :8788 in dev).
-import type { MeasureSource, PlanDoc, WallElement } from '../model/types'
+import type { Measurement, MeasureSource, MeasureTarget, PlanDoc, WallElement } from '../model/types'
 
 export class ApiError extends Error {
   status: number
@@ -23,8 +23,31 @@ export type ProjectResponse = PlanDoc & { version: number }
 /** PUT snapshot body: PlanDoc minus measurements/roomNotes, plus baseVersion. */
 export type SnapshotPayload = Omit<PlanDoc, 'measurements' | 'roomNotes'> & { baseVersion: number }
 
-export type MeasurementPut = { actualCm: number; updatedAt?: string; source?: MeasureSource }
-export type MeasurementRow = { label: string; actualCm: number; updatedAt: string; source?: MeasureSource }
+export type MeasurementPut = {
+  actualCm: number
+  updatedAt?: string
+  source?: MeasureSource
+  /** What the value measures (phase 5c). null removes the stored target. */
+  target?: MeasureTarget | null
+}
+export type MeasurementRow = {
+  label: string
+  actualCm: number
+  updatedAt: string
+  source?: MeasureSource
+  target?: MeasureTarget
+}
+
+/**
+ * Body of the measurement job / PUT for one stored value. `source` and `target` are left out
+ * when the value has none, so a value without target keeps the target stored on the server.
+ */
+export const measurementPutBody = (m: Measurement): MeasurementPut => ({
+  actualCm: m.actualCm,
+  updatedAt: m.updatedAt,
+  ...(m.source ? { source: m.source } : {}),
+  ...(m.target ? { target: m.target } : {}),
+})
 export type MeasurementResult = { ok: boolean; ignored?: boolean; measurement: MeasurementRow }
 
 export type ItemData = WallElement & { updatedAt?: string }

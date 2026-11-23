@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parsePlan, planJsonSchema, safeParsePlan, SnapshotPutBodySchema } from './schema'
+import { parseMeasureTarget, parseMeasureTargetJson, parsePlan, planJsonSchema, safeParsePlan, SnapshotPutBodySchema } from './schema'
 
 describe('schema: parsePlan & migration', () => {
   it('migrates a minimal legacy doc missing schemaVersion, pins, tapes, holes, walls, walkOrder', () => {
@@ -225,6 +225,83 @@ describe('schema: measurement source (walls-plan 3a)', () => {
     })
     expect(body.measurements?.['SE-2'].source).toBe('plan')
     expect(JSON.stringify(planJsonSchema())).toContain('laser')
+  })
+})
+
+describe('schema: measurement target (walls-plan 5c)', () => {
+  const docWith = (measurement: unknown) => ({
+    projectId: 'p1',
+    rooms: [],
+    measurements: { 'SE-2': measurement },
+  })
+  const face = { wallId: 'W12', side: 'L', roomId: 'room_SE', from: 0, to: 412, kind: 'face' }
+
+  it('keeps the target of a measurement', () => {
+    const doc = parsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: face }))
+    expect(doc.measurements['SE-2'].target).toEqual(face)
+  })
+
+  it('accepts a measurement without target (documents saved before 5c)', () => {
+    const old = parsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u' }))
+    expect(old.measurements['SE-2'].target).toBeUndefined()
+    expect(old.measurements['SE-2'].actualCm).toBe(412)
+  })
+
+  it('accepts a minimal target (wall and side only) and every kind', () => {
+    const min = parsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: { wallId: 'W12', side: 'R' } }))
+    expect(min.measurements['SE-2'].target).toEqual({ wallId: 'W12', side: 'R' })
+    for (const kind of ['face', 'centre', 'outside', 'thickness', 'diagonal'] as const) {
+      const doc = parsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: { ...face, kind } }))
+      expect(doc.measurements['SE-2'].target?.kind).toBe(kind)
+    }
+  })
+
+  it('strips unknown keys of a target (an old writer does no harm)', () => {
+    const doc = parsePlan(
+      docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: { ...face, extra: 1 } }),
+    )
+    expect(doc.measurements['SE-2'].target).toEqual(face)
+    expect(doc.measurements['SE-2'].target as unknown as Record<string, unknown>).not.toHaveProperty('extra')
+  })
+
+  it('rejects a target with a wrong shape', () => {
+    expect(safeParsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: null })).ok).toBe(false)
+    expect(safeParsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: {} })).ok).toBe(false)
+    expect(
+      safeParsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: { wallId: 'W12', side: 'X' } })).ok,
+    ).toBe(false)
+    expect(
+      safeParsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', target: { ...face, kind: 'length' } })).ok,
+    ).toBe(false)
+  })
+
+  it('accepts a target in a snapshot body and exposes it in the JSON Schema', () => {
+    const body = SnapshotPutBodySchema.parse({
+      baseVersion: 0,
+      measurements: { 'SE-2': { label: 'SE-2', actualCm: 412, updatedAt: 'u', target: face } },
+    })
+    expect(body.measurements?.['SE-2'].target).toEqual(face)
+    const json = JSON.stringify(planJsonSchema())
+    expect(json).toContain('wallId')
+    expect(json).toContain('side')
+  })
+
+  it('parseMeasureTarget ignores an unknown shape, it never throws', () => {
+    expect(parseMeasureTarget(face)).toEqual(face)
+    expect(parseMeasureTarget(undefined)).toBeUndefined()
+    expect(parseMeasureTarget(null)).toBeUndefined()
+    expect(parseMeasureTarget('W12')).toBeUndefined()
+    expect(parseMeasureTarget({ wallId: 'W12' })).toBeUndefined()
+    expect(parseMeasureTarget({ wallId: 'W12', side: 'L', kind: 'other' })).toBeUndefined()
+  })
+
+  it('parseMeasureTargetJson reads the column and treats NULL or bad text as no target', () => {
+    expect(parseMeasureTargetJson(JSON.stringify(face))).toEqual(face)
+    expect(parseMeasureTargetJson(null)).toBeUndefined()
+    expect(parseMeasureTargetJson(undefined)).toBeUndefined()
+    expect(parseMeasureTargetJson('')).toBeUndefined()
+    expect(parseMeasureTargetJson('{not json')).toBeUndefined()
+    expect(parseMeasureTargetJson('{"wallId":"W12"}')).toBeUndefined()
   })
 })
 

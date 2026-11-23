@@ -170,7 +170,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'set_measurement',
     description:
-      'Record a verified on-site measurement in centimeters for a survey label (e.g. "CU-1", "CU-D", "CU-H"). Set source (tape | laser | plan | other) to say how it was measured; missing = tape.',
+      'Record a verified on-site measurement in centimeters for a survey label (e.g. "CU-1", "CU-D", "CU-H"). Set source (tape | laser | plan | other) to say how it was measured; missing = tape. Set target (wallId, side, optional roomId, from, to, kind) to say what on the wall graph the value measures; missing = the stored target is kept.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -181,6 +181,24 @@ export const MCP_TOOLS: McpToolDefinition[] = [
           type: 'string',
           enum: ['tape', 'laser', 'plan', 'other'],
           description: 'How the value was measured (default tape). A laser value weighs more in the solver, a plan value less.',
+        },
+        target: {
+          type: 'object',
+          description:
+            'What the value measures on the wall graph (phase 5c): the face of a wall seen from a room, the centre line, the thickness or the diagonal of a room. Missing = the stored target is kept.',
+          properties: {
+            wallId: { type: 'string', description: 'Stored wall id, for example "W12".' },
+            side: { type: 'string', enum: ['L', 'R'], description: 'L = left of the wall from node a to node b, R = right.' },
+            roomId: { type: 'string', description: 'Room that sees this face. Missing = outside (facade).' },
+            from: { type: 'number', description: 'Face start along the wall from node a, in cm.' },
+            to: { type: 'number', description: 'Face end along the wall from node a, in cm.' },
+            kind: {
+              type: 'string',
+              enum: ['face', 'centre', 'outside', 'thickness', 'diagonal'],
+              description: 'What the value measures. Missing = face.',
+            },
+          },
+          required: ['wallId', 'side'],
         },
         dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
         baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
@@ -625,6 +643,8 @@ export async function callTool(
       const source = args.source
       const cmd: Record<string, unknown> = { type: 'set_measurement', label, actualCm: cm }
       if (source !== undefined) cmd.source = source
+      // A target the command does not know leaves the stored one in place.
+      if (args.target !== undefined) cmd.target = args.target
       return executeCommandsTool(
         store,
         projectId,

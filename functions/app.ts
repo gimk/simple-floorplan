@@ -5,7 +5,7 @@
 import { Hono } from 'hono'
 import { ZodError } from 'zod'
 import { PRUNE_SNAPSHOTS_SQL, pruneCutoffVersion } from '../src/sync/projects'
-import { planJsonSchema, SnapshotPutBodySchema } from '../src/core/schema'
+import { parseMeasureTarget, parseMeasureTargetJson, planJsonSchema, SnapshotPutBodySchema } from '../src/core/schema'
 import { applyBatch, CommandError, CommandsBatchRequestSchema } from '../src/core/commands'
 import { QueryError, querySummary, runQuery } from '../src/core/queries'
 import { renderPlanSvg } from '../src/core/export'
@@ -67,7 +67,7 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 // ---------- row types ----------
 
-type MeasurementRow = { label: string; actual_cm: number; updated_at: string; source: string | null }
+type MeasurementRow = { label: string; actual_cm: number; updated_at: string; source: string | null; target_json: string | null }
 type ItemRow = { id: string; data_json: string; updated_at: string; deleted: number }
 type NoteRow = { room_code: string; text: string; updated_at: string }
 
@@ -98,13 +98,17 @@ async function projectExists(db: D1Database, id: string): Promise<boolean> {
 const notFound = (c: { json: (b: unknown, s: 404) => Response }) => c.json({ error: 'not_found' }, 404)
 
 // A NULL source in the database (old row) is no `source` field in JSON: the client
-// then uses the default source (tape).
-const toMeasurement = (r: MeasurementRow) => ({
-  label: r.label,
-  actualCm: r.actual_cm,
-  updatedAt: r.updated_at,
-  ...(r.source == null ? {} : { source: r.source }),
-})
+// then uses the default source (tape). The same holds for a NULL target_json.
+const toMeasurement = (r: MeasurementRow) => {
+  const target = parseMeasureTargetJson(r.target_json)
+  return {
+    label: r.label,
+    actualCm: r.actual_cm,
+    updatedAt: r.updated_at,
+    ...(r.source == null ? {} : { source: r.source }),
+    ...(target === undefined ? {} : { target }),
+  }
+}
 
 // ---------- projects ----------
 
@@ -379,26 +383,47 @@ app.put('/projects/:id/measurements/:label', async (c) => {
   if (actualCm === null) return badRequest(c, 'actualCm must be a finite number')
   // How the value was measured. Missing or unknown = no source (the client uses tape).
   const source = asSource(body.source)
+  // Target of the value (phase 5c). Only a body WITH the field changes it, so a client that
+  // does not know the field (old app, CLI) never drops a stored target. An unknown shape is
+  // ignored the same way; `target: null` removes the target.
+  const bodyTarget = parseMeasureTarget(body.target)
   const updatedAt = asIso(body.updatedAt) ?? nowIso()
   const existing = await c.env.DB.prepare(
-    'SELECT label, actual_cm, updated_at, source FROM measurements WHERE project_id = ? AND label = ?',
+    'SELECT label, actual_cm, updated_at, source, target_json FROM measurements WHERE project_id = ? AND label = ?',
   )
     .bind(id, label)
     .first<MeasurementRow>()
   if (existing && existing.updated_at >= updatedAt) {
     return c.json({ ok: true, ignored: true, measurement: toMeasurement(existing) })
   }
-  await c.env.DB.prepare(
-    `INSERT INTO measurements (project_id, label, actual_cm, updated_at, source) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(project_id, label) DO UPDATE SET actual_cm = excluded.actual_cm, updated_at = excluded.updated_at, source = excluded.source`,
-  )
-    .bind(id, label, actualCm, updatedAt, source)
-    .run()
+  const keepsTarget = !('target' in body) || bodyTarget === undefined
+  if (keepsTarget) {
+    // No usable target in the body: keep the stored one (if any).
+    await c.env.DB.prepare(
+      `INSERT INTO measurements (project_id, label, actual_cm, updated_at, source, target_json) VALUES (?, ?, ?, ?, ?, NULL)
+       ON CONFLICT(project_id, label) DO UPDATE SET actual_cm = excluded.actual_cm, updated_at = excluded.updated_at, source = excluded.source`,
+    )
+      .bind(id, label, actualCm, updatedAt, source)
+      .run()
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO measurements (project_id, label, actual_cm, updated_at, source, target_json) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_id, label) DO UPDATE SET actual_cm = excluded.actual_cm, updated_at = excluded.updated_at, source = excluded.source, target_json = excluded.target_json`,
+    )
+      .bind(id, label, actualCm, updatedAt, source, JSON.stringify(bodyTarget))
+      .run()
+  }
   await c.env.DB.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').bind(updatedAt, id).run()
   return c.json({
     ok: true,
     ignored: false,
-    measurement: { label, actualCm, updatedAt, ...(source == null ? {} : { source }) },
+    measurement: toMeasurement({
+      label,
+      actual_cm: actualCm,
+      updated_at: updatedAt,
+      source,
+      target_json: keepsTarget ? (existing?.target_json ?? null) : JSON.stringify(bodyTarget),
+    }),
   })
 })
 
@@ -510,7 +535,7 @@ app.get('/projects/:id/changes', async (c) => {
   if (Number.isNaN(Date.parse(since))) return badRequest(c, 'since must be an ISO 8601 date')
 
   const { results: mRows } = await c.env.DB.prepare(
-    'SELECT label, actual_cm, updated_at, source FROM measurements WHERE project_id = ? AND updated_at > ?',
+    'SELECT label, actual_cm, updated_at, source, target_json FROM measurements WHERE project_id = ? AND updated_at > ?',
   )
     .bind(id, since)
     .all<MeasurementRow>()

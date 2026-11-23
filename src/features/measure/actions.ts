@@ -1,7 +1,7 @@
 // Small side-effect helpers for Measuring Mode (store writes, DOM navigation).
 import { nowIso, useDoc } from '../../model/store'
 import { parseThicknessLabel } from '../../model/survey'
-import type { MeasureSource } from '../../model/types'
+import type { MeasureSource, MeasureTarget } from '../../model/types'
 import { scheduleAutoApply, wallLabelRoom } from '../rooms/measureRules'
 import { applyThicknessLabel } from '../rooms/thickness'
 
@@ -11,20 +11,25 @@ export const inputId = (label: string) => `m-${label}`
  * Save one on-site value. Not an undo step. Empty (null) removes it.
  * `source` says how the value was measured (it sets its weight in the solver). With no
  * source the value has no `source` field, which counts as tape.
+ * `target` says what the value measures (phase 5c). With no target the value keeps the
+ * target already stored for this label, so typing a new value never drops it.
  * A wall value also solves its room again shortly after the typing stops (the plan follows
  * the measurements; that shape change is one undo step).
  */
-export function setMeasurement(label: string, cm: number | null, source?: MeasureSource) {
+export function setMeasurement(label: string, cm: number | null, source?: MeasureSource, target?: MeasureTarget) {
   useDoc.getState().updateSilent((d) => {
     const measurements = { ...d.measurements }
     if (cm == null) delete measurements[label]
-    else
+    else {
+      const kept = target ?? d.measurements[label]?.target
       measurements[label] = {
         label,
         actualCm: cm,
         updatedAt: nowIso(),
         ...(source ? { source } : {}),
+        ...(kept ? { target: kept } : {}),
       }
+    }
     // A thickness (CODE-n-T) becomes the thickness of the wall, on both sides of it.
     return cm == null ? { ...d, measurements } : applyThicknessLabel({ ...d, measurements }, label, cm)
   })

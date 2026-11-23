@@ -40,6 +40,7 @@ import {
   ElementVariantSchema,
   IsoDateSchema,
   MeasureSourceSchema,
+  MeasureTargetSchema,
   parsePlan,
   SurfaceReferenceSourceSchema,
   type PlanDocV1,
@@ -256,6 +257,8 @@ const SetMeasurementSchema = z.object({
   updatedAt: z.string().optional(),
   // How the value was measured (docs/walls-plan.md phase 3a). Missing = tape.
   source: MeasureSourceSchema.optional(),
+  // Target of the value (phase 5c). Missing = keep the target already stored for this label.
+  target: MeasureTargetSchema.optional(),
 })
 
 const ClearMeasurementSchema = z.object({
@@ -1454,12 +1457,16 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
     }
 
     case 'set_measurement': {
+      // A command without a target keeps the target already stored for this label, so a new
+      // value never drops it (the label stays the key).
+      const target = cmd.target ?? doc.measurements[cmd.label]?.target
       const m: Measurement = {
         label: cmd.label,
         actualCm: cmd.actualCm,
         updatedAt: cmd.updatedAt ?? nowIso(),
         // No source field when the command has none: the value then counts as tape.
         ...(cmd.source ? { source: cmd.source } : {}),
+        ...(target ? { target } : {}),
       }
       // A thickness (CODE-n-T) also becomes the thickness of the wall, on both sides of it.
       const next: PlanDocV1 = applyThicknessLabel({

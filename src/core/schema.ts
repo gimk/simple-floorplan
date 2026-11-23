@@ -1,7 +1,7 @@
 // Versioned Zod schema for PlanDoc v1, migration of legacy docs, and JSON Schema export.
 // Zero React/DOM dependencies — safe for browser, Node, and Cloudflare Workers.
 import { z } from 'zod'
-import type { PlanDoc } from '../model/types'
+import type { MeasureTarget, PlanDoc } from '../model/types'
 
 export const VecSchema = z.object({
   x: z.number().finite(),
@@ -90,13 +90,52 @@ export const BackgroundImageSchema = z.object({
 /** How an on-site value was measured (docs/walls-plan.md phase 3a). Missing = 'tape'. */
 export const MeasureSourceSchema = z.enum(['tape', 'laser', 'plan', 'other'])
 
+/**
+ * Target of one value (docs/walls-plan.md phase 5c): the wall face, centre line, thickness
+ * or diagonal that the value measures. Unknown keys are stripped, so an old writer that
+ * sends more fields does no harm.
+ */
+export const MeasureTargetSchema = z.object({
+  wallId: z.string().min(1),
+  side: z.enum(['L', 'R']),
+  roomId: z.string().min(1).optional(),
+  from: z.number().finite().optional(),
+  to: z.number().finite().optional(),
+  kind: z.enum(['face', 'centre', 'outside', 'thickness', 'diagonal']).optional(),
+})
+
 export const MeasurementSchema = z.object({
   label: z.string().min(1),
   actualCm: z.number().finite().positive(),
   updatedAt: z.string(),
   // Optional: documents saved before phase 3a have no source.
   source: MeasureSourceSchema.optional(),
+  // Optional: documents saved before phase 5c have no target.
+  target: MeasureTargetSchema.optional(),
 })
+
+/**
+ * Validate one target as sent by a client or read from the database.
+ * A wrong shape gives undefined (no target), it never throws.
+ */
+export function parseMeasureTarget(raw: unknown): MeasureTarget | undefined {
+  if (raw == null) return undefined
+  const res = MeasureTargetSchema.safeParse(raw)
+  return res.success ? res.data : undefined
+}
+
+/**
+ * Read the target_json column. NULL, bad JSON and a wrong shape all give no target,
+ * so a read never fails on a bad row.
+ */
+export function parseMeasureTargetJson(json: string | null | undefined): MeasureTarget | undefined {
+  if (json == null || json === '') return undefined
+  try {
+    return parseMeasureTarget(JSON.parse(json))
+  } catch {
+    return undefined
+  }
+}
 
 /** Stored wall graph (phase 5a). All optional: older documents have none. */
 export const StoredNodeSchema = z.object({ id: z.string().min(1), x: z.number().finite(), y: z.number().finite() })
