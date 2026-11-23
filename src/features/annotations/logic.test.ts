@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Room, TapeMeasure } from '../../model/types'
-import { fitSize, isUnplaced, nearestWall, placePin, pointOnWall, roomPins, snapToPlan, tapeLabel, tracedCm } from './logic'
+import { fitSize, isUnplaced, nearestWall, placePin, pointOnWall, roomPins, snapTapeAngle, snapToPlan, tapeLabel, tracedCm } from './logic'
 
 const room: Room = {
   id: 'r1', code: 'SE', name: 'Salon', walkOrder: 0, holes: [], walls: {},
@@ -24,6 +24,27 @@ describe('snapToPlan', () => {
   })
   it('picks the closest wall', () => {
     expect(nearestWall({ x: 395, y: 150 }, [room], 12)?.wallStart).toBe('b')
+  })
+})
+
+describe('snapTapeAngle (Shift)', () => {
+  it('locks the direction to the nearest 45° step', () => {
+    const h = snapTapeAngle({ x: 100, y: 100 }, { x: 180, y: 112 }, [], 5)
+    expect(h.kind).toBe('free')
+    expect(h.point.y).toBeCloseTo(100)
+    expect(h.point.x).toBeCloseTo(180)
+    const d = snapTapeAngle({ x: 100, y: 100 }, { x: 150, y: 160 }, [], 5)
+    expect(d.point.x - 100).toBeCloseTo(d.point.y - 100) // 45°
+  })
+  it('stops on a wall crossed by the locked line', () => {
+    const h = snapTapeAngle({ x: 200, y: 150 }, { x: 396, y: 160 }, [room], 12)
+    expect(h).toMatchObject({ kind: 'wall', wallStart: 'b' })
+    expect(h.point.x).toBeCloseTo(400)
+    expect(h.point.y).toBeCloseTo(150)
+  })
+  it('snaps to a corner that lies on the locked line', () => {
+    const h = snapTapeAngle({ x: 100, y: 0 }, { x: 395, y: 305 }, [room], 12)
+    expect(h).toMatchObject({ kind: 'vertex', point: { x: 400, y: 300 } })
   })
 })
 

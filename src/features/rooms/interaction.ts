@@ -14,7 +14,7 @@ import {
   deleteRoom, insertVertex, moveHoleVertex, movableLinked, moveVertices, removeHole, removeHoleVertex, removeVertex,
   type VMove, type VRef,
 } from './ops'
-import { snapPoint } from './snap'
+import { snapPoint, snapTranslation } from './snap'
 import {
   moveRoom, nearestVertex, oppositeVertex, roomHasLockedWall, scaleFactors, scaleRoomWithLinks, type Link,
 } from './transform'
@@ -82,6 +82,17 @@ export function otherVertices(doc: Pick<PlanDoc, 'rooms'>, skip?: (roomId: strin
     for (const h of r.holes) for (const v of h) out.push(v)
   }
   return out
+}
+
+/** Outline walls of a room, as segments [start, end], in vertex order. */
+export function outlineEdges(room: Pick<Room, 'vertices'>): [Vec, Vec][] {
+  const n = room.vertices.length
+  return room.vertices.map((v, i) => [v, room.vertices[(i + 1) % n]] as [Vec, Vec])
+}
+
+/** Outline walls of every room, except the rooms for which `skip` returns true (holes are not wall targets). */
+export function otherEdges(doc: Pick<PlanDoc, 'rooms'>, skip?: (roomId: string) => boolean): [Vec, Vec][] {
+  return doc.rooms.flatMap((r) => (skip?.(r.id) ? [] : outlineEdges(r)))
 }
 
 export function selectRoom(roomId: string) { useUi.getState().select({ kind: 'room', roomId }); clearHoleSel() }
@@ -153,22 +164,32 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
     },
     onMove: (ev) => {
       if (!start) return
+      const base = start
       const linked = ev.shiftKey ? [] : linkedAll
       const w = vp.toWorld(ev.clientX, ev.clientY)
-      const raw = { x: near.x + (w.x - down.x), y: near.y + (w.y - down.y) }
       const ui = useUi.getState()
-      const r = snapPoint(raw, {
-        opts: ui.snap, tolCm: vp.px(10), disabled: ev.altKey,
-        // The moving rooms and the shared corners that travel with them stay out of the snap set.
-        vertices: otherVertices(start, (rid, vid) => idSet.has(rid) || (!ev.shiftKey && linkedKeysAll.has(rid + ':' + vid))),
-      })
+      const movingRooms = ids.flatMap((id) => base.rooms.filter((r) => r.id === id))
+      const r = snapTranslation(
+        movingRooms.flatMap((m) => [...m.vertices, ...m.holes.flat()]),
+        { x: w.x - down.x, y: w.y - down.y },
+        {
+          opts: ui.snap, tolCm: vp.px(10), disabled: ev.altKey,
+          // The moving rooms and the shared corners that travel with them stay out of the snap set.
+          vertices: otherVertices(base, (rid, vid) => idSet.has(rid) || (!ev.shiftKey && linkedKeysAll.has(rid + ':' + vid))),
+          // Walls of other rooms, except walls whose two corners travel with the dragged rooms
+          // (shared corners): those walls move too, so they are not a target.
+          edges: base.rooms.filter((r) => !idSet.has(r.id)).flatMap((r) => outlineEdges(r).filter((_, i) =>
+            ev.shiftKey || !(linkedKeysAll.has(r.id + ':' + r.vertices[i].id) && linkedKeysAll.has(r.id + ':' + r.vertices[(i + 1) % r.vertices.length].id)))),
+          movingEdges: movingRooms.flatMap((m) => outlineEdges(m)),
+        },
+      )
       useGuides.getState().set(r.guides)
-      last = r.point
-      const d = { x: r.point.x - near.x, y: r.point.y - near.y }
+      const d = r.d
+      last = { x: near.x + d.x, y: near.y + d.y }
       // Always translate the drag-start document, so every move is independent of the last one.
       // The linked corners are read from the drag-start document by the first moveRoom call.
       useDoc.getState().updateSilent(() =>
-        ids.slice(1).reduce((acc, id) => moveRoom(acc, id, d), moveRoom(start as PlanDoc, ids[0], d, linked)))
+        ids.slice(1).reduce((acc, id) => moveRoom(acc, id, d), moveRoom(base, ids[0], d, linked)))
     },
     onEnd: () => {
       document.body.style.cursor = ''
@@ -270,6 +291,7 @@ export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, verte
       const r = snapPoint(raw, {
         opts: ui.snap, refs: [prev, next], tolCm: vp.px(10), disabled: ev.altKey,
         vertices: otherVertices(base, (rid, vid) => (rid === roomId && vid === vertexId) || (!ev.shiftKey && linkedKeys.has(rid + ':' + vid))),
+        edges: otherEdges(base, (rid) => rid === roomId),
       })
       useGuides.getState().set(r.guides)
       last = r.point
@@ -314,6 +336,7 @@ function dragVertexGroup(e: ReactPointerEvent, vp: Vp, roomId: string, vertexId:
     movableLinked(doc0, p.roomId, p.vertexId).filter((l) => !ownKeys.has(refKey(l))).map((l) => ({ ref: l, at: p.at })))
   const followKeys = new Set(followersAll.map((f) => refKey(f.ref)))
   const affected = [...new Set([...pts, ...followersAll.map((f) => f.ref)].map((p) => p.roomId))]
+  const groupRooms = new Set(pts.map((p) => p.roomId))
   const down = vp.toWorld(e.clientX, e.clientY)
   let start: PlanDoc | null = null
   let last = orig
@@ -333,6 +356,7 @@ function dragVertexGroup(e: ReactPointerEvent, vp: Vp, roomId: string, vertexId:
       const r = snapPoint(raw, {
         opts: useUi.getState().snap, refs: [prev, next], tolCm: vp.px(10), disabled: ev.altKey,
         vertices: otherVertices(base, (rid, vid) => ownKeys.has(rid + ':' + vid) || (!ev.shiftKey && followKeys.has(rid + ':' + vid))),
+        edges: otherEdges(base, (rid) => groupRooms.has(rid)),
       })
       useGuides.getState().set(r.guides)
       last = r.point
@@ -403,6 +427,7 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
           const r = snapPoint({ x: a0.x + normal.x * d, y: a0.y + normal.y * d }, {
             opts: { ...ui.snap, angles: false }, tolCm: vp.px(10),
             vertices: otherVertices(doc, (rid, vid) => (rid === roomId && (vid === aId || vid === bId)) || linkedKeys.has(rid + ':' + vid)),
+            edges: otherEdges(doc, (rid) => rid === roomId),
           })
           useGuides.getState().set(r.guides)
           d = dot({ x: r.point.x - a0.x, y: r.point.y - a0.y }, normal)
@@ -454,6 +479,7 @@ export function onHoleVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, v
       const r = snapPoint(raw, {
         opts: useUi.getState().snap, refs: [prev, next], tolCm: vp.px(10), disabled: ev.altKey,
         vertices: otherVertices(doc, (_rid, vid) => vid === vertexId),
+        edges: otherEdges(doc, (rid) => rid === roomId),
       })
       useGuides.getState().set(r.guides)
       last = r.point

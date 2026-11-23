@@ -1,5 +1,5 @@
 // OWNER: annotations agent. Tape tool, note/photo pins (Edit Mode canvas + sidebar panels).
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { MapPin, Trash2 } from 'lucide-react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { fmtCm } from '../../model/geometry'
@@ -7,7 +7,7 @@ import { useDoc, useUi } from '../../model/store'
 import type { Pin, TapeMeasure, Vec } from '../../model/types'
 import { FieldRow, IconButton, NumberField, PanelSection, StatGrid, TextField } from '../../shell/panel'
 import { addPin, addTape, patchPin, patchTape, removePin, removeTape } from './actions'
-import { SNAP_PX, isUnplaced, placePin, snapToPlan, tapeLabel, tracedCm } from './logic'
+import { SNAP_PX, isUnplaced, placePin, snapTapeAngle, snapToPlan, tapeLabel, tracedCm } from './logic'
 import { PinPhotos } from './PinEditor'
 import { PIN_FIELD_NAMES, TAPE_FIELD_NAMES, notePatch, pinTextPatch, realLengthPatch, tapeStats } from './panel'
 import { selectAnnot, useAnnotSel, type AnnotSel } from './selection'
@@ -103,27 +103,36 @@ export function AnnotationsLayer() {
   )
 }
 
-/** Tool overlay for ui.tool === 'tape': click A, click B. */
+/** Tool overlay for ui.tool === 'tape': click A, click B. Shift locks the tape to 45° steps. */
 export function TapeTool() {
   const { px, toWorld } = useViewport()
   const rooms = useDoc((s) => s.doc.rooms)
   const [a, setA] = useState<Vec | null>(null)
   const [hover, setHover] = useState<Vec | null>(null)
-  const snap = (e: React.PointerEvent) => snapToPlan(toWorld(e.clientX, e.clientY), rooms, px(SNAP_PX))
+  // Last pointer position, so pressing or releasing Shift updates the preview without a move.
+  const last = useRef<{ x: number; y: number } | null>(null)
+  const snapAt = (cx: number, cy: number, shift: boolean) => {
+    const w = toWorld(cx, cy)
+    return a && shift ? snapTapeAngle(a, w, rooms, px(SNAP_PX)) : snapToPlan(w, rooms, px(SNAP_PX))
+  }
+  const snap = (e: React.PointerEvent) => { last.current = { x: e.clientX, y: e.clientY }; return snapAt(e.clientX, e.clientY, e.shiftKey) }
 
   useEffect(() => {
     if (!a) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && e.type === 'keydown') {
         e.preventDefault()
         e.stopPropagation()
         setA(null)
         setHover(null)
+      } else if (e.key === 'Shift' && last.current) {
+        setHover(snapAt(last.current.x, last.current.y, e.type === 'keydown').point)
       }
     }
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [a])
+    window.addEventListener('keyup', onKey, true)
+    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true) }
+  })
 
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return

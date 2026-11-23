@@ -6,7 +6,7 @@ import { useDoc, useUi } from '../../model/store'
 import type { Vec } from '../../model/types'
 import { newEdgeCrosses, selfIntersects } from './crossing'
 import { useGuides } from './guides'
-import { deleteSelection, locked, onHoleVertexDown, onVertexDown, otherVertices } from './interaction'
+import { deleteSelection, locked, onHoleVertexDown, onVertexDown, otherEdges, otherVertices } from './interaction'
 import { NoticeLayer, notify } from './notice'
 import { cutDoc, makeRoom, rectPoints, sliceDoc, validOutline } from './ops'
 import { snapPoint, type SnapGuide } from './snap'
@@ -21,6 +21,10 @@ function GuidesLayer() {
   useEffect(() => () => useGuides.getState().set([]), [])
   const line = (g: SnapGuide, i: number) => {
     if (g.kind === 'vertex') return <circle key={i} cx={g.at.x} cy={g.at.y} r={px(8)} fill="none" strokeWidth={px(2)} className="stroke-fuchsia-500" />
+    if (g.kind === 'edge') {
+      // The snapped wall, highlighted.
+      return <line key={i} x1={g.from.x} y1={g.from.y} x2={g.to.x} y2={g.to.y} strokeWidth={px(4)} strokeLinecap="round" className="stroke-fuchsia-500" />
+    }
     return (
       <line key={i} x1={g.from.x} y1={g.from.y} x2={g.to.x} y2={g.to.y} strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`}
         className="stroke-fuchsia-500" />
@@ -48,6 +52,11 @@ function useVertexPool() {
   return useMemo(() => otherVertices({ rooms }), [rooms])
 }
 
+function useEdgePool() {
+  const rooms = useDoc((s) => s.doc.rooms)
+  return useMemo(() => otherEdges({ rooms }), [rooms])
+}
+
 const addRoom = (pts: Vec[]) => {
   if (!validOutline(pts)) return
   let id = ''
@@ -60,12 +69,15 @@ const addRoom = (pts: Vec[]) => {
 function RectDraw({ onDone, onShift }: { onDone: (a: Vec, b: Vec) => void; onShift?: (p: Vec) => void }) {
   const vp = useViewport()
   const pool = useVertexPool()
+  const edges = useEdgePool()
   const snapOpts = useUi((s) => s.snap)
   const [drag, setDrag] = useState<{ a: Vec; b: Vec } | null>(null)
   const set = useGuides((s) => s.set)
 
   const snap = (e: RPE) => {
-    const r = snapPoint(vp.toWorld(e.clientX, e.clientY), { opts: { ...snapOpts, angles: false }, vertices: pool, tolCm: vp.px(10), disabled: e.altKey })
+    const r = snapPoint(vp.toWorld(e.clientX, e.clientY), {
+      opts: { ...snapOpts, angles: false }, vertices: pool, edges, tolCm: vp.px(10), disabled: e.altKey,
+    })
     set(r.guides)
     return r.point
   }
@@ -120,6 +132,7 @@ function RectDraw({ onDone, onShift }: { onDone: (a: Vec, b: Vec) => void; onShi
 function PolyDraw({ initial, onDone, onCancel }: { initial?: Vec[]; onDone: (pts: Vec[]) => void; onCancel?: () => void }) {
   const vp = useViewport()
   const pool = useVertexPool()
+  const edges = useEdgePool()
   const snapOpts = useUi((s) => s.snap)
   const [pts, setPts] = useState<Vec[]>(initial ?? [])
   const [hover, setHover] = useState<Vec | null>(null)
@@ -132,7 +145,7 @@ function PolyDraw({ initial, onDone, onCancel }: { initial?: Vec[]; onDone: (pts
   const snap = (e: RPE) => {
     const raw = vp.toWorld(e.clientX, e.clientY)
     const r = snapPoint(raw, {
-      opts: snapOpts, refs: pts.length ? [pts[pts.length - 1]] : [], vertices: [...pool, ...pts], tolCm: vp.px(10), disabled: e.altKey,
+      opts: snapOpts, refs: pts.length ? [pts[pts.length - 1]] : [], vertices: [...pool, ...pts], edges, tolCm: vp.px(10), disabled: e.altKey,
     })
     set(r.guides)
     return { raw, point: r.point }
@@ -213,6 +226,7 @@ function PolygonTool() {
 function SliceTool() {
   const vp = useViewport()
   const pool = useVertexPool()
+  const edges = useEdgePool()
   const snapOpts = useUi((s) => s.snap)
   const rooms = useDoc((s) => s.doc.rooms)
   const [a, setA] = useState<Vec | null>(null)
@@ -240,7 +254,9 @@ function SliceTool() {
   }, [a])
 
   const snap = (e: RPE) => {
-    const r = snapPoint(vp.toWorld(e.clientX, e.clientY), { opts: snapOpts, refs: a ? [a] : [], vertices: pool, tolCm: vp.px(10), disabled: e.altKey })
+    const r = snapPoint(vp.toWorld(e.clientX, e.clientY), {
+      opts: snapOpts, refs: a ? [a] : [], vertices: pool, edges, tolCm: vp.px(10), disabled: e.altKey,
+    })
     set(r.guides)
     return r.point
   }

@@ -26,6 +26,46 @@ export function snapToPlan(p: Vec, rooms: Room[], radiusCm: number): SnapHit {
   return { point: p, kind: 'free' }
 }
 
+/**
+ * Second end of a tape with Shift: the tape direction from `a` is locked to the nearest 45° step.
+ * On that line, a room corner (within radiusCm of the line point) wins, then the crossing with a
+ * wall near the pointer, else the plain point on the line.
+ */
+export function snapTapeAngle(a: Vec, p: Vec, rooms: Room[], radiusCm: number): SnapHit {
+  const ang = Math.atan2(p.y - a.y, p.x - a.x)
+  const step = Math.round(ang / (Math.PI / 4)) * (Math.PI / 4)
+  const dir = { x: Math.cos(step), y: Math.sin(step) }
+  const t = Math.max(0, (p.x - a.x) * dir.x + (p.y - a.y) * dir.y)
+  const onLine = { x: a.x + dir.x * t, y: a.y + dir.y * t }
+  // Corners on the locked line.
+  let best: { d: number; hit: SnapHit } | null = null
+  for (const r of rooms) {
+    for (const v of r.vertices) {
+      const tv = (v.x - a.x) * dir.x + (v.y - a.y) * dir.y
+      const off = Math.abs((v.x - a.x) * dir.y - (v.y - a.y) * dir.x)
+      const d = dist(v, onLine)
+      if (tv > 0 && off < 0.5 && d <= radiusCm && (!best || d < best.d)) best = { d, hit: { point: { x: v.x, y: v.y }, kind: 'vertex', roomId: r.id } }
+    }
+  }
+  if (best) return best.hit
+  // Crossings of the locked line with walls, near the pointer.
+  for (const r of rooms) {
+    for (const w of roomWalls(r)) {
+      const e = { x: w.end.x - w.start.x, y: w.end.y - w.start.y }
+      const den = dir.x * e.y - dir.y * e.x
+      if (Math.abs(den) < 1e-9) continue
+      const s = { x: w.start.x - a.x, y: w.start.y - a.y }
+      const tt = (s.x * e.y - s.y * e.x) / den
+      const u = (s.x * dir.y - s.y * dir.x) / den
+      if (tt <= 0 || u < 0 || u > 1) continue
+      const q = { x: a.x + dir.x * tt, y: a.y + dir.y * tt }
+      const d = dist(q, onLine)
+      if (d <= radiusCm && (!best || d < best.d)) best = { d, hit: { point: q, kind: 'wall', roomId: r.id, wallStart: w.start.id } }
+    }
+  }
+  return best ? best.hit : { point: onLine, kind: 'free' }
+}
+
 /** Nearest wall within radiusCm. Returns the projected point on the wall. */
 export function nearestWall(p: Vec, rooms: Room[], radiusCm: number) {
   let best: { distance: number; point: Vec; roomId: string; wallStart: string } | null = null
