@@ -99,6 +99,22 @@ type Measurement = { label: string; actualCm: number; updatedAt: string
   the thickness before the snap; the fit must run again with the snapped thicknesses fixed.
 - **Preview before apply**: list walls that move more than X cm; Apply or Cancel.
 
+### Walls in any direction (phase 4b, agreed 2026-11-23)
+Today the solver knows the direction of each wall: one position and one thickness per wall, corners
+from one x and one y. This forces exact right angles and skips walls at an angle.
+- **Unknowns per wall**: direction (angle of its normal), offset of its centre line, thickness. The
+  direction has a prior = the drawn angle (sigma `angleSigmaDeg`, default 3 degrees).
+- **Corners** = intersection of the two face lines (inside) or centre lines. When the two walls are
+  almost parallel (|sin| < 0.02) the corner is a free point along the line (as today in line).
+- **Soft rules**: walls drawn at about 90 degrees (or parallel) to a wall they meet keep that angle,
+  sigma `squareSigmaDeg`. Setting "Room angles: Square | Free": Square (default) fixes the direction
+  of horizontal and vertical walls (the result is the same as today); Free lets them turn, so a
+  diagonal can show a room that is out of square. Walls at an angle are always solved.
+- **Exact gradients** with a small sparse forward-mode automatic differentiation (value + sparse
+  gradient, with add, sub, mul, div, sqrt, sin, cos, atan2), so every row (lengths, diagonals,
+  centre and facade values, surfaces, in-line rules) is written once as a function of the unknowns.
+- Measure next, facade and centre values, preview and apply work for every wall.
+
 ### Suggested measurements (next best measurement)
 The solver tells you which values to measure next, most useful first, and you type them in place.
 
@@ -148,6 +164,7 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
 4. **Solver on the graph**: `globalSolve` reads `buildWallGraph` (same results); remove its own
    pairing code; graph conflicts in the report; snap thicknesses; preview before apply. Centre and
    outside face rows need stable wall labels: they move to phase 5.
+4b. **Walls in any direction** (section above), after 5b.
 5a. **Stored graph, stable ids, no lost values** (decided 2026-11-23: auto-migrate). The rooms stay
    the editing source for now. `doc.nodes` and `doc.walls` (with their faces) are STORED and kept in
    sync by a doc rule: after each outline change the graph is built again and each wall keeps its
