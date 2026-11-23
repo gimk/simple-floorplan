@@ -1,14 +1,18 @@
 // Measurements control the plan (local edits only; changes from the server are not touched):
 //  1. When a room outline changes (cutout, slice, merge, corner added or removed), on-site
-//     values move with their wall (model/relabel.ts). A split or removed wall loses its value,
+//     values move with their wall (model/relabel.ts). In a v2 document each value follows its
+//     stored target instead (model/v2/relabelV2.ts). A split or removed wall loses its value,
 //     and a toast says which walls to measure again.
 //  2. When a wall value is entered, its room is solved again from all its values ("Apply
 //     measured lengths" for that room), a short time after the typing stops.
 import { graphRule } from '../../model/graphRule'
 import { appendOld, REASON_WORDS, renameOldCode, renamedCodes } from '../../model/oldMeasurements'
 import { relabelMeasurements } from '../../model/relabel'
+import { relabelByTarget } from '../../model/v2/relabelV2'
+import { attachTargets, isV2Doc } from '../../model/v2/targets'
 import { removedWallValues } from '../../model/wallValues'
 import { addDocRule, nowIso, useDoc, type DocRule } from '../../model/store'
+import type { PlanDoc } from '../../model/types'
 import { toast } from '../toast'
 import { applyMeasuredNear, describeReport } from './apply'
 
@@ -20,13 +24,20 @@ export function measureAgainText(dropped: { label: string; reason: 'wall-split' 
   return `Measure again: ${parts.join('; ')}. The old value${dropped.length > 1 ? 's are' : ' is'} kept in the room card.`
 }
 
+/** In a v2 document every value that can hold a target gets one (a height cannot). */
+const withTargets = (on: boolean, d: PlanDoc) => (on ? attachTargets(d) : d)
+
 const relabelRule: DocRule = (prev, next) => {
   const now = nowIso()
   // A renamed room: its old values follow the new code.
   let old = next.oldMeasurements ?? prev.oldMeasurements
   for (const r of renamedCodes(prev, next)) old = renameOldCode(old, r.from, r.to)
-  const res = relabelMeasurements(prev, next, now)
-  if (!res) return old === next.oldMeasurements ? next : { ...next, oldMeasurements: old }
+  // A v2 document relabels by stored target (stable wall ids); a v1 document by its corner ids.
+  const byTarget = isV2Doc(next)
+  const res = byTarget
+    ? relabelByTarget(attachTargets(prev), next, now)
+    : relabelMeasurements(prev, next, now)
+  if (!res) return withTargets(byTarget, old === next.oldMeasurements ? next : { ...next, oldMeasurements: old })
   // The values that leave `measurements` are kept in `oldMeasurements`, never lost.
   old = appendOld(old, res.droppedValues, now)
   const again = res.droppedValues.filter((d) => res.dropped.includes(d.measurement.label) && d.reason !== 'room-deleted')
@@ -40,7 +51,8 @@ const relabelRule: DocRule = (prev, next) => {
     const code = gone[0].roomCode
     queueMicrotask(() => toast(`Room ${code} deleted. ${gone.length} measured value${gone.length > 1 ? 's are' : ' is'} kept under "Old values".`, { durationMs: 8000 }))
   }
-  return { ...next, measurements: res.measurements, ...(old ? { oldMeasurements: old } : {}) }
+  const out: PlanDoc = { ...next, measurements: res.measurements, ...(old ? { oldMeasurements: old } : {}) }
+  return withTargets(byTarget, out)
 }
 
 /**

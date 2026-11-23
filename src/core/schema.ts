@@ -27,11 +27,26 @@ export const WallPropsSchema = z.object({
   align: z.enum(['room', 'center', 'other']).optional(),
 })
 
+/**
+ * One face of one stored wall, seen from one room, in room order (docs/walls-plan.md phase 5c).
+ * A v1 room has no cycle: its polygon is the source.
+ */
+export const RoomFaceSchema = z.object({
+  wallId: z.string().min(1),
+  side: z.enum(['L', 'R']),
+  from: z.number().finite(),
+  to: z.number().finite(),
+  // Id of the room corner at the start of this face in room order (kept from v1).
+  cornerId: z.string().min(1),
+})
+
 export const RoomSchema = z.object({
   id: z.string().min(1),
   code: z.string().min(1),
   name: z.string(),
   vertices: z.array(VertexSchema).min(3),
+  // Faces of a v2 room (one per room wall). Absent in a v1 document.
+  cycle: z.array(RoomFaceSchema).optional(),
   holes: z.array(z.array(VertexSchema).min(3)).default([]),
   walls: z.record(z.string(), WallPropsSchema).default({}),
   ceilingCm: z.number().finite().positive().optional(),
@@ -151,6 +166,13 @@ export const StoredWallSchema = z.object({
   a: z.string().min(1),
   b: z.string().min(1),
   faces: z.array(StoredFaceSchema),
+  // Wall properties (docs/walls-plan.md phase 5c): a v2 wall is the source, so it holds its own
+  // thickness, type, renovation state, align rule and lock. Absent in a phase 5a document.
+  thicknessCm: z.number().finite().positive().optional(),
+  type: WallTypeSchema.optional(),
+  status: WallStatusSchema.optional(),
+  align: z.enum(['room', 'center', 'other']).optional(),
+  locked: z.boolean().optional(),
 })
 export const OldMeasurementSchema = MeasurementSchema.extend({
   roomCode: z.string(),
@@ -224,8 +246,11 @@ export const TraceWallSchema = z.object({
   type: WallTypeSchema,
 })
 
+/** 1 = rooms are the editing source (or absent). 2 = walls are the editing source (phase 5c). */
+export const SchemaVersionSchema = z.union([z.literal(1), z.literal(2)])
+
 export const PlanDocV1Schema = z.object({
-  schemaVersion: z.literal(1).optional().default(1),
+  schemaVersion: SchemaVersionSchema.optional().default(1),
   projectId: z.string().min(1).default('local'),
   title: z.string().default(''),
   background: BackgroundImageSchema.optional(),
@@ -243,11 +268,15 @@ export const PlanDocV1Schema = z.object({
   traces: z.array(TraceWallSchema).optional(),
 })
 
-export type PlanDocV1 = PlanDoc & { schemaVersion: 1; pins: NonNullable<PlanDoc['pins']> }
+/**
+ * A parsed document. The name stays `PlanDocV1` for the imports that use it: it holds a v1 OR a v2
+ * document (`schemaVersion` 1 or 2), because both are read and written by the same code.
+ */
+export type PlanDocV1 = PlanDoc & { schemaVersion: 1 | 2; pins: NonNullable<PlanDoc['pins']> }
 
 /** Schema for PUT /api/projects/:id/snapshot request bodies. */
 export const SnapshotPutBodySchema = z.object({
-  schemaVersion: z.literal(1).optional().default(1),
+  schemaVersion: SchemaVersionSchema.optional().default(1),
   baseVersion: z.number().int().min(0),
   projectId: z.string().min(1).optional(),
   title: z.string().optional(),

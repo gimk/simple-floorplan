@@ -9,6 +9,7 @@ import { nowIso, useDoc, useUi } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
 import { EmptyHint, IconButton, INPUT_BARE, MUTED, PanelSection, inputGroup } from '../../shell/panel'
 import { setMeasurement } from '../measure/actions'
+import { targetOfLabel } from '../../model/v2/targets'
 import { sourceSigmaCm } from '../../model/measureSource'
 import { parseCm } from '../measure/logic'
 import type { RoomAngles, SurfaceMode } from '../rooms/globalSolve'
@@ -54,11 +55,17 @@ function saveValue(s: Suggestion, cm: number) {
   if (s.kind === 'diagonal' && s.diagonal) {
     const [i, j] = s.diagonal
     const pair: [number, number] = [i, j]
-    useDoc.getState().update((d) => ({
-      ...d,
-      rooms: d.rooms.map((r) => (r.id === s.roomId ? { ...r, diagonal: pair } : r)),
-      measurements: { ...d.measurements, [s.label]: { label: s.label, actualCm: cm, updatedAt: nowIso(), source } },
-    }))
+    useDoc.getState().update((d) => {
+      const rooms = d.rooms.map((r) => (r.id === s.roomId ? { ...r, diagonal: pair } : r))
+      // The target is read AFTER the pair is on the room: the diagonal of a v2 document names the
+      // wall of its first corner face (docs/walls-plan.md phase 5c). A stored target is kept.
+      const kept = d.measurements[s.label]?.target ?? targetOfLabel({ ...d, rooms }, s.label)
+      return {
+        ...d,
+        rooms,
+        measurements: { ...d.measurements, [s.label]: { label: s.label, actualCm: cm, updatedAt: nowIso(), source, ...(kept ? { target: kept } : {}) } },
+      }
+    })
     const code = useDoc.getState().doc.rooms.find((r) => r.id === s.roomId)?.code
     if (code) scheduleAutoApply(code)
     return

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { demoRooms } from '../features/measure/demo'
+import { convertToV2 } from '../model/v2/convert'
 import { parseMeasureTarget, parseMeasureTargetJson, parsePlan, planJsonSchema, safeParsePlan, SnapshotPutBodySchema } from './schema'
 
 describe('schema: parsePlan & migration', () => {
@@ -326,5 +328,71 @@ describe('schema: traced walls (walls-plan phase 6)', () => {
     expect(safeParsePlan({ projectId: 'p1', rooms: [], traces: [{ ...trace, id: '' }] }).ok).toBe(false)
     expect(safeParsePlan({ projectId: 'p1', rooms: [], traces: [{ ...trace, type: 'wood' }] }).ok).toBe(false)
     expect(safeParsePlan({ projectId: 'p1', rooms: [], traces: [{ ...trace, thicknessCm: 0 }] }).ok).toBe(false)
+  })
+})
+
+describe('schema: v2 documents (walls-plan phase 5c)', () => {
+  /** The demo apartment as a v1 document, with one value on a wall and one on a facade. */
+  const v1Doc = () => ({
+    projectId: 'p1',
+    title: 'Demo',
+    rooms: demoRooms(),
+    elements: [],
+    measurements: { 'SE-2': { label: 'SE-2', actualCm: 412, updatedAt: '2026-11-23T10:00:00Z' } },
+    roomNotes: {},
+    tapes: [],
+  })
+
+  it('keeps the cycles, the wall properties and schemaVersion 2 through JSON', () => {
+    const { doc } = convertToV2(parsePlan(v1Doc()))
+    const json = JSON.parse(JSON.stringify(doc))
+    const back = parsePlan(json)
+
+    expect(back.schemaVersion).toBe(2)
+    // One face per room wall, with its wall id, side, span and corner id: nothing lost or rounded.
+    expect(back.rooms.map((r) => r.cycle)).toEqual(doc.rooms.map((r) => r.cycle))
+    for (const room of back.rooms) expect(room.cycle?.length).toBe(room.vertices.length)
+    // Every stored wall keeps its properties and its faces.
+    expect(back.walls).toEqual(doc.walls)
+    for (const w of back.walls ?? []) {
+      expect(typeof w.thicknessCm).toBe('number')
+      expect(w.type).toBeDefined()
+    }
+    expect(back.nodes).toEqual(doc.nodes)
+  })
+
+  it('keeps a value and its target through JSON', () => {
+    const { doc } = convertToV2(parsePlan(v1Doc()))
+    const wall = doc.walls!.find((w) => w.faces.some((f) => f.roomId === 'demo-SE'))!
+    const withTarget = {
+      ...doc,
+      measurements: {
+        ...doc.measurements,
+        'SE-2': { ...doc.measurements['SE-2'], target: { wallId: wall.id, side: 'L' as const, roomId: 'demo-SE', from: 10, to: 200, kind: 'face' as const } },
+      },
+    }
+    const back = parsePlan(JSON.parse(JSON.stringify(withTarget)))
+    expect(back.measurements['SE-2'].target).toEqual(withTarget.measurements['SE-2'].target)
+  })
+
+  it('a v1 document still parses with schemaVersion 1 and no cycle', () => {
+    const doc = parsePlan(v1Doc())
+    expect(doc.schemaVersion).toBe(1)
+    for (const r of doc.rooms) expect(r.cycle).toBeUndefined()
+  })
+
+  it('accepts schemaVersion 2 in a snapshot body', () => {
+    expect(SnapshotPutBodySchema.parse({ baseVersion: 1 }).schemaVersion).toBe(1)
+    expect(SnapshotPutBodySchema.parse({ baseVersion: 1, schemaVersion: 2 }).schemaVersion).toBe(2)
+    expect(safeParsePlan({ schemaVersion: 3, rooms: [] }).ok).toBe(false)
+    expect(SnapshotPutBodySchema.safeParse({ baseVersion: 1, schemaVersion: 3 }).success).toBe(false)
+  })
+
+  it('rejects a cycle face with a bad side or no wall id', () => {
+    const cycle = [{ wallId: 'W1', side: 'L', from: 0, to: 100, cornerId: 'v1' }]
+    const room = { ...v1Doc().rooms[0], cycle }
+    expect(parsePlan({ ...v1Doc(), rooms: [room] }).rooms[0].cycle).toEqual(cycle)
+    expect(safeParsePlan({ ...v1Doc(), rooms: [{ ...room, cycle: [{ ...cycle[0], side: 'X' }] }] }).ok).toBe(false)
+    expect(safeParsePlan({ ...v1Doc(), rooms: [{ ...room, cycle: [{ ...cycle[0], wallId: '' }] }] }).ok).toBe(false)
   })
 })
