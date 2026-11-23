@@ -252,6 +252,21 @@ export function RoomsLayer() {
             strokeWidth={px(2)} className="fill-orange-500/35 stroke-orange-500" />
         )))}
 
+      {/* "In line on": the line of each selected wall that lines up with the walls that continue it */}
+      {selWalls.size > 0 && rooms.map((r) => roomWalls(r).filter((w) => selWalls.has(r.id + ':' + w.start.id)).map((w) => {
+        const p = wallProps(r, w.start.id)
+        const k = (p.align ?? 'room') === 'room' ? 1 : p.align === 'other' ? -1 : 0
+        const o = (k * p.thicknessCm) / 2
+        const x1 = w.start.x + w.inward.x * o, y1 = w.start.y + w.inward.y * o
+        const x2 = w.end.x + w.inward.x * o, y2 = w.end.y + w.inward.y * o
+        return (
+          <line key={'align' + r.id + w.start.id} x1={x1} y1={y1} x2={x2} y2={y2} pointerEvents="none"
+            data-wall-align-line={r.id + ':' + w.start.id} data-align={p.align ?? 'room'}
+            strokeWidth={px(2)} strokeLinecap="round" strokeDasharray={`${px(2)} ${px(4)}`}
+            className="stroke-sky-600 dark:stroke-sky-400" />
+        )
+      }))}
+
       {/* labels + dimensions */}
       {display.map(label)}
       {layers.dimensions && rooms.map((r) => {
