@@ -1,0 +1,129 @@
+# Walls as data, rooms as the survey view
+
+Follows `docs/sidebar-plan-3.md` (Solve tab done). Agreed 2026-11-23.
+
+## Problems today
+1. **A wall between two rooms exists two times.** Each room is a polygon with its own wall props
+   (`room.walls`, keyed by start vertex). The global solver (`src/features/rooms/globalSolve.ts`)
+   must guess which room walls are one wall (`pairTolCm` = 35 cm, `MIN_OVERLAP` = 20 cm). When the
+   guess fails, walls overlap, rooms leave thin gaps, or two copies get different thicknesses.
+2. **Measurements point to a vertex index.** `SE-2` = wall 2 of room SE. When a wall is split or a
+   vertex is added, the index changes and the value can move to another wall.
+3. **One value per room wall.** A wall has two faces, a centre line and a thickness. Today only the
+   inside face of each room and the thickness (`CODE-n-T`) can hold a value.
+4. **The solver does not use the surface references** (DPE, Carrez...) of `apartment.references`.
+5. **Doors and windows belong to one room wall** (`roomId` + `wallStart`), so a door between two
+   rooms is seen from one room only.
+
+## Decisions
+- **Walls are the stored data, rooms are the survey view.** The room stays the unit you measure
+  (codes `SE`, `SE-2`, walk order). The wall is the unit you store (one time).
+- **Labels stay for the user.** `SE-2` is a display label. The data points to a stable target.
+- **Change step by step.** First the wall graph is DERIVED from the rooms (no doc change). Then the
+  solver and the measurements use it. Only then is it STORED, with a transition layer that keeps
+  `room.vertices` for the features that are not migrated yet.
+
+## Target model
+
+```ts
+type Node = { id: string; x: number; y: number }            // centre-line junction, cm
+type Wall = {
+  id: string; a: string; b: string                          // node ids
+  type: WallType; thicknessCm: number
+  locked?: boolean; status?: WallStatus; align?: WallAlign
+}
+/** One side of one wall, seen from one room (or from outside). */
+type Face = { wallId: string; side: 'L' | 'R'; roomId?: string }   // L = left of a -> b
+type Room = { id; code; name; walkOrder; ceilingCm?; outdoor?; diagonal?
+              faces: Face[]       // closed cycle, in order
+              holes: ... }
+```
+
+- A room is a closed cycle of faces. Its polygon (centre and inside) is CALCULATED.
+- One side of a wall can have more than one face (T-junction: two rooms on one side).
+- A face with no `roomId` is outside (facade).
+
+### Measurements: several values per wall
+
+```
+        room SE (side L)
+   ┌─────────────────────────┐   face L : SE-2   = 412 cm
+   ╞═════════ wall W12 ══════╡   centre : W12-C  = 424 cm   thickness : W12-T = 12 cm
+   └────────────┬────────────┘
+     room SB    │   room C1     face R : SB-1 = 236 cm, C1-3 = 168 cm
+```
+
+| Target | Label | Meaning |
+|---|---|---|
+| Face (room side) | `SE-2` | Inside length seen from the room. One per room on that side. |
+| Face (outside) | `EXT-4` | Facade length. |
+| Centre | `W12-C` | Node to node. Usually from an architect plan, not from site. |
+| Thickness | `W12-T` | Belongs to the wall (today `CODE-n-T`). |
+| Diagonal | `SE-D` | Between two inside corners of a room. |
+
+```ts
+type MeasureTarget =
+  | { kind: 'face'; wallId: string; side: 'L' | 'R'; roomId?: string }
+  | { kind: 'centre'; wallId: string }
+  | { kind: 'thickness'; wallId: string }
+  | { kind: 'diagonal'; roomId: string; a: string; b: string }   // node ids
+type MeasureSource = 'tape' | 'laser' | 'plan' | 'other'
+type Measurement = { label: string; actualCm: number; updatedAt: string
+                     target?: MeasureTarget; source?: MeasureSource }
+```
+
+- Measurements stay keyed by label (server tables and old docs keep working). `target` is added.
+- **Source sets the weight** in the solver. Defaults: laser 0.3 cm, tape 1 cm, plan 3 cm, other 2 cm.
+  Missing source = tape.
+- When a wall is split, each face value stays on the segment that holds it. A centre value on a
+  split wall is marked "to check".
+
+## Solver on the wall graph
+- Unknowns: node positions (centre line) and wall thicknesses. No pairing guess: the topology is given.
+- Rows: face lengths, centre lengths, thicknesses, diagonals, locked walls, walls in line (as today).
+- **Surface references** (option, Solve tab): `Off | Guide | Match`.
+  - Guide (one-sided): when the plan surface is already smaller than the reference, the solver must
+    not make it smaller (and the opposite). Hinge row, active only when the change goes the wrong way.
+  - Match: weak pull to the reference.
+  - Sigma about 1.5 % of the surface: a measured wall always wins. A room reference uses the area of
+    the inside faces of that room; an apartment reference uses the sum of the rooms.
+  - Report: per reference, plan surface before / after / reference, difference in %.
+- **Outliers**: list measurements with a large residual (|r| > 3 sigma), with an option to ignore
+  them for one run.
+- **Snap thicknesses** (option): walls that the data does not determine snap to usual values
+  (5, 7, 10, 15, 20, 30 cm).
+- **Preview before apply**: list walls that move more than X cm; Apply or Cancel.
+
+## Drawing
+- **Wall tool**: trace centre lines on the background. Snap to nodes and walls; a new wall that
+  ends on a wall splits it (T-junction). Thickness and type from the last used values.
+- **Make room**: click inside a closed area; the room gets the faces of that area and asks for a code.
+- **Room tool stays**: a rectangle or polygon makes walls, shared with the walls it touches.
+- **Cleanup** (old plans): merge walls that overlap or almost touch, with a report.
+
+## Phases
+Each phase is one or more agent rounds. Commit after each round (tsc, tests, build pass).
+
+1. **Derived wall graph** (`src/model/wallGraph.ts`, pure, tested). `buildWallGraph(rooms)` returns
+   nodes, walls, faces and a map room wall (`roomId` + `wallStart`) -> face. Same grouping rules as
+   `globalSolve.ts` today, plus T-junction splits. No doc change.
+2. **Surface references in the current solver** (Off / Guide / Match), with the report. Independent of
+   the graph; phase 3 keeps the rows.
+3. **Measurement targets and sources**: optional `target` and `source` on `Measurement` (types,
+   schema, server). Resolver from old labels to targets using the derived graph. Source in the
+   measuring UI. Solver weights from the source.
+4. **Solver on the graph**: `globalSolve` reads `buildWallGraph`; remove the pairing guess; add centre
+   and outside face rows; outliers; snap thicknesses; preview.
+5. **Stored graph (schema v2)**: `doc.nodes`, `doc.walls`, rooms as face cycles. Migration from v1 with
+   `buildWallGraph`. Transition layer: `room.vertices` and `room.walls` calculated, so features move
+   one at a time. Server snapshot accepts v1 and v2.
+6. **Wall tool and Make room.**
+7. **Elements on walls**: `wallId` + offset from node `a`; migrate; update clearance and export.
+8. **Cleanup tool** for old plans; remove the transition layer.
+
+## Risks
+- `src/model/types.ts` is shared by every feature. Phases 1-4 do not change `Room`.
+- Saved projects (local and shared) need a tested migration (phase 5), with the schema version.
+- Labels shown to the user must not change during the migration.
+- Walls that are not horizontal or vertical: the graph handles them; the solver keeps them fixed
+  until a later phase.
