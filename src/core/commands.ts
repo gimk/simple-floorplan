@@ -6,7 +6,6 @@ import {
   area,
   dist,
   dot,
-  len,
   norm,
   pointInPolygon,
   projectOnSegment,
@@ -31,6 +30,7 @@ import type {
 } from '../model/types'
 import { defaultElement, overflows } from '../features/elements/geometry'
 import { DEFAULT_THICKNESS, wallProps } from '../features/rooms/walls'
+import { hasVerifiedWalls, solveRoom } from '../features/rooms/solve'
 import {
   ElementKindSchema,
   ElementVariantSchema,
@@ -658,66 +658,6 @@ export function resolveWall(doc: PlanDoc, ref: WallRef): { room: Room; wall: Wal
 
 // ---------- apply_measurements pure solver ----------
 
-function isRightAngledQuad(room: Room): boolean {
-  const v = room.vertices
-  if (v.length !== 4) return false
-  return v.every((b, i) => {
-    const a = v[(i + 3) % 4]
-    const c = v[(i + 1) % 4]
-    const d1 = norm(sub(a, b))
-    const d2 = norm(sub(c, b))
-    return Math.abs(dot(d1, d2)) < 0.02
-  })
-}
-
-function solveRect(room: Room, measured: (number | null)[]) {
-  const w = roomWalls(room)
-  const pair = (i: number, j: number) => {
-    const a = measured[i]
-    const b = measured[j]
-    if (a !== null && b !== null) return { v: (a + b) / 2, diff: Math.abs(a - b) }
-    if (a !== null) return { v: a, diff: 0 }
-    if (b !== null) return { v: b, diff: 0 }
-    return { v: (w[i].length + w[j].length) / 2, diff: 0 }
-  }
-  const A = pair(0, 2)
-  const B = pair(1, 3)
-  const d0 = w[0].dir
-  let n = { x: -d0.y, y: d0.x }
-  if (dot(n, w[1].dir) < 0) n = { x: -n.x, y: -n.y }
-  const p0 = room.vertices[0]
-  const p1 = { x: p0.x + d0.x * A.v, y: p0.y + d0.y * A.v }
-  const p2 = { x: p1.x + n.x * B.v, y: p1.y + n.y * B.v }
-  const p3 = { x: p0.x + n.x * B.v, y: p0.y + n.y * B.v }
-  return { points: [{ x: p0.x, y: p0.y }, p1, p2, p3], closingErrorCm: 0, oppositeDiffCm: Math.max(A.diff, B.diff), mode: 'rect' as const }
-}
-
-function solvePolygon(room: Room, measured: (number | null)[]) {
-  const w = roomWalls(room)
-  const n = w.length
-  const L = w.map((x, i) => measured[i] ?? x.length)
-  const v0 = room.vertices[0]
-  const walk: Vec[] = [{ x: v0.x, y: v0.y }]
-  for (let i = 0; i < n; i++) {
-    const p = walk[i]
-    walk.push({ x: p.x + w[i].dir.x * L[i], y: p.y + w[i].dir.y * L[i] })
-  }
-  const e = sub(walk[n], v0)
-  const closingErrorCm = len(e)
-  const unmeasured = w.map((_, i) => i).filter((i) => measured[i] === null)
-  if (!unmeasured.length) {
-    return { points: walk.slice(0, n), closingErrorCm, oppositeDiffCm: 0, mode: 'polygon' as const }
-  }
-  const total = unmeasured.reduce((s, i) => s + L[i], 0) || 1
-  const pts: Vec[] = [{ x: v0.x, y: v0.y }]
-  for (let i = 0; i < n - 1; i++) {
-    const share = measured[i] === null ? L[i] / total : 0
-    const p = pts[i]
-    pts.push({ x: p.x + w[i].dir.x * L[i] - e.x * share, y: p.y + w[i].dir.y * L[i] - e.y * share })
-  }
-  return { points: pts, closingErrorCm, oppositeDiffCm: 0, mode: 'polygon' as const }
-}
-
 function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWalls: boolean) {
   const room = doc.rooms.find((r) => r.id === roomId)
   if (!room) {
@@ -751,7 +691,7 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm
-  const solved = isRightAngledQuad(room) ? solveRect(room, measured) : solvePolygon(room, measured)
+  const solved = solveRoom(room, measured)
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })
   if (walls.some((x) => x.length < 1)) {
     return {
@@ -785,7 +725,11 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
     const to = solved.points[i]
     if (dist(v, to) < 0.01) return
     moves.push({ roomId, vertexId: v.id, x: to.x, y: to.y })
-    for (const ref of movableLinked(doc, roomId, v.id)) moves.push({ ...ref, x: to.x, y: to.y })
+    // A neighbour with its own verified walls does not follow: dragging its corner would bend it before it is solved.
+    for (const ref of movableLinked(doc, roomId, v.id)) {
+      const rm = doc.rooms.find((r) => r.id === ref.roomId)
+      if (rm && !hasVerifiedWalls(doc, rm)) moves.push({ ...ref, x: to.x, y: to.y })
+    }
   })
   const moved = moveVertices(doc, moves)
   const next: PlanDocV1 = {
@@ -1506,7 +1450,7 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
         const res = applyMeasurementsForRoom(cur, id, cmd.lockVerifiedWalls)
         cur = res.doc
         reports.push(res.report)
-        if (res.report.mode === 'polygon' && res.report.closingErrorCm > 2) {
+        if ((res.report.mode === 'polygon' || res.report.mode === 'rectilinear') && res.report.closingErrorCm > 2) {
           warnings.push({
             code: 'CLOSING_ERROR',
             message: `Room ${res.report.code} has a closing error of ${res.report.closingErrorCm} cm.`,

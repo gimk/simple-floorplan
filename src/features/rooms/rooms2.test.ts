@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { emptyDoc } from '../../model/store'
 import { roomAreaM2, roomWalls } from '../../model/geometry'
 import type { Measurement, PlanDoc, Room, WallElement } from '../../model/types'
-import { applyMeasured, applyMeasuredAll, isRightAngledQuad, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
+import { applyMeasured, applyMeasuredAll, isRectilinear, isRightAngledQuad, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
 import { newEdgeCrosses, selfIntersects } from './crossing'
 import {
   cutDoc, insertVertex, linkedVertices, makeRoom, movableLinked, moveHoleVertex, moveVertices, rectPoints, removeHole,
@@ -203,36 +203,87 @@ describe('applyMeasured', () => {
     expect(r.report.mode).toBe('none')
     expect(r.doc).toBe(doc)
   })
-  const lShape = [P(0, 0), P(400, 0), P(400, 150), P(200, 150), P(200, 300), P(0, 300)]
+  // One slanted wall (index 2), so this room is not rectilinear: free polygon solver.
+  const slanted = [P(0, 0), P(400, 0), P(400, 150), P(200, 300), P(0, 300)]
   it('polygon: measured walls keep their length, polygon closes, error is reported', () => {
-    const { doc, room } = withRoom(lShape)
-    const d: PlanDoc = { ...doc, measurements: { 'R1-1': meas('R1-1', 410), 'R1-6': meas('R1-6', 304) } }
+    const { doc, room } = withRoom(slanted)
+    const d: PlanDoc = { ...doc, measurements: { 'R1-1': meas('R1-1', 410), 'R1-5': meas('R1-5', 304) } }
     const r = applyMeasured(d, room.id)
     expect(r.report.mode).toBe('polygon')
-    // walking: wall 1 grows by 10 (x), wall 6 grows by 4 (y) => closing error = hypot(10, 4)
+    // walking: wall 1 grows by 10 (x), wall 5 grows by 4 (y) => closing error = hypot(10, 4)
     expect(r.report.closingErrorCm).toBeCloseTo(Math.hypot(10, 4), 5)
     const out = r.doc.rooms[0]
     const l = len(out)
     expect(l[0]).toBeCloseTo(410, 5)
-    expect(l[5]).toBeCloseTo(304, 5)
-    // closed: polygon still has its 6 vertices and v0 did not move
-    expect(out.vertices).toHaveLength(6)
+    expect(l[4]).toBeCloseTo(304, 5)
+    // closed: polygon still has its 5 vertices and v0 did not move
+    expect(out.vertices).toHaveLength(5)
     expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
     expect(out.walls[room.vertices[0].id].locked).toBe(true)
-    expect(out.walls[room.vertices[5].id].locked).toBe(true)
+    expect(out.walls[room.vertices[4].id].locked).toBe(true)
   })
   it('polygon: all walls measured, the last wall closes and is not locked if it deviates', () => {
-    const { doc, room } = withRoom(lShape)
+    const { doc, room } = withRoom(slanted)
     const m: Record<string, Measurement> = {}
-    ;[400, 150, 200, 150, 200, 300].forEach((v, i) => { m[`R1-${i + 1}`] = meas(`R1-${i + 1}`, v) })
+    ;[400, 150, 250, 200, 300].forEach((v, i) => { m[`R1-${i + 1}`] = meas(`R1-${i + 1}`, v) })
     m['R1-1'] = meas('R1-1', 420)
     const r = applyMeasured({ ...doc, measurements: m }, room.id)
     expect(r.report.closingErrorCm).toBeCloseTo(20)
     const out = r.doc.rooms[0]
     expect(len(out)[0]).toBeCloseTo(420)
-    expect(len(out)[5]).toBeCloseTo(Math.hypot(20, 300)) // closing wall absorbs the error
+    expect(len(out)[4]).toBeCloseTo(Math.hypot(20, 300)) // closing wall absorbs the error
     expect(out.walls[room.vertices[0].id].locked).toBe(true)
-    expect(out.walls[room.vertices[5].id]?.locked).toBeFalsy()
+    expect(out.walls[room.vertices[4].id]?.locked).toBeFalsy()
+  })
+
+  const lShape = [P(0, 0), P(400, 0), P(400, 150), P(200, 150), P(200, 300), P(0, 300)]
+  it('L shape: right angles are kept, unmeasured walls take the gap', () => {
+    const { doc, room } = withRoom(lShape)
+    expect(isRectilinear(room)).toBe(true)
+    const d: PlanDoc = { ...doc, measurements: { 'R1-1': meas('R1-1', 410), 'R1-6': meas('R1-6', 304) } }
+    const r = applyMeasured(d, room.id)
+    expect(r.report.mode).toBe('rectilinear')
+    const out = r.doc.rooms[0]
+    expect(isRectilinear(out)).toBe(true)
+    const l = len(out)
+    expect(l[0]).toBeCloseTo(410)
+    expect(l[5]).toBeCloseTo(304)
+    // x: 410 = wall 3 + wall 5 (were 200 + 200); y: 304 = wall 2 + wall 4 (were 150 + 150)
+    expect(l[2] + l[4]).toBeCloseTo(410)
+    expect(l[1] + l[3]).toBeCloseTo(304)
+    expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
+  })
+  it('L shape: all walls measured, the gap is spread and right angles are kept', () => {
+    const { doc, room } = withRoom(lShape)
+    const m: Record<string, Measurement> = {}
+    ;[403, 150, 200, 150, 200, 300].forEach((v, i) => { m[`R1-${i + 1}`] = meas(`R1-${i + 1}`, v) })
+    const r = applyMeasured({ ...doc, measurements: m }, room.id)
+    expect(r.report.mode).toBe('rectilinear')
+    expect(r.report.closingErrorCm).toBeCloseTo(3)
+    const out = r.doc.rooms[0]
+    expect(isRectilinear(out)).toBe(true)
+    const l = len(out)
+    // 3 cm over the 3 x walls: 403 -> 402, 200 -> 201, 200 -> 201
+    expect(l[0]).toBeCloseTo(402)
+    expect(l[2]).toBeCloseTo(201)
+    expect(l[4]).toBeCloseTo(201)
+    expect(l[5]).toBeCloseTo(300)
+  })
+  it('a neighbour with its own measured walls is not bent, both stay rectangles', () => {
+    const d0 = emptyDoc()
+    const a = makeRoom(d0, rectPoints(P(0, 0), P(400, 300)))
+    const b = makeRoom({ ...d0, rooms: [a] }, rectPoints(P(400, 0), P(700, 300)))
+    const doc: PlanDoc = {
+      ...d0, rooms: [a, b],
+      measurements: { 'R1-1': meas('R1-1', 380), 'R1-2': meas('R1-2', 280), 'R2-1': meas('R2-1', 290), 'R2-2': meas('R2-2', 270) },
+    }
+    const r = applyMeasuredAll(doc)
+    expect(r.reports.map((x) => x.mode)).toEqual(['rect', 'rect'])
+    const [aOut, bOut] = r.doc.rooms
+    expect(isRightAngledQuad(aOut)).toBe(true)
+    expect(isRightAngledQuad(bOut)).toBe(true)
+    expect(len(aOut)).toEqual([380, 280, 380, 280].map((x) => expect.closeTo(x)))
+    expect(len(bOut)).toEqual([290, 270, 290, 270].map((x) => expect.closeTo(x)))
   })
   it('moves shared corners of a neighbour room, and applyMeasuredAll is one doc', () => {
     const d0 = emptyDoc()
