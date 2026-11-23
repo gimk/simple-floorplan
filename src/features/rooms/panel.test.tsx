@@ -131,6 +131,18 @@ describe('RoomsPanelView', () => {
     expect(hole).toContain('Hole selected. Drag its handles to reshape it.')
   })
 
+  it('keeps the room tools in Measured lengths and points to the Solve tab', () => {
+    const html = render({ kind: 'room', roomId: 'r1' })
+    expect(html).toContain('>Apply measured lengths</button>')
+    expect(html).toContain('name="lockVerifiedWalls"')
+    // The whole-plan tools moved to the Solve tab (docs/sidebar-plan-3.md).
+    expect(html).not.toContain('Apply to all rooms')
+    expect(html).not.toContain('Solve whole plan')
+    expect(html).not.toContain('name="solveKeepLocked"')
+    expect(html).toContain('Whole plan: Solve tab.')
+    expect(html).toContain('data-goto-solve')
+  })
+
   it('renders nothing without a room selection', () => {
     expect(render(null)).toBe('')
     expect(render({ kind: 'element', elementId: 'e1' })).toBe('')

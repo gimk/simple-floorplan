@@ -1,0 +1,139 @@
+import { renderToString } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import type { PlanDoc, Room } from '../../model/types'
+import { SolvePanel, SolvePanelView } from './SolvePanel'
+
+const rect = (over: Partial<Room> = {}): Room => ({
+  id: 'r1',
+  code: 'SE',
+  name: 'Séjour',
+  holes: [],
+  walls: {},
+  walkOrder: 1,
+  vertices: [
+    { id: 'v0', x: 0, y: 0 },
+    { id: 'v1', x: 400, y: 0 },
+    { id: 'v2', x: 400, y: 300 },
+    { id: 'v3', x: 0, y: 300 },
+  ],
+  ...over,
+})
+
+const doc = (over: Partial<PlanDoc> = {}): PlanDoc => ({
+  projectId: 'local',
+  title: 'Test',
+  rooms: [rect()],
+  elements: [],
+  measurements: {},
+  roomNotes: {},
+  tapes: [],
+  pins: [],
+  apartment: { defaultCeilingCm: 250 },
+  ...over,
+})
+
+const render = (d: PlanDoc = doc(), report: string | null = null) =>
+  renderToString(<SolvePanelView doc={d} report={report} />)
+
+// react-dom/server separates interpolated text nodes with <!-- -->, so match fragments.
+
+const verifiedDoc = () => doc({
+  measurements: { 'SE-1': { label: 'SE-1', actualCm: 390, updatedAt: '' } },
+})
+
+
+describe('SolvePanel sections', () => {
+  it('renders Progress, Settings and Actions in workflow order', () => {
+    const html = render(verifiedDoc())
+    const progress = html.indexOf('aria-label="Progress"')
+    const settings = html.indexOf('aria-label="Settings"')
+    const actions = html.indexOf('aria-label="Actions"')
+    expect(progress).toBeGreaterThanOrEqual(0)
+    expect(settings).toBeGreaterThan(progress)
+    expect(actions).toBeGreaterThan(settings)
+  })
+
+  it('shows no Last result section before the first run', () => {
+    expect(render(verifiedDoc())).not.toContain('aria-label="Last result"')
+  })
+
+  it('shows the report of the last run when there is one', () => {
+    const html = render(verifiedDoc(), 'Solved 1 rooms together: fit error 0,4 cm rms.')
+    expect(html).toContain('aria-label="Last result"')
+    expect(html).toContain('data-solve-report')
+    expect(html).toContain('Solved 1 rooms together')
+  })
+})
+
+describe('SolvePanel progress', () => {
+  it('gives one row per room with its counts and its fit error', () => {
+    const d = doc({
+      measurements: { 'SE-1': { label: 'SE-1', actualCm: 392, updatedAt: '' } },
+      rooms: [rect(), rect({ id: 'r2', code: 'CU', name: 'Cuisine' })],
+    })
+    const html = render(d)
+    expect(html).toContain('data-solve-room="SE"')
+    expect(html).toContain('data-solve-room="CU"')
+    expect(html).toContain('aria-label="Select room Séjour (SE)"')
+    expect(html).toContain('1<!-- -->/<!-- -->4') // one measured wall out of four
+    expect(html).toContain('data-solve-residual="SE"')
+    expect(html).toContain('±<!-- -->2')
+    expect(html).toContain('data-solve-totals')
+    expect(html).toContain('2 rooms, 1 of 8 walls measured')
+  })
+
+  it('shows a lock on a room whose verified walls are all locked', () => {
+    const d = doc({
+      rooms: [rect({ walls: { v0: { type: 'partition', thicknessCm: 10, locked: true } } })],
+      measurements: { 'SE-1': { label: 'SE-1', actualCm: 390, updatedAt: '' } },
+    })
+    expect(render(d)).toContain('aria-label="locked"')
+    expect(render(verifiedDoc())).not.toContain('aria-label="locked"')
+  })
+
+  it('has a hint instead of the list when the plan has no room', () => {
+    expect(render(doc({ rooms: [] }))).toContain('No room in the plan yet.')
+  })
+})
+
+describe('SolvePanel settings', () => {
+  it('owns the precision control and the keep-locked option', () => {
+    const html = render(verifiedDoc())
+    expect(html).toContain('aria-label="Precision of solved corners and thicknesses"')
+    expect(html).toContain('Precision (cm)')
+    expect(html).toContain('name="solveKeepLocked"')
+    expect(html).toContain('Default 0,5 cm')
+  })
+
+  it('marks the precision of the plan as pressed', () => {
+    expect(render(verifiedDoc())).toContain('aria-pressed="true" title="0,5"')
+    const off = doc({ apartment: { precisionCm: 0 } })
+    expect(render(off)).toContain('aria-pressed="true" title="Off"')
+  })
+})
+
+describe('SolvePanel actions', () => {
+  it('disables both actions when no room has a verified wall length', () => {
+    const html = render(doc())
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Apply measured lengths to all rooms<\/button>/)
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Solve whole plan<\/button>/)
+    expect(html).toContain('No verified wall length in any room.')
+  })
+
+  it('enables the actions once a wall is verified, and keeps the solve hint', () => {
+    const html = render(verifiedDoc())
+    expect(html).toContain('>Apply measured lengths to all rooms</button>')
+    expect(html).toContain('>Solve whole plan</button>')
+    expect(html).not.toContain('No verified wall length in any room.')
+    expect(html).toContain('Solve all rooms together: shared walls, wall thicknesses and walls in line.')
+  })
+})
+
+describe('SolvePanel (wired to the stores)', () => {
+  it('renders on its own with the empty plan', () => {
+    const html = renderToString(<SolvePanel />)
+    expect(html).toContain('aria-label="Progress"')
+    expect(html).toContain('No room in the plan yet.')
+    expect(html).toContain('No verified wall length in any room.')
+  })
+})

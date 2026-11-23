@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { parseSections, parseTab } from './store'
 
 describe('parseTab', () => {
-  it('reads the two known tabs', () => {
+  it('reads the three known tabs', () => {
     expect(parseTab('inspect')).toBe('inspect')
+    expect(parseTab('solve')).toBe('solve')
     expect(parseTab('plan')).toBe('plan')
   })
 

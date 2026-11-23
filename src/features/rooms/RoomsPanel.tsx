@@ -3,7 +3,7 @@
 // All lengths are cm. One undo step per edit, comma decimals.
 import { useEffect, useMemo, useState } from 'react'
 import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
-import { fmtCm, innerWallLengths, roomAreaM2, roomInnerRing, roomWalls } from '../../model/geometry'
+import { fmtCm, innerWallLengths, roomAreaM2, roomWalls } from '../../model/geometry'
 import { planPrecision, shownLength } from '../../model/precision'
 import { selectedItems, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
@@ -24,14 +24,20 @@ import {
   TextField,
   formatM2,
 } from '../../shell/panel'
+import { useSidebar } from '../../shell/sidebar/store'
 import { undoToast } from '../toast'
-import { applyMeasuredAll, applyMeasuredNear, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
-import { applyGlobal, describeGlobal } from './applyGlobal'
+import { applyMeasuredNear, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
 import { setWallAlign } from './thickness'
 import { useActiveHole } from './holes'
 import { deleteRoom, moveHoleVertex, moveVertices, movableLinked, setRoomCode, vertexLocked } from './ops'
 import { elementRows, wallElementRows, wallRows, WALL_TYPE_CHIP, type ElementRow } from './roomLists'
 import { wallProps } from './walls'
+import { fitCheck } from './fit'
+
+// The whole-plan tools (apply to all rooms, solve whole plan, precision, keep locked) live
+// in the Solve tab (features/solve). `fitCheck` moved to ./fit; re-exported for old imports.
+export { fitCheck } from './fit'
+export type { FitCheck } from './fit'
 
 const update = (fn: (d: PlanDoc) => PlanDoc) => useDoc.getState().update(fn)
 const patchRoom = (id: string, patch: Partial<Room>) =>
@@ -93,22 +99,6 @@ function setWallTypes(refs: WallRef[], type: WallType) {
 
 /** Signed cm difference, French decimal comma: "+2,1" / "−0,6". */
 const fmtDiffCm = (d: number) => `${d >= 0 ? '+' : '−'}${fmtCm(Math.abs(Math.round(d * 10) / 10))}`
-
-/** Measured values of a room against its plan: rms of (measured − plan), and the diagonal check. */
-export function fitCheck(doc: Pick<PlanDoc, 'measurements'>, room: Room) {
-  // Inside faces: measured values are taken inside the room.
-  const q = roomInnerRing(room)
-  const inner = innerWallLengths(room)
-  const diffs = verifiedWalls(doc, room).map((v) => v.cm - inner[v.index])
-  let diagonal: { measuredCm: number; planCm: number } | undefined
-  const dm = doc.measurements[`${room.code}-D`]?.actualCm
-  if (room.diagonal && dm && dm > 0) {
-    const a = q[room.diagonal[0]], b = q[room.diagonal[1]]
-    if (a && b) { diagonal = { measuredCm: dm, planCm: Math.hypot(b.x - a.x, b.y - a.y) }; diffs.push(dm - diagonal.planCm) }
-  }
-  if (!diffs.length) return null
-  return { rmsCm: Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length), count: diffs.length, diagonal }
-}
 
 /** Selected walls when two or more are selected, else null. */
 function wallGroup(items: SelItem[]): WallRef[] | null {
@@ -176,19 +166,6 @@ function ElementList({ rows, onSelect, show = 'wall' }: { rows: ElementRow[]; on
 export type ActiveHole = { roomId: string; holeIndex: number } | null
 
 /** Sidebar panel: properties of the selected room / wall / vertex. */
-/** "Solve whole plan" option: keep locked walls (UI setting, on by default). */
-function KeepLockedToggle() {
-  const on = useUi((s) => s.solveKeepLocked)
-  return (
-    <CheckboxRow
-      name="solveKeepLocked"
-      label="Keep locked walls when solving the whole plan"
-      checked={on}
-      onChange={(checked) => useUi.getState().set({ solveKeepLocked: checked })}
-    />
-  )
-}
-
 export function RoomsPanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
@@ -223,9 +200,9 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
   const roomId = selection && selection.kind !== 'element' ? selection.roomId : null
   const room = doc.rooms.find((r) => r.id === roomId)
   const apartmentCeilingCm = doc.apartment?.defaultCeilingCm ?? null
-  // The apply note belongs to the room it was run for, so it vanishes on a room change
-  // without an effect (derive during render instead of resetting in an effect).
-  const [note, setNote] = useState<{ roomId: string; text: string } | null>(null)
+  // Report of the last "Apply measured lengths" run for this room; local, so it goes away
+  // with the room card instead of following the selection.
+  const [note, setNote] = useState<string | null>(null)
 
   if (!room || !selection || selection.kind === 'element') return null
   const walls = roomWalls(room)
@@ -252,21 +229,11 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
   }
   const groupKind = items.length > 1 ? items[0].kind : null
 
-  const runApply = (all: boolean) => {
+  const runApply = () => {
     const current = useDoc.getState().doc
-    const r = all ? applyMeasuredAll(current) : applyMeasuredNear(current, room.id)
+    const r = applyMeasuredNear(current, room.id)
     if (r.doc !== current) update(() => r.doc)
-    const done = r.reports.filter((x) => x.mode !== 'none')
-    setNote({ roomId: room.id, text: all
-      ? done.length ? `Applied to ${done.length} room${done.length === 1 ? '' : 's'}. ${done.map(describeReport).join(' ')}` : 'No room has verified wall lengths.'
-      : describeReport(r.reports[0]) })
-  }
-
-  const runGlobal = () => {
-    const current = useDoc.getState().doc
-    const r = applyGlobal(current, { keepLocked: useUi.getState().solveKeepLocked })
-    if (r.doc !== current) update(() => r.doc)
-    setNote({ roomId: room.id, text: describeGlobal(r.report) })
+    setNote(describeReport(r.reports[0]))
   }
 
   return (
@@ -340,7 +307,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
           <EmptyHint>
             Key B: bearing / partition. Length moves the end vertex. "In line on" is the line of this wall that lines up with
             the walls that continue it: the face in this room (as measured on site), the centre (as on an architect plan),
-            or the face on the other side. "Solve whole plan" uses it.
+            or the face on the other side. The dotted blue line on the plan shows it. "Solve whole plan" uses it.
           </EmptyHint>
         </PanelSection>
       )}
@@ -545,19 +512,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
       </PanelSection>
 
       <PanelSection id="room-measured" title="Measured lengths" collapsible>
-        <button className={BTN} disabled={!verified.length} onClick={() => runApply(false)}>Apply measured lengths</button>
-        <button className={BTN} disabled={!doc.rooms.some((r) => verifiedWalls({ measurements: doc.measurements }, r).length)} onClick={() => runApply(true)}>
-          Apply to all rooms
-        </button>
-        <button
-          className={BTN}
-          disabled={!doc.rooms.some((r) => verifiedWalls({ measurements: doc.measurements }, r).length)}
-          onClick={runGlobal}
-          title="Solve all rooms together: shared walls, wall thicknesses and walls in line. Keeps all measured values; other walls move to fit."
-        >
-          Solve whole plan (beta)
-        </button>
-        <KeepLockedToggle />
+        <button className={BTN} disabled={!verified.length} onClick={runApply}>Apply measured lengths</button>
         <CheckboxRow
           name="lockVerifiedWalls"
           label="Lock verified walls"
@@ -566,7 +521,18 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
           onChange={(checked) => update((d) => setVerifiedLocked(d, room.id, checked))}
         />
         {!verified.length && <EmptyHint>No verified wall lengths yet. Measure this room in Measuring Mode.</EmptyHint>}
-        {note && note.roomId === room.id && <p className="text-xs text-slate-700 dark:text-slate-200">{note.text}</p>}
+        {note && <p className="text-xs text-slate-700 dark:text-slate-200">{note}</p>}
+        <EmptyHint>
+          Whole plan: Solve tab.{' '}
+          <button
+            type="button"
+            data-goto-solve=""
+            onClick={() => useSidebar.getState().setTab('solve')}
+            className="underline hover:no-underline"
+          >
+            Open Solve
+          </button>
+        </EmptyHint>
       </PanelSection>
     </>
   )

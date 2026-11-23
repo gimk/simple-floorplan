@@ -3,7 +3,7 @@
 // is unavailable (private mode, blocked cookies, server render in tests).
 import { create } from 'zustand'
 
-export type SidebarTab = 'inspect' | 'plan'
+export type SidebarTab = 'inspect' | 'solve' | 'plan'
 
 const TAB_KEY = 'sfp.sidebar.tab'
 const SECTIONS_KEY = 'sfp.sidebar.sections'
@@ -34,7 +34,8 @@ const writeRaw = (key: string, value: string) => {
 }
 
 /** Stored tab, 'inspect' when there is none or it is unknown. */
-export const parseTab = (raw: string | null): SidebarTab => (raw === 'plan' ? 'plan' : 'inspect')
+export const parseTab = (raw: string | null): SidebarTab =>
+  raw === 'plan' ? 'plan' : raw === 'solve' ? 'solve' : 'inspect'
 
 /** Stored section memory. Anything that is not `{ [id]: boolean }` is dropped. */
 export const parseSections = (raw: string | null): Record<string, boolean> => {

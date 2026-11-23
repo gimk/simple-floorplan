@@ -77,6 +77,13 @@ describe('ApartmentCard', () => {
     expect(render(baseDoc, null)).toContain('Apartment')
   })
 
+  it('no longer owns the precision setting (it moved to the Solve tab)', () => {
+    const html = render()
+    expect(html).not.toContain('Precision (cm)')
+    expect(html).not.toContain('aria-label="Precision of solved corners and thicknesses"')
+    expect(html).not.toContain('Default 0,5 cm')
+  })
+
   it('keeps the field names and the collapsible reference section', () => {
     const html = render()
     expect(html).toContain('aria-label="Reference surfaces"')

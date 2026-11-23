@@ -144,6 +144,8 @@ type UiState = {
   snap: { grid: boolean; gridCm: number; angles: boolean; vertices: boolean }
   /** "Solve whole plan" keeps locked walls. */
   solveKeepLocked: boolean
+  /** Report of the last run of the Solve tab (whole plan, not per room). */
+  solveReport: string | null
   layers: Layers
   /** Before / After / Both renovation display (see features/renovation, 7.4). */
   renovationView: RenovationView
@@ -155,7 +157,9 @@ type UiState = {
   select: (s: Selection) => void
   /** Shift + click: add the item to the group, or remove it. */
   toggleSelect: (s: SelItem) => void
-  set: (p: Partial<Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect'>>) => void
+  /** Write the report of the Solve tab (null clears it). */
+  setSolveReport: (text: string | null) => void
+  set: (p: Partial<Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect' | 'setSolveReport'>>) => void
 }
 
 export const useUi = create<UiState>()((set) => ({
@@ -166,6 +170,7 @@ export const useUi = create<UiState>()((set) => ({
   placeKind: 'door',
   snap: { grid: true, gridCm: 5, angles: true, vertices: true },
   solveKeepLocked: true,
+  solveReport: null,
   layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true },
   renovationView: 'both',
   view: { x: -100, y: -100, zoom: 1 },
@@ -173,6 +178,7 @@ export const useUi = create<UiState>()((set) => ({
   setTool: (tool) => set({ tool }),
   select: (selection) => set({ selection, multi: [] }),
   toggleSelect: (item) => set((s) => toggleItem(s, item)),
+  setSolveReport: (solveReport) => set({ solveReport }),
   set: (p) => set(p),
 }))
 

@@ -91,13 +91,25 @@ describe('roomIdOfSelection', () => {
 })
 
 describe('Sidebar shell', () => {
-  it('renders the two tabs with Inspect active', () => {
+  it('renders the three tabs with Inspect active', () => {
     const html = renderToString(<Sidebar />)
     expect(html).toContain('role="tablist"')
     expect(html).toContain('aria-selected="true"')
     expect(html).toContain('>Inspect<')
+    expect(html).toContain('>Solve<')
     expect(html).toContain('>Plan<')
     expect(html).toContain('role="tabpanel"')
+  })
+
+  it('gives the Solve tab the whole-plan sections', () => {
+    const html = renderToString(<Sidebar />)
+    expect(html).toContain('-panel-solve"')
+    expect(html).toContain('aria-label="Progress"')
+    expect(html).toContain('aria-label="Settings"')
+    expect(html).toContain('aria-label="Actions"')
+    // The whole-plan tools live there now, not in the room card.
+    expect(html).toContain('name="solveKeepLocked"')
+    expect(html).toContain('aria-label="Precision of solved corners and thicknesses"')
   })
 
   it('mounts the panels unchanged, including the layer checkboxes', () => {

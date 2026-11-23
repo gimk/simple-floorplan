@@ -1,8 +1,10 @@
-// Sidebar shell: two tabs around the feature panels (docs/sidebar-plan.md phase 1).
+// Sidebar shell: three tabs around the feature panels (docs/sidebar-plan.md phase 1,
+// docs/sidebar-plan-3.md for the Solve tab).
 //   Inspect = the current context (breadcrumb + apartment, room/wall, element, tape, pin).
+//   Solve   = the whole-plan tools (progress, precision, keep locked, apply / solve).
 //   Plan    = the global sections (background, layers, calculators, export).
 // Panels are mounted unchanged here; the tab and the open state of each section are
-// remembered per viewer (localStorage, see ./store.ts).
+// remembered per viewer (localStorage, see ./store.ts). A new selection brings back Inspect.
 import { useEffect, useId, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
 import { ImagePlus } from 'lucide-react'
@@ -11,6 +13,7 @@ import { useAnnotSel } from '../../features/annotations/selection'
 import { ApartmentPanel } from '../../features/apartment'
 import { ClearancePanel } from '../../features/clearance'
 import { RoomsPanel } from '../../features/rooms'
+import { SolvePanel } from '../../features/solve'
 import { ElementsPanel } from '../../features/elements'
 import { TapePanel, PinPanel } from '../../features/annotations'
 import { BackgroundPanel } from '../../features/background'
@@ -23,6 +26,7 @@ import { useSidebar, type SidebarTab } from './store'
 
 const TABS: { id: SidebarTab; label: string }[] = [
   { id: 'inspect', label: 'Inspect' },
+  { id: 'solve', label: 'Solve' },
   { id: 'plan', label: 'Plan' },
 ]
 
@@ -111,6 +115,16 @@ export function Sidebar() {
         <ElementsPanel />
         <TapePanel />
         <PinPanel />
+      </div>
+
+      <div
+        id={`${baseId}-panel-solve`}
+        role="tabpanel"
+        aria-labelledby={`${baseId}-tab-solve`}
+        className={tab === 'solve' ? 'flex flex-col gap-3' : 'hidden'}
+      >
+        {/* Whole-plan tools: progress, precision, keep locked, apply / solve (docs/sidebar-plan-3.md). */}
+        <SolvePanel />
       </div>
 
       <div

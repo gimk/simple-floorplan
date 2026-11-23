@@ -3,7 +3,6 @@
 // Built from the shared panel primitives (docs/sidebar-plan.md §3-4).
 import { useId, useState } from 'react'
 import { House, Plus, Trash2 } from 'lucide-react'
-import { DEFAULT_PRECISION_CM, planPrecision } from '../../model/precision'
 import { uid, useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Selection, SurfaceReference, SurfaceReferenceSource } from '../../model/types'
 import {
@@ -17,7 +16,6 @@ import {
   MUTED,
   NumberField,
   PanelSection,
-  Segmented,
   SelectField,
   StatGrid,
   TextField,
@@ -44,23 +42,6 @@ function setDefaultCeiling(value: number | null) {
     const apartment = { ...(d.apartment ?? {}) }
     if (value === null) delete apartment.defaultCeilingCm
     else apartment.defaultCeilingCm = value
-    return { ...d, apartment }
-  })
-}
-
-const PRECISIONS = [
-  { value: '0', label: 'Off' },
-  { value: '0.5', label: '0,5' },
-  { value: '1', label: '1' },
-] as const
-
-/** 0.5 is the default: it is not stored. Off is stored as 0. */
-function setPrecision(value: string) {
-  UPDATE((d) => {
-    const apartment = { ...(d.apartment ?? {}) }
-    const cm = Number(value) as 0 | 0.5 | 1
-    if (cm === DEFAULT_PRECISION_CM) delete apartment.precisionCm
-    else apartment.precisionCm = cm
     return { ...d, apartment }
   })
 }
@@ -299,19 +280,6 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
         {totals.roomsWithOwnCeiling > 0
           ? ` ${totals.roomsWithOwnCeiling} room(s) override it.`
           : ' No room overrides it.'}
-      </EmptyHint>
-
-      <FieldRow label="Precision (cm)">
-        <Segmented
-          ariaLabel="Precision of solved corners and thicknesses"
-          options={PRECISIONS}
-          value={String(planPrecision(doc))}
-          onChange={setPrecision}
-        />
-      </FieldRow>
-      <EmptyHint>
-        Smallest step for the corners and wall thicknesses that "Apply measured lengths" and "Solve whole plan" write.
-        Default 0,5 cm. Off keeps the exact result.
       </EmptyHint>
 
       <PanelSection
