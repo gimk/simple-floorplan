@@ -21,8 +21,22 @@ const setNote = (code: string, text: string) =>
     return { ...d, roomNotes }
   })
 
-export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; allLabels: string[] }) {
+/** Survey label under the pointer or focus: the canvas draws it, and the matching field gets a ring. */
+const setHover = (label: string) => useUi.getState().set({ hoverLabel: label })
+/** Clear the hover label, but only if it is still this label. */
+const clearHover = (label: string) => {
+  if (useUi.getState().hoverLabel === label) useUi.getState().set({ hoverLabel: null })
+}
+
+type Props = {
+  doc: PlanDoc; room: Room; allLabels: string[]
+  /** Hide the small room drawing (desktop: the canvas shows the room). */
+  hideDrawing?: boolean
+}
+
+export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
   const [focused, setFocused] = useState<string | null>(null)
+  const hoverLabel = useUi((s) => s.hoverLabel)
   // Source saved with the values typed in this card. The picker is gone, so it stays tape.
   const measureSource = useUi((s) => s.measureSource)
   const ids = surveyIds(room, doc.apartment?.defaultCeilingCm)
@@ -50,7 +64,13 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
       : sid.label
     const applyRoom = wallLabelRoom(sid.label) ?? parseThicknessLabel(sid.label)?.code
     return (
-      <div key={sid.label} className="flex min-w-0 flex-col gap-1">
+      <div
+        key={sid.label}
+        className={`flex min-w-0 flex-col gap-1 rounded-lg ${hoverLabel === sid.label ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-white dark:ring-orange-400 dark:ring-offset-[#1b2128]' : ''}`}
+        data-field-highlight={hoverLabel === sid.label ? sid.label : undefined}
+        onPointerEnter={() => setHover(sid.label)}
+        onPointerLeave={() => { if (focused !== sid.label) clearHover(sid.label) }}
+      >
         <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-green-700 dark:text-green-400' : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
           <span className="truncate">{title}</span>
           {verified
@@ -60,10 +80,10 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
         <NumField
           id={inputId(sid.label)}
           value={m?.actualCm}
-          placeholder={sid.plannedCm != null ? `plan ${fmtCm(sid.plannedCm)}` : undefined}
+          placeholder={sid.plannedCm != null ? (hideDrawing ? fmtCm(sid.plannedCm) : `plan ${fmtCm(sid.plannedCm)}`) : undefined}
           onValue={(n) => setMeasurement(sid.label, n, measureSource)}
-          onFocus={() => setFocused(sid.label)}
-          onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); if (applyRoom) flushAutoApply(applyRoom) }}
+          onFocus={() => { setFocused(sid.label); setHover(sid.label) }}
+          onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); clearHover(sid.label); if (applyRoom) flushAutoApply(applyRoom) }}
           onEnter={() => goNext(sid.label)}
         />
         {verified && sid.plannedCm != null && dis && (
@@ -84,11 +104,13 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
         <small className="font-mono text-[13px] font-medium text-slate-500 dark:text-slate-400">{room.code} · {done}/{total}</small>
       </h2>
 
-      <MiniDrawing
-        doc={doc} room={room} focused={focused}
-        pins={roomPins(doc, room.id).map((p, i) => ({ n: i + 1, at: p.at }))}
-        tapes={doc.tapes.filter((t) => t.roomId === room.id && !isUnplaced(t)).map((t) => ({ a: t.a, b: t.b, label: t.actualCm != null ? fmtCm(t.actualCm) : tapeLabel(t) }))}
-      />
+      {!hideDrawing && (
+        <MiniDrawing
+          doc={doc} room={room} focused={focused}
+          pins={roomPins(doc, room.id).map((p, i) => ({ n: i + 1, at: p.at }))}
+          tapes={doc.tapes.filter((t) => t.roomId === room.id && !isUnplaced(t)).map((t) => ({ a: t.a, b: t.b, label: t.actualCm != null ? fmtCm(t.actualCm) : tapeLabel(t) }))}
+        />
+      )}
 
       <div className="grid grid-cols-2 gap-2.5">
         {ids.map(field)}

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import {
   DoorOpen, Hand, Keyboard, MousePointer2, MapPin, MoreVertical, PanelRightClose, PanelRightOpen,
-  PenTool, Ruler, Scissors, Square, SquareDashed, Undo2, Redo2, Smartphone, Crosshair, Cloud, CloudOff, KeyRound,
+  PenTool, Ruler, Scissors, Square, SquareDashed, Undo2, Redo2, Smartphone, Monitor, Crosshair, Cloud, CloudOff, KeyRound,
 } from 'lucide-react'
 import { getSyncState, setPasscode, startSync, useSyncState, useSyncStatusText } from './sync/sync'
 import { Viewport } from './canvas/Viewport'
@@ -12,7 +12,7 @@ import type { ToolId } from './model/types'
 import { BackgroundLayer, CalibrateTool } from './features/background'
 import { RoomsLayer, RoomTools } from './features/rooms'
 import { ElementsLayer, PlaceElementTool } from './features/elements'
-import { MeasureMode } from './features/measure'
+import { MeasureMode, MeasurePanel } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
 import { AnnotationsLayer, PinTool, TapeTool } from './features/annotations'
 import { selectAnnot, useAnnotSel } from './features/annotations/selection'
@@ -30,6 +30,7 @@ import { parentSelection } from './shell/sidebar/trail'
 import { installBridge } from './shell/bridge'
 import { fitToDoc } from './shell/fit'
 import { initTheme } from './shell/theme'
+import { useIsDesktop } from './shell/useDesktop'
 
 initTheme()
 
@@ -211,6 +212,9 @@ export default function App() {
   useEffect(() => startSync(), [])
   useEffect(() => { installBridge() }, [])
   const mode = useUi((s) => s.mode)
+  // Desktop: Measuring Mode keeps the editor layout and only the right panel changes.
+  const isDesktop = useIsDesktop()
+  const measureDesktop = mode === 'measure' && isDesktop
   const setMode = useUi((s) => s.setMode)
   const tool = useUi((s) => s.tool)
   const setTool = useUi((s) => s.setTool)
@@ -243,7 +247,7 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      {mode === 'edit' && (
+      {(mode === 'edit' || measureDesktop) && (
         <header className="flex h-12 shrink-0 items-center gap-1 border-b border-black/10 bg-white px-2 sm:gap-2 sm:px-3 dark:border-white/10 dark:bg-[#1b2128]">
           <div className="min-w-0 flex-1">
             <ProjectTitleButton />
@@ -303,19 +307,21 @@ export default function App() {
           </button>
           <button
             className={`${btn} border border-black/10 dark:border-white/10`}
-            aria-label="Switch to Measuring Mode"
+            aria-label={measureDesktop ? 'Exit Measuring Mode' : 'Switch to Measuring Mode'}
             onClick={() => setMode(mode === 'edit' ? 'measure' : 'edit')}
           >
-            <Smartphone size={16} /> <span className="hidden lg:inline">Measuring Mode</span>
+            {measureDesktop ? <Monitor size={16} /> : <Smartphone size={16} />}{' '}
+            <span className="hidden lg:inline">{measureDesktop ? 'Exit Measuring Mode' : 'Measuring Mode'}</span>
           </button>
         </header>
       )}
 
-      {mode === 'measure' ? (
-        // #8: no app header in Measuring Mode — the measure feature renders its own.
+      {mode === 'measure' && !isDesktop ? (
+        // Phones: no app header in Measuring Mode, the measure feature renders its own.
         <div className="min-h-0 flex-1 overflow-auto"><MeasureMode /></div>
       ) : (
         <div className="flex min-h-0 flex-1">
+          {!measureDesktop && (
           <nav className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-black/10 bg-white py-2 max-md:w-13 dark:border-white/10 dark:bg-[#1b2128]" aria-label="Tools">
             {TOOLS.map(({ id, label, key, icon: Icon }) => (
               <button
@@ -331,8 +337,9 @@ export default function App() {
               </button>
             ))}
           </nav>
+          )}
           <main className="relative min-w-0 flex-1">
-            <Viewport overlay={<ToolOverlay />}>
+            <Viewport overlay={measureDesktop ? null : <ToolOverlay />}>
               <CanvasGrid />
               {layers.background && <BackgroundLayer />}
               <RoomsLayer />
@@ -347,14 +354,14 @@ export default function App() {
               <ToolHints />
             </div>
           </main>
-          {sidebarOpen && (
+          {sidebarOpen && !measureDesktop && (
             <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
           )}
           <aside
-            className={`${sidebarOpen ? 'flex' : 'hidden'} w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-40 max-md:shadow-2xl`}
+            className={`${sidebarOpen || measureDesktop ? 'flex' : 'hidden'} w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-40 max-md:shadow-2xl`}
             aria-label="Side panel"
           >
-            <Sidebar />
+            {measureDesktop ? <MeasurePanel /> : <Sidebar />}
           </aside>
         </div>
       )}

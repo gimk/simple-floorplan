@@ -15,12 +15,16 @@ const HINTS: Record<ToolId, string> = {
   pin: 'Click anywhere to drop a note / photo pin',
 }
 
+/** Measuring Mode has no editing tool: its own hint. */
+const MEASURE_HINT = 'Click a wall to type its length · hover a wall to find its field · drag to pan · scroll to zoom'
+
 export function ToolHints() {
   const tool = useUi((s) => s.tool)
+  const measuring = useUi((s) => s.mode === 'measure')
   return (
     <div className="pointer-events-none min-w-[280px] max-w-full flex-1">
       <div className="w-fit max-w-full rounded-2xl border border-black/10 bg-white/90 px-3 py-1 text-xs leading-snug opacity-80 shadow-sm dark:border-white/15 dark:bg-[#1b2128]/90">
-        {HINTS[tool]}
+        {measuring ? MEASURE_HINT : HINTS[tool]}
       </div>
     </div>
   )

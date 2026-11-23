@@ -28,11 +28,15 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
   const ref = useRef<SVGSVGElement>(null)
   const view = useUi((s) => s.view)
   const tool = useUi((s) => s.tool)
+  // Measuring Mode has no editing tool: a left drag on the plan pans it (a click still selects).
+  const measuring = useUi((s) => s.mode === 'measure')
   const setUi = useUi((s) => s.set)
   const [svg, setSvg] = useState<SVGSVGElement | null>(null)
   const [space, setSpace] = useState(false)
   const pointers = useRef(new Map<number, Vec>())
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
+  /** Measuring Mode: a left press that becomes a pan only after it moves a few pixels. */
+  const pendingPan = useRef<{ id: number; x: number; y: number; vx: number; vy: number } | null>(null)
   const pinch = useRef<{ d: number; zoom: number; world: Vec } | null>(null)
 
   useEffect(() => setSvg(ref.current), [])
@@ -97,6 +101,9 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
       panStart.current = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }
       ref.current?.setPointerCapture(e.pointerId)
       e.stopPropagation()
+    } else if (measuring && e.button === 0 && e.pointerType === 'mouse') {
+      // Do not stop the event: a click on a wall or a room must still reach it.
+      pendingPan.current = { id: e.pointerId, x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }
     }
   }
   const onPointerMoveCapture = (e: React.PointerEvent) => {
@@ -110,6 +117,12 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
       e.stopPropagation()
       return
     }
+    const pp = pendingPan.current
+    if (pp && pp.id === e.pointerId && Math.hypot(e.clientX - pp.x, e.clientY - pp.y) > 4) {
+      pendingPan.current = null
+      panStart.current = { x: pp.x, y: pp.y, vx: pp.vx, vy: pp.vy }
+      ref.current?.setPointerCapture(e.pointerId)
+    }
     const p = panStart.current
     if (p) {
       const z = useUi.getState().view.zoom
@@ -120,6 +133,7 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
   const onPointerUpCapture = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId)
     if (pointers.current.size < 2) pinch.current = null
+    pendingPan.current = null
     if (panStart.current) { panStart.current = null; e.stopPropagation() }
   }
 

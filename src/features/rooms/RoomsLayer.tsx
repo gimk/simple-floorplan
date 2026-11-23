@@ -18,6 +18,8 @@ import { piecesPath, renovationRooms, wallAppearance, type DisplayRoom } from '.
 import { useSidebar } from '../../shell/sidebar/store'
 import { modeLayerVisible } from '../../shell/view/layers'
 import { hoverTarget } from './hoverTarget'
+import { focusMeasureField } from '../measure/focusField'
+import { inputId } from '../measure/actions'
 
 const pathOf = (rings: Vec[][]) =>
   rings.map((r) => 'M' + r.map((p) => `${p.x} ${p.y}`).join('L') + 'Z').join('')
@@ -92,7 +94,14 @@ export function RoomsLayer() {
     const w = (Math.max(nameW, areaW) + 10) / labelZoom, h = 34 / labelZoom
     return [d.id, labelPlacement(d.pieces[0], w, h, 12 / labelZoom)]
   })), [display, labelZoom, showCodes])
-  const interactive = tool === 'select'
+  // Measuring Mode with the canvas (desktop): no geometry edit. A wall or a room is only picked,
+  // and the wall under the pointer lights up its field in the measure panel.
+  const measuring = uiMode === 'measure'
+  const interactive = tool === 'select' && !measuring
+  const selectRoomOnly = (e: { button: number; isPrimary: boolean }, roomId: string) => {
+    if (e.button !== 0 || !e.isPrimary) return
+    useUi.getState().select({ kind: 'room', roomId })
+  }
   // Outlined rooms: the room of the selected item, or every room of a room group.
   const selRoomIds = new Set(items.flatMap((s) => (s.kind === 'room' || (s.kind !== 'element' && s === selection) ? [s.roomId] : [])))
   const selWalls = new Set(items.flatMap((s) => (s.kind === 'wall' ? [s.roomId + ':' + s.wallStart] : [])))
@@ -186,14 +195,14 @@ export function RoomsLayer() {
           d={piecesPath(d.pieces)}
           fillRule="evenodd"
           className={d.outdoor ? 'fill-emerald-100/80 dark:fill-emerald-900/40' : 'fill-sky-50/90 dark:fill-slate-800/90'}
-          pointerEvents={interactive ? 'auto' : 'none'}
-          style={interactive ? { cursor: 'move' } : undefined}
+          pointerEvents={interactive || measuring ? 'auto' : 'none'}
+          style={interactive ? { cursor: 'move' } : measuring ? { cursor: 'pointer' } : undefined}
           data-room-id={d.id}
           data-room-ids={d.roomIds.join(' ')}
           data-room-code={d.codes[0]}
           data-renovation-merged={d.merged ? 'true' : undefined}
           aria-label={d.merged ? `${d.name} (merged: ${d.codes.join(', ')})` : `${d.name} (${d.codes[0]})`}
-          onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : undefined}
+          onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : measuring && !d.merged ? (e) => selectRoomOnly(e, d.id) : undefined}
         />
       ))}
 
@@ -412,6 +421,33 @@ export function RoomsLayer() {
             aria-label={`Wall ${r.code}-${w.index + 1}, ${p.type}, ${fmtCm(w.length)} cm${p.locked ? ', locked' : ''}`}
             onPointerDown={(e) => onWallDown(e, vp, r.id, w.start.id)}
             onDoubleClick={(e) => onWallDouble(e, vp, r.id, w.start.id)} />
+        )
+      }))}
+
+      {/* Measuring Mode: wall hit areas that only hover and pick (no drag, no edit) */}
+      {measuring && rooms.map((r) => roomWalls(r).map((w) => {
+        const p = wallProps(r, w.start.id)
+        if (!wallAppearance(p.type, p.status, renovationView).visible) return null
+        const wallLabel = `${r.code}-${w.index + 1}`
+        return (
+          <line key={'mhit' + r.id + w.start.id} x1={w.start.x} y1={w.start.y} x2={w.end.x} y2={w.end.y}
+            stroke="transparent" strokeLinecap="round" style={{ cursor: 'pointer' }}
+            strokeWidth={Math.max(p.thicknessCm, px(18))}
+            data-wall-label={wallLabel}
+            data-measure-wall-hit=""
+            aria-label={`Wall ${wallLabel}, ${fmtCm(w.length)} cm`}
+            onPointerEnter={() => useUi.getState().set({ hoverLabel: wallLabel })}
+            onPointerLeave={() => {
+              // A focused field keeps its highlight on the plan.
+              if (typeof document !== 'undefined' && document.activeElement?.id === inputId(wallLabel)) return
+              if (useUi.getState().hoverLabel === wallLabel) useUi.getState().set({ hoverLabel: null })
+            }}
+            onPointerDown={(e) => {
+              if (e.button !== 0 || !e.isPrimary) return
+              // The panel opens the card of the room; then the field takes the focus.
+              useUi.getState().select({ kind: 'room', roomId: r.id })
+              focusMeasureField(wallLabel)
+            }} />
         )
       }))}
 

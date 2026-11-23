@@ -1,49 +1,31 @@
 // OWNER: measure agent. Contract: keep this export name.
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownCircle, Cloud, CloudOff, Eye, KeyRound, Monitor, Sun } from 'lucide-react'
-import { normalizeDoorHosts } from '../../core/doorHost'
+import { ArrowDownCircle, Eye, Monitor, Sun } from 'lucide-react'
 import { useDoc, useUi } from '../../model/store'
 import { allRequiredSurveyIds, labelRoomCode, roomsInWalkOrder } from '../../model/survey'
-import { getSyncState, setPasscode, useSyncState, useSyncStatusText } from '../../sync/sync'
 import { loadDemoApartment } from './demo'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
 import { inputId } from './actions'
 import { Overview } from './Overview'
 import { RoomCard } from './RoomCard'
 import { useWakeLock } from './useWakeLock'
+import { FilterGroup, SyncLine, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
 
-type Filter = 'all' | 'missing' | 'flagged'
-const FILTERS: { id: Filter; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'missing', label: 'Missing' },
-  { id: 'flagged', label: 'Flagged' },
-]
-
-const readFlag = (key: string, def: boolean) => {
-  try {
-    if (typeof localStorage === 'undefined') return def
-    const v = localStorage.getItem(key)
-    return v == null ? def : v === '1'
-  } catch { return def }
-}
+export { MeasurePanel } from './MeasurePanel'
 
 /** Full-screen Measuring Mode (mobile-first). Rendered instead of the editor when ui.mode === 'measure'. */
 export function MeasureMode() {
   const doc = useDoc((s) => s.doc)
-  const { text: status, warn: statusWarn } = useSyncStatusText()
   const allRooms = roomsInWalkOrder(doc)
   const labels = allRequiredSurveyIds(doc).map((s) => s.label)
   const { done, total } = docProgress(doc)
   const hasRooms = allRooms.length > 0
 
   const [filter, setFilter] = useState<Filter>('all')
-  const [keepOn, setKeepOn] = useState(() => readFlag('measure-keep-screen-on', true))
-  const [sunlight, setSunlight] = useState(() => readFlag('measure-sunlight', false))
+  const [keepOn, setKeepOn] = useStoredFlag('measure-keep-screen-on', true)
+  const [sunlight, setSunlight] = useStoredFlag('measure-sunlight', false)
   useWakeLock(keepOn)
 
-  const sync = useSyncState()
-  const [unlocking, setUnlocking] = useState(false)
-  const [passErr, setPassErr] = useState('')
   const lastFocusedRef = useRef<string | null>(null)
   useEffect(() => {
     const onFocusIn = (e: FocusEvent) => {
@@ -52,21 +34,8 @@ export function MeasureMode() {
     document.addEventListener('focusin', onFocusIn)
     return () => document.removeEventListener('focusin', onFocusIn)
   }, [])
-  useEffect(() => {
-    if (sync.conn !== 'locked') { setPassErr(''); setUnlocking(false) }
-  }, [sync.conn])
 
-  const toggle = (key: string, set: (v: boolean) => void) => (v: boolean) => {
-    set(v)
-    try { localStorage.setItem(key, v ? '1' : '0') } catch { /* private mode */ }
-  }
-
-  // Canonical door hosts: old plans may hold a door that opens out of its own room. Fix them once,
-  // as ONE undoable update, when Measuring Mode opens (the rule is idempotent, so a second run is a no-op).
-  useEffect(() => {
-    const { doc: fixed, moved } = normalizeDoorHosts(useDoc.getState().doc)
-    if (moved.length) useDoc.getState().update(() => fixed)
-  }, [])
+  useNormalizeDoorHosts()
 
   // Open the room from the URL hash, if any.
   useEffect(() => {
@@ -126,59 +95,15 @@ export function MeasureMode() {
             <div className="h-full bg-green-600 transition-[width] motion-reduce:transition-none dark:bg-green-400" style={{ width: `${total ? (100 * done) / total : 0}%` }} />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1 sm:gap-2">
-            {sync.conn === 'locked' ? (
-              <form
-                className="relative flex min-w-0 flex-1 items-center gap-1"
-                onSubmit={async (e) => {
-                  e.preventDefault()
-                  const v = new FormData(e.currentTarget).get('p')
-                  if (!v || unlocking) return
-                  setPassErr('')
-                  setUnlocking(true)
-                  await setPasscode(String(v))
-                  setUnlocking(false)
-                  if (getSyncState().conn === 'locked') setPassErr('Passcode rejected')
-                }}
-              >
-                <KeyRound size={15} className="shrink-0 text-orange-700 dark:text-orange-400" />
-                <input
-                  name="p" type="password" placeholder="Passcode" autoComplete="current-password" aria-label="Sync passcode"
-                  className="min-h-11 w-24 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 text-sm dark:border-slate-600 dark:bg-[#12161b]"
-                />
-                <button type="submit" disabled={unlocking} className="min-h-11 rounded-lg bg-orange-700 px-2.5 text-xs font-semibold text-white hover:bg-orange-800 disabled:opacity-50">
-                  {unlocking ? '…' : 'Unlock'}
-                </button>
-                {passErr && (
-                  <span role="alert" className="absolute left-0 top-full z-20 mt-1 rounded bg-red-100 px-2 py-0.5 text-xs text-red-800 shadow dark:bg-red-900/60 dark:text-red-200">
-                    {passErr}
-                  </span>
-                )}
-              </form>
-            ) : (
-              <span
-                className={`flex min-w-0 flex-1 items-center gap-1 text-xs ${statusWarn ? 'text-orange-700 dark:text-orange-400' : 'text-emerald-700 dark:text-emerald-400'}`}
-                aria-label={status}
-                title={status}
-              >
-                {statusWarn ? <CloudOff size={16} className="shrink-0" /> : <Cloud size={16} className="shrink-0" />}
-                <span className="hidden truncate text-slate-500 sm:inline dark:text-slate-400">{status}</span>
-              </span>
-            )}
-            <span role="group" aria-label="Filter rooms" className="flex flex-none overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
-              {FILTERS.map((f) => (
-                <button
-                  key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}
-                  className={`min-h-11 px-2 text-xs font-semibold sm:px-2.5 ${filter === f.id ? 'bg-orange-700 text-white' : 'bg-white text-slate-600 dark:bg-[#12161b] dark:text-slate-300'}`}
-                >{f.label}</button>
-              ))}
-            </span>
+            <SyncLine />
+            <FilterGroup filter={filter} onChange={setFilter} />
             <button
-              type="button" onClick={() => toggle('measure-keep-screen-on', setKeepOn)(!keepOn)}
+              type="button" onClick={() => setKeepOn(!keepOn)}
               aria-pressed={keepOn} aria-label="Keep screen on" title="Keep screen on"
               className={`flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg border ${keepOn ? 'border-green-700 text-green-700 dark:border-green-400 dark:text-green-400' : 'border-slate-300 text-slate-400 dark:border-slate-600'}`}
             ><Eye size={16} /></button>
             <button
-              type="button" onClick={() => toggle('measure-sunlight', setSunlight)(!sunlight)}
+              type="button" onClick={() => setSunlight(!sunlight)}
               aria-pressed={sunlight} aria-label="Sunlight high-contrast mode" title="Sunlight (high contrast)"
               className={`flex min-h-11 min-w-11 flex-none items-center justify-center rounded-lg border ${sunlight ? 'border-yellow-500 bg-yellow-300 text-black' : 'border-slate-300 text-slate-500 dark:border-slate-600 dark:text-slate-400'}`}
             ><Sun size={16} /></button>

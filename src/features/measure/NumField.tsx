@@ -52,6 +52,8 @@ export function NumField({ id, value, onValue, placeholder, ariaLabel, allowZero
             onValue(n)
           }}
           onKeyDown={(e) => {
+            // Esc leaves the field (the App does not use Esc while a field has the focus).
+            if (e.key === 'Escape') { e.preventDefault(); ref.current?.blur(); return }
             if (e.key !== 'Enter') return
             e.preventDefault()
             if (onEnter) onEnter(); else ref.current?.blur()

@@ -202,3 +202,19 @@ describe('measuredText', () => {
     expect(measuredText(412, 410.5, 0.5)).toBe('✓ 412 · 410,5')
   })
 })
+
+describe('Measuring Mode on the canvas', () => {
+  it('has hover wall hit areas, and no edit hit areas, even with the select tool', () => {
+    const html = setup({ mode: 'measure' })
+    expect(html).toContain('data-measure-wall-hit')
+    expect(html).toContain('data-wall-label="CU-1"')
+    expect(html).not.toContain('data-wall-type')
+    expect(html).not.toContain('cursor:move')
+  })
+
+  it('keeps the edit hit areas in edit mode', () => {
+    const html = setup({ mode: 'edit' })
+    expect(html).toContain('data-wall-type')
+    expect(html).not.toContain('data-measure-wall-hit')
+  })
+})

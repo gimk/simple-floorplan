@@ -16,6 +16,7 @@ import { normalizeDeg, parseCommaNumber, rotateBy } from './rotate'
 export function BackgroundLayer() {
   const bg = useDoc((s) => s.doc.background)
   const tool = useUi((s) => s.tool)
+  const mode = useUi((s) => s.mode)
   const { toWorld } = useViewport()
   const drag = useRef<{ start: PlanDoc; px0: number; py0: number; x0: number; y0: number } | null>(null)
 
@@ -23,7 +24,7 @@ export function BackgroundLayer() {
   const { w, h } = imageSizeCm(bg)
   const cx = bg.xCm + w / 2
   const cy = bg.yCm + h / 2
-  const draggable = !bg.locked && tool === 'select'
+  const draggable = !bg.locked && tool === 'select' && mode === 'edit'
 
   return (
     <image
