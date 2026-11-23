@@ -320,6 +320,8 @@ export type PlanDoc = {
   apartment?: Apartment
   /** Traced walls of the Wall tool (docs/walls-plan.md phase 6). Absent in older documents. */
   traces?: TraceWall[]
+  /** Conversion to walls as the source (docs/walls-plan.md phase 5c): when, and what was merged. */
+  conversion?: { at: string; report: ConversionReport; seen?: boolean }
 }
 
 /**
