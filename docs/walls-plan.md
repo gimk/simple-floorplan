@@ -140,8 +140,9 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
    3b (after 2b): solver weights from the source. The TARGET is not stored yet: the derived wall ids
    change when a room joins a wall, so `measurementTarget(graph, rooms, label)` resolves it from the
    label at each call. Stored targets come with stable ids in phase 5.
-4. **Solver on the graph**: `globalSolve` reads `buildWallGraph`; remove the pairing guess; add centre
-   and outside face rows; outliers; snap thicknesses; preview.
+4. **Solver on the graph**: `globalSolve` reads `buildWallGraph` (same results); remove its own
+   pairing code; graph conflicts in the report; snap thicknesses; preview before apply. Centre and
+   outside face rows need stable wall labels: they move to phase 5.
 5. **Stored graph (schema v2)**: `doc.nodes`, `doc.walls`, rooms as face cycles. Migration from v1 with
    `buildWallGraph`. Transition layer: `room.vertices` and `room.walls` calculated, so features move
    one at a time. Server snapshot accepts v1 and v2.
