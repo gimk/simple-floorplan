@@ -238,6 +238,21 @@ describe('buildWallGraph', () => {
     expect(sharedWall(buildWallGraph([A, B], { pairTolCm: 10 }), 'A', 'B')).toEqual([])
   })
 
+  it('puts the line of a merged wall at the exact mean of copies under 1 cm apart', () => {
+    // The two copies of the wall are drawn 1,5 cm apart, so their ends are under the 1 cm node snap
+    // of the corner walls: the node is the crossing of the centre lines, not the first end found.
+    const A = room('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1)
+    const B = room('B', [[301.5, 0], [601.5, 0], [601.5, 400], [301.5, 400]], 2)
+    const g = buildWallGraph([A, B])
+    const shared = sharedWall(g, 'A', 'B')
+    expect(shared).toHaveLength(1)
+    const byId = new Map(g.nodes.map((n) => [n.id, n]))
+    expect(byId.get(shared[0].a)!.x).toBeCloseTo(300.75, 6)
+    expect(byId.get(shared[0].b)!.x).toBeCloseTo(300.75, 6)
+    // The corner of both rooms is on that line too, so no room is left on a copy.
+    for (const f of facesOf(g, shared[0].id)) expect(f.to).toBeCloseTo(400, 6)
+  })
+
   it('reports two facing walls that cannot be one wall', () => {
     // B and C are drawn 10 cm apart on the same side of A, so C cannot join the wall of A and B.
     const A = room('A', [[0, 0], [600, 0], [600, 400], [0, 400]], 1)

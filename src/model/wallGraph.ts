@@ -148,6 +148,9 @@ type DraftFace = {
 
 type Pair = { d: number; a: number; b: number; overlap: number }
 
+/** One end of one wall, a candidate node. */
+type Cand = { pos: Vec; keys: string[]; wall: number }
+
 const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 /** Room walk order, then code, then id: the same order for the same rooms in any array order. */
@@ -326,9 +329,8 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
   }
 
   // ---- nodes: one node where wall ends meet (within NODE_TOL_CM) ----
-  type Cand = { pos: Vec; keys: string[] }
   const cands: Cand[] = []
-  for (const w of walls) {
+  walls.forEach((w, wi) => {
     for (const u of [w.uLo, w.uHi]) {
       const keys: string[] = []
       for (const m of w.members) {
@@ -337,25 +339,30 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
         if (Math.min(ds, de) > NODE_TOL_CM) continue
         keys.push(`${m.room.id}:${ds <= de ? m.startId : m.endId}`)
       }
-      cands.push({ pos: pointAt(w, u), keys })
+      cands.push({ pos: pointAt(w, u), keys, wall: wi })
     }
-  }
-  const clusters: { pos: Vec; keys: Set<string> }[] = []
+  })
+  // The members are grouped by the FIRST end of the group (the same rule as phase 5a); the position
+  // of the node is calculated from the lines of all the walls that end there (see nodePosition).
+  const clusters: { anchor: Vec; members: number[]; keys: Set<string> }[] = []
   const clusterOfCand: number[] = cands.map(() => -1)
   const candOrder = cands
     .map((_, i) => i)
     .sort((i, j) => cands[i].pos.x - cands[j].pos.x || cands[i].pos.y - cands[j].pos.y || cmpStr(cands[i].keys.join('+'), cands[j].keys.join('+')))
   for (const i of candOrder) {
     const c = cands[i]
-    const hit = clusters.findIndex((k) => dist(k.pos, c.pos) <= NODE_TOL_CM)
-    if (hit >= 0) c.keys.forEach((k) => clusters[hit].keys.add(k))
-    else clusters.push({ pos: c.pos, keys: new Set(c.keys) })
+    const hit = clusters.findIndex((k) => dist(k.anchor, c.pos) <= NODE_TOL_CM)
+    if (hit >= 0) {
+      c.keys.forEach((k) => clusters[hit].keys.add(k))
+      clusters[hit].members.push(i)
+    } else clusters.push({ anchor: c.pos, members: [i], keys: new Set(c.keys) })
     clusterOfCand[i] = hit >= 0 ? hit : clusters.length - 1
   }
-  const nodes: GraphNode[] = clusters.map((c) => ({
+  const clusterPos = clusters.map((c) => nodePosition(c.members, cands, walls))
+  const nodes: GraphNode[] = clusters.map((c, k) => ({
     id: `n:${[...c.keys].sort(cmpStr).join('+')}`,
-    x: round(c.pos.x),
-    y: round(c.pos.y),
+    x: round(clusterPos[k].x),
+    y: round(clusterPos[k].y),
   }))
   // Candidate 2 * wall + end belongs to the a end (0) or the b end (1).
   const endNode = (wall: number, end: 0 | 1) => nodes[clusterOfCand[2 * wall + end]].id
@@ -370,8 +377,8 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
     const left = { x: -w.dir.y, y: w.dir.x }
     // T junctions: nodes that lie ON this wall (not at its ends) cut its faces.
     const cuts: number[] = []
-    for (const c of clusters) {
-      const rel = sub(c.pos, w.origin)
+    for (const c of clusterPos) {
+      const rel = sub(c, w.origin)
       if (Math.abs(dot(rel, left)) > T_TOL_CM) continue
       const u = dot(rel, w.dir) - w.uLo
       if (u > NODE_TOL_CM && u < length - NODE_TOL_CM) cuts.push(u)
@@ -437,6 +444,36 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
   }
 
   return { nodes, walls: walls.map((w, wi) => graphWall(w, endNode(wi, 0), endNode(wi, 1))), faces, roomFaces, conflicts }
+}
+
+/**
+ * Position of a node from the ends of the walls that meet there, so the line of a merged wall is
+ * exact: the point nearest to the centre lines of those walls (least squares; for two walls that is
+ * their crossing). One wall only: the mean of its own ends. Walls all on parallel lines (a T
+ * junction, two collinear walls that are not merged): the mean of the ends.
+ */
+function nodePosition(members: number[], cands: Cand[], walls: Draft[]): Vec {
+  const own = members.map((i) => cands[i])
+  const meanOf = (list: Cand[]): Vec => ({ x: mean(list.map((c) => c.pos.x)), y: mean(list.map((c) => c.pos.y)) })
+  const wallIndexes = [...new Set(own.map((c) => c.wall))]
+  if (wallIndexes.length < 2) return meanOf(own)
+  // Each wall gives the line n . p = c, with |n| = 1: the sum of the squared distances is least at
+  // the solution of A p = b, with A = sum(n n^T) and b = sum(c n).
+  let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0
+  for (const wi of wallIndexes) {
+    const w = walls[wi]
+    const n = { x: -w.dir.y, y: w.dir.x }
+    const c = n.x * w.origin.x + n.y * w.origin.y
+    a11 += n.x * n.x
+    a12 += n.x * n.y
+    a22 += n.y * n.y
+    b1 += n.x * c
+    b2 += n.y * c
+  }
+  const det = a11 * a22 - a12 * a12
+  // Parallel lines cross nowhere: the mean of the ends is the honest answer.
+  if (det <= 1e-9 * Math.max(1, a11 * a22)) return meanOf(own)
+  return { x: (b1 * a22 - a12 * b2) / det, y: (a11 * b2 - a12 * b1) / det }
 }
 
 /** Public wall record: no internal fields, no `undefined` optional keys. */

@@ -142,11 +142,10 @@ describe('convertToV2', () => {
     const b = nodes.get(shared.b)!
     expect(a.x).toBeCloseTo(b.x, 6)
     expect(after.rooms[0].vertices[1].x).toBeCloseTo(after.rooms[1].vertices[3].x, 6)
-    // The merged line is the mean of the two drawn lines (300 and 301,5), within the 1 cm node snap
-    // of phase 5a (a node takes the place of the corner that is already there).
-    expect(Math.abs(a.x - 300.75)).toBeLessThanOrEqual(1)
-    expect(a.x).toBeGreaterThanOrEqual(300)
-    expect(a.x).toBeLessThanOrEqual(301.5)
+    // The merged line is the EXACT mean of the two drawn lines (300 and 301,5): the node is the
+    // crossing of the centre lines of the walls that meet there, so the 1 cm node snap cannot pull
+    // the merged wall onto one of the two copies.
+    expect(a.x).toBeCloseTo(300.75, 6)
   })
 
   it('is stable: a converted document converts to itself', () => {
