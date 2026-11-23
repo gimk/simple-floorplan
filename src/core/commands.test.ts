@@ -714,6 +714,13 @@ describe('commands: renovation wall status (7.4)', () => {
     expect(back.warnings).toHaveLength(0)
   })
 
+  it('keeps the thickness when only the type changes', () => {
+    const thick = apply(flat(), { type: 'set_wall_props', wall: 'SE-2', thicknessCm: 18 }).doc
+    const bearing = apply(thick, { type: 'set_wall_props', wall: 'SE-2', wallType: 'bearing' }).doc
+    const wall = roomWalls(bearing.rooms[0])[1]
+    expect(bearing.rooms[0].walls[wall.start.id]).toEqual({ type: 'bearing', thicknessCm: 18 })
+  })
+
   it('warns when a bearing or exterior wall is marked for demolition', () => {
     const doc = apply(flat(), { type: 'set_wall_props', wall: 'SE-2', wallType: 'bearing', thicknessCm: 25 }).doc
     const res = apply(doc, { type: 'set_wall_props', wall: 'SE-2', status: 'demolish' })
