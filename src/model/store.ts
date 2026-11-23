@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { temporal } from 'zundo'
 import type { ElementKind, Mode, PlanDoc, Selection, ToolId } from './types'
 import type { RenovationView } from '../features/renovation/logic'
+import { toggleItem, type SelItem } from './selection'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
 
 // ---------- Document store (undoable) ----------
@@ -102,7 +103,10 @@ export type Layers = {
 type UiState = {
   mode: Mode
   tool: ToolId
+  /** Primary selected item (the last one clicked). */
   selection: Selection
+  /** Shift + click group: every selected item, the primary included (see model/selection.ts). */
+  multi: SelItem[]
   /** Element kind to place with the 'place-element' tool. */
   placeKind: ElementKind
   snap: { grid: boolean; gridCm: number; angles: boolean; vertices: boolean }
@@ -113,22 +117,27 @@ type UiState = {
   view: { x: number; y: number; zoom: number }
   setMode: (m: Mode) => void
   setTool: (t: ToolId) => void
+  /** Select one item only (or nothing). Clears the group. */
   select: (s: Selection) => void
-  set: (p: Partial<Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select'>>) => void
+  /** Shift + click: add the item to the group, or remove it. */
+  toggleSelect: (s: SelItem) => void
+  set: (p: Partial<Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect'>>) => void
 }
 
 export const useUi = create<UiState>()((set) => ({
   mode: typeof window !== 'undefined' && window.innerWidth < 700 ? 'measure' : 'edit',
   tool: 'select',
   selection: null,
+  multi: [],
   placeKind: 'door',
   snap: { grid: true, gridCm: 5, angles: true, vertices: true },
   layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true },
   renovationView: 'both',
   view: { x: -100, y: -100, zoom: 1 },
-  setMode: (mode) => set({ mode, tool: 'select', selection: null }),
+  setMode: (mode) => set({ mode, tool: 'select', selection: null, multi: [] }),
   setTool: (tool) => set({ tool }),
-  select: (selection) => set({ selection }),
+  select: (selection) => set({ selection, multi: [] }),
+  toggleSelect: (item) => set((s) => toggleItem(s, item)),
   set: (p) => set(p),
 }))
 

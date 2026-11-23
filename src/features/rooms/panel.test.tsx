@@ -38,6 +38,23 @@ const doc = (over: Partial<PlanDoc> = {}): PlanDoc => ({
 const render = (selection: Selection, d: PlanDoc = doc(), activeHole: ActiveHole = null) =>
   renderToString(<RoomsPanelView doc={d} selection={selection} activeHole={activeHole} />)
 
+describe('RoomsPanelView with a Shift + click group', () => {
+  it('lists the selected walls, applies to all, and hides Length', () => {
+    const items: Selection[] = [{ kind: 'wall', roomId: 'r1', wallStart: 'v0' }, { kind: 'wall', roomId: 'r1', wallStart: 'v2' }]
+    const html = renderToString(<RoomsPanelView doc={doc()} selection={items[1]} items={items.filter((x) => !!x)} activeHole={null} />)
+    expect(html).toContain('2 walls')
+    expect(html).toContain('SE-1, SE-3')
+    expect(html).toContain('name="thickness"')
+    expect(html).not.toContain('name="length"')
+  })
+  it('shows a summary for a group of rooms', () => {
+    const d = doc({ rooms: [rect(), rect({ id: 'r2', code: 'C1', name: 'Chambre' })] })
+    const items: Selection[] = [{ kind: 'room', roomId: 'r1' }, { kind: 'room', roomId: 'r2' }]
+    const html = renderToString(<RoomsPanelView doc={d} selection={items[1]} items={items.filter((x) => !!x)} activeHole={null} />)
+    expect(html).toContain('2 rooms selected')
+  })
+})
+
 describe('RoomsPanelView', () => {
   it('keeps the room field names, the delete action and the lists', () => {
     const html = render({ kind: 'room', roomId: 'r1' })

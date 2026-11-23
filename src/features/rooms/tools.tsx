@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type PointerEvent as RPE } from 'react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { dist, fmtCm, norm, sub } from '../../model/geometry'
+import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { Vec } from '../../model/types'
 import { newEdgeCrosses, selfIntersects } from './crossing'
@@ -294,8 +295,18 @@ function SelectTool() {
   const vp = useViewport()
   const { px } = vp
   const selection = useUi((s) => s.selection)
-  const roomId = selection && selection.kind !== 'element' ? selection.roomId : null
-  const room = useDoc((s) => s.doc.rooms.find((r) => r.id === roomId))
+  const multi = useUi((s) => s.multi)
+  const items = useMemo(() => selectedItems({ selection, multi }), [selection, multi])
+  const allRooms = useDoc((s) => s.doc.rooms)
+  // Points are shown for the selected room(s). While points are selected, every room shows its
+  // points, so Shift + click can add a point of another room.
+  const rooms = useMemo(() => {
+    if (!selection || selection.kind === 'element') return []
+    if (selection.kind === 'vertex') return allRooms
+    const ids = new Set(items.flatMap((s) => (s.kind === 'element' ? [] : [s.roomId])))
+    return allRooms.filter((r) => ids.has(r.id))
+  }, [selection, items, allRooms])
+  const selVerts = new Set(items.flatMap((s) => (s.kind === 'vertex' ? [s.vertexId] : [])))
 
   // Delete / Backspace on selected vertex or room.
   useEffect(() => {
@@ -324,20 +335,21 @@ function SelectTool() {
 
   return (
     <g>
-      {room && selection?.kind !== 'element' && room.vertices.map((v, i) => {
-        const sel = selection?.kind === 'vertex' && selection.vertexId === v.id
+      {rooms.map((room) => room.vertices.map((v, i) => {
+        const sel = selVerts.has(v.id)
         // Locked adjacent walls block the drag (7.2 #21): show not-allowed.
         const blocked = locked(room, i) || locked(room, i - 1)
         return (
-          <g key={v.id} style={{ cursor: blocked ? 'not-allowed' : 'move' }} onPointerDown={(e) => onVertexDown(e, vp, room.id, v.id)}>
+          <g key={room.id + v.id} style={{ cursor: blocked ? 'not-allowed' : 'move' }} data-vertex={room.id + ':' + v.id}
+            data-selected={sel ? 'true' : undefined} onPointerDown={(e) => onVertexDown(e, vp, room.id, v.id)}>
             <circle cx={v.x} cy={v.y} r={px(18)} fill="transparent" />
             <circle cx={v.x} cy={v.y} r={px(sel ? 8 : 6)} strokeWidth={px(2)}
               className={sel ? 'fill-orange-500 stroke-white' : 'fill-white stroke-orange-500 dark:fill-slate-900'} />
           </g>
         )
-      })}
-      {room && selection?.kind !== 'element' && room.holes.map((h) => h.map((v) => {
-        const sel = selection?.kind === 'vertex' && selection.vertexId === v.id
+      }))}
+      {rooms.map((room) => room.holes.map((h) => h.map((v) => {
+        const sel = selVerts.has(v.id)
         return (
           <g key={v.id} style={{ cursor: 'move' }} onPointerDown={(e) => onHoleVertexDown(e, vp, room.id, v.id)}>
             <circle cx={v.x} cy={v.y} r={px(18)} fill="transparent" />
@@ -346,7 +358,7 @@ function SelectTool() {
               className={sel ? 'fill-orange-500 stroke-white' : 'fill-white stroke-orange-500 dark:fill-slate-900'} />
           </g>
         )
-      }))}
+      })))}
       <GuidesLayer />
       <NoticeLayer />
     </g>

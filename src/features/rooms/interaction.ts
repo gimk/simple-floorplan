@@ -2,6 +2,7 @@
 // selection, insert, delete.
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { dot, roomWalls } from '../../model/geometry'
+import { inGroup, selectedItems, type SelItem } from '../../model/selection'
 import { beginDrag, endDrag, useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, Vec } from '../../model/types'
 import { selfIntersects } from './crossing'
@@ -85,6 +86,23 @@ export function otherVertices(doc: Pick<PlanDoc, 'rooms'>, skip?: (roomId: strin
 
 export function selectRoom(roomId: string) { useUi.getState().select({ kind: 'room', roomId }); clearHoleSel() }
 
+/** Shift + click: add the item to the selection group, or remove it. */
+function toggle(item: SelItem) { useUi.getState().toggleSelect(item); clearHoleSel() }
+
+/** Selected rooms, when this room is part of a group of two or more; else null. */
+function roomGroup(roomId: string): string[] | null {
+  const ui = useUi.getState()
+  if (!inGroup(ui, { kind: 'room', roomId })) return null
+  return selectedItems(ui).flatMap((s) => (s.kind === 'room' ? [s.roomId] : []))
+}
+
+/** Selected points, when this point is part of a group of two or more; else null. */
+function vertexGroup(roomId: string, vertexId: string): VRef[] | null {
+  const ui = useUi.getState()
+  if (!inGroup(ui, { kind: 'vertex', roomId, vertexId })) return null
+  return selectedItems(ui).flatMap((s) => (s.kind === 'vertex' ? [{ roomId: s.roomId, vertexId: s.vertexId }] : []))
+}
+
 const CROSS_MSG = 'Room would cross itself. Move cancelled.'
 
 /** After a drag: did a room that was simple become self-intersecting? */
@@ -99,27 +117,37 @@ const refKey = (r: VRef) => r.roomId + ':' + r.vertexId
 /**
  * Pointer down on a room fill (or its label): select it, then, without `vp`, nothing else
  * (old behaviour). With `vp`, a drag past the 4 px threshold moves the whole room.
+ * Shift + click (no drag) adds or removes the room from the selection group; Shift + drag
+ * still means "this room only". Dragging a room of a group moves every room of the group;
+ * a click without Shift and without a drag selects this room only.
  */
 export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
   if (e.button !== 0 || !e.isPrimary) return
-  selectRoom(roomId)
-  if (!vp) return
+  const shift = e.shiftKey
+  const flip = () => toggle({ kind: 'room', roomId })
+  const group = roomGroup(roomId)
+  const ids = group ?? [roomId]
+  if (!group && !shift) selectRoom(roomId)
+  if (!vp) { if (shift) flip(); return }
   const room0 = findRoom(roomId)
-  if (!room0) return
   const doc0 = useDoc.getState().doc
   const down = vp.toWorld(e.clientX, e.clientY)
   // The room vertex nearest the pointer is the one that snaps against other rooms.
-  const near = nearestVertex(room0, down)
-  if (!near) return
-  // Shared corners of other rooms follow the translation, so neighbours stretch (Shift = this room only,
-  // read on every move so it can be pressed during the drag).
-  const linkedAll = room0.vertices.flatMap((v) => movableLinked(doc0, roomId, v.id))
+  const near = room0 && nearestVertex(room0, down)
+  if (!near) { if (shift) flip(); return }
+  // Shared corners of other rooms follow the translation, so neighbours stretch (Shift = these rooms only,
+  // read on every move so it can be pressed during the drag). Corners of rooms in the group move with their room.
+  const idSet = new Set(ids)
+  const linkedAll = [...new Map(ids.flatMap((id) => (findRoom(id)?.vertices ?? []).flatMap((v) => movableLinked(doc0, id, v.id)))
+    .filter((l) => !idSet.has(l.roomId)).map((l) => [refKey(l), l] as const)).values()]
   const linkedKeysAll = new Set(linkedAll.map(refKey))
-  const affected = [roomId, ...new Set(linkedAll.map((l) => l.roomId))]
+  const affected = [...ids, ...new Set(linkedAll.map((l) => l.roomId))]
   let start: PlanDoc | null = null
   let last: Vec = near
   track(e, {
     onStart: () => {
+      // Shift + drag of a room outside the group: select it, as a plain drag does.
+      if (shift && !group) selectRoom(roomId)
       start = beginDrag()
       document.body.style.cursor = 'move'
     },
@@ -131,18 +159,22 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
       const ui = useUi.getState()
       const r = snapPoint(raw, {
         opts: ui.snap, tolCm: vp.px(10), disabled: ev.altKey,
-        // Both the room and the shared corners that travel with it stay out of the snap set.
-        vertices: otherVertices(start, (rid, vid) => rid === roomId || (!ev.shiftKey && linkedKeysAll.has(rid + ':' + vid))),
+        // The moving rooms and the shared corners that travel with them stay out of the snap set.
+        vertices: otherVertices(start, (rid, vid) => idSet.has(rid) || (!ev.shiftKey && linkedKeysAll.has(rid + ':' + vid))),
       })
       useGuides.getState().set(r.guides)
       last = r.point
       const d = { x: r.point.x - near.x, y: r.point.y - near.y }
       // Always translate the drag-start document, so every move is independent of the last one.
-      useDoc.getState().updateSilent(() => moveRoom(start as PlanDoc, roomId, d, linked))
+      // The linked corners are read from the drag-start document by the first moveRoom call.
+      useDoc.getState().updateSilent(() =>
+        ids.slice(1).reduce((acc, id) => moveRoom(acc, id, d), moveRoom(start as PlanDoc, ids[0], d, linked)))
     },
     onEnd: () => {
       document.body.style.cursor = ''
-      if (!start) return
+      // A click (no drag): Shift toggles the room in the group; a plain click on a room
+      // of a group selects that room only.
+      if (!start) { if (shift) flip(); else if (group) selectRoom(roomId); return }
       if (newlyCrossing(start, useDoc.getState().doc, affected)) {
         useDoc.getState().updateSilent(() => start as PlanDoc)
         notify(CROSS_MSG, last)
@@ -170,11 +202,16 @@ const CORNER_LOCKED_MSG = 'A wall at this corner is locked.'
 export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, vertexId: string) {
   if (e.button !== 0 || !e.isPrimary) return
   e.stopPropagation()
-  useUi.getState().select({ kind: 'vertex', roomId, vertexId })
+  // Shift + click (no drag) toggles the point in the group; Shift + drag is still "this room only".
+  const shift = e.shiftKey
+  const flip = () => toggle({ kind: 'vertex', roomId, vertexId })
+  const group = vertexGroup(roomId, vertexId)
+  if (group) { dragVertexGroup(e, vp, roomId, vertexId, group, shift); return }
+  const selectMe = () => useUi.getState().select({ kind: 'vertex', roomId, vertexId })
+  if (!shift) selectMe()
   const room0 = findRoom(roomId)
-  if (!room0) return
-  const i = room0.vertices.findIndex((v) => v.id === vertexId)
-  if (i < 0) return
+  const i = room0 ? room0.vertices.findIndex((v) => v.id === vertexId) : -1
+  if (!room0 || i < 0) { if (shift) flip(); return }
   const n = room0.vertices.length
   const orig = room0.vertices[i]
   const prev = room0.vertices[(i - 1 + n) % n], next = room0.vertices[(i + 1) % n]
@@ -198,7 +235,7 @@ export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, verte
   let warned = ''
   const warn = (msg: string, at: Vec) => { if (warned !== msg) { warned = msg; notify(msg, at) } }
   track(e, {
-    onStart: () => { start = beginDrag(); setDragInfo({ kind: 'vertex', roomId, vertexId }) },
+    onStart: () => { if (shift) selectMe(); start = beginDrag(); setDragInfo({ kind: 'vertex', roomId, vertexId }) },
     onMove: (ev) => {
       if (!start) return
       const base = start
@@ -241,7 +278,78 @@ export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, verte
     },
     onEnd: () => {
       setDragInfo(null)
+      if (!start) { if (shift) flip(); return }
+      if (newlyCrossing(start, useDoc.getState().doc, affected)) {
+        useDoc.getState().updateSilent(() => start as PlanDoc)
+        notify(CROSS_MSG, last)
+        return
+      }
+      endDrag(start)
+    },
+  })
+}
+
+/**
+ * Drag one point of a selection group: every selected point moves by the same offset. The
+ * dragged point snaps. Shared corners of other points follow (Shift = no followers).
+ * A click without a drag selects this point only; Shift + click removes it from the group.
+ */
+function dragVertexGroup(e: ReactPointerEvent, vp: Vp, roomId: string, vertexId: string, group: VRef[], shift: boolean) {
+  const doc0 = useDoc.getState().doc
+  const room0 = findRoom(roomId)
+  const i = room0?.vertices.findIndex((v) => v.id === vertexId) ?? -1
+  if (!room0 || i < 0) return
+  const n = room0.vertices.length
+  const orig = room0.vertices[i] as Vec
+  const prev = room0.vertices[(i - 1 + n) % n], next = room0.vertices[(i + 1) % n]
+  // Outline points only, with their start position.
+  const pts = group.flatMap((g) => {
+    const r = doc0.rooms.find((x) => x.id === g.roomId)
+    const k = r ? r.vertices.findIndex((v) => v.id === g.vertexId) : -1
+    return r && k >= 0 ? [{ ...g, at: r.vertices[k] as Vec, locked: locked(r, k) || locked(r, k - 1) }] : []
+  })
+  const anyLocked = pts.some((p) => p.locked)
+  const ownKeys = new Set(pts.map(refKey))
+  const followersAll = pts.flatMap((p) =>
+    movableLinked(doc0, p.roomId, p.vertexId).filter((l) => !ownKeys.has(refKey(l))).map((l) => ({ ref: l, at: p.at })))
+  const followKeys = new Set(followersAll.map((f) => refKey(f.ref)))
+  const affected = [...new Set([...pts, ...followersAll.map((f) => f.ref)].map((p) => p.roomId))]
+  const down = vp.toWorld(e.clientX, e.clientY)
+  let start: PlanDoc | null = null
+  let last = orig
+  let warned = false
+  track(e, {
+    onStart: () => { start = beginDrag(); setDragInfo({ kind: 'vertex', roomId, vertexId }) },
+    onMove: (ev) => {
       if (!start) return
+      const base = start
+      const w = vp.toWorld(ev.clientX, ev.clientY)
+      const raw = { x: orig.x + (w.x - down.x), y: orig.y + (w.y - down.y) }
+      if (anyLocked) {
+        useDoc.getState().updateSilent(() => base)
+        if (!warned) { warned = true; notify(CORNER_LOCKED_MSG, raw) }
+        return
+      }
+      const r = snapPoint(raw, {
+        opts: useUi.getState().snap, refs: [prev, next], tolCm: vp.px(10), disabled: ev.altKey,
+        vertices: otherVertices(base, (rid, vid) => ownKeys.has(rid + ':' + vid) || (!ev.shiftKey && followKeys.has(rid + ':' + vid))),
+      })
+      useGuides.getState().set(r.guides)
+      last = r.point
+      const d = { x: r.point.x - orig.x, y: r.point.y - orig.y }
+      const moves: VMove[] = [
+        ...pts.map((p) => ({ roomId: p.roomId, vertexId: p.vertexId, x: p.at.x + d.x, y: p.at.y + d.y })),
+        ...(ev.shiftKey ? [] : followersAll.map((f) => ({ ...f.ref, x: f.at.x + d.x, y: f.at.y + d.y }))),
+      ]
+      useDoc.getState().updateSilent(() => moveVertices(base, moves))
+    },
+    onEnd: () => {
+      setDragInfo(null)
+      if (!start) {
+        if (shift) toggle({ kind: 'vertex', roomId, vertexId })
+        else useUi.getState().select({ kind: 'vertex', roomId, vertexId })
+        return
+      }
       if (newlyCrossing(start, useDoc.getState().doc, affected)) {
         useDoc.getState().updateSilent(() => start as PlanDoc)
         notify(CROSS_MSG, last)
@@ -255,13 +363,15 @@ export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, verte
 export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallStart: string) {
   if (e.button !== 0 || !e.isPrimary) return
   e.stopPropagation()
-  useUi.getState().select({ kind: 'wall', roomId, wallStart })
+  // Shift + click (no drag) toggles the wall in the group; Shift + drag is still "this room only".
+  const shift = e.shiftKey
+  const flip = () => toggle({ kind: 'wall', roomId, wallStart })
+  const selectMe = () => useUi.getState().select({ kind: 'wall', roomId, wallStart })
+  if (!shift) selectMe()
   const room0 = findRoom(roomId)
-  if (!room0) return
-  const i = room0.vertices.findIndex((v) => v.id === wallStart)
-  if (i < 0) return
-  // Moving a wall changes its neighbours' lengths.
-  if (locked(room0, i - 1) || locked(room0, i + 1)) return
+  const i = room0 ? room0.vertices.findIndex((v) => v.id === wallStart) : -1
+  // Moving a wall changes its neighbours' lengths: a locked neighbour blocks the drag.
+  if (!room0 || i < 0 || locked(room0, i - 1) || locked(room0, i + 1)) { if (shift) flip(); return }
   const n = room0.vertices.length
   const aId = room0.vertices[i].id, bId = room0.vertices[(i + 1) % n].id
   const a0 = room0.vertices[i], b0 = room0.vertices[(i + 1) % n]
@@ -277,7 +387,7 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
   let start: PlanDoc | null = null
   let last: Vec = a0
   track(e, {
-    onStart: () => { start = beginDrag(); setDragInfo({ kind: 'wall', roomId, wallStart }) },
+    onStart: () => { if (shift) selectMe(); start = beginDrag(); setDragInfo({ kind: 'wall', roomId, wallStart }) },
     onMove: (ev) => {
       if (!start) return
       const base = start
@@ -311,7 +421,7 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
     },
     onEnd: () => {
       setDragInfo(null)
-      if (!start) return
+      if (!start) { if (shift) flip(); return }
       if (newlyCrossing(start, useDoc.getState().doc, affected)) {
         useDoc.getState().updateSilent(() => start as PlanDoc)
         notify(CROSS_MSG, last)
@@ -371,8 +481,43 @@ export function onWallDouble(e: { clientX: number; clientY: number }, vp: Vp, ro
   useUi.getState().select({ kind: 'vertex', roomId, vertexId: r.vertexId })
 }
 
+/**
+ * Delete all the rooms or points of a selection group in one undo step. A room keeps at
+ * least 3 outline points. Returns false when the selection is not a group.
+ */
+export function deleteGroup(): boolean {
+  const items = selectedItems(useUi.getState())
+  if (items.length < 2) return false
+  const doc = useDoc.getState().doc
+  if (items[0].kind === 'room') {
+    const ids = items.flatMap((s) => (s.kind === 'room' ? [s.roomId] : []))
+    useDoc.getState().update((d) => ids.reduce((acc, id) => deleteRoom(acc, id), d))
+    useUi.getState().select(null)
+    undoToast(`${ids.length} rooms deleted`, () => useDoc.temporal.getState().undo())
+    return true
+  }
+  if (items[0].kind === 'vertex') {
+    let next = doc
+    for (const s of items) {
+      if (s.kind !== 'vertex') continue
+      const room = next.rooms.find((r) => r.id === s.roomId)
+      if (!room) continue
+      if (room.vertices.some((v) => v.id === s.vertexId)) {
+        if (room.vertices.length > 3) next = removeVertex(next, s.roomId, s.vertexId)
+      } else next = removeHoleVertex(next, s.roomId, s.vertexId)
+    }
+    if (next !== doc) useDoc.getState().update(() => next)
+    const primary = useUi.getState().selection
+    useUi.getState().select(primary && primary.kind === 'vertex' ? { kind: 'room', roomId: primary.roomId } : null)
+    return true
+  }
+  // Walls: nothing to delete (same as a single wall).
+  return true
+}
+
 /** Delete key: selected vertex (outline or hole), selected hole, or room. Walls and elements are ignored here. */
 export function deleteSelection() {
+  if (deleteGroup()) return
   const sel = useUi.getState().selection
   if (!sel) return
   const doc = useDoc.getState().doc

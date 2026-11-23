@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { centroid, fmtCm, roomWalls } from '../../model/geometry'
+import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { Room, Vec } from '../../model/types'
 import { selfIntersects } from './crossing'
@@ -32,6 +33,8 @@ const bearingFaceClass = 'stroke-slate-500 dark:stroke-slate-400'
 export function RoomsLayer() {
   const rooms = useDoc((s) => s.doc.rooms)
   const selection = useUi((s) => s.selection)
+  const multi = useUi((s) => s.multi)
+  const items = useMemo(() => selectedItems({ selection, multi }), [selection, multi])
   const layers = useUi((s) => s.layers)
   const renovationView = useUi((s) => s.renovationView)
   const tool = useUi((s) => s.tool)
@@ -47,7 +50,9 @@ export function RoomsLayer() {
   const vp = useViewport()
   const { px, zoom } = vp
   const interactive = tool === 'select'
-  const selRoomId = selection && selection.kind !== 'element' ? selection.roomId : null
+  // Outlined rooms: the room of the selected item, or every room of a room group.
+  const selRoomIds = new Set(items.flatMap((s) => (s.kind === 'room' || (s.kind !== 'element' && s === selection) ? [s.roomId] : [])))
+  const selWalls = new Set(items.flatMap((s) => (s.kind === 'wall' ? [s.roomId + ':' + s.wallStart] : [])))
   // Bearing wall stripes: ~6 px apart (perpendicular), ~1 px wide, at 45°, zoom independent.
   // A 45° pattern tile of `tile` repeats its lines every tile / sqrt(2).
   const stripeGap = px(6)
@@ -205,13 +210,15 @@ export function RoomsLayer() {
       ))}
 
       {/* selection highlight */}
-      {rooms.filter((r) => r.id === selRoomId).map((r) => (
+      {rooms.filter((r) => selRoomIds.has(r.id)).map((r) => (
         <path key={'sel' + r.id} d={pathOf([r.vertices, ...r.holes])} fill="none" pointerEvents="none"
+          data-selected-room={r.id}
           strokeWidth={px(2)} strokeDasharray={`${px(6)} ${px(4)}`} className="stroke-orange-500" />
       ))}
-      {selection?.kind === 'wall' && rooms.filter((r) => r.id === selection.roomId).map((r) =>
-        quadsOf(r).filter((q) => q.startId === selection.wallStart).map((q) => (
-          <path key={'selw' + q.startId} d={polygonPath(q.points)} pointerEvents="none" strokeOpacity={0.9}
+      {selWalls.size > 0 && rooms.map((r) =>
+        quadsOf(r).filter((q) => selWalls.has(r.id + ':' + q.startId)).map((q) => (
+          <path key={'selw' + r.id + q.startId} d={polygonPath(q.points)} pointerEvents="none" strokeOpacity={0.9}
+            data-selected-wall={r.id + ':' + q.startId}
             strokeWidth={px(2)} className="fill-orange-500/35 stroke-orange-500" />
         )))}
 

@@ -1,9 +1,10 @@
 // Sidebar panel: properties of the selected room / wall / vertex, plus the walls and the
 // elements of the room (docs/sidebar-plan.md phase 2, primitives in src/shell/panel).
 // All lengths are cm. One undo step per edit, comma decimals.
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
 import { fmtCm, roomAreaM2, roomWalls } from '../../model/geometry'
+import { selectedItems, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, Selection, WallProps, WallStatus, WallType } from '../../model/types'
 import { effectiveCeilingCm } from '../export/calc'
@@ -49,20 +50,32 @@ const WALL_STATUSES = [
 /** Structural warning message: same text as the set_wall_props command warning. */
 const structuralWarning = (type: WallType) => `STRUCTURAL: ${type} wall marked for demolition`
 
-function setWall(roomId: string, startId: string, patch: Partial<WallProps>) {
+/** A wall, addressed by its room and start vertex. */
+type WallRef = { roomId: string; wallStart: string }
+
+/** Patch the props of one or more walls in one undo step. `patch` may depend on the current props. */
+function patchWalls(refs: WallRef[], patch: (cur: WallProps) => Partial<WallProps>) {
   update((d) => ({
     ...d,
-    rooms: d.rooms.map((r) => (r.id !== roomId ? r : { ...r, walls: { ...r.walls, [startId]: { ...wallProps(r, startId), ...patch } } })),
+    rooms: d.rooms.map((r) => {
+      const mine = refs.filter((w) => w.roomId === r.id)
+      if (!mine.length) return r
+      const walls = { ...r.walls }
+      for (const w of mine) { const cur = wallProps(r, w.wallStart); walls[w.wallStart] = { ...cur, ...patch(cur) } }
+      return { ...r, walls }
+    }),
   }))
 }
 
-function setWallType(roomId: string, startId: string, type: WallType) {
-  const r = useDoc.getState().doc.rooms.find((x) => x.id === roomId)
-  if (!r) return
-  const cur = wallProps(r, startId)
-  // Follow the new type's default thickness unless the user customised it.
-  const thick = cur.thicknessCm === DEFAULT_THICKNESS[cur.type] ? DEFAULT_THICKNESS[type] : cur.thicknessCm
-  setWall(roomId, startId, { type, thicknessCm: thick })
+/** Change the type; each wall follows the new type's default thickness unless it was customised. */
+function setWallTypes(refs: WallRef[], type: WallType) {
+  patchWalls(refs, (cur) => ({ type, thicknessCm: cur.thicknessCm === DEFAULT_THICKNESS[cur.type] ? DEFAULT_THICKNESS[type] : cur.thicknessCm }))
+}
+
+/** Selected walls when two or more are selected, else null. */
+function wallGroup(items: SelItem[]): WallRef[] | null {
+  const walls = items.flatMap((s) => (s.kind === 'wall' ? [{ roomId: s.roomId, wallStart: s.wallStart }] : []))
+  return walls.length > 1 ? walls : null
 }
 
 function setWallLength(roomId: string, startId: string, length: number) {
@@ -118,9 +131,11 @@ export type ActiveHole = { roomId: string; holeIndex: number } | null
 export function RoomsPanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
+  const multi = useUi((s) => s.multi)
+  const items = useMemo(() => selectedItems({ selection, multi }), [selection, multi])
   const activeHole = useActiveHole()
 
-  // 'b' toggles the selected wall between bearing and partition.
+  // 'b' toggles the selected wall(s) between bearing and partition (the primary wall decides).
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== 'b' || e.metaKey || e.ctrlKey || e.altKey) return
@@ -130,17 +145,20 @@ export function RoomsPanel() {
       const sel = ui.selection
       const r = useDoc.getState().doc.rooms.find((x) => x.id === sel.roomId)
       if (!r) return
-      setWallType(sel.roomId, sel.wallStart, wallProps(r, sel.wallStart).type === 'bearing' ? 'partition' : 'bearing')
+      const refs = wallGroup(selectedItems(ui)) ?? [{ roomId: sel.roomId, wallStart: sel.wallStart }]
+      setWallTypes(refs, wallProps(r, sel.wallStart).type === 'bearing' ? 'partition' : 'bearing')
     }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
   }, [])
 
-  return <RoomsPanelView doc={doc} selection={selection} activeHole={activeHole} />
+  return <RoomsPanelView doc={doc} selection={selection} items={items} activeHole={activeHole} />
 }
 
 /** Same panel from plain data, so it can be rendered without the stores (tests, SSR). */
-export function RoomsPanelView({ doc, selection, activeHole }: { doc: PlanDoc; selection: Selection; activeHole: ActiveHole }) {
+export function RoomsPanelView({ doc, selection, items = selection ? [selection] : [], activeHole }: {
+  doc: PlanDoc; selection: Selection; items?: SelItem[]; activeHole: ActiveHole
+}) {
   const roomId = selection && selection.kind !== 'element' ? selection.roomId : null
   const room = doc.rooms.find((r) => r.id === roomId)
   const apartmentCeilingCm = doc.apartment?.defaultCeilingCm ?? null
@@ -163,6 +181,15 @@ export function RoomsPanelView({ doc, selection, activeHole }: { doc: PlanDoc; s
   const ceiling = effectiveCeilingCm(doc, room)
   const areaM2 = roomAreaM2(room)
   const select = useUi.getState().select
+  // Shift + click group: the wall controls change every selected wall (values shown are the primary wall's).
+  const group = wallGroup(items)
+  const targets: WallRef[] = group ?? (wall ? [{ roomId: room.id, wallStart: wall.start.id }] : [])
+  const wallLabel = (w: WallRef) => {
+    const r = doc.rooms.find((x) => x.id === w.roomId)
+    const i = r ? r.vertices.findIndex((v) => v.id === w.wallStart) : -1
+    return r && i >= 0 ? `${r.code}-${i + 1}` : '?'
+  }
+  const groupKind = items.length > 1 ? items[0].kind : null
 
   const runApply = (all: boolean) => {
     const current = useDoc.getState().doc
@@ -176,17 +203,23 @@ export function RoomsPanelView({ doc, selection, activeHole }: { doc: PlanDoc; s
 
   return (
     <>
+      {(groupKind === 'room' || groupKind === 'vertex') && (
+        <PanelSection title={`${items.length} ${groupKind === 'room' ? 'rooms' : 'points'} selected`}>
+          <EmptyHint>Drag one of them to move all. Delete removes all. Shift + click adds or removes one.</EmptyHint>
+        </PanelSection>
+      )}
       {wall && props && (
-        <PanelSection title={`Wall ${room.code}-${wall.index + 1}`}>
+        <PanelSection title={group ? `${group.length} walls` : `Wall ${room.code}-${wall.index + 1}`}>
+          {group && <EmptyHint>{group.map(wallLabel).join(', ')}. Changes apply to all of them.</EmptyHint>}
           <FieldRow label="Type">
-            <Segmented ariaLabel="Wall type" options={WALL_TYPES} value={props.type} onChange={(t) => setWallType(room.id, wall.start.id, t as WallType)} />
+            <Segmented ariaLabel="Wall type" options={WALL_TYPES} value={props.type} onChange={(t) => setWallTypes(targets, t as WallType)} />
           </FieldRow>
           <FieldRow label="Renovation">
             <Segmented
               ariaLabel="Wall status"
               options={WALL_STATUSES}
               value={props.status ?? 'existing'}
-              onChange={(st) => setWall(room.id, wall.start.id, { status: st as WallStatus })}
+              onChange={(st) => patchWalls(targets, () => ({ status: st as WallStatus }))}
             />
           </FieldRow>
           {props.status === 'demolish' && (props.type === 'bearing' || props.type === 'exterior') && (
@@ -204,11 +237,11 @@ export function RoomsPanelView({ doc, selection, activeHole }: { doc: PlanDoc; s
               max={200}
               onCommit={(v) => {
                 if (v === null || v < 1 || v > 200) return false
-                setWall(room.id, wall.start.id, { thicknessCm: v })
+                patchWalls(targets, () => ({ thicknessCm: v }))
               }}
             />
           </FieldRow>
-          <FieldRow label="Length" htmlFor="wall-length">
+          {!group && <FieldRow label="Length" htmlFor="wall-length">
             <NumberField
               id="wall-length"
               name="length"
@@ -221,12 +254,12 @@ export function RoomsPanelView({ doc, selection, activeHole }: { doc: PlanDoc; s
                 setWallLength(room.id, wall.start.id, v)
               }}
             />
-          </FieldRow>
+          </FieldRow>}
           <SwitchRow
             name="wallLocked"
             label="Locked (cannot be resized)"
             checked={!!props.locked}
-            onChange={(checked) => setWall(room.id, wall.start.id, { locked: checked })}
+            onChange={(checked) => patchWalls(targets, () => ({ locked: checked }))}
           />
           <EmptyHint>Key B: bearing / partition. Length moves the end vertex.</EmptyHint>
         </PanelSection>
