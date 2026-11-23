@@ -28,7 +28,7 @@ import { applyMeasured, applyMeasuredAll, describeReport, setVerifiedLocked, ver
 import { useActiveHole } from './holes'
 import { deleteRoom, perimeter, setRoomCode } from './ops'
 import { elementRows, wallElementRows, wallRows, WALL_TYPE_CHIP, type ElementRow } from './roomLists'
-import { DEFAULT_THICKNESS, wallProps } from './walls'
+import { wallProps } from './walls'
 
 const update = (fn: (d: PlanDoc) => PlanDoc) => useDoc.getState().update(fn)
 const patchRoom = (id: string, patch: Partial<Room>) =>
@@ -67,9 +67,9 @@ function patchWalls(refs: WallRef[], patch: (cur: WallProps) => Partial<WallProp
   }))
 }
 
-/** Change the type; each wall follows the new type's default thickness unless it was customised. */
+/** Change the type; each wall keeps its current thickness. */
 function setWallTypes(refs: WallRef[], type: WallType) {
-  patchWalls(refs, (cur) => ({ type, thicknessCm: cur.thicknessCm === DEFAULT_THICKNESS[cur.type] ? DEFAULT_THICKNESS[type] : cur.thicknessCm }))
+  patchWalls(refs, () => ({ type }))
 }
 
 /** Signed cm difference, French decimal comma: "+2,1" / "−0,6". */

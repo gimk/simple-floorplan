@@ -10,6 +10,7 @@ import { selectHole, useActiveHole } from './holes'
 import { locked, onRoomDown, onWallDouble, onWallDown } from './interaction'
 import { surveyIds } from '../../model/survey'
 import { polygonPath, polylinePath, wallFaces, wallQuads } from './wallOutline'
+import { gapAreas, multiPath } from './gaps'
 import { RoomNameEditor } from './RoomNameEditor'
 import { wallProps } from './walls'
 import { piecesPath, renovationRooms, wallAppearance, type DisplayRoom } from '../renovation/logic'
@@ -47,6 +48,8 @@ export function RoomsLayer() {
   // Before / After / Both renovation view: 'after' shows rooms separated only by a
   // demolished wall as one room (merged outline, display only).
   const display = useMemo(() => renovationRooms({ rooms }, renovationView), [rooms, renovationView])
+  // Space between rooms (wall mass, shafts): light tone with a diagonal hatch.
+  const gapPath = useMemo(() => multiPath(gapAreas(rooms)), [rooms])
   const vp = useViewport()
   const { px, zoom } = vp
   const interactive = tool === 'select'
@@ -103,7 +106,19 @@ export function RoomsLayer() {
           <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
             className="stroke-emerald-700 dark:stroke-emerald-300" strokeOpacity={0.85} strokeWidth={px(1)} />
         </pattern>
+        {/* Space between rooms: light diagonal hatch, other direction than the bearing stripes. */}
+        <pattern id="rooms-gap-hatch" patternUnits="userSpaceOnUse" width={stripeTile} height={stripeTile} patternTransform="rotate(-45)">
+          <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
+            className="stroke-slate-400 dark:stroke-slate-500" strokeOpacity={0.7} strokeWidth={px(1)} />
+        </pattern>
       </defs>
+
+      {gapPath && (
+        <g pointerEvents="none" data-room-gaps="">
+          <path d={gapPath} fillRule="evenodd" className="fill-slate-200 dark:fill-slate-700" />
+          <path d={gapPath} fillRule="evenodd" fill="url(#rooms-gap-hatch)" />
+        </g>
+      )}
 
       {/* fills (holes via evenodd); rooms merged by a demolished wall are drawn as one */}
       {display.map((d) => (

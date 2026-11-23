@@ -30,7 +30,7 @@ import type {
   WallType,
 } from '../model/types'
 import { defaultElement, overflows } from '../features/elements/geometry'
-import { DEFAULT_THICKNESS, wallProps } from '../features/rooms/walls'
+import { wallProps } from '../features/rooms/walls'
 import { hasVerifiedWalls, solveRoom } from '../features/rooms/solve'
 import {
   ElementKindSchema,
@@ -1215,7 +1215,7 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
       const cur = wallProps(room, wall.start.id)
       const nextType: WallType = cmd.wallType ?? cur.type
       const nextThickness =
-        cmd.thicknessCm ?? (cmd.wallType && cmd.wallType !== cur.type ? DEFAULT_THICKNESS[cmd.wallType] : cur.thicknessCm)
+        cmd.thicknessCm ?? cur.thicknessCm // a type change keeps the thickness
       const nextLocked = cmd.locked !== undefined ? cmd.locked : cur.locked
       // 'existing' is the implicit value: store it as an absent field (like older documents).
       const wantedStatus: WallStatus | undefined = cmd.status !== undefined ? cmd.status : cur.status
