@@ -10,9 +10,13 @@
 //     the same behaviour as Shift + drag today.
 // Each function gives the document back with the room cycles that follow the moved nodes, the faces
 // of the walls derived again, and the survey view of every room calculated again.
+// The elements follow their wall (docs/walls-plan.md phase 7): `alongCm` stays the distance from node
+// a, so a moved wall takes its doors and windows with it, and a wall that a drag made shorter pulls
+// them inside it. A room that gets its own copy of a shared wall takes its elements with it.
 
 import { dist, dot, sub } from '../geometry'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall, Vec } from '../types'
+import { materializeElements } from './elements'
 import { deriveWallFaces, materializeRooms, roundStored } from './materialize'
 
 /** A span end this close to a node of its wall follows that node (cm). */
@@ -105,7 +109,7 @@ function followSpans(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls'>, oldLength:
   })
 }
 
-/** The document after a move: spans followed up, faces derived, rooms calculated. */
+/** The document after a move: spans followed up, faces derived, rooms and elements calculated. */
 function rebuild(
   doc: PlanDoc,
   rooms: Room[],
@@ -116,7 +120,7 @@ function rebuild(
   const followed = followSpans({ rooms, nodes, walls }, oldLength)
   const plain: PlanDoc = { ...doc, rooms: followed, nodes, walls }
   const withFaces: PlanDoc = { ...plain, walls: deriveWallFaces(plain) }
-  return { ...withFaces, rooms: materializeRooms(withFaces) }
+  return materializeElements({ ...withFaces, rooms: materializeRooms(withFaces) })
 }
 
 /** A copy of a wall with the same properties, under another id and on other nodes. */
@@ -248,5 +252,11 @@ export function moveRoom(doc: PlanDoc, roomId: string, delta: Vec, opts: MoveRoo
     return id ? { ...f, wallId: id } : f
   })
   const rooms = doc.rooms.map((r) => (r.id === roomId ? { ...r, cycle } : r))
-  return rebuild(doc, rooms, [...nodes, ...added], nextWalls, old)
+  // An element of this room that sits on a copied wall sits on the copy: it moves with the room.
+  const elements = doc.elements.map((el) => {
+    if (el.roomId !== roomId || !el.wallId) return el
+    const copy = wallCopy.get(el.wallId)
+    return copy ? { ...el, wallId: copy } : el
+  })
+  return rebuild({ ...doc, elements }, rooms, [...nodes, ...added], nextWalls, old)
 }

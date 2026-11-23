@@ -9,6 +9,10 @@
 //     graph, and the rooms that a tool wrote are ignored;
 //   - both changed                -> the walls win (a drag on the graph moves nodes, and the
 //     polygons of every room follow).
+// The elements follow the walls too (docs/walls-plan.md phase 7): an element that a tool placed with
+// the view only gets its wall (`attachElements`), an element that the user moved along its wall keeps
+// that place (`alongCm` follows the view), and the view of every element on a wall is calculated
+// again, so a door stays on its wall when a room is edited (`syncElements`).
 // A v1 document is given back unchanged: there the rooms are the source and the stored graph
 // follows them (model/graphRule.ts). A document is `schemaVersion: 2` after `ensureV2` on load.
 //
@@ -17,6 +21,7 @@
 // objects when nothing moved.
 
 import type { PlanDoc, Room } from '../types'
+import { syncElements } from './elements'
 import { deriveWallFaces, materializeRooms } from './materialize'
 import { applyRoomPolygon, removeRoom } from './write'
 
@@ -60,9 +65,10 @@ export function v2SyncRule(prev: PlanDoc, next: PlanDoc): PlanDoc {
   if (!hasGraph(next)) return next
   const roomsChanged = next.rooms !== prev.rooms
   const graphChanged = next.walls !== prev.walls || next.nodes !== prev.nodes
-  if (!roomsChanged && !graphChanged) return next
+  const elementsChanged = next.elements !== prev.elements
+  if (!roomsChanged && !graphChanged && !elementsChanged) return next
   // The walls win: the polygons are a view of the graph.
-  if (graphChanged) return materializeDoc(next)
+  if (graphChanged) return syncElements(prev, materializeDoc(next))
 
   // ---- rooms changed, walls not: write the polygons into the graph ----
   let doc = next
@@ -83,5 +89,5 @@ export function v2SyncRule(prev: PlanDoc, next: PlanDoc): PlanDoc {
     if (was && !polygonChanged(was, r)) continue
     doc = applyRoomPolygon(doc, r.id, r)
   }
-  return doc
+  return syncElements(prev, doc)
 }

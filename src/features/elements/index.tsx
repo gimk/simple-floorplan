@@ -28,6 +28,12 @@ const DRAG_THRESHOLD_PX = 4
 const drawableWidth = (el: Pick<WallElement, 'widthCm'>) =>
   typeof el.widthCm === 'number' && Number.isFinite(el.widthCm) && el.widthCm > 0
 
+/** The element without the "moved to the other room" hint (docs/walls-plan.md phase 7). */
+function withoutMovedHint(el: WallElement): WallElement {
+  const { elementMoved: _seen, ...rest } = el
+  return rest
+}
+
 // Variant remembered per kind for the placement tool.
 const usePlaceOpts = create<{ variants: Partial<Record<ElementKind, ElementVariant>>; setVariant: (k: ElementKind, v: ElementVariant) => void }>((set) => ({
   variants: {},
@@ -58,6 +64,7 @@ export function ElementsLayer() {
     moved: boolean
     start: PlanDoc | null
     grab: number
+    wallStart: string
   } | null>(null)
   const interactive = tool === 'select' && mode === 'edit'
 
@@ -86,7 +93,7 @@ export function ElementsLayer() {
     // 4 px threshold before the drag starts (7.2 #14): a plain click only selects.
     drag.current = {
       id: el.id, pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false, start: null,
-      grab: dot(sub(p, wall.start), wall.dir) - el.offsetCm,
+      grab: dot(sub(p, wall.start), wall.dir) - el.offsetCm, wallStart: el.wallStart,
     }
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
   }
@@ -102,6 +109,12 @@ export function ElementsLayer() {
     if (!wall) return
     e.stopPropagation()
     const p = toWorld(e.clientX, e.clientY)
+    // The element can move to another face of the same wall (a corner in the middle of it, a v2
+    // document): take the grab again from the face it is on now, so it stays under the pointer.
+    if (d.wallStart !== el.wallStart) {
+      d.wallStart = el.wallStart
+      d.grab = dot(sub(p, wall.start), wall.dir) - el.offsetCm
+    }
     const snap = useUi.getState().snap
     let off = dot(sub(p, wall.start), wall.dir) - d.grab
     if (!e.altKey && snap.grid) off = snapTo(off, snap.gridCm)
@@ -293,6 +306,12 @@ export function ElementCard({ el, room, onPatch: patch, onDelete: deleteElement 
     >
       {/* A new key resets the drafts of the fields when another element is selected. */}
       <Fragment key={el.id}>
+        {el.elementMoved && (
+          <p role="status" className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            This element now opens into the room on the other side of its wall: its first room lost that part of the wall.
+            Check its position.
+          </p>
+        )}
         {/* 6 kinds: a select reads better than 6 squeezed segments in a 320 px sidebar. */}
         <FieldRow label="Kind" htmlFor={N.kind}>
           <SelectField
@@ -452,8 +471,12 @@ export function ElementsPanel() {
       room={room}
       onPatch={(p) =>
         // One undo step, and the door-host rule right after: an out-door moves to the room it opens into.
+        // The "moved room" hint is cleared by the first edit: the user has seen it.
         update((d) =>
-          normalizeDoorHosts({ ...d, elements: d.elements.map((x) => (x.id === el.id ? { ...x, ...p, updatedAt: nowIso() } : x)) }).doc,
+          normalizeDoorHosts({
+            ...d,
+            elements: d.elements.map((x) => (x.id === el.id ? { ...withoutMovedHint(x), ...p, updatedAt: nowIso() } : x)),
+          }).doc,
         )
       }
       onDelete={() => {

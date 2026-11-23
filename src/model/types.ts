@@ -62,12 +62,27 @@ export type ElementVariant =
   // storage
   | 'wall-cabinet' | 'recessed' | 'wardrobe'
 
-/** A door / window / fixture attached to one wall of one room. */
+/**
+ * A door / window / fixture attached to a wall.
+ * In a v2 document it belongs to a WALL (`wallId` + `alongCm`), so a door between two rooms is ONE
+ * element (docs/walls-plan.md phase 7). `roomId` + `wallStart` + `offsetCm` are then a CALCULATED
+ * view: the room it opens into, the face of that room which holds it, and the distance from that
+ * face's start corner. A v1 document has only the view.
+ */
 export type WallElement = {
   id: string
   roomId: string
   /** Start vertex id of the host wall. */
   wallStart: string
+  /** Stored wall of a v2 document. Missing in a v1 document, or in an element not attached yet. */
+  wallId?: string
+  /** Distance from node a of the wall to the near edge of the element, cm (v2 documents). */
+  alongCm?: number
+  /**
+   * Set when the element had to open into the room on the other side of its wall (its own room lost
+   * that part of the wall). A hint for the user; the UI shows it and clears it on the next edit.
+   */
+  elementMoved?: boolean
   kind: ElementKind
   variant?: ElementVariant
   /** Distance along the wall from its start vertex to the near edge of the element. */

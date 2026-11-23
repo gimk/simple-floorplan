@@ -133,6 +133,20 @@ export function itemSpan(doc: Pick<PlanDoc, 'measurements'>, room: Room, el: Wal
 
 const ADJ_TOLERANCE_CM = 3
 
+/**
+ * Walls of `room` that an element of ANOTHER room shows on, dashed.
+ * In a v2 document the element belongs to a stored wall (`wallId`, docs/walls-plan.md phase 7): the
+ * same wall is the same door, so only the walls of this room that share that wall id can show it
+ * (none = nothing to show). null = the geometry decides: a v1 element, or a room without a cycle.
+ */
+function sharedHostWalls(room: Room, el: WallElement): Wall[] | null {
+  if (!el.wallId) return null
+  const cycle = room.cycle ?? []
+  if (!cycle.length) return null
+  const starts = new Set(cycle.filter((f) => f.wallId === el.wallId).map((f) => f.cornerId))
+  return roomWalls(room).filter((w) => starts.has(w.start.id))
+}
+
 /** Doors and openings owned by OTHER rooms that lie on a wall of `room` (shown dashed). */
 export function adjacentItems(doc: PlanDoc, room: Room) {
   const out: { kind: 'door' | 'opening'; p0: Vec; p1: Vec; inward: Vec }[] = []
@@ -143,7 +157,9 @@ export function adjacentItems(doc: PlanDoc, room: Room) {
     if (!owner) continue
     const span = itemSpan(doc, owner, el)
     if (!span) continue
-    for (const w of walls) {
+    const hostWalls = sharedHostWalls(room, el)
+    if (hostWalls && !hostWalls.length) continue
+    for (const w of hostWalls ?? walls) {
       const d = { x: w.end.x - w.start.x, y: w.end.y - w.start.y }
       const dd = d.x * d.x + d.y * d.y
       if (dd < 1e-9) continue

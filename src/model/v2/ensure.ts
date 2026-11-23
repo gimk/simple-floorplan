@@ -19,6 +19,7 @@
 import { ensureStoredGraph } from '../graphRule'
 import type { PlanDoc } from '../types'
 import { convertToV2 } from './convert'
+import { attachElements, materializeElements } from './elements'
 import { attachTargets } from './targets'
 import { materializeDoc } from './syncRule'
 import { applyRoomPolygon } from './write'
@@ -39,7 +40,9 @@ function convert(doc: PlanDoc, now: string): PlanDoc {
   // The conversion refuses a document whose stored graph is out of step with its rooms: it stays
   // a v1 document (the next load tries again) rather than getting the faces of other walls.
   if (v2.schemaVersion !== 2) return doc
-  return attachTargets({ ...v2, conversion: { at: now, report } })
+  // Every element now belongs to a wall (phase 7). Its view (roomId, wallStart, offsetCm) does not
+  // change, so nothing moves on the plan.
+  return attachElements(attachTargets({ ...v2, conversion: { at: now, report } }))
 }
 
 /**
@@ -58,5 +61,7 @@ function keepV2(doc: PlanDoc): PlanDoc {
     }
     next = materializeDoc(next)
   }
-  return attachTargets(next)
+  // Elements on walls (phase 7): an element saved with the view only gets its wall, and every view is
+  // calculated again, so an element follows the wall after any change of the graph.
+  return materializeElements(attachElements(attachTargets(next)))
 }

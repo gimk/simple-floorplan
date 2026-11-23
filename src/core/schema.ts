@@ -74,6 +74,12 @@ export const WallElementSchema = z.object({
   id: z.string().min(1),
   roomId: z.string().min(1),
   wallStart: z.string().min(1),
+  // Stored wall of a v2 document, and the distance from its node a to the near edge (phase 7).
+  // Optional: a v1 document, and an element that is not attached yet, have none.
+  wallId: z.string().min(1).optional(),
+  alongCm: z.number().finite().optional(),
+  // Hint: the element had to open into the room on the other side of its wall.
+  elementMoved: z.boolean().optional(),
   kind: ElementKindSchema,
   variant: ElementVariantSchema.optional(),
   offsetCm: z.number().finite().min(0),

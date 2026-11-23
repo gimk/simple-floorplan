@@ -19,6 +19,17 @@ export const AREA_TOL_M2 = 0.05
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 /**
+ * An element without the v2-only fields (docs/walls-plan.md phase 7): `wallId` and `alongCm` are
+ * added by the load step from the view, so the conversion may add them. What must not change is the
+ * VIEW (roomId, wallStart, offsetCm) and the sizes of the element.
+ */
+const elementViews = (elements: PlanDoc['elements']) =>
+  elements.map((el) => {
+    const { wallId: _wall, alongCm: _along, elementMoved: _moved, ...rest } = el
+    return rest
+  })
+
+/**
  * Problems that make the converted document a different plan (empty = the conversion kept
  * everything). The text uses room codes and ids only, never a measured value.
  */
@@ -56,7 +67,7 @@ export function conversionProblems(before: PlanDoc, after: PlanDoc): string[] {
   }
   // Parts that the conversion must not touch.
   if (!sameJson(after.measurements, before.measurements)) problems.push('measurements changed')
-  if (!sameJson(after.elements, before.elements)) problems.push('elements changed')
+  if (!sameJson(elementViews(after.elements), elementViews(before.elements))) problems.push('elements changed')
   if (!sameJson(after.roomNotes, before.roomNotes)) problems.push('room notes changed')
   if (!sameJson(after.tapes, before.tapes)) problems.push('tapes changed')
   if (!sameJson(after.pins, before.pins)) problems.push('pins changed')

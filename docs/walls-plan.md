@@ -229,7 +229,7 @@ value of the face that room SE sees. Measuring Mode still shows values room by r
 3. Write adapter `applyRoomPolygon`, then the drags on the graph; all tools and commands use them.
 4. The switch: docs stay v2 after load; server guard; no pruning of v1 snapshots; conversion
    report shown once per project.
-5. Phase 7 (doors and windows on walls).
+5. Phase 7 (doors and windows on walls). Steps 1-5 done 2026-11-24.
 
 ## Phases
 Each phase is one or more agent rounds. Commit after each round (tsc, tests, build pass).
@@ -267,7 +267,8 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
 5c. **Walls as the editing source** (decided 2026-11-23, before 7; 8 becomes part of it). See the
    section "Phase 5c" below.
 6. **Wall tool and Make room.**
-7. **Elements on walls** (after 5c): `wallId` + offset from node `a`; migrate; update clearance and export.
+7. **Elements on walls** (done 2026-11-24): `wallId` + `alongCm` (from node a) are the source;
+   `roomId` / `wallStart` / `offsetCm` are the calculated view. A door on a shared wall is one object.: `wallId` + offset from node `a`; migrate; update clearance and export.
 8. **Cleanup tool**: done by the 5c conversion (report of merged copies). Remove the transition layer.
 
 ## Risks
