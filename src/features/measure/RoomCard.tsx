@@ -79,7 +79,9 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
         />
         {verified && sid.plannedCm != null && dis && (
           <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : 'text-slate-500 dark:text-slate-400'}`}>
-            Plan {fmtCm(sid.plannedCm)} · Real {fmtCm(m.actualCm)} ({fmtDiff(dis.diff)})
+            {/* The measured value is never changed by the solver: the plan follows it. "Solved" is
+                the length that the plan has now, after the solve. */}
+            Measured {fmtCm(m.actualCm)} · Solved {fmtCm(sid.plannedCm)} ({fmtDiff(dis.diff)})
           </p>
         )}
       </div>
