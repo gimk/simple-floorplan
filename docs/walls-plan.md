@@ -157,9 +157,13 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
    walls gets them. Values of a split or removed wall, or of a deleted room, go to
    `doc.oldMeasurements` (kept in the snapshot, shown as "Old values" in the room card, deleted only
    by the user) instead of the bin.
-5b. **Walls as the editing source**: tools edit `doc.walls` / `doc.nodes`; `room.vertices` and
-   `room.walls` become calculated (transition layer), feature by feature. Centre (`W12-C`) and
-   outside face rows in the solver and in Measure next.
+5b. **Wall values (done 2026-11-23)**: centre `W12-C` and facade `W12-E` lengths on stored walls, in
+   the solver (a facade length finds an exterior wall thickness), Measure next (facade only), the
+   Inspect wall card and a Facade section in Measuring Mode. Values of a removed wall go to old values.
+5c. **Walls as the editing source** (NOT started, to decide): tools edit `doc.walls` / `doc.nodes`;
+   `room.vertices` and `room.walls` become calculated. About 6,500 lines of editing code
+   (interaction, tools, ops, commands, dsl). High risk, little visible gain while the derived graph
+   keeps ids stable; phase 6 can output rooms without it.
 6. **Wall tool and Make room.**
 7. **Elements on walls**: `wallId` + offset from node `a`; migrate; update clearance and export.
 8. **Cleanup tool** for old plans; remove the transition layer.
