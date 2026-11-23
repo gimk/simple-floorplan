@@ -148,9 +148,18 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
 4. **Solver on the graph**: `globalSolve` reads `buildWallGraph` (same results); remove its own
    pairing code; graph conflicts in the report; snap thicknesses; preview before apply. Centre and
    outside face rows need stable wall labels: they move to phase 5.
-5. **Stored graph (schema v2)**: `doc.nodes`, `doc.walls`, rooms as face cycles. Migration from v1 with
-   `buildWallGraph`. Transition layer: `room.vertices` and `room.walls` calculated, so features move
-   one at a time. Server snapshot accepts v1 and v2.
+5a. **Stored graph, stable ids, no lost values** (decided 2026-11-23: auto-migrate). The rooms stay
+   the editing source for now. `doc.nodes` and `doc.walls` (with their faces) are STORED and kept in
+   sync by a doc rule: after each outline change the graph is built again and each wall keeps its
+   id (`W1`, `W2`...) by matching its faces (room id + start vertex id). Additive change: same
+   schemaVersion, optional fields, measurement labels and rooms unchanged, so an old cached client
+   that drops the fields only causes a rebuild with the same ids. Migration = on load, a doc with no
+   walls gets them. Values of a split or removed wall, or of a deleted room, go to
+   `doc.oldMeasurements` (kept in the snapshot, shown as "Old values" in the room card, deleted only
+   by the user) instead of the bin.
+5b. **Walls as the editing source**: tools edit `doc.walls` / `doc.nodes`; `room.vertices` and
+   `room.walls` become calculated (transition layer), feature by feature. Centre (`W12-C`) and
+   outside face rows in the solver and in Measure next.
 6. **Wall tool and Make room.**
 7. **Elements on walls**: `wallId` + offset from node `a`; migrate; update clearance and export.
 8. **Cleanup tool** for old plans; remove the transition layer.
