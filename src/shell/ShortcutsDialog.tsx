@@ -6,7 +6,7 @@ import { X } from 'lucide-react'
 const ROWS: [string, string][] = [
   ['V / H / R / P / S / X / D / C / T / N', 'Select, Pan, Rectangle, Polygon, Slice, Cutout, Element, Calibrate, Tape, Pin'],
   ['Ctrl/Cmd+Z · Ctrl/Cmd+Shift+Z (or Ctrl+Y)', 'Undo · Redo'],
-  ['Esc', 'Cancel in-progress points, then Select tool + clear selection'],
+  ['Esc', 'Cancel in-progress points, then up one level, clear'],
   ['0', 'Fit plan to view'],
   ['?', 'This shortcuts dialog'],
   ['Space + drag · middle- or right-drag · two-finger drag', 'Pan'],

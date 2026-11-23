@@ -33,6 +33,25 @@ export function roomIdOfSelection(doc: TrailDoc, selection: Selection, annot: An
   return selection.roomId
 }
 
+/**
+ * Where Esc goes from the current selection (docs/sidebar-plan-3.md step 6): up one level.
+ * A wall, a vertex or an element goes to its room; a room goes to nothing; a tape or a pin
+ * drops its own selection and goes to its room. `kind: 'none'` means nothing is selected.
+ */
+export type ParentStep =
+  | { kind: 'none' }
+  | { kind: 'select'; selection: Selection; clearAnnot?: boolean }
+
+export function parentSelection(doc: TrailDoc, selection: Selection, annot: AnnotSelection): ParentStep {
+  /** Room of `roomId`, or nothing when the room is gone. */
+  const roomSel = (roomId: string | undefined): Selection =>
+    roomId && doc.rooms.some((r) => r.id === roomId) ? { kind: 'room', roomId } : null
+  if (annot) return { kind: 'select', selection: roomSel(roomIdOfSelection(doc, null, annot)), clearAnnot: true }
+  if (!selection) return { kind: 'none' }
+  if (selection.kind === 'room') return { kind: 'select', selection: null }
+  return { kind: 'select', selection: roomSel(roomIdOfSelection(doc, selection, null)) }
+}
+
 /** The crumbs to show, from the apartment down to the current selection. */
 export function buildTrail(doc: TrailDoc, selection: Selection, annot: AnnotSelection): Crumb[] {
   const crumbs: Crumb[] = [{ level: 'apartment', text: 'Apartment', select: { kind: 'apartment' } }]

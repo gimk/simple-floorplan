@@ -2,6 +2,7 @@ import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { PlanDoc, Room, Selection } from '../../model/types'
 import { RoomsPanelView, type ActiveHole } from './RoomsPanel'
+import { adjacentWallStart } from './cards'
 
 const rect = (over: Partial<Room> = {}): Room => ({
   id: 'r1',
@@ -52,6 +53,81 @@ describe('RoomsPanelView with a Shift + click group', () => {
     const items: Selection[] = [{ kind: 'room', roomId: 'r1' }, { kind: 'room', roomId: 'r2' }]
     const html = renderToString(<RoomsPanelView doc={d} selection={items[1]} items={items.filter((x) => !!x)} activeHole={null} />)
     expect(html).toContain('2 rooms selected')
+  })
+})
+
+describe('RoomsPanelView shows one context at a time', () => {
+  it('hides the Room card, the lists and the measured values with a wall selected', () => {
+    const html = render({ kind: 'wall', roomId: 'r1', wallStart: 'v0' })
+    expect(html).toContain('aria-label="Wall SE-1"')
+    expect(html).toContain('aria-label="On this wall"')
+    expect(html).not.toContain('aria-label="Room"')
+    expect(html).not.toContain('aria-label="Walls"')
+    expect(html).not.toContain('aria-label="Elements"')
+    expect(html).not.toContain('aria-label="Measured lengths"')
+    expect(html).not.toContain('id="room-walls"')
+    expect(html).not.toContain('id="room-elements"')
+    expect(html).not.toContain('name="name"')
+    expect(html).not.toContain('aria-label="Select wall SE-2"')
+  })
+
+  it('hides the wall card and its wall steps with a room selected', () => {
+    const html = render({ kind: 'room', roomId: 'r1' })
+    expect(html).toContain('aria-label="Room"')
+    expect(html).not.toContain('aria-label="Wall SE-1"')
+    expect(html).not.toContain('aria-label="On this wall"')
+    expect(html).not.toContain('aria-label="Previous wall"')
+    expect(html).not.toContain('aria-label="Next wall"')
+    expect(html).not.toContain('name="thickness"')
+  })
+
+  it('shows the vertex card alone for a point selection', () => {
+    const html = render({ kind: 'vertex', roomId: 'r1', vertexId: 'v1' })
+    expect(html).toContain('aria-label="Vertex"')
+    expect(html).not.toContain('aria-label="Room"')
+    expect(html).not.toContain('aria-label="Walls"')
+    expect(html).not.toContain('aria-label="On this wall"')
+  })
+
+  it('shows the group card alone for a group of walls', () => {
+    const items: Selection[] = [{ kind: 'wall', roomId: 'r1', wallStart: 'v0' }, { kind: 'wall', roomId: 'r1', wallStart: 'v2' }]
+    const html = renderToString(<RoomsPanelView doc={doc()} selection={items[1]} items={items.filter((x) => !!x)} activeHole={null} />)
+    expect(html).toContain('2 walls')
+    expect(html).not.toContain('aria-label="Room"')
+    expect(html).not.toContain('aria-label="On this wall"')
+    // A wall group has no single wall to step to.
+    expect(html).not.toContain('aria-label="Previous wall"')
+    expect(html).not.toContain('aria-label="Next wall"')
+  })
+
+  it('shows the group card alone for a group of points', () => {
+    const items: Selection[] = [{ kind: 'vertex', roomId: 'r1', vertexId: 'v1' }, { kind: 'vertex', roomId: 'r1', vertexId: 'v2' }]
+    const html = renderToString(<RoomsPanelView doc={doc()} selection={items[1]} items={items.filter((x) => !!x)} activeHole={null} />)
+    expect(html).toContain('2 points selected')
+    expect(html).not.toContain('aria-label="Vertex"')
+    expect(html).not.toContain('id="vertex-x"')
+  })
+})
+
+describe('wall steps (previous / next wall of the same room)', () => {
+  it('wraps around in polygon order', () => {
+    const room = rect()
+    expect(adjacentWallStart(room, 'v0', 1)).toBe('v1')
+    expect(adjacentWallStart(room, 'v0', -1)).toBe('v3')
+    expect(adjacentWallStart(room, 'v3', 1)).toBe('v0')
+    expect(adjacentWallStart(room, 'v3', -1)).toBe('v2')
+  })
+
+  it('gives nothing when the wall is gone', () => {
+    expect(adjacentWallStart(rect(), 'nope', 1)).toBeNull()
+    expect(adjacentWallStart(rect({ vertices: [] }), 'v0', 1)).toBeNull()
+  })
+
+  it('renders both step buttons on a wall card, in the header', () => {
+    const html = render({ kind: 'wall', roomId: 'r1', wallStart: 'v1' })
+    expect(html).toContain('aria-label="Previous wall"')
+    expect(html).toContain('aria-label="Next wall"')
+    expect(html).toContain('aria-label="Wall SE-2"')
   })
 })
 

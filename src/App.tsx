@@ -15,6 +15,7 @@ import { ElementsLayer, PlaceElementTool } from './features/elements'
 import { MeasureMode } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
 import { AnnotationsLayer, PinTool, TapeTool } from './features/annotations'
+import { selectAnnot, useAnnotSel } from './features/annotations/selection'
 import { ClashLayer } from './features/clearance'
 import { ToastHost } from './features/toast'
 import { CanvasGrid } from './shell/CanvasGrid'
@@ -25,6 +26,7 @@ import { SnapPopover } from './shell/SnapPopover'
 import { ShortcutsDialog } from './shell/ShortcutsDialog'
 import { ThemeToggle } from './shell/ThemeToggle'
 import { Sidebar } from './shell/sidebar/Sidebar'
+import { parentSelection } from './shell/sidebar/trail'
 import { installBridge } from './shell/bridge'
 import { fitToDoc } from './shell/fit'
 import { initTheme } from './shell/theme'
@@ -77,7 +79,18 @@ function useShortcuts(onHelp: () => void) {
       }
       if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); useDoc.temporal.getState().redo(); return }
       // #13: a tool that cancelled in-progress points preventDefault()s Escape — leave it alone.
-      if (e.key === 'Escape') { if (e.defaultPrevented) return; ui.setTool('select'); ui.select(null); return }
+      if (e.key === 'Escape') {
+        if (e.defaultPrevented) return
+        // A drawing tool goes back to Select first, and keeps the selection.
+        if (ui.tool !== 'select') { ui.setTool('select'); return }
+        // Esc goes up one level (wall / vertex / element -> room, room -> nothing, tape / pin -> room).
+        // `ui.select` also clears a Shift + click group.
+        const step = parentSelection(useDoc.getState().doc, ui.selection, useAnnotSel.getState().sel)
+        if (step.kind === 'none') return
+        if (step.clearAnnot) selectAnnot(null)
+        ui.select(step.selection)
+        return
+      }
       if (e.key === '0') { e.preventDefault(); fitToDoc(); return }
       if (mod || e.altKey) return
       const tool = TOOLS.find((x) => x.key === e.key.toLowerCase())

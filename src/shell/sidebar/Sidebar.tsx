@@ -23,6 +23,7 @@ import { PanelSection } from '../panel'
 import { Breadcrumb } from './Breadcrumb'
 import { LayersSection } from './LayersSection'
 import { useSidebar, type SidebarTab } from './store'
+import { scrollToTop } from './scroll'
 
 const TABS: { id: SidebarTab; label: string }[] = [
   { id: 'inspect', label: 'Inspect' },
@@ -37,15 +38,19 @@ export function Sidebar() {
   const annotSel = useAnnotSel((s) => s.sel)
   const baseId = useId()
   const tabRefs = useRef<Partial<Record<SidebarTab, HTMLButtonElement | null>>>({})
+  const inspectRef = useRef<HTMLDivElement | null>(null)
 
   // A new selection brings the inspector back — but not on the first render, so a
-  // viewer who left the sidebar on Plan keeps it after a reload.
+  // viewer who left the sidebar on Plan keeps it after a reload. The card of the new
+  // selection sits at the top, so the scroll container goes back to the top too.
   const signature = JSON.stringify([selection, annotSel])
   const lastSignature = useRef(signature)
   useEffect(() => {
     if (lastSignature.current === signature) return
     lastSignature.current = signature
     setTab('inspect')
+    // The card of the new selection sits at the top: bring it into view in the scrolling <aside>.
+    scrollToTop(inspectRef.current)
   }, [signature, setTab])
 
   const onTabKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -102,6 +107,7 @@ export function Sidebar() {
       </div>
 
       <div
+        ref={inspectRef}
         id={`${baseId}-panel-inspect`}
         role="tabpanel"
         aria-labelledby={`${baseId}-tab-inspect`}

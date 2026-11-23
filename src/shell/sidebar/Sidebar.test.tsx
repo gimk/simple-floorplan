@@ -1,94 +1,8 @@
+// Sidebar shell: three tabs, the Inspect context and the Plan / Solve panels.
 import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { PlanDoc, Room } from '../../model/types'
+import { scrollParent, scrollToTop } from './scroll'
 import { Sidebar } from './Sidebar'
-import { buildTrail, roomIdOfSelection } from './trail'
-
-const rect = (): Room => ({
-  id: 'r1',
-  code: 'SE',
-  name: 'Séjour',
-  holes: [],
-  walls: {},
-  walkOrder: 1,
-  vertices: [
-    { id: 'v0', x: 0, y: 0 },
-    { id: 'v1', x: 400, y: 0 },
-    { id: 'v2', x: 400, y: 300 },
-    { id: 'v3', x: 0, y: 300 },
-  ],
-})
-
-const doc = (over: Partial<PlanDoc> = {}): PlanDoc => ({
-  projectId: 'local',
-  title: 'Test',
-  rooms: [rect()],
-  elements: [
-    { id: 'e1', roomId: 'r1', wallStart: 'v1', kind: 'door', offsetCm: 10, widthCm: 83, createdAt: '', updatedAt: '' },
-  ],
-  measurements: {},
-  roomNotes: {},
-  tapes: [{ id: 't1', a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, roomId: 'r1' }],
-  pins: [{ id: 'p1', roomId: 'r1', at: { x: 10, y: 10 }, photoKeys: [], createdAt: '', updatedAt: '' }],
-  ...over,
-})
-
-const texts = (d: PlanDoc, selection: Parameters<typeof buildTrail>[1], annot: Parameters<typeof buildTrail>[2] = null) =>
-  buildTrail(d, selection, annot).map((c) => c.text)
-
-describe('buildTrail', () => {
-  it('shows the apartment alone when nothing is selected', () => {
-    expect(texts(doc(), null)).toEqual(['Apartment'])
-  })
-
-  it('shows the room name and code for a room selection', () => {
-    expect(texts(doc(), { kind: 'room', roomId: 'r1' })).toEqual(['Apartment', 'Séjour (SE)'])
-  })
-
-  it('shows the survey wall label', () => {
-    expect(texts(doc(), { kind: 'wall', roomId: 'r1', wallStart: 'v1' })).toEqual(['Apartment', 'Séjour (SE)', 'Wall SE-2'])
-  })
-
-  it('shows a vertex', () => {
-    expect(texts(doc(), { kind: 'vertex', roomId: 'r1', vertexId: 'v1' })).toEqual(['Apartment', 'Séjour (SE)', 'Vertex'])
-  })
-
-  it('shows the element kind through its room', () => {
-    expect(texts(doc(), { kind: 'element', elementId: 'e1' })).toEqual(['Apartment', 'Séjour (SE)', 'Element Door'])
-  })
-
-  it('shows tape and pin through their room', () => {
-    expect(texts(doc(), null, { kind: 'tape', id: 't1' })).toEqual(['Apartment', 'Séjour (SE)', 'Tape'])
-    expect(texts(doc(), null, { kind: 'pin', id: 'p1' })).toEqual(['Apartment', 'Séjour (SE)', 'Pin'])
-  })
-
-  it('falls back to the bare level when the item is gone', () => {
-    expect(texts(doc({ elements: [], rooms: [] }), { kind: 'element', elementId: 'nope' })).toEqual(['Apartment', 'Element'])
-    expect(texts(doc({ rooms: [] }), { kind: 'wall', roomId: 'r1', wallStart: 'v0' })).toEqual(['Apartment', 'Wall'])
-  })
-
-  it('gives every crumb the selection that restores it', () => {
-    const crumbs = buildTrail(doc(), { kind: 'wall', roomId: 'r1', wallStart: 'v1' }, null)
-    expect(crumbs.map((c) => c.select)).toEqual([
-      { kind: 'apartment' },
-      { kind: 'room', roomId: 'r1' },
-      { kind: 'wall', roomId: 'r1', wallStart: 'v1' },
-    ])
-  })
-})
-
-describe('roomIdOfSelection', () => {
-  it('finds the room of an element, a tape and a pin', () => {
-    expect(roomIdOfSelection(doc(), { kind: 'element', elementId: 'e1' }, null)).toBe('r1')
-    expect(roomIdOfSelection(doc(), null, { kind: 'tape', id: 't1' })).toBe('r1')
-    expect(roomIdOfSelection(doc(), null, { kind: 'pin', id: 'p1' })).toBe('r1')
-  })
-
-  it('returns undefined when there is no room', () => {
-    expect(roomIdOfSelection(doc(), null, null)).toBeUndefined()
-    expect(roomIdOfSelection(doc({ tapes: [] }), null, { kind: 'tape', id: 't1' })).toBeUndefined()
-  })
-})
 
 describe('Sidebar shell', () => {
   it('renders the three tabs with Inspect active', () => {
@@ -131,5 +45,75 @@ describe('Sidebar shell', () => {
     expect(html).toContain('name="coverage"')
     expect(html).toContain('name="exportA3"')
     expect(html).toContain('name="exportWithBg"')
+  })
+})
+
+describe('Sidebar Inspect context', () => {
+  it('puts the breadcrumb before the cards of the Inspect tab', () => {
+    const html = renderToString(<Sidebar />)
+    const breadcrumb = html.indexOf('aria-label="Selection"')
+    const apartment = html.indexOf('aria-label="Apartment"')
+    expect(breadcrumb).toBeGreaterThan(-1)
+    expect(apartment).toBeGreaterThan(breadcrumb)
+  })
+
+  it('shows no room, wall or vertex card when nothing is selected', () => {
+    // The one-context rule itself is covered in features/rooms/panel.test.tsx: a server
+    // render of the shell always reads the initial state of the stores.
+    const html = renderToString(<Sidebar />)
+    expect(html).not.toContain('aria-label="Room"')
+    expect(html).not.toContain('aria-label="Walls"')
+    expect(html).not.toContain('aria-label="On this wall"')
+    expect(html).not.toContain('aria-label="Vertex"')
+    expect(html).not.toContain('aria-label="Previous wall"')
+  })
+})
+
+describe('scroll to the top of the Inspect card', () => {
+  type FakeNode = HTMLElement & { parentElement: FakeNode | null; overflowY: string; scrolls: { top: number }[] }
+  /** Fake element tree: `parentElement` chain with the sizes, the overflow and a scroll spy. */
+  const node = (overflowY: string, scrollHeight: number, clientHeight: number): FakeNode => {
+    const scrolls: { top: number }[] = []
+    const el = {
+      parentElement: null as FakeNode | null,
+      scrollHeight,
+      clientHeight,
+      overflowY,
+      scrolls,
+      scrollTo: ({ top }: { top: number }) => { scrolls.push({ top }) },
+    }
+    return el as unknown as FakeNode
+  }
+  const readOverflow = (n: HTMLElement) => (n as unknown as FakeNode).overflowY
+  const chain = (leaf: FakeNode, ...parents: FakeNode[]) => {
+    let cur: FakeNode = leaf
+    for (const p of parents) { cur.parentElement = p; cur = p }
+    return leaf
+  }
+
+  it('finds the first scrolling ancestor and scrolls it to the top', () => {
+    const aside = node('auto', 900, 600)
+    const inner = node('visible', 900, 900)
+    const leaf = chain(node('visible', 100, 100), inner, aside)
+    expect(scrollParent(leaf, readOverflow)).toBe(aside)
+    expect(scrollToTop(leaf, readOverflow)).toBe(aside)
+    expect(aside.scrolls).toEqual([{ top: 0 }])
+  })
+
+  it('does nothing when no ancestor scrolls or `scrollTo` is missing', () => {
+    const flat = chain(node('visible', 100, 100), node('hidden', 100, 100))
+    expect(scrollParent(flat, readOverflow)).toBeNull()
+    expect(scrollToTop(flat, readOverflow)).toBeNull()
+
+    const aside = node('scroll', 900, 600)
+    delete (aside as unknown as { scrollTo?: unknown }).scrollTo
+    const leaf = chain(node('visible', 100, 100), aside)
+    expect(() => scrollToTop(leaf, readOverflow)).not.toThrow()
+    expect(aside.scrolls).toEqual([])
+  })
+
+  it('does nothing without an element', () => {
+    expect(scrollParent(null)).toBeNull()
+    expect(scrollToTop(null)).toBeNull()
   })
 })
