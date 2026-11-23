@@ -2,10 +2,10 @@
 // written into the wall graph, and a room that goes away.
 import { describe, expect, it } from 'vitest'
 import { demoRooms } from '../../features/measure/demo'
-import { dist } from '../geometry'
+import { dist, signedArea } from '../geometry'
 import type { Measurement, PlanDoc, Room, Vec } from '../types'
 import { convertToV2 } from './convert'
-import { faceEndCm, faceStartCm } from './materialize'
+import { faceEndCm, faceForward, faceStartCm } from './materialize'
 import { applyRoomPolygon, removeRoom } from './write'
 
 /** A v1 document with these rooms. */
@@ -109,6 +109,8 @@ function writeProblems(doc: PlanDoc): string[] {
     if (r.vertices.length !== cycle.length) problems.push(`room ${r.code}: ${r.vertices.length} corners, ${cycle.length} faces`)
     const starts: (Vec | null)[] = []
     const ends: (Vec | null)[] = []
+    // The travel direction of the room on this wall: a CCW room walks b -> a on side L.
+    const winding = signedArea(r.vertices)
     cycle.forEach((f, k) => {
       const line = lineOf(doc, f.wallId)
       if (!line) {
@@ -118,8 +120,9 @@ function writeProblems(doc: PlanDoc): string[] {
         return
       }
       if (f.from < -1e-6 || f.to > line.length + 1e-6) problems.push(`room ${r.code}: face ${k} ${f.from}..${f.to} on a wall of ${line.length} cm`)
-      starts.push(pointAt(line, faceStartCm(f)))
-      ends.push(pointAt(line, faceEndCm(f)))
+      const forward = faceForward(f, winding)
+      starts.push(pointAt(line, faceStartCm(f, forward)))
+      ends.push(pointAt(line, faceEndCm(f, forward)))
     })
     for (let k = 0; k < cycle.length; k++) {
       const end = ends[k]
@@ -335,6 +338,41 @@ describe('applyRoomPolygon: corner and wall edits', () => {
     const doc = v2([mk('A', [[0, 0], [400, 0], [400, 400], [0, 400]], 1, { holes: [hole] })])
     const after = applyRoomPolygon(doc, 'A', withVertex(roomOf(doc, 'A'), 0, [-50, -50]))
     expect(roomOf(after, 'A').holes).toEqual([hole])
+  })
+
+  it('gives the properties of the corner to every piece of a split edge', () => {
+    // A = x 0..300, y 0..400: its top wall runs from (0,0) to (300,0).
+    const doc = v2([mk('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1)])
+    // B is above A, and its bottom edge covers the top wall of A and goes 200 cm further.
+    const b: Room = {
+      ...mk('B', [[0, 0], [500, 0], [500, -100], [0, -100]], 2),
+      walls: { 'B-v0': { type: 'bearing', thicknessCm: 20 } },
+    }
+    const after = applyRoomPolygon(doc, 'B', b)
+
+    expect(corners(roomOf(after, 'B'))).toEqual([[0, 0], [300, 0], [500, 0], [500, -100], [0, -100]])
+    // The edge makes two pieces: the wall of A, reused, then a new wall for the rest of the edge.
+    // A wall is never split for a new room, so the extension is a wall of its own; the properties
+    // given for the corner of the edge belong to both pieces.
+    const atTop = wallsOnLine(after, false, 0)
+    expect(atTop).toHaveLength(2)
+    expect(atTop.map((w) => [w.type, w.thicknessCm])).toEqual([['bearing', 20], ['bearing', 20]])
+    expect(writeProblems(after)).toEqual([])
+  })
+
+  it('writes a room polygon wound counter-clockwise without reordering it', () => {
+    const doc = v2([mk('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1)])
+    // B shares the wall at x = 300, but its corners are listed counter-clockwise.
+    const b = mk('B', [[300, 0], [300, 400], [600, 400], [600, 0]], 2)
+    const after = applyRoomPolygon(doc, 'B', b)
+
+    // The polygon comes back as it was typed, with its corners in the same order.
+    expect(roomOf(after, 'B').cycle!.map((f) => f.cornerId)).toEqual(['B-v0', 'B-v1', 'B-v2', 'B-v3'])
+    expect(corners(roomOf(after, 'B'))).toEqual([[300, 0], [300, 400], [600, 400], [600, 0]])
+    // One wall between the two rooms, and the neighbour does not move.
+    expect(wallBetween(after, 'A', 'B')).toHaveLength(1)
+    expect(corners(roomOf(after, 'A'))).toEqual(corners(roomOf(doc, 'A')))
+    expect(writeProblems(after)).toEqual([])
   })
 
   it('writes a v1 document the v1 way (no wall graph yet)', () => {

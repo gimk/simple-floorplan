@@ -39,6 +39,31 @@ const wallOf = (walls: StoredWall[], roomId: string, cornerId: string) =>
   walls.find((w) => w.faces.some((f) => f.roomId === roomId && f.wallStart === cornerId))
 
 describe('convertToV2', () => {
+  it('converts a room whose polygon is wound counter-clockwise without reordering it', () => {
+    // A v1 plan can hold a room whose corners are listed the other way round (A here). The
+    // conversion keeps the polygon order, so the corner ids, the labels and the values stay.
+    const before = plan(
+      [
+        mk('A', [[0, 0], [0, 398], [304, 398], [304, 0]], 1),
+        mk('B', [[304, 0], [601, 0], [601, 398], [304, 398]], 2),
+      ],
+      { 'A-2': value('A-2', 304), 'B-1': value('B-1', 398) },
+    )
+    const { doc: after } = convertToV2(before)
+
+    expect(after.schemaVersion).toBe(2)
+    expect(conversionProblems(before, after)).toEqual([])
+    const a = after.rooms.find((r) => r.id === 'A')!
+    // Same order as the v1 polygon, in the cycle too.
+    expect(a.vertices.map((v) => v.id)).toEqual(['A-v0', 'A-v1', 'A-v2', 'A-v3'])
+    expect(a.cycle!.map((f) => f.cornerId)).toEqual(['A-v0', 'A-v1', 'A-v2', 'A-v3'])
+    // The wall between A and B is ONE wall, with a face of each room.
+    const shared = (after.walls ?? []).filter((w) => w.faces.some((f) => f.roomId === 'A') && w.faces.some((f) => f.roomId === 'B'))
+    expect(shared).toHaveLength(1)
+    // The values keep their labels.
+    expect(after.measurements).toBe(before.measurements)
+  })
+
   it('keeps every room of the demo apartment', () => {
     const before = plan(demoRooms(), {
       'SE-2': value('SE-2', 412),

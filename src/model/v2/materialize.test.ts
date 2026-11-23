@@ -77,6 +77,24 @@ describe('materializeRooms', () => {
     expect(corners(room)[2]).toEqual([400, 0])
   })
 
+  it('puts an in-line corner right for a room wound the other way (CCW)', () => {
+    // The same rectangle, walked counter-clockwise: the room is on side L of every wall but runs
+    // b -> a, so its two faces on W1 come in the other order (the span that stops at 150 first).
+    const nodes = rectNodes()
+    const walls = rectWalls()
+    const cycle = [
+      face('W1', 'L', 250, 400, 'c0'),
+      face('W1', 'L', 0, 250, 'c5'),
+      face('W4', 'L', 0, 300, 'c1'),
+      face('W3', 'L', 0, 400, 'c2'),
+      face('W2', 'L', 0, 300, 'c3'),
+    ]
+    const [room] = materializeRooms(v2(nodes, walls, [roomWithCycle(cycle)]))
+    // The corner ids keep the polygon order, and the in-line corner is where the two spans meet.
+    expect(room.vertices.map((v) => v.id)).toEqual(['c0', 'c5', 'c1', 'c2', 'c3'])
+    expect(corners(room)).toEqual([[400, 0], [250, 0], [0, 0], [0, 300], [400, 300]])
+  })
+
   it('gives a room without a cycle back unchanged', () => {
     const room: Room = { id: 'old', code: 'O', name: 'O', vertices: [{ id: 'a', x: 0, y: 0 }], holes: [], walls: {}, walkOrder: 1 }
     const doc = v2([], [], [room])

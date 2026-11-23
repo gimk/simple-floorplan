@@ -10,12 +10,15 @@
 //   - `deriveWallFaces(doc)`: the faces of each stored wall, rebuilt from the cycles, plus the
 //     outside faces (a span that no room covers). Both sides are cut independently, so a wall can
 //     have one face of room A on side L and three faces on side R (the Entree / Couloir case).
+// A face says which SIDE of its wall the room lies on, not which way the room walks along it: the
+// walk direction also depends on the winding of the room polygon (a v1 room can be counter-clockwise),
+// so every reader takes it from `faceForward` / `roomFaceForward`.
 //
 // The two functions are deterministic: the same document gives the same result. `deriveWallFaces`
 // gives back the previous array and the previous wall objects when nothing changed, so the store
 // does not churn.
 
-import { DEFAULT_WALL_CM, add, cross, dist, mul, sub } from '../geometry'
+import { DEFAULT_WALL_CM, add, cross, dist, mul, signedArea, sub } from '../geometry'
 import type { PlanDoc, Room, RoomFace, StoredFace, StoredWall, Vec, WallProps, Vertex } from '../types'
 
 /** A straight line: point `p` plus unit direction `d`. */
@@ -46,11 +49,38 @@ export function storedWallProps(w: StoredWall): WallProps {
   return out
 }
 
-/** Distance along a face where the face STARTS in room order: the room runs a -> b on side L. */
-export const faceStartCm = (f: Pick<RoomFace, 'side' | 'from' | 'to'>) => (f.side === 'L' ? f.from : f.to)
+/** The travel direction of a face when nothing better is known: side L means a -> b. */
+const usualForward = (f: Pick<RoomFace, 'side'>): 1 | -1 => (f.side === 'L' ? 1 : -1)
 
-/** Distance along a face where the face ENDS in room order. */
-export const faceEndCm = (f: Pick<RoomFace, 'side' | 'from' | 'to'>) => (f.side === 'L' ? f.to : f.from)
+/**
+ * Distance along a face where the face STARTS in room order.
+ * `forward` is the travel direction of the room on that wall (+1 = a -> b, -1 = b -> a); the default
+ * takes the usual winding (side L runs a -> b). See `faceForward`.
+ */
+export const faceStartCm = (f: Pick<RoomFace, 'side' | 'from' | 'to'>, forward: 1 | -1 = usualForward(f)) =>
+  (forward > 0 ? f.from : f.to)
+
+/** Distance along a face where the face ENDS in room order. Same `forward` as `faceStartCm`. */
+export const faceEndCm = (f: Pick<RoomFace, 'side' | 'from' | 'to'>, forward: 1 | -1 = usualForward(f)) =>
+  (forward > 0 ? f.to : f.from)
+
+/**
+ * The travel direction of a face in room order: +1 when the room runs a -> b on that wall, -1 when
+ * it runs b -> a. `winding` is the sign of the signed area of the room polygon.
+ * The SIDE alone does not say the travel direction: it says where the room lies (left or right of
+ * node a -> node b), and that is what the faces of the two rooms on a shared wall tell apart. Which
+ * way the room walks along its wall depends on the winding of its polygon: the usual winding
+ * (signed area > 0, every room that the tools draw) walks a -> b on side L, and a room wound the
+ * other way (counter-clockwise; a v1 room can be, and a polygon typed by a user can be) walks
+ * b -> a on side L. Every reader that needs room order takes it from here, so a CCW room keeps its
+ * vertex order, its corner ids and its labels.
+ */
+export const faceForward = (f: Pick<RoomFace, 'side'>, winding: number): 1 | -1 =>
+  ((winding >= 0 ? 1 : -1) * usualForward(f)) as 1 | -1
+
+/** The travel direction of one face of a room, from the winding of the room polygon. */
+export const roomFaceForward = (room: Pick<Room, 'vertices'>, f: Pick<RoomFace, 'side'>): 1 | -1 =>
+  faceForward(f, signedArea(room.vertices))
 
 /** Centre line of a stored wall, or null when one of its two nodes is missing or they touch. */
 function wallLine(wall: StoredWall, nodes: Map<string, Vec>): Line | null {
@@ -79,7 +109,12 @@ function cornerBetween(prev: RoomFace, cur: RoomFace, walls: Map<string, StoredW
 
   if (prev.wallId === cur.wallId) {
     // Two faces of one room on one wall (in-line merge): the corner lies on that wall, where the
-    // two spans meet.
+    // two spans meet. The end that the two spans share says where, whatever the travel direction
+    // of the room is (two faces of one room meet at a point that is an end of both).
+    const shared = sharedSpanCm(prev, cur)
+    if (shared !== null) return pointAt(lCur, shared)
+    // Spans that share no end (a spike on one wall): the middle of the two ends that face each
+    // other on the way the room travels.
     const cm = prev.side === 'L' ? (prev.to + cur.from) / 2 : (prev.from + cur.to) / 2
     return pointAt(lCur, cm)
   }
@@ -102,6 +137,25 @@ function cornerBetween(prev: RoomFace, cur: RoomFace, walls: Map<string, StoredW
   const end = pointAt(lCur, faceEndCm(cur))
   if (hint) return dist(start, hint) <= dist(end, hint) ? start : end
   return start
+}
+
+/**
+ * The point where two faces of one room on one wall meet: the end of their two spans that they
+ * share (within GAP_TOL_CM). Null when the spans share no end.
+ */
+function sharedSpanCm(prev: RoomFace, cur: RoomFace): number | null {
+  let best: number | null = null
+  let bestD = Infinity
+  for (const a of [prev.from, prev.to]) {
+    for (const b of [cur.from, cur.to]) {
+      const d = Math.abs(a - b)
+      if (d < bestD) {
+        bestD = d
+        best = (a + b) / 2
+      }
+    }
+  }
+  return bestD <= GAP_TOL_CM ? best : null
 }
 
 /** Position of the node that both walls have, if any. */

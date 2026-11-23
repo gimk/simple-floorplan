@@ -3,9 +3,10 @@
 import { describe, expect, it } from 'vitest'
 import { demoRooms } from '../../features/measure/demo'
 import { dist } from '../geometry'
-import type { PlanDoc, Room } from '../types'
+import type { PlanDoc, Room, StoredWall } from '../types'
 import { convertToV2 } from './convert'
 import { moveNode, moveRoom, moveWall } from './drag'
+import { applyRoomPolygon } from './write'
 
 /** A v1 document with these rooms. */
 const plan = (rooms: Room[]): PlanDoc => ({
@@ -45,6 +46,14 @@ const nodeAt = (doc: PlanDoc, x: number, y: number) => {
   const node = (doc.nodes ?? []).find((n) => dist(n, { x, y }) < 0.5)
   if (!node) throw new Error(`no node at ${x},${y}`)
   return node.id
+}
+
+/** The one wall whose two nodes are on the horizontal line y (a plan of the tests below). */
+function wallOnY(doc: PlanDoc, y: number): StoredWall {
+  const nodes = new Map((doc.nodes ?? []).map((n) => [n.id, n]))
+  const found = (doc.walls ?? []).filter((w) => Math.abs(nodes.get(w.a)!.y - y) < 0.5 && Math.abs(nodes.get(w.b)!.y - y) < 0.5)
+  if (found.length !== 1) throw new Error(`${found.length} walls on y = ${y}`)
+  return found[0]
 }
 
 /** Every face of every wall stays inside its wall (cm). */
@@ -95,6 +104,37 @@ describe('moveNode', () => {
     expect(spans(after, shared.id, 'A')).toEqual([[0, 500]])
     expect(spans(after, shared.id, 'B')).toEqual([[0, 500]])
     expect(corners(roomOf(after, 'A'))).toEqual([[0, 0], [300, 0], [300, 500], [0, 400]])
+    expect(spansInsideWalls(after)).toEqual([])
+  })
+
+  it('follows a T junction node that moves more than 1 cm along its wall', () => {
+    // One room, sliced in two (the slice tool): the two halves share the long walls, and the middle
+    // wall meets the top wall at a T junction node. So the top wall holds two faces of two rooms on
+    // one side, and they meet at that node.
+    const doc = v2([mk('A', [[0, 0], [600, 0], [600, 400], [0, 400]], 1)])
+    const first = roomOf(doc, 'A')
+    const left: Room = {
+      ...first,
+      vertices: [first.vertices[0], { id: 'mid-top', x: 300, y: 0 }, { id: 'mid-bottom', x: 300, y: 400 }, first.vertices[3]],
+    }
+    const right: Room = {
+      ...mk('A2', [[0, 0], [0, 0], [0, 0], [0, 0]], 2),
+      id: 'A2',
+      vertices: [{ id: 'mid-top', x: 300, y: 0 }, first.vertices[1], first.vertices[2], { id: 'mid-bottom', x: 300, y: 400 }],
+    }
+    const both = applyRoomPolygon(applyRoomPolygon(doc, 'A', left), 'A2', right)
+    const top = wallOnY(both, 0)
+    expect(spans(both, top.id, 'A')).toEqual([[0, 300]])
+    expect(spans(both, top.id, 'A2')).toEqual([[300, 600]])
+
+    // The T junction goes 50 cm along its wall: far more than the 1 cm snap tolerance.
+    const after = moveNode(both, nodeAt(both, 300, 0), { x: 250, y: 0 })
+
+    // The two faces meet at that node, so both follow it: no face keeps an end at 300.
+    expect(spans(after, top.id, 'A')).toEqual([[0, 250]])
+    expect(spans(after, top.id, 'A2')).toEqual([[250, 600]])
+    expect(corners(roomOf(after, 'A'))).toEqual([[0, 0], [250, 0], [300, 400], [0, 400]])
+    expect(corners(roomOf(after, 'A2'))).toEqual([[250, 0], [600, 0], [600, 400], [300, 400]])
     expect(spansInsideWalls(after)).toEqual([])
   })
 

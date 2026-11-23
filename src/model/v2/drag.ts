@@ -45,29 +45,86 @@ function wallLengths(doc: Pick<PlanDoc, 'nodes' | 'walls'>): Map<string, number>
 
 /** The distances from node a of the nodes that lie on the wall (its two ends and its T junctions). */
 function stopsOf(wall: StoredWall, pos: Map<string, Vec>): number[] | null {
+  const stops = stopsWithNodes(wall, pos)
+  return stops ? stops.map((s) => s.u) : null
+}
+
+/** The nodes that lie on a wall line, with their distance from node a: the two ends, the T junctions. */
+function stopsWithNodes(wall: StoredWall, pos: Map<string, Vec>): { u: number; nodeId: string }[] | null {
   const a = pos.get(wall.a)
   const b = pos.get(wall.b)
   if (!a || !b) return null
   const length = dist(a, b)
   if (length < EPS) return null
   const d = { x: (b.x - a.x) / length, y: (b.y - a.y) / length }
-  const stops = [0, length]
+  const stops = [{ u: 0, nodeId: wall.a }, { u: length, nodeId: wall.b }]
   for (const [id, p] of pos) {
     if (id === wall.a || id === wall.b) continue
     const rel = sub(p, a)
     if (Math.abs(d.x * rel.y - d.y * rel.x) > ON_LINE_TOL_CM) continue
     const u = dot(rel, d)
-    if (u > EPS && u < length - EPS) stops.push(u)
+    if (u > EPS && u < length - EPS) stops.push({ u, nodeId: id })
   }
-  return stops.sort((p, q) => p - q)
+  return stops.sort((p, q) => p.u - q.u)
+}
+
+/** A span end that sat on a node of its wall before a move: the room, the face, the end, the node. */
+type SpanAnchor = { roomId: string; index: number; end: 'from' | 'to'; nodeId: string }
+
+/** What a drag reads from the document BEFORE the move. */
+type BeforeMove = {
+  /** Length of each wall (cm). */
+  oldLength: Map<string, number>
+  /**
+   * The node that each span end sat on before the move. The distance of an end is not enough: a
+   * T junction can move far along its wall, and the end must still follow the NODE.
+   */
+  anchors: SpanAnchor[]
+}
+
+/** The node that the two ends of each face span sat on, before the move. */
+function spanAnchors(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls'>): SpanAnchor[] {
+  const pos = new Map((doc.nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
+  const out: SpanAnchor[] = []
+  for (const w of doc.walls ?? []) {
+    const stops = stopsWithNodes(w, pos)
+    if (!stops) continue
+    // The node at a distance, when a node is there (the closest one wins).
+    const nodeAtCm = (u: number): string | null => {
+      let best: { u: number; nodeId: string } | null = null
+      for (const s of stops) {
+        if (Math.abs(s.u - u) > SPAN_TOL_CM) continue
+        if (!best || Math.abs(s.u - u) < Math.abs(best.u - u)) best = s
+      }
+      return best ? best.nodeId : null
+    }
+    for (const r of doc.rooms) {
+      (r.cycle ?? []).forEach((f, index) => {
+        if (f.wallId !== w.id) return
+        const from = nodeAtCm(f.from)
+        if (from) out.push({ roomId: r.id, index, end: 'from', nodeId: from })
+        const to = nodeAtCm(f.to)
+        if (to) out.push({ roomId: r.id, index, end: 'to', nodeId: to })
+      })
+    }
+  }
+  return out
+}
+
+/** What a drag reads before the move: the wall lengths and the node of each span end. */
+function beforeMove(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls'>): BeforeMove {
+  return { oldLength: wallLengths(doc), anchors: spanAnchors(doc) }
 }
 
 /**
  * The room cycles with their spans followed up: a span end that sat on a node of its wall moves
- * with that node, so a wall that a drag stretched still holds its faces over the whole wall.
+ * with that node, so a wall that a drag stretched still holds its faces over the whole wall, and a
+ * T junction that a drag moved along its wall still cuts it at the new place.
  */
-function followSpans(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls'>, oldLength: Map<string, number>): Room[] {
+function followSpans(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls'>, before: BeforeMove): Room[] {
+  const oldLength = before.oldLength
   const pos = new Map((doc.nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
+  const walls = new Map((doc.walls ?? []).map((w) => [w.id, w]))
   const stops = new Map<string, number[]>()
   const length = new Map<string, number>()
   for (const w of doc.walls ?? []) {
@@ -81,8 +138,8 @@ function followSpans(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls'>, oldLength:
     const len = length.get(wallId)
     if (!s || len === undefined) return u
     if (u <= SPAN_TOL_CM) return 0
-    const before = oldLength.get(wallId)
-    if (before !== undefined && Math.abs(u - before) <= SPAN_TOL_CM) return roundStored(len)
+    const was = oldLength.get(wallId)
+    if (was !== undefined && Math.abs(u - was) <= SPAN_TOL_CM) return roundStored(len)
     let best = u
     let bestD = SPAN_TOL_CM
     for (const stop of s) {
@@ -94,13 +151,39 @@ function followSpans(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls'>, oldLength:
     }
     return roundStored(Math.min(Math.max(best, 0), len))
   }
+  // The distance from node a of a node after the move, or null when it left the line of its wall.
+  const nodeCm = (wallId: string, nodeId: string): number | null => {
+    const w = walls.get(wallId)
+    const a = w ? pos.get(w.a) : undefined
+    const b = w ? pos.get(w.b) : undefined
+    if (!w || !a || !b) return null
+    const len = dist(a, b)
+    if (len < EPS) return null
+    if (nodeId === w.a) return 0
+    if (nodeId === w.b) return roundStored(len)
+    const p = pos.get(nodeId)
+    if (!p) return null
+    const d = { x: (b.x - a.x) / len, y: (b.y - a.y) / len }
+    const rel = sub(p, a)
+    // A node that a drag took off the wall does not cut it any more: the distance of the end stays.
+    if (Math.abs(d.x * rel.y - d.y * rel.x) > ON_LINE_TOL_CM) return null
+    return roundStored(Math.min(Math.max(dot(rel, d), 0), len))
+  }
+  const anchorOf = new Map<string, string>()
+  for (const a of before.anchors) anchorOf.set(`${a.roomId}|${a.index}|${a.end}`, a.nodeId)
   return doc.rooms.map((r) => {
     const cycle = r.cycle
     if (!cycle || !cycle.length) return r
     let changed = false
-    const next: RoomFace[] = cycle.map((f) => {
-      const from = snap(f.wallId, f.from)
-      const to = snap(f.wallId, f.to)
+    const next: RoomFace[] = cycle.map((f, index) => {
+      // The end follows the node it sat on; an end that sat on no node follows the distances.
+      const follow = (end: 'from' | 'to', u: number): number => {
+        const nodeId = anchorOf.get(`${r.id}|${index}|${end}`)
+        const got = nodeId === undefined ? null : nodeCm(f.wallId, nodeId)
+        return got === null ? snap(f.wallId, u) : got
+      }
+      const from = follow('from', f.from)
+      const to = follow('to', f.to)
       if (from === f.from && to === f.to) return f
       changed = true
       return { ...f, from, to }
@@ -115,9 +198,9 @@ function rebuild(
   rooms: Room[],
   nodes: StoredNode[],
   walls: StoredWall[],
-  oldLength: Map<string, number>,
+  before: BeforeMove,
 ): PlanDoc {
-  const followed = followSpans({ rooms, nodes, walls }, oldLength)
+  const followed = followSpans({ rooms, nodes, walls }, before)
   const plain: PlanDoc = { ...doc, rooms: followed, nodes, walls }
   const withFaces: PlanDoc = { ...plain, walls: deriveWallFaces(plain) }
   return materializeElements({ ...withFaces, rooms: materializeRooms(withFaces) })
@@ -161,9 +244,9 @@ export function moveNode(doc: PlanDoc, nodeId: string, to: Vec): PlanDoc {
   const nodes = doc.nodes ?? []
   const node = nodes.find((n) => n.id === nodeId)
   if (!node || (node.x === to.x && node.y === to.y)) return doc
-  const old = wallLengths(doc)
+  const before = beforeMove(doc)
   const moved = nodes.map((n) => (n.id === nodeId ? { ...n, x: to.x, y: to.y } : n))
-  return rebuild(doc, doc.rooms, moved, doc.walls ?? [], old)
+  return rebuild(doc, doc.rooms, moved, doc.walls ?? [], before)
 }
 
 /**
@@ -174,9 +257,9 @@ export function moveWall(doc: PlanDoc, wallId: string, delta: Vec): PlanDoc {
   const wall = (doc.walls ?? []).find((w) => w.id === wallId)
   if (!wall || (!delta.x && !delta.y)) return doc
   const ids = new Set([wall.a, wall.b])
-  const old = wallLengths(doc)
+  const before = beforeMove(doc)
   const moved = (doc.nodes ?? []).map((n) => (ids.has(n.id) ? { ...n, x: n.x + delta.x, y: n.y + delta.y } : n))
-  return rebuild(doc, doc.rooms, moved, doc.walls ?? [], old)
+  return rebuild(doc, doc.rooms, moved, doc.walls ?? [], before)
 }
 
 /**
@@ -189,7 +272,7 @@ export function moveRoom(doc: PlanDoc, roomId: string, delta: Vec, opts: MoveRoo
   if (!room || !room.cycle?.length || (!delta.x && !delta.y)) return doc
   const walls = doc.walls ?? []
   const mine = new Set(room.cycle.map((f) => f.wallId))
-  const old = wallLengths(doc)
+  const before = beforeMove(doc)
   if (!opts.thisRoomOnly) {
     const ids = new Set<string>()
     for (const w of walls) {
@@ -198,7 +281,7 @@ export function moveRoom(doc: PlanDoc, roomId: string, delta: Vec, opts: MoveRoo
       ids.add(w.b)
     }
     const moved = (doc.nodes ?? []).map((n) => (ids.has(n.id) ? { ...n, x: n.x + delta.x, y: n.y + delta.y } : n))
-    return rebuild(doc, doc.rooms, moved, walls, old)
+    return rebuild(doc, doc.rooms, moved, walls, before)
   }
 
   // ---- this room only ----
@@ -258,5 +341,5 @@ export function moveRoom(doc: PlanDoc, roomId: string, delta: Vec, opts: MoveRoo
     const copy = wallCopy.get(el.wallId)
     return copy ? { ...el, wallId: copy } : el
   })
-  return rebuild({ ...doc, elements }, rooms, [...nodes, ...added], nextWalls, old)
+  return rebuild({ ...doc, elements }, rooms, [...nodes, ...added], nextWalls, before)
 }

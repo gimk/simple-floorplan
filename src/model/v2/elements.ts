@@ -5,7 +5,8 @@
 //     the stored data, so a door between two rooms is ONE element on ONE wall;
 //   - `roomId` + `wallStart` + `offsetCm` stay the calculated view: the room the element opens into,
 //     the face of that room which holds it, and the distance from that face's start corner along the
-//     face direction (the room travel direction: a -> b on side L, b -> a on side R).
+//     face direction (the room travel direction: a -> b on side L, b -> a on side R, and the other
+//     way round for a room whose polygon is wound counter-clockwise; see materialize.faceForward).
 // A v1 document keeps only the view, so these functions give it back unchanged.
 //
 // `attachElements(doc)`: an element without `wallId` (a converted v1 document, a tool or a command
@@ -30,7 +31,7 @@
 
 import { dist } from '../geometry'
 import type { PlanDoc, Room, StoredWall, Vec, WallElement } from '../types'
-import { roundStored } from './materialize'
+import { roomFaceForward, roundStored } from './materialize'
 
 /** One face of one room on one wall, with the wall it belongs to. */
 type Face = { wallId: string; roomId: string; wallStart: string; side: 'L' | 'R'; from: number; to: number }
@@ -104,14 +105,24 @@ function facesOfWall(g: Graph, wallId: string): Face[] {
 }
 
 /**
- * Distance from node a of the near edge of an element, from its view: `offsetCm` runs from the face
- * start corner in the travel direction of the room (a -> b on side L, b -> a on side R).
+ * The travel direction of a face (+1 when the room runs a -> b on that wall, -1 when it runs b -> a).
+ * The side of a face says where the room lies, not which way it walks: that comes from the winding
+ * of the room polygon (a v1 room can be counter-clockwise), see materialize.faceForward.
  */
-function alongFromView(f: Face, offsetCm: number, widthCm: number): number {
-  const start = f.side === 'L' ? f.from : f.to
-  const step = f.side === 'L' ? 1 : -1
-  const e0 = start + step * offsetCm
-  const e1 = e0 + step * widthCm
+function faceForward(g: Graph, f: Face): 1 | -1 {
+  const room = g.roomById.get(f.roomId)
+  return room ? roomFaceForward(room, f) : f.side === 'L' ? 1 : -1
+}
+
+/**
+ * Distance from node a of the near edge of an element, from its view: `offsetCm` runs from the face
+ * start corner in the travel direction of the room.
+ */
+function alongFromView(g: Graph, f: Face, offsetCm: number, widthCm: number): number {
+  const forward = faceForward(g, f)
+  const start = forward > 0 ? f.from : f.to
+  const e0 = start + forward * offsetCm
+  const e1 = e0 + forward * widthCm
   return roundStored(Math.min(e0, e1))
 }
 
@@ -144,10 +155,12 @@ function faceGap(f: Face, lo: number, hi: number): number {
 }
 
 /** The element with the view of one face: the room it opens into, the face, and the offset. */
-function withView(el: WallElement, f: Face, lo: number, hi: number, alongCm: number): WallElement {
+function withView(g: Graph, el: WallElement, f: Face, lo: number, hi: number, alongCm: number): WallElement {
   const roomMoved = el.roomId !== f.roomId
-  // The near edge in the travel direction of the room: the start end on side L, the end one on side R.
-  const offsetCm = roundStored(Math.max(0, f.side === 'L' ? lo - f.from : f.to - hi))
+  // The near edge in the travel direction of the room: it starts at `from` when the room walks
+  // a -> b, and at `to` when it walks b -> a.
+  const forward = faceForward(g, f)
+  const offsetCm = roundStored(Math.max(0, forward > 0 ? lo - f.from : f.to - hi))
   const same =
     !roomMoved && el.wallStart === f.wallStart && near(offsetCm, el.offsetCm) &&
     el.alongCm !== undefined && near(alongCm, el.alongCm)
@@ -179,18 +192,18 @@ function materializeOne(g: Graph, el: WallElement): WallElement {
   // 1. The face of its own room that holds it (the usual case, and a corner added on the wall).
   const own = roomFaces(g, el.roomId).filter((f) => f.wallId === wallId)
   const home = holdingFace(own, lo, hi) ?? overlappingFace(own, lo, hi)
-  if (home) return withView(el, home, lo, hi, alongCm)
+  if (home) return withView(g, el, home, lo, hi, alongCm)
 
   // 2. The same wall, seen from the room on the other side: the element opens into that room now.
   const others = facesOfWall(g, wallId).filter((f) => f.roomId !== el.roomId)
   const away = holdingFace(others, lo, hi) ?? overlappingFace(others, lo, hi)
-  if (away) return withView(el, away, lo, hi, alongCm)
+  if (away) return withView(g, el, away, lo, hi, alongCm)
 
   // 3. Its room is gone, and no face of another room holds the element: the nearest face of that
   //    wall keeps it visible (the room of the element does not exist any more).
   if (!own.length && others.length) {
     const nearest = others.reduce((best, f) => (faceGap(f, lo, hi) < faceGap(best, lo, hi) ? f : best))
-    return withView(el, nearest, lo, hi, alongCm)
+    return withView(g, el, nearest, lo, hi, alongCm)
   }
 
   // 4. No room holds this part of the wall: keep the last view, and the wall (the next edit fixes it).
@@ -203,7 +216,7 @@ function attachOne(g: Graph, el: WallElement): WallElement {
   if (!face) return el
   // A wall without geometry cannot hold an element (a document in the middle of a repair).
   if (wallLength(g, face.wallId) === null) return el
-  return { ...el, wallId: face.wallId, alongCm: alongFromView(face, el.offsetCm, el.widthCm) }
+  return { ...el, wallId: face.wallId, alongCm: alongFromView(g, face, el.offsetCm, el.widthCm) }
 }
 
 /**
@@ -258,7 +271,7 @@ function followViews(prev: PlanDoc, next: PlanDoc): PlanDoc {
     // The view moved: the wall keeps the element where the view says, on the face of the view.
     const face = roomFaces(g, el.roomId).find((f) => f.wallStart === el.wallStart && f.wallId === el.wallId)
     if (!face) return el
-    const alongCm = alongFromView(face, el.offsetCm, el.widthCm)
+    const alongCm = alongFromView(g, face, el.offsetCm, el.widthCm)
     if (near(alongCm, el.alongCm)) return el
     changed = true
     return { ...el, alongCm }

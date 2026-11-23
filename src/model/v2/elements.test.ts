@@ -73,6 +73,20 @@ function span(doc: PlanDoc, e: WallElement): { a: { x: number; y: number }; b: {
   return { a: at(e.offsetCm), b: at(e.offsetCm + e.widthCm) }
 }
 
+/** The world points of the two edges of an element from its WALL (`alongCm` from node a). */
+function wallSpan(doc: PlanDoc, e: WallElement): { a: { x: number; y: number }; b: { x: number; y: number } } | null {
+  const wall = (doc.walls ?? []).find((w) => w.id === e.wallId)
+  const nodes = new Map((doc.nodes ?? []).map((n) => [n.id, n]))
+  const a = wall ? nodes.get(wall.a) : undefined
+  const b = wall ? nodes.get(wall.b) : undefined
+  if (!wall || !a || !b || e.alongCm === undefined) return null
+  const length = dist(a, b)
+  if (!(length > 0)) return null
+  const d = { x: (b.x - a.x) / length, y: (b.y - a.y) / length }
+  const at = (cm: number) => ({ x: a.x + d.x * cm, y: a.y + d.y * cm })
+  return { a: at(e.alongCm), b: at(e.alongCm + e.widthCm) }
+}
+
 /** Round a view number the way a comparison reads it (0.1 cm). */
 const r1 = (v: number) => Math.round(v * 10) / 10
 
@@ -106,6 +120,30 @@ describe('attachElements: the view becomes a wall', () => {
 
     // A second call does nothing (same document object).
     expect(attachElements(attached)).toBe(attached)
+  })
+
+  it('keeps the place of an element on a room wound the other way (CCW)', () => {
+    // A is the same 300 x 400 room, but its polygon is typed counter-clockwise: the room runs from
+    // A-v0 (0,0) to A-v1 (0,400) and then along the bottom wall to A-v2 (300,400).
+    const ccw = () => [mk('A', [[0, 0], [0, 400], [300, 400], [300, 0]], 1)]
+    const doc = attachElements(v2(ccw(), [el({ id: 'door', roomId: 'A', wallStart: 'A-v1', offsetCm: 100 })]))
+    const door = doc.elements[0]
+    expect(door.wallId).toBeDefined()
+    // The view runs 100..180 cm from A-v1 (0,400) towards A-v2 (300,400): the same place on the plan.
+    const world = span(doc, door)!
+    expect(r1(world.a.x)).toBe(100)
+    expect(r1(world.b.x)).toBe(180)
+    expect(r1(world.a.y)).toBe(400)
+    // The wall says the same place: 100..180 cm from its node a.
+    const onWall = wallSpan(doc, door)!
+    expect(r1(onWall.a.x)).toBe(100)
+    expect(r1(onWall.b.x)).toBe(180)
+    expect(r1(door.alongCm!)).toBe(100)
+    // Nothing to correct: the wall and the view already say the same place.
+    const back = materializeElements(doc)
+    expect(back).toBe(doc)
+    expect(back.elements[0].wallStart).toBe('A-v1')
+    expect(r1(back.elements[0].offsetCm)).toBe(100)
   })
 
   it('keeps a v1 document as it is', () => {

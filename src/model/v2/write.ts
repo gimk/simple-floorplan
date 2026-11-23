@@ -219,7 +219,9 @@ function buildCycle(draft: Draft, room: Room): RoomFace[] {
     edgePieces(draft, p, q).forEach((piece, k) => {
       // The corner of the piece: the polygon corner for the first piece, a new one after it.
       const cornerId = k === 0 ? p.id : draft.newId('v')
-      const props = room.walls[cornerId]
+      // The properties of the edge come from the corner of the POLYGON, so every piece of a split
+      // edge gets them: the piece on an existing wall, and the piece that makes a new wall.
+      const props = room.walls[p.id]
       if (piece.kind === 'wall') {
         const line = draft.line(piece.wallId)
         if (!line) return
@@ -228,7 +230,10 @@ function buildCycle(draft: Draft, room: Room): RoomFace[] {
         const from = roundStored(Math.min(u1, u2))
         const to = roundStored(Math.max(u1, u2))
         if (to - from < EPS) return
-        // The room travels along the wall a -> b on side L, and b -> a on side R.
+        // The side is where the room LIES (left or right of node a -> node b), so it does not depend
+        // on the winding. Which way the room walks along the wall follows from the side and from the
+        // winding of its polygon; the read layer derives it (materialize.faceForward), so a
+        // counter-clockwise room keeps its vertex order, its corner ids and its labels.
         const forward = dot(d, line.d) > 0
         const side: 'L' | 'R' = forward === (winding > 0) ? 'L' : 'R'
         cycle.push({ wallId: piece.wallId, side, from, to, cornerId })

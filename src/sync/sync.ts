@@ -147,8 +147,12 @@ const sendJob: queue.SendJob = async (job, projectId, signal) => {
     case 'snapshot': {
       // The job may belong to a project we already left: use its saved doc then.
       const current = useDoc.getState().doc
-      const doc = current.projectId === projectId ? current : await idb.getDoc(projectId)
-      if (!doc) return // project was deleted locally: nothing to send
+      const raw = current.projectId === projectId ? current : await idb.getDoc(projectId)
+      if (!raw) return // project was deleted locally: nothing to send
+      // A project that the old app version left as v1 (edited offline, then the app was updated) is
+      // converted here, as on load: the server of a project already in v2 refuses a v1 snapshot
+      // (409 update_required, docs/walls-plan.md 5c Safety), so a v1 doc is never sent.
+      const doc = raw.schemaVersion === 2 ? raw : ensureV2(raw)
       const send = (base: number) => api.putSnapshot(projectId, { ...snapshotOf(doc), baseVersion: base }, opts)
       try {
         setVersion(projectId, (await send(getVersion(projectId))).version)
@@ -179,6 +183,9 @@ const sender: queue.SendJob = async (job, projectId, signal) => {
     throw e // the job stays in the outbox: no local change is dropped
   }
 }
+
+/** Test hook: send one outbox job without the rest of the app (see sync.test.ts). */
+export const __test = { sender }
 
 // ---------- local changes -> outbox ----------
 function diffAndEnqueue(next: PlanDoc, prev: PlanDoc) {
