@@ -3,7 +3,7 @@ import { useUi } from '../model/store'
 import type { ToolId } from '../model/types'
 
 const HINTS: Record<ToolId, string> = {
-  select: 'Drag room to move · Shift+click = add to selection · Shift+drag = this room only (do not move shared walls) · Ctrl/Cmd+drag corner = resize room (+Shift uniform) · Alt = no snap · double-click a wall adds a vertex · Delete/Backspace deletes',
+  select: 'Drag room to move · Shift+click = add to selection · drag on empty space = box select · Shift+drag = this room only (do not move shared walls) · Ctrl/Cmd+drag corner = resize room (+Shift uniform) · Alt = no snap · double-click a wall adds a vertex · Delete/Backspace deletes',
   pan: 'Drag the canvas to pan · scroll to pan · Ctrl/Cmd+scroll to zoom',
   rect: 'Drag on the canvas to draw a rectangle room · Alt bypasses snap',
   polygon: 'Click to add vertices · Enter closes the room · Backspace removes the last point · Esc cancels',

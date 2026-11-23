@@ -52,3 +52,15 @@ export const inGroup = (s: SelState, item: SelItem): boolean => {
   const cur = selectedItems(s)
   return cur.length > 1 && cur.some((c) => sameSel(c, item))
 }
+
+/**
+ * Select a set of items (box selection). With `add` (Shift), they join the current selection
+ * when it has the same kind; otherwise they replace it.
+ */
+export function selectItems(s: SelState, found: MultiItem[], add: boolean): SelState {
+  if (!found.length) return add ? s : { selection: null, multi: [] }
+  const cur = add ? selectedItems(s) : []
+  const base = cur.length && cur[0].kind === found[0].kind ? cur : []
+  const next = [...base, ...found.filter((f) => !base.some((c) => sameSel(c, f)))]
+  return { selection: next[next.length - 1], multi: next.length > 1 ? next : [] }
+}

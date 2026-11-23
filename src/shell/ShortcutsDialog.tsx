@@ -14,6 +14,7 @@ const ROWS: [string, string][] = [
   ['Alt (while drawing/dragging)', 'Bypass snap'],
   ['Drag a room (Select tool)', 'Move the room with its walls, cutouts and pins'],
   ['Shift + click a room / wall / point', 'Add it to the selection, or remove it (same kind only)'],
+  ['Drag on empty space', 'Select with a box: rooms fully inside, else walls, else points (Shift adds)'],
   ['Drag a selected room / point (group)', 'Move all the selected rooms or points together'],
   ['Shift + drag a room / wall / vertex', 'This room only: shared walls of other rooms do not follow'],
   ['Ctrl/Cmd + drag a corner', 'Resize the whole room from that corner (the opposite corner stays)'],

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type PointerEvent as RPE } from 'react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { dist, fmtCm, norm, sub } from '../../model/geometry'
-import { selectedItems } from '../../model/selection'
+import { selectedItems, selectItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { Vec } from '../../model/types'
 import { newEdgeCrosses, selfIntersects } from './crossing'
+import { boxOf, itemsInBox } from './boxSelect'
 import { useGuides } from './guides'
 import { deleteSelection, locked, onHoleVertexDown, onVertexDown, otherEdges, otherVertices } from './interaction'
 import { NoticeLayer, notify } from './notice'
@@ -337,17 +338,51 @@ function SelectTool() {
   }, [])
 
   // Click on empty space (svg root or background image) clears the selection.
+  // Mouse drag there draws a box: rooms fully inside, else walls, else points (Shift adds).
   // Rooms, walls and elements handle their own pointerdown and are never the target here.
+  const [band, setBand] = useState<{ a: Vec; b: Vec } | null>(null)
+  const toWorld = vp.toWorld
   useEffect(() => {
     const svg = vp.svg
     if (!svg) return
     const down = (e: PointerEvent) => {
       if (e.button !== 0 || !e.isPrimary) return
-      if (e.target === svg || e.target instanceof SVGImageElement) useUi.getState().select(null)
+      if (!(e.target === svg || e.target instanceof SVGImageElement)) return
+      if (svg.hasAttribute('data-pan-ready')) return
+      const add = e.shiftKey
+      if (!add) useUi.getState().select(null)
+      if (e.pointerType === 'touch') return
+      const sx = e.clientX, sy = e.clientY
+      const a = toWorld(sx, sy)
+      let moved = false
+      const move = (ev: PointerEvent) => {
+        if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return
+        moved = true
+        setBand({ a, b: toWorld(ev.clientX, ev.clientY) })
+      }
+      const stop = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', stop)
+        window.removeEventListener('keydown', key)
+        setBand(null)
+      }
+      const up = (ev: PointerEvent) => {
+        stop()
+        if (!moved) return
+        const found = itemsInBox(useDoc.getState().doc.rooms, boxOf(a, toWorld(ev.clientX, ev.clientY)))
+        const ui = useUi.getState()
+        ui.set(selectItems(ui, found, add))
+      }
+      const key = (ev: KeyboardEvent) => { if (ev.key === 'Escape') stop() }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', stop)
+      window.addEventListener('keydown', key)
     }
     svg.addEventListener('pointerdown', down)
     return () => svg.removeEventListener('pointerdown', down)
-  }, [vp.svg])
+  }, [vp.svg, toWorld])
 
   return (
     <g>
@@ -375,6 +410,13 @@ function SelectTool() {
           </g>
         )
       })))}
+      {band && (() => {
+        const b = boxOf(band.a, band.b)
+        return (
+          <rect data-select-box="" x={b.x0} y={b.y0} width={b.x1 - b.x0} height={b.y1 - b.y0} pointerEvents="none"
+            strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`} className="fill-orange-500/10 stroke-orange-500" />
+        )
+      })()}
       <GuidesLayer />
       <NoticeLayer />
     </g>

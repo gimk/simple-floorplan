@@ -80,7 +80,9 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
 
   // Pan / pinch handled in CAPTURE phase so they win over tools when appropriate.
   const onPointerDownCapture = (e: React.PointerEvent) => {
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    // Only touch pointers count for pinch: a mouse released outside the canvas never sends
+    // pointerup here, and a stale entry would turn the next mouse drag into a pinch.
+    if (e.pointerType === 'touch') pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     const v = useUi.getState().view
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()]
@@ -129,6 +131,7 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
       <svg
         ref={ref}
         data-testid="floorplan-canvas"
+        data-pan-ready={space || tool === 'pan' ? '' : undefined}
         className="h-full w-full touch-none select-none"
         style={{ cursor }}
         onPointerDownCapture={onPointerDownCapture}
