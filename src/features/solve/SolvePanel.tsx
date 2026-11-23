@@ -11,6 +11,7 @@ import { BTN, CheckboxRow, EmptyHint, FieldRow, MUTED, PanelSection, Segmented }
 import { applyMeasuredAll, describeReport, verifiedWalls } from '../rooms/apply'
 import { applyGlobal, describeGlobal } from '../rooms/applyGlobal'
 import type { SurfaceMode } from '../rooms/globalSolve'
+import { MeasureNext } from './MeasureNext'
 import { progressRows, progressTotals, type ProgressRow } from './logic'
 
 const update = (fn: (d: PlanDoc) => PlanDoc) => useDoc.getState().update(fn)
@@ -217,6 +218,8 @@ export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode }: {
           onChange={setMode}
         />
       </PanelSection>
+
+      <MeasureNext doc={doc} surfaceMode={mode} />
 
       <PanelSection id="solve-actions" title="Actions" icon={<Crosshair size={16} />}>
         <Actions doc={doc} />

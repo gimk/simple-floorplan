@@ -175,3 +175,55 @@ describe('SolvePanel surface references', () => {
     expect(html).toContain('DPE (SE): 11,3 -&gt; 12,0 m2')
   })
 })
+
+describe('SolvePanel measure next', () => {
+  it('sits above Actions and says which value to measure next, with its uncertainty', () => {
+    const html = render(doc())
+    const section = html.indexOf('aria-label="Measure next"')
+    expect(section).toBeGreaterThan(0)
+    expect(section).toBeLessThan(html.indexOf('aria-label="Actions"'))
+    expect(html).toContain('data-measure-suggestion="SE-1"')
+    expect(html).toContain('aria-label="Show on plan"')
+    expect(html).toContain('position only from the drawing')
+    expect(html).toContain('data-measure-sd="SE-1"')
+    expect(html).toContain('141,5')
+    // A field per line: type the value in place (react-dom/server keeps the camel case of inputMode).
+    expect(html).toContain('inputMode="decimal"')
+    expect(html).toContain('aria-label="Measured value of SE-1"')
+  })
+
+  it('asks to measure again a value that the plan cannot fit', () => {
+    const d = doc({
+      measurements: {
+        'SE-1': { label: 'SE-1', actualCm: 390, updatedAt: '' },
+        'SE-3': { label: 'SE-3', actualCm: 402, updatedAt: '' },
+      },
+    })
+    const html = render(d)
+    expect(html).toContain('data-measure-remeasure')
+    expect(html).toContain('Measure again')
+    expect(html).toContain('text-amber-700')
+    expect(html).toContain('plan says')
+    // The remeasure lines come before the suggestions.
+    const again = html.indexOf('Measure again')
+    const list = html.indexOf('data-measure-list')
+    expect(list === -1 || again < list).toBe(true)
+  })
+
+  it('has a hint when every value has a measurement', () => {
+    const all = {
+      'SE-1': { label: 'SE-1', actualCm: 390, updatedAt: '' },
+      'SE-2': { label: 'SE-2', actualCm: 290, updatedAt: '' },
+      'SE-3': { label: 'SE-3', actualCm: 390, updatedAt: '' },
+      'SE-4': { label: 'SE-4', actualCm: 290, updatedAt: '' },
+      'SE-D': { label: 'SE-D', actualCm: 486, updatedAt: '' },
+      'SE-1-T': { label: 'SE-1-T', actualCm: 10, updatedAt: '' },
+      'SE-2-T': { label: 'SE-2-T', actualCm: 10, updatedAt: '' },
+      'SE-3-T': { label: 'SE-3-T', actualCm: 10, updatedAt: '' },
+      'SE-4-T': { label: 'SE-4-T', actualCm: 10, updatedAt: '' },
+    }
+    const html = render(doc({ measurements: all }))
+    expect(html).toContain('Nothing left to suggest')
+    expect(html).not.toContain('data-measure-list')
+  })
+})

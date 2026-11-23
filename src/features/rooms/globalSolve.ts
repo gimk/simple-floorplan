@@ -11,6 +11,11 @@
 // Surface references (docs/walls-plan.md phase 2): a reference of `doc.apartment.references` is a
 // surface written on a document (DPE, Carrez...). It adds one row on the area of the inside face
 // polygon: 'match' pulls the area to the reference, 'guide' only blocks the wrong direction.
+//
+// The problem build (edges, walls, corners, rows, priors, x0) is one function, `buildModel`, used
+// by solveGlobal and by solveGlobalWithModel. The second one keeps the model: the final x, the
+// normal matrix at that x, and the gradient of any value that a new measurement could add. That is
+// what `suggest.ts` scores (docs/walls-plan.md phase 2b).
 import { innerWallLengths } from '../../model/geometry'
 import type { PlanDoc, Room, SurfaceReference, Vec, WallAlign } from '../../model/types'
 import { thicknessLabel } from '../../model/survey'
@@ -147,8 +152,92 @@ type Row =
    */
   | { kind: 'area'; polys: AreaPoly[]; target: number; sigma: number; hinge?: { t0: number; above: boolean } }
 
-const shoelace = (p: Vec[]) => p.reduce((s, a, i) => {
-  const b = p[(i + 1) % p.length]
+/** The geometry of the fit: rooms, their walls, and the corner expressions. */
+type Geom = { rooms: Room[]; edgeOf: Edge[][]; corners: CornerLin[][] }
+
+/** Unknowns of one wall: its centre line and its thickness. */
+type GroupVar = {
+  coord: number; thick: number; edges: Edge[]; orient: 'h' | 'v'; drawn: number; prior: number
+  /** Reference line = centre + k * thickness / 2. */
+  k: number
+  drawnRef: number
+  lo: number
+  hi: number
+}
+
+/** Corner k of a room: x and y of the centre line, and of the inside face. */
+type CornerLin = { cx: Lin; cy: Lin; fx: Lin; fy: Lin; okX: boolean; okY: boolean }
+
+/** One surface reference, ready for a row. */
+type SurfaceEntry = { label: string; roomCode?: string; referenceM2: number; polys: AreaPoly[] }
+
+/**
+ * Everything the fit needs, built from the document. solveGlobal and solveGlobalWithModel use
+ * the same build, so a candidate row is scored on exactly the system that was solved.
+ */
+type Built = {
+  o: Required<GlobalOptions>
+  rooms: Room[]
+  edgeOf: Edge[][]
+  groupVars: GroupVar[]
+  corners: CornerLin[][]
+  rows: Row[]
+  priors: Row[]
+  meta: { label: string; kind: GlobalResidual['kind'] }[]
+  skipped: { label: string; reason: string }[]
+  surfaceEntries: SurfaceEntry[]
+  x0: number[]
+  label: (e: Edge) => string
+}
+
+/**
+ * Inside-length row of wall i of room ri, as in the measurements section: a positive length
+ * between the two inside face corners. Null when the wall cannot carry a row.
+ */
+function wallLenLin(g: Geom, ri: number, i: number): Lin | null {
+  const r = g.rooms[ri]
+  const e = g.edgeOf[ri][i]
+  if (!r || !e || e.orient === 'o') return null
+  const n = r.vertices.length
+  const a = g.corners[ri][i], b = g.corners[ri][(i + 1) % n]
+  if (!(e.orient === 'h' ? a.okX && b.okX : a.okY && b.okY)) return null
+  const va = r.vertices[i], vb = r.vertices[(i + 1) % n]
+  const s = e.orient === 'h' ? Math.sign(vb.x - va.x) : Math.sign(vb.y - va.y)
+  return scaleLin(e.orient === 'h' ? subLin(b.fx, a.fx) : subLin(b.fy, a.fy), s)
+}
+
+/** Inside-corner points of the diagonal between corners i and j of room ri. Null when not possible. */
+function diagonalLins(g: Geom, ri: number, i: number, j: number) {
+  const a = g.corners[ri]?.[i], b = g.corners[ri]?.[j]
+  return a && b ? { ax: a.fx, ay: a.fy, bx: b.fx, by: b.fy } : null
+}
+
+/**
+ * Distance between two points at xs, with its gradient in cm per cm (not divided by a sigma).
+ * The gradient of a length row is the same expression, with or without the row in the fit.
+ */
+function distAt(d: { ax: Lin; ay: Lin; bx: Lin; by: Lin }, xs: number[]): { value: number; grad: [number, number][] } {
+  const dx = evalLin(d.bx, xs) - evalLin(d.ax, xs), dy = evalLin(d.by, xs) - evalLin(d.ay, xs)
+  const L = Math.hypot(dx, dy) || 1e-9
+  return {
+    value: Math.hypot(dx, dy),
+    grad: [
+      ...d.bx.t.map(([v, k]) => [v, (k * dx) / L] as [number, number]),
+      ...d.ax.t.map(([v, k]) => [v, (-k * dx) / L] as [number, number]),
+      ...d.by.t.map(([v, k]) => [v, (k * dy) / L] as [number, number]),
+      ...d.ay.t.map(([v, k]) => [v, (-k * dy) / L] as [number, number]),
+    ],
+  }
+}
+
+/** Sum the terms that use the same unknown, so a gradient has one term per unknown. */
+function mergeGrad(t: [number, number][]): [number, number][] {
+  const m = new Map<number, number>()
+  for (const [v, k] of t) m.set(v, (m.get(v) ?? 0) + k)
+  return [...m].filter(([, k]) => k !== 0)
+}
+
+const shoelace = (p: Vec[]) => p.reduce((s, a, i) => {  const b = p[(i + 1) % p.length]
   return s + a.x * b.y - b.x * a.y
 }, 0)
 
@@ -220,7 +309,7 @@ function cholSolve(L: number[][], b: number[]): number[] {
   return x
 }
 
-export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): GlobalSolved {
+function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): Built {
   // The references come from the options, or from the document (doc.apartment.references).
   const o = { ...DEFAULTS, ...options, references: options.references ?? doc.apartment?.references ?? [] }
   const rooms = doc.rooms
@@ -303,14 +392,6 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
     return k
   }
   const label = (e: Edge) => `${rooms[e.room].code}-${e.index + 1}`
-  type GroupVar = {
-    coord: number; thick: number; edges: Edge[]; orient: 'h' | 'v'; drawn: number; prior: number
-    /** Reference line = centre + k * thickness / 2. */
-    k: number
-    drawnRef: number
-    lo: number
-    hi: number
-  }
   const groupVars: GroupVar[] = []
   const rootToGroup = new Map<number, number>()
   edges.forEach((e, i) => {
@@ -344,7 +425,6 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
   // Corner k of room r: x and y of the centre line, and of the inside face.
   // The x comes from the vertical wall at the corner, the y from the horizontal one.
   // A corner with no wall in one direction gets a free unknown there.
-  type CornerLin = { cx: Lin; cy: Lin; fx: Lin; fy: Lin; okX: boolean; okY: boolean }
   const corners: CornerLin[][] = rooms.map((r, ri) => {
     const es = edgeOf[ri]
     const n = es.length
@@ -365,6 +445,9 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
     })
   })
 
+  // The geometry of the fit, for the row builders (walls, diagonals).
+  const geom: Geom = { rooms, edgeOf, corners }
+
   // ---- measurements ----
   const rows: Row[] = []
   // Current inside lengths, for locked walls with no measured value.
@@ -372,7 +455,6 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
   const meta: { label: string; kind: GlobalResidual['kind'] }[] = []
   const skipped: { label: string; reason: string }[] = []
   rooms.forEach((r, ri) => {
-    const n = r.vertices.length
     edgeOf[ri].forEach((e, i) => {
       // Measured thickness (CODE-n-T): a direct value for the wall.
       const tLab = thicknessLabel(r.code, i)
@@ -393,22 +475,20 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
       const m = hasValue ? measuredCm! : innerLengths[ri][i]
       const sigma = locked ? o.lockedSigmaCm : o.measureSigmaCm
       const kind: GlobalResidual['kind'] = hasValue ? 'wall' : 'locked'
-      if (e.orient === 'o') return skipped.push({ label: lab, reason: 'wall is not horizontal or vertical' }), undefined
-      const a = corners[ri][i], b = corners[ri][(i + 1) % n]
-      const ok = e.orient === 'h' ? a.okX && b.okX : a.okY && b.okY
-      if (!ok) return skipped.push({ label: lab, reason: 'a wall at its end is not horizontal or vertical' }), undefined
-      const va = r.vertices[i], vb = r.vertices[(i + 1) % n]
-      const s = e.orient === 'h' ? Math.sign(vb.x - va.x) : Math.sign(vb.y - va.y)
-      const l = e.orient === 'h' ? subLin(b.fx, a.fx) : subLin(b.fy, a.fy)
-      rows.push({ kind: 'lin', l: scaleLin(l, s), target: m, sigma })
+      const l = wallLenLin(geom, ri, i)
+      if (!l) {
+        const reason = e.orient === 'o' ? 'wall is not horizontal or vertical' : 'a wall at its end is not horizontal or vertical'
+        return skipped.push({ label: lab, reason }), undefined
+      }
+      rows.push({ kind: 'lin', l, target: m, sigma })
       meta.push({ label: lab, kind })
     })
     const d = doc.measurements[`${r.code}-D`]?.actualCm
     if (r.diagonal && d && d > 0) {
       const [i, j] = r.diagonal
-      const a = corners[ri][i], b = corners[ri][j]
-      if (a && b) {
-        rows.push({ kind: 'dist', ax: a.fx, ay: a.fy, bx: b.fx, by: b.fy, target: d, sigma: o.measureSigmaCm })
+      const dl = diagonalLins(geom, ri, i, j)
+      if (dl) {
+        rows.push({ kind: 'dist', ...dl, target: d, sigma: o.measureSigmaCm })
         meta.push({ label: `${r.code}-D`, kind: 'diagonal' })
       }
     }
@@ -418,7 +498,6 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
   // One row per reference: the area of the inside face polygon of its room, or the sum of the
   // inside areas of every indoor room. Sigma is a small % of the surface, so a measured wall
   // (1 cm) always wins over the reference.
-  type SurfaceEntry = { label: string; roomCode?: string; referenceM2: number; polys: AreaPoly[] }
   const surfaceEntries: SurfaceEntry[] = []
   if (o.surfaceMode !== 'off') {
     const insidePoly = (ri: number): AreaPoly => ({ fx: corners[ri].map((c) => c.fx), fy: corners[ri].map((c) => c.fy) })
@@ -488,31 +567,32 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
     }
   }
 
-  // ---- Gauss-Newton ----
-  const all = [...rows, ...priors]
-  const nv = x0.length
-  let x = [...x0]
-  const residualAndGrad = (row: Row, xs: number[]): { r: number; g: [number, number][] } => {
-    if (row.kind === 'lin') return { r: (evalLin(row.l, xs) - row.target) / row.sigma, g: row.l.t.map(([v, k]) => [v, k / row.sigma]) }
-    if (row.kind === 'area') {
-      const { area, grad } = evalArea(row.polys, xs)
-      // The Guide hinge is active only when the area went past t0 on the given side, so it lets
-      // the area move the right way and blocks the wrong way only. Activity is tested again at
-      // each iteration, with the current area.
-      const target = row.hinge ? (row.hinge.above ? (area > row.hinge.t0 ? row.hinge.t0 : null) : (area < row.hinge.t0 ? row.hinge.t0 : null)) : row.target
-      if (target === null) return { r: 0, g: [] }
-      return { r: (area - target) / row.sigma, g: grad.map(([v, k]) => [v, k / row.sigma]) }
-    }
-    const dx = evalLin(row.bx, xs) - evalLin(row.ax, xs), dy = evalLin(row.by, xs) - evalLin(row.ay, xs)
-    const L = Math.hypot(dx, dy) || 1e-9
-    const g: [number, number][] = [
-      ...row.bx.t.map(([v, k]) => [v, (k * dx) / L / row.sigma] as [number, number]),
-      ...row.ax.t.map(([v, k]) => [v, (-k * dx) / L / row.sigma] as [number, number]),
-      ...row.by.t.map(([v, k]) => [v, (k * dy) / L / row.sigma] as [number, number]),
-      ...row.ay.t.map(([v, k]) => [v, (-k * dy) / L / row.sigma] as [number, number]),
-    ]
-    return { r: (L - row.target) / row.sigma, g }
+  return { o, rooms, edgeOf, groupVars, corners, rows, priors, meta, skipped, surfaceEntries, x0, label }
+}
+
+// ---- Gauss-Newton ----
+
+/** Residual and gradient (divided by sigma) of one row, at xs. */
+function residualAndGrad(row: Row, xs: number[]): { r: number; g: [number, number][] } {
+  if (row.kind === 'lin') return { r: (evalLin(row.l, xs) - row.target) / row.sigma, g: row.l.t.map(([v, k]) => [v, k / row.sigma]) }
+  if (row.kind === 'area') {
+    const { area, grad } = evalArea(row.polys, xs)
+    // The Guide hinge is active only when the area went past t0 on the given side, so it lets
+    // the area move the right way and blocks the wrong way only. Activity is tested again at
+    // each iteration, with the current area.
+    const target = row.hinge ? (row.hinge.above ? (area > row.hinge.t0 ? row.hinge.t0 : null) : (area < row.hinge.t0 ? row.hinge.t0 : null)) : row.target
+    if (target === null) return { r: 0, g: [] }
+    return { r: (area - target) / row.sigma, g: grad.map(([v, k]) => [v, k / row.sigma]) }
   }
+  const d = distAt(row, xs)
+  return { r: (d.value - row.target) / row.sigma, g: d.grad.map(([v, k]) => [v, k / row.sigma]) }
+}
+
+/** The fit itself: x at the end, the normal matrix there, and its Cholesky factor. */
+function fitModel(b: Built): { x: number[]; normal: number[][]; chol: number[][] | null; iterations: number } {
+  const all = [...b.rows, ...b.priors]
+  const nv = b.x0.length
+  let x = [...b.x0]
   const normal = (xs: number[]) => {
     const N = Array.from({ length: nv }, () => new Array<number>(nv).fill(0))
     const b = new Array<number>(nv).fill(0)
@@ -526,21 +606,33 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
     return { N, b }
   }
   let iterations = 0
-  let L: number[][] | null = null
+  let chol: number[][] | null = null
   for (; iterations < 20; iterations++) {
-    const { N, b } = normal(x)
-    L = cholesky(N)
-    if (!L) break
-    const dx = cholSolve(L, b)
+    const { N, b: rhs } = normal(x)
+    chol = cholesky(N)
+    if (!chol) break
+    const dx = cholSolve(chol, rhs)
     x = x.map((v, k) => v + dx[k])
     if (Math.hypot(...dx) < 1e-6) break
   }
-  L = cholesky(normal(x).N)
+  // The normal matrix and its factor at the final x: they give the covariance of the unknowns.
+  const N = normal(x).N
+  return { x, normal: N, chol: cholesky(N), iterations }
+}
+
+/**
+ * Report of one fit. Also the single place that turns `x` into user values, so the solved plan and
+ * the model used by the suggestions always agree.
+ */
+function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; iterations: number }): GlobalSolved {
+  const { x, chol, iterations } = fitted
+  const { o, rooms, groupVars, corners, rows, meta, skipped, surfaceEntries, x0, label } = b
+  const nv = x0.length
   const variance = (k: number) => {
-    if (!L) return NaN
+    if (!chol) return NaN
     const e = new Array<number>(nv).fill(0)
     e[k] = 1
-    return cholSolve(L, e)[k]
+    return cholSolve(chol, e)[k]
   }
 
   // ---- report ----
@@ -585,4 +677,86 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apart
     }
   })
   return { groups, residuals, rmsCm, rooms: out, inner, surfaces, skipped, iterations }
+}
+
+/** Defaults of the solver, for callers that must use the same sigmas (see the suggestions). */
+export const GLOBAL_SOLVE_DEFAULTS: Required<GlobalOptions> = DEFAULTS
+
+/** All rooms in one least-squares fit. Same result as before the model was split out. */
+export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): GlobalSolved {
+  const b = buildModel(doc, options)
+  return reportModel(b, fitModel(b))
+}
+
+/** A gradient of one quantity: the change of that quantity per unit of each unknown. */
+export type Grad = [number, number][]
+
+/**
+ * C g, with C = inverse of the normal matrix (the covariance of the unknowns, in cm²).
+ * Used by the suggestions: gᵀ C g is the variance of a candidate value, and the term C g is what a
+ * new measurement takes away from the uncertainty of everything else.
+ */
+export function covarianceTimes(chol: number[][] | null, grad: Grad): number[] | null {
+  if (!chol) return null
+  const dense = new Array<number>(chol.length).fill(0)
+  for (const [v, k] of grad) dense[v] += k
+  return cholSolve(chol, dense)
+}
+
+/** A quantity that can become a measurement. */
+export type CandidateQuantity =
+  | { kind: 'wall'; roomId: string; wallIndex: number }
+  | { kind: 'diagonal'; roomId: string; i: number; j: number }
+  | { kind: 'thickness'; groupId: number }
+
+/** Value of a quantity at x (cm, or cm² for a surface), with its unscaled gradient. */
+export type QuantityAtX = { value: number; grad: Grad }
+
+/**
+ * The solved plan, plus what a "next best measurement" needs: the final x, the normal matrix, the
+ * unknown of each wall, and the gradient of any candidate row at the final x.
+ */
+export type SolveModel = {
+  solved: GlobalSolved
+  /** Final values of the unknowns. */
+  x: number[]
+  /** Gauss-Newton normal matrix (all rows, priors included) at the final x. */
+  normal: number[][]
+  /** Cholesky factor of `normal` (N = L Lᵀ). Null when N is not positive definite. */
+  chol: number[][] | null
+  /** Unknown index of the centre line and of the thickness of each wall group (same order as solved.groups). */
+  groupVars: { coord: number; thick: number }[]
+  /** Value and gradient at x, or null when the quantity cannot be a row. */
+  quantity(q: CandidateQuantity): QuantityAtX | null
+}
+
+/**
+ * Same fit as solveGlobal, and the model behind it: the covariance of the unknowns (from `chol`)
+ * and the gradient of a candidate row score how much a new measurement would help.
+ */
+export function solveGlobalWithModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): SolveModel {
+  const b = buildModel(doc, options)
+  const fitted = fitModel(b)
+  const solved = reportModel(b, fitted)
+  const x = fitted.x
+  const geom: Geom = { rooms: b.rooms, edgeOf: b.edgeOf, corners: b.corners }
+  const quantity = (q: CandidateQuantity): QuantityAtX | null => {
+    if (q.kind === 'thickness') {
+      const g = b.groupVars[q.groupId]
+      return g ? { value: x[g.thick], grad: [[g.thick, 1]] } : null
+    }
+    const ri = b.rooms.findIndex((r) => r.id === q.roomId)
+    if (ri < 0) return null
+    if (q.kind === 'wall') {
+      const l = wallLenLin(geom, ri, q.wallIndex)
+      return l ? { value: evalLin(l, x), grad: mergeGrad(l.t) } : null
+    }
+    const d = diagonalLins(geom, ri, q.i, q.j)
+    return d ? distAt(d, x) : null
+  }
+  return {
+    solved, x, normal: fitted.normal, chol: fitted.chol,
+    groupVars: b.groupVars.map((g) => ({ coord: g.coord, thick: g.thick })),
+    quantity,
+  }
 }
