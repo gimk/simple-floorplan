@@ -16,13 +16,20 @@
 //   and `openDoc()` switches the whole app to another project.
 import { useEffect, useState } from 'react'
 import { useDoc, useUi } from '../model/store'
-import type { BackgroundImage, PlanDoc } from '../model/types'
+import type { BackgroundImage, Measurement, PlanDoc } from '../model/types'
 import * as api from './api'
 import * as idb from './idb'
 import { collectDataUrls, isLocalId, pinsOf, pollIntervalMs, projectKey, replacePhoto, titlePatchForDoc, type PinLike } from './projects'
 import * as queue from './queue'
 
 const PASS_KEY = 'simple-floorplan:passcode'
+
+/** Body of one measurement job. The source is left out when the value has none (tape). */
+const measurementPayload = (m: Measurement): api.MeasurementPut => ({
+  actualCm: m.actualCm,
+  updatedAt: m.updatedAt,
+  ...(m.source ? { source: m.source } : {}),
+})
 const LEGACY_VERSION_KEY = 'simple-floorplan:version'
 const LEGACY_SINCE_KEY = 'simple-floorplan:since'
 const CONNECT_RETRY_MS = 30_000
@@ -117,7 +124,7 @@ function diffAndEnqueue(next: PlanDoc, prev: PlanDoc) {
 
   if (next.measurements !== prev.measurements) {
     for (const [label, m] of Object.entries(next.measurements))
-      if (prev.measurements[label] !== m) void queue.enqueue('measurement', label, { actualCm: m.actualCm, updatedAt: m.updatedAt })
+      if (prev.measurements[label] !== m) void queue.enqueue('measurement', label, measurementPayload(m))
     for (const label of Object.keys(prev.measurements))
       if (!(label in next.measurements)) void queue.enqueue('delete-measurement', label, null)
   }
@@ -244,7 +251,8 @@ async function pull() {
     if (ch.measurements.length || ch.notes.length || ch.items.length) {
       applyServer((doc) => {
         const measurements = { ...doc.measurements }
-        for (const m of ch.measurements) measurements[m.label] = { label: m.label, actualCm: m.actualCm, updatedAt: m.updatedAt }
+        for (const m of ch.measurements)
+          measurements[m.label] = { label: m.label, actualCm: m.actualCm, updatedAt: m.updatedAt, ...(m.source ? { source: m.source } : {}) }
         const roomNotes = { ...doc.roomNotes }
         for (const n of ch.notes) roomNotes[n.roomCode] = n.text
         let elements = doc.elements
@@ -310,7 +318,7 @@ async function connect() {
       // First upload, or local geometry is ahead: push everything we have.
       await queue.enqueue('snapshot', '', null)
       if (server.version === 0) {
-        for (const m of Object.values(d.measurements)) await queue.enqueue('measurement', m.label, { actualCm: m.actualCm, updatedAt: m.updatedAt })
+        for (const m of Object.values(d.measurements)) await queue.enqueue('measurement', m.label, measurementPayload(m))
         for (const [code, text] of Object.entries(d.roomNotes)) await queue.enqueue('note', code, { text })
         for (const e of d.elements) await queue.enqueue('item', e.id, e)
       }

@@ -190,3 +190,40 @@ describe('schema: pin photo sketches', () => {
     expect(json).toContain('valueCm')
   })
 })
+
+describe('schema: measurement source (walls-plan 3a)', () => {
+  const docWith = (measurement: unknown) => ({
+    projectId: 'p1',
+    rooms: [],
+    measurements: { 'SE-2': measurement },
+  })
+
+  it('keeps the source of a measurement', () => {
+    const doc = parsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', source: 'laser' }))
+    expect(doc.measurements['SE-2'].source).toBe('laser')
+  })
+
+  it('accepts every source, and a measurement without source (documents saved before 3a)', () => {
+    for (const source of ['tape', 'laser', 'plan', 'other']) {
+      const doc = parsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', source }))
+      expect(doc.measurements['SE-2'].source).toBe(source)
+    }
+    const old = parsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u' }))
+    expect(old.measurements['SE-2'].source).toBeUndefined()
+    expect(old.measurements['SE-2'].actualCm).toBe(412)
+  })
+
+  it('rejects an unknown source', () => {
+    expect(safeParsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', source: 'ruler' })).ok).toBe(false)
+    expect(safeParsePlan(docWith({ label: 'SE-2', actualCm: 412, updatedAt: 'u', source: null })).ok).toBe(false)
+  })
+
+  it('accepts a source in a snapshot body and exposes it in the JSON Schema', () => {
+    const body = SnapshotPutBodySchema.parse({
+      baseVersion: 0,
+      measurements: { 'SE-2': { label: 'SE-2', actualCm: 412, updatedAt: 'u', source: 'plan' } },
+    })
+    expect(body.measurements?.['SE-2'].source).toBe('plan')
+    expect(JSON.stringify(planJsonSchema())).toContain('laser')
+  })
+})

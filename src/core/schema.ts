@@ -87,10 +87,15 @@ export const BackgroundImageSchema = z.object({
   locked: z.boolean(),
 })
 
+/** How an on-site value was measured (docs/walls-plan.md phase 3a). Missing = 'tape'. */
+export const MeasureSourceSchema = z.enum(['tape', 'laser', 'plan', 'other'])
+
 export const MeasurementSchema = z.object({
   label: z.string().min(1),
   actualCm: z.number().finite().positive(),
   updatedAt: z.string(),
+  // Optional: documents saved before phase 3a have no source.
+  source: MeasureSourceSchema.optional(),
 })
 
 export const TapeMeasureSchema = z.object({

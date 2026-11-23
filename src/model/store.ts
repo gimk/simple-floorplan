@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { temporal } from 'zundo'
-import type { ElementKind, Mode, PlanDoc, Selection, ToolId } from './types'
+import type { ElementKind, MeasureSource, Mode, PlanDoc, Selection, ToolId } from './types'
 import type { RenovationView } from '../features/renovation/logic'
 import { toggleItem, type SelItem } from './selection'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
@@ -151,6 +151,11 @@ type UiState = {
   layers: Layers
   /** Before / After / Both renovation display (see features/renovation, 7.4). */
   renovationView: RenovationView
+  /**
+   * Source saved with every value typed in Measuring Mode (docs/walls-plan.md phase 3a).
+   * It sets the weight of the value in the solver. Memory only: no other UI setting persists.
+   */
+  measureSource: MeasureSource
   /** Viewport: world point at screen origin + zoom (screen px per cm). */
   view: { x: number; y: number; zoom: number }
   setMode: (m: Mode) => void
@@ -161,7 +166,13 @@ type UiState = {
   toggleSelect: (s: SelItem) => void
   /** Write the report of the Solve tab (null clears it). */
   setSolveReport: (text: string | null) => void
-  set: (p: Partial<Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect' | 'setSolveReport'>>) => void
+  /** Source saved with the next values typed in Measuring Mode. */
+  setMeasureSource: (s: MeasureSource) => void
+  set: (
+    p: Partial<
+      Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect' | 'setSolveReport' | 'setMeasureSource'>
+    >,
+  ) => void
 }
 
 export const useUi = create<UiState>()((set) => ({
@@ -176,12 +187,14 @@ export const useUi = create<UiState>()((set) => ({
   solveReport: null,
   layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true },
   renovationView: 'both',
+  measureSource: 'tape',
   view: { x: -100, y: -100, zoom: 1 },
   setMode: (mode) => set({ mode, tool: 'select', selection: null, multi: [] }),
   setTool: (tool) => set({ tool }),
   select: (selection) => set({ selection, multi: [] }),
   toggleSelect: (item) => set((s) => toggleItem(s, item)),
   setSolveReport: (solveReport) => set({ solveReport }),
+  setMeasureSource: (measureSource) => set({ measureSource }),
   set: (p) => set(p),
 }))
 

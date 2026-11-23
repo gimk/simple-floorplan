@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Check } from 'lucide-react'
 import { fmtCm } from '../../model/geometry'
-import { useDoc } from '../../model/store'
+import { sourceTag } from '../../model/measureSource'
+import { useDoc, useUi } from '../../model/store'
 import { parseThicknessLabel, surveyIds, thicknessIds, type SurveyId } from '../../model/survey'
 import type { PlanDoc, Room } from '../../model/types'
 import { ItemsEditor } from './ItemsEditor'
@@ -23,6 +24,8 @@ const setNote = (code: string, text: string) =>
 
 export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; allLabels: string[] }) {
   const [focused, setFocused] = useState<string | null>(null)
+  // Source saved with the values typed in this card (chosen in the Measuring Mode header).
+  const measureSource = useUi((s) => s.measureSource)
   const ids = surveyIds(room, doc.apartment?.defaultCeilingCm)
   const thick = thicknessIds(doc, room)
   const thickDone = thick.filter((s) => doc.measurements[s.label] != null).length
@@ -47,10 +50,20 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
       : sid.kind === 'thickness' ? `${sid.label} · thickness`
       : sid.label
     const applyRoom = wallLabelRoom(sid.label) ?? parseThicknessLabel(sid.label)?.code
+    // Tiny tag of how this value was measured: L = laser, P = plan, none for tape.
+    const tag = verified ? sourceTag(m.source) : null
     return (
       <div key={sid.label} className="flex min-w-0 flex-col gap-1">
         <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-green-700 dark:text-green-400' : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
-          <span>{title}</span>
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="truncate">{title}</span>
+            {tag && (
+              <span
+                className="flex-none rounded bg-slate-200 px-1 font-sans text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                title={`${tag === 'L' ? 'Laser' : 'Plan'} measurement`}
+              >{tag}</span>
+            )}
+          </span>
           {verified
             ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> verified</span>
             : <span className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">{sid.plannedCm != null ? 'estimated' : 'to measure'}</span>}
@@ -59,7 +72,7 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
           id={inputId(sid.label)}
           value={m?.actualCm}
           placeholder={sid.plannedCm != null ? `plan ${fmtCm(sid.plannedCm)}` : undefined}
-          onValue={(n) => setMeasurement(sid.label, n)}
+          onValue={(n) => setMeasurement(sid.label, n, measureSource)}
           onFocus={() => setFocused(sid.label)}
           onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); if (applyRoom) flushAutoApply(applyRoom) }}
           onEnter={() => goNext(sid.label)}

@@ -585,7 +585,13 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
       if (!m || m[1] !== roomCode) throw new DslParseError(line, `measurement label "${label}" does not belong to room ${roomCode}`)
     }
     const prev = baseDoc?.measurements?.[label]
-    measurements[label] = { label, actualCm: value, updatedAt: prev?.updatedAt ?? now }
+    // The .sfp text holds only the value: keep how the old value was measured (source).
+    measurements[label] = {
+      label,
+      actualCm: value,
+      updatedAt: prev?.updatedAt ?? now,
+      ...(prev?.source ? { source: prev.source } : {}),
+    }
   }
 
   for (let i = 0; i < lines.length; i++) {

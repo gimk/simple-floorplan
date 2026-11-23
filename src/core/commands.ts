@@ -21,6 +21,7 @@ import type {
   Apartment,
   PlanDoc,
   Room,
+  Measurement,
   SurfaceReference,
   Vec,
   Vertex,
@@ -38,6 +39,7 @@ import {
   ElementKindSchema,
   ElementVariantSchema,
   IsoDateSchema,
+  MeasureSourceSchema,
   parsePlan,
   SurfaceReferenceSourceSchema,
   type PlanDocV1,
@@ -252,6 +254,8 @@ const SetMeasurementSchema = z.object({
   label: z.string().min(1),
   actualCm: z.number().finite().positive(),
   updatedAt: z.string().optional(),
+  // How the value was measured (docs/walls-plan.md phase 3a). Missing = tape.
+  source: MeasureSourceSchema.optional(),
 })
 
 const ClearMeasurementSchema = z.object({
@@ -1450,7 +1454,13 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
     }
 
     case 'set_measurement': {
-      const m = { label: cmd.label, actualCm: cmd.actualCm, updatedAt: cmd.updatedAt ?? nowIso() }
+      const m: Measurement = {
+        label: cmd.label,
+        actualCm: cmd.actualCm,
+        updatedAt: cmd.updatedAt ?? nowIso(),
+        // No source field when the command has none: the value then counts as tape.
+        ...(cmd.source ? { source: cmd.source } : {}),
+      }
       // A thickness (CODE-n-T) also becomes the thickness of the wall, on both sides of it.
       const next: PlanDocV1 = applyThicknessLabel({
         ...doc,

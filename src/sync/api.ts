@@ -1,6 +1,6 @@
 // Typed fetch client for the API (functions/app.ts, served by functions/worker.ts).
 // All routes live under /api (Vite proxies /api to wrangler on :8788 in dev).
-import type { PlanDoc, WallElement } from '../model/types'
+import type { MeasureSource, PlanDoc, WallElement } from '../model/types'
 
 export class ApiError extends Error {
   status: number
@@ -23,8 +23,8 @@ export type ProjectResponse = PlanDoc & { version: number }
 /** PUT snapshot body: PlanDoc minus measurements/roomNotes, plus baseVersion. */
 export type SnapshotPayload = Omit<PlanDoc, 'measurements' | 'roomNotes'> & { baseVersion: number }
 
-export type MeasurementPut = { actualCm: number; updatedAt?: string }
-export type MeasurementRow = { label: string; actualCm: number; updatedAt: string }
+export type MeasurementPut = { actualCm: number; updatedAt?: string; source?: MeasureSource }
+export type MeasurementRow = { label: string; actualCm: number; updatedAt: string; source?: MeasureSource }
 export type MeasurementResult = { ok: boolean; ignored?: boolean; measurement: MeasurementRow }
 
 export type ItemData = WallElement & { updatedAt?: string }

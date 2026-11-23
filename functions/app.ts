@@ -46,6 +46,12 @@ const asIso = (v: unknown): string | null => {
   return Number.isNaN(Date.parse(v)) ? null : v
 }
 
+const MEASURE_SOURCES = ['tape', 'laser', 'plan', 'other'] as const
+
+/** Returns the measurement source if it is a known one, else null. Missing = null (tape). */
+const asSource = (v: unknown): string | null =>
+  typeof v === 'string' && (MEASURE_SOURCES as readonly string[]).includes(v) ? v : null
+
 const badRequest = (c: { json: (b: unknown, s: 400) => Response }, msg: string, extra?: Record<string, unknown>) =>
   c.json({ error: msg, ...extra }, 400)
 
@@ -91,10 +97,13 @@ async function projectExists(db: D1Database, id: string): Promise<boolean> {
 
 const notFound = (c: { json: (b: unknown, s: 404) => Response }) => c.json({ error: 'not_found' }, 404)
 
+// A NULL source in the database (old row) is no `source` field in JSON: the client
+// then uses the default source (tape).
 const toMeasurement = (r: MeasurementRow) => ({
   label: r.label,
   actualCm: r.actual_cm,
   updatedAt: r.updated_at,
+  ...(r.source == null ? {} : { source: r.source }),
 })
 
 // ---------- projects ----------
@@ -357,9 +366,11 @@ app.put('/projects/:id/measurements/:label', async (c) => {
   if (!isObj(body)) return badRequest(c, 'body must be a JSON object')
   const actualCm = asNumber(body.actualCm)
   if (actualCm === null) return badRequest(c, 'actualCm must be a finite number')
+  // How the value was measured. Missing or unknown = no source (the client uses tape).
+  const source = asSource(body.source)
   const updatedAt = asIso(body.updatedAt) ?? nowIso()
   const existing = await c.env.DB.prepare(
-    'SELECT label, actual_cm, updated_at FROM measurements WHERE project_id = ? AND label = ?',
+    'SELECT label, actual_cm, updated_at, source FROM measurements WHERE project_id = ? AND label = ?',
   )
     .bind(id, label)
     .first<MeasurementRow>()
@@ -367,13 +378,17 @@ app.put('/projects/:id/measurements/:label', async (c) => {
     return c.json({ ok: true, ignored: true, measurement: toMeasurement(existing) })
   }
   await c.env.DB.prepare(
-    `INSERT INTO measurements (project_id, label, actual_cm, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(project_id, label) DO UPDATE SET actual_cm = excluded.actual_cm, updated_at = excluded.updated_at`,
+    `INSERT INTO measurements (project_id, label, actual_cm, updated_at, source) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, label) DO UPDATE SET actual_cm = excluded.actual_cm, updated_at = excluded.updated_at, source = excluded.source`,
   )
-    .bind(id, label, actualCm, updatedAt)
+    .bind(id, label, actualCm, updatedAt, source)
     .run()
   await c.env.DB.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').bind(updatedAt, id).run()
-  return c.json({ ok: true, ignored: false, measurement: { label, actualCm, updatedAt } })
+  return c.json({
+    ok: true,
+    ignored: false,
+    measurement: { label, actualCm, updatedAt, ...(source == null ? {} : { source }) },
+  })
 })
 
 app.delete('/projects/:id/measurements/:label', async (c) => {
@@ -484,7 +499,7 @@ app.get('/projects/:id/changes', async (c) => {
   if (Number.isNaN(Date.parse(since))) return badRequest(c, 'since must be an ISO 8601 date')
 
   const { results: mRows } = await c.env.DB.prepare(
-    'SELECT label, actual_cm, updated_at FROM measurements WHERE project_id = ? AND updated_at > ?',
+    'SELECT label, actual_cm, updated_at, source FROM measurements WHERE project_id = ? AND updated_at > ?',
   )
     .bind(id, since)
     .all<MeasurementRow>()

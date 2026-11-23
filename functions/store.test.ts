@@ -67,7 +67,7 @@ class FakeDB {
 
   all(sql: string, args: unknown[]): Row[] {
     const q = this.norm(sql)
-    if (q.startsWith('SELECT label, actual_cm, updated_at FROM measurements WHERE project_id = ?')) {
+    if (q.startsWith('SELECT label, actual_cm, updated_at, source FROM measurements WHERE project_id = ?')) {
       return [...this.measurements.values()].filter((r) => r.project_id === args[0])
     }
     if (q.startsWith('SELECT data_json FROM survey_items WHERE project_id = ? AND deleted = 0')) {
@@ -99,6 +99,7 @@ class FakeDB {
         label: args[1],
         actual_cm: args[2],
         updated_at: args[3],
+        source: args[4], // nullable: NULL means "no source" (tape)
       })
       return
     }
@@ -273,6 +274,37 @@ describe('functions/store.ts (shared D1 persistence)', () => {
     // custom name kept, title unchanged
     expect(db.projects.get('p2')!.name).toBe('Custom name')
     expect(db.projects.get('p2')!.title).toBe('Old title')
+  })
+
+  it('carries the measurement source through the table, and NULL source = no source in JSON', async () => {
+    const db = new FakeDB()
+    addProject(db, 'p5')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'p5'))!
+    const doc1 = makeDoc('p5', {
+      measurements: {
+        'SE-1': { label: 'SE-1', actualCm: 402, updatedAt: '2026-11-21T01:00:00.000Z', source: 'laser' },
+        'SE-2': { label: 'SE-2', actualCm: 300, updatedAt: '2026-11-21T01:00:00.000Z' },
+      },
+    })
+    await commitDoc(db as unknown as D1Database, 'p5', v0, doc1)
+    expect(db.measurements.get('p5|SE-1')!.source).toBe('laser')
+    // No source in the doc: the column stays NULL, no 'tape' is written.
+    expect(db.measurements.get('p5|SE-2')!.source).toBeNull()
+
+    const v1 = (await loadProjectDoc(db as unknown as D1Database, 'p5'))!
+    expect(v1.doc.measurements['SE-1'].source).toBe('laser')
+    // NULL in the database is no source in JSON (the client then uses tape).
+    expect(v1.doc.measurements['SE-2'].source).toBeUndefined()
+
+    // A source change alone is a change: it is written.
+    const doc2 = makeDoc('p5', {
+      measurements: {
+        'SE-1': { label: 'SE-1', actualCm: 402, updatedAt: '2026-11-21T01:00:00.000Z', source: 'plan' },
+        'SE-2': { label: 'SE-2', actualCm: 300, updatedAt: '2026-11-21T01:00:00.000Z' },
+      },
+    })
+    await commitDoc(db as unknown as D1Database, 'p5', v1, doc2)
+    expect(db.measurements.get('p5|SE-1')!.source).toBe('plan')
   })
 
   it('commitDoc throws VersionConflictError on baseVersion mismatch (routes answer 409)', async () => {

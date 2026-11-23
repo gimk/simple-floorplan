@@ -169,13 +169,19 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'set_measurement',
-    description: 'Record a verified on-site laser measurement in centimeters for a survey label (e.g. "CU-1", "CU-D", "CU-H").',
+    description:
+      'Record a verified on-site measurement in centimeters for a survey label (e.g. "CU-1", "CU-D", "CU-H"). Set source (tape | laser | plan | other) to say how it was measured; missing = tape.',
     inputSchema: {
       type: 'object',
       properties: {
         projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
         label: { type: 'string', minLength: 1, description: 'Survey label such as "CU-1", "CU-D", or "CU-H".' },
         cm: { type: 'number', exclusiveMinimum: 0, description: 'Measured length in centimeters.' },
+        source: {
+          type: 'string',
+          enum: ['tape', 'laser', 'plan', 'other'],
+          description: 'How the value was measured (default tape). A laser value weighs more in the solver, a plan value less.',
+        },
         dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
         baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
       },
@@ -616,10 +622,13 @@ export async function callTool(
       if (!projectId || !label || cm === undefined) {
         return errResult('INVALID_PARAMS', 'projectId, label, and cm are required.')
       }
+      const source = args.source
+      const cmd: Record<string, unknown> = { type: 'set_measurement', label, actualCm: cm }
+      if (source !== undefined) cmd.source = source
       return executeCommandsTool(
         store,
         projectId,
-        [{ type: 'set_measurement', label, actualCm: cm }],
+        [cmd],
         {
           dryRun: Boolean(args.dryRun),
           baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,

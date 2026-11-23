@@ -13,11 +13,14 @@
 //   query <project> summary|unmeasured|validate|shared_walls [--room CODE] [--json]
 //   run <project> <commands.json> [--dry-run] Execute a command batch
 //   export <project> svg|dxf -o <file>        Export a render
-//   measure <project> <label> <cm>            Set one on-site measurement (e.g. SE-2 412.5)
+//   measure <project> <label> <cm> [--source S] Set one on-site measurement (e.g. SE-2 412.5 --source laser)
 
 import { readFile, writeFile } from 'node:fs/promises'
 
 const BASE = (process.env.SFP_URL || 'http://localhost:8788').replace(/\/+$/, '')
+
+/** Measurement sources the API accepts (docs/walls-plan.md phase 3a). */
+const SOURCES = ['tape', 'laser', 'plan', 'other']
 
 function headers(extra = {}) {
   const h = { ...extra }
@@ -77,7 +80,7 @@ Usage:
   sfp query <project> summary|unmeasured|validate|shared_walls [--room CODE] [--json]
   sfp run <project> <commands.json> [--dry-run]
   sfp export <project> svg|dxf -o file
-  sfp measure <project> <label> <cm>
+  sfp measure <project> <label> <cm> [--source tape|laser|plan|other]
 
 Env: SFP_URL (default http://localhost:8788), SFP_TOKEN (Bearer), SFP_PASSCODE (x-passcode)
 `
@@ -190,11 +193,17 @@ async function main() {
       if (!project || !label || cm === undefined) throw new Error('measure requires <project> <label> <cm>')
       const actualCm = Number(cm)
       if (!Number.isFinite(actualCm) || actualCm <= 0) throw new Error(`<cm> must be a positive number, got "${cm}"`)
+      // How the value was measured: it sets the weight of the value in the solver.
+      // Without --source the API stores no source, which means tape.
+      const source = flags.source
+      if (source !== undefined && !SOURCES.includes(source)) {
+        throw new Error(`--source must be one of ${SOURCES.join('|')}, got "${source}"`)
+      }
       const res = await api('PUT', `/api/projects/${encodeURIComponent(project)}/measurements/${encodeURIComponent(label)}`, {
-        body: { actualCm, updatedAt: new Date().toISOString() },
+        body: { actualCm, updatedAt: new Date().toISOString(), ...(source ? { source } : {}) },
       })
       if (asJson) return print(res, true)
-      console.log(`${res.ignored ? 'ignored (older)' : 'set'} ${label} = ${actualCm} cm`)
+      console.log(`${res.ignored ? 'ignored (older)' : 'set'} ${label} = ${actualCm} cm${source ? ` (${source})` : ''}`)
       return
     }
 

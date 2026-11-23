@@ -96,11 +96,16 @@ export type BackgroundImage = {
 
 export type MeasureStatus = 'estimated' | 'verified'
 
+/** How an on-site value was measured. It sets the weight of the value in the solver. */
+export type MeasureSource = 'tape' | 'laser' | 'plan' | 'other'
+
 /** On-site value for one survey ID such as "SE-2", "SE-D", "SE-H". */
 export type Measurement = {
   label: string
   actualCm: number
   updatedAt: string
+  /** How the value was measured. Missing = 'tape'. */
+  source?: MeasureSource
 }
 
 export type TapeMeasure = {

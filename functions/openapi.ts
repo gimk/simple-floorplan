@@ -363,6 +363,11 @@ export const OPENAPI_SPEC = {
                 properties: {
                   actualCm: { type: 'number' },
                   updatedAt: { type: 'string', format: 'date-time' },
+                  source: {
+                    type: 'string',
+                    enum: ['tape', 'laser', 'plan', 'other'],
+                    description: 'How the value was measured. Default and missing value are tape.',
+                  },
                 },
               },
             },

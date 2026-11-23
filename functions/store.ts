@@ -10,7 +10,7 @@ import { parsePlan, type PlanDocV1 } from '../src/core/schema'
 import { syncProjectTitle } from './routes/projectTitle'
 
 export type ProjectRow = { id: string; name: string; title: string | null; updated_at: string }
-export type MeasurementRow = { label: string; actual_cm: number; updated_at: string }
+export type MeasurementRow = { label: string; actual_cm: number; updated_at: string; source: string | null }
 
 export type LoadedProjectDoc = {
   project: ProjectRow
@@ -30,10 +30,13 @@ export class VersionConflictError extends Error {
 
 const nowIso = (): string => new Date().toISOString()
 
+// A NULL source in the database means "no source given" (old rows), which is no
+// `source` field in JSON: the client then uses the default source (tape).
 const toMeasurement = (r: MeasurementRow) => ({
   label: r.label,
   actualCm: r.actual_cm,
   updatedAt: r.updated_at,
+  ...(r.source == null ? {} : { source: r.source }),
 })
 
 /** Load the latest snapshot merged with measurements, survey items and room notes. */
@@ -50,7 +53,7 @@ export async function loadProjectDoc(db: D1Database, id: string): Promise<Loaded
 
   const measurements: Record<string, unknown> = {}
   const { results: mRows } = await db
-    .prepare('SELECT label, actual_cm, updated_at FROM measurements WHERE project_id = ?')
+    .prepare('SELECT label, actual_cm, updated_at, source FROM measurements WHERE project_id = ?')
     .bind(id)
     .all<MeasurementRow>()
   for (const r of mRows) measurements[r.label] = toMeasurement(r)
@@ -134,14 +137,14 @@ export async function commitDoc(
   }
   for (const [label, m] of Object.entries(nextMeasurements)) {
     const old = prevM[label]
-    if (!old || old.actualCm !== m.actualCm || old.updatedAt !== m.updatedAt) {
+    if (!old || old.actualCm !== m.actualCm || old.updatedAt !== m.updatedAt || old.source !== m.source) {
       statements.push(
         db
           .prepare(
-            `INSERT INTO measurements (project_id, label, actual_cm, updated_at) VALUES (?, ?, ?, ?)
-             ON CONFLICT(project_id, label) DO UPDATE SET actual_cm = excluded.actual_cm, updated_at = excluded.updated_at`,
+            `INSERT INTO measurements (project_id, label, actual_cm, updated_at, source) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(project_id, label) DO UPDATE SET actual_cm = excluded.actual_cm, updated_at = excluded.updated_at, source = excluded.source`,
           )
-          .bind(id, label, m.actualCm, m.updatedAt),
+          .bind(id, label, m.actualCm, m.updatedAt, m.source ?? null),
       )
     }
   }
