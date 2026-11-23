@@ -43,9 +43,20 @@ export type DocRule = (prev: PlanDoc, next: PlanDoc) => PlanDoc
 const rules: DocRule[] = []
 export const addDocRule = (rule: DocRule) => { if (!rules.includes(rule)) rules.push(rule) }
 
+/**
+ * Settle rules run after a finished edit: every `update`, and the end of a drag (`endDrag`),
+ * but not on each pointermove of a drag, so a drag never works in a moving frame.
+ */
+export type SettleRule = (doc: PlanDoc) => PlanDoc
+const settleRules: SettleRule[] = []
+export const addSettleRule = (rule: SettleRule) => { if (!settleRules.includes(rule)) settleRules.push(rule) }
+const settle = (d: PlanDoc) => settleRules.reduce((acc, rule) => rule(acc), d)
+
 const local = (fn: (d: PlanDoc) => PlanDoc) => (d: PlanDoc) => {
   const next = fn(d)
-  return next === d ? next : rules.reduce((acc, rule) => rule(d, acc), next)
+  if (next === d) return next
+  const ruled = rules.reduce((acc, rule) => rule(d, acc), next)
+  return silent ? ruled : settle(ruled)
 }
 
 export const useDoc = create<DocState>()(
@@ -79,6 +90,10 @@ export const endDrag = (start: PlanDoc) => {
   if (useDoc.getState().doc === start) return
   const t = useDoc.temporal
   t.setState({ pastStates: [...t.getState().pastStates, { doc: start }].slice(-200), futureStates: [] })
+  // The drag is one undo step from `start`; settle its result in that same step.
+  const cur = useDoc.getState().doc
+  const settled = settle(cur)
+  if (settled !== cur) { silent = true; useDoc.setState({ doc: settled }); silent = false }
 }
 
 // ---------- persistence (IndexedDB, one record per projectId, debounced 300 ms) ----------
