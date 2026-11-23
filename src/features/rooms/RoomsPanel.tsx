@@ -72,6 +72,23 @@ function setWallTypes(refs: WallRef[], type: WallType) {
   patchWalls(refs, (cur) => ({ type, thicknessCm: cur.thicknessCm === DEFAULT_THICKNESS[cur.type] ? DEFAULT_THICKNESS[type] : cur.thicknessCm }))
 }
 
+/** Signed cm difference, French decimal comma: "+2,1" / "−0,6". */
+const fmtDiffCm = (d: number) => `${d >= 0 ? '+' : '−'}${fmtCm(Math.abs(Math.round(d * 10) / 10))}`
+
+/** Measured values of a room against its plan: rms of (measured − plan), and the diagonal check. */
+export function fitCheck(doc: Pick<PlanDoc, 'measurements'>, room: Room) {
+  const walls = roomWalls(room)
+  const diffs = verifiedWalls(doc, room).map((v) => v.cm - walls[v.index].length)
+  let diagonal: { measuredCm: number; planCm: number } | undefined
+  const dm = doc.measurements[`${room.code}-D`]?.actualCm
+  if (room.diagonal && dm && dm > 0) {
+    const a = room.vertices[room.diagonal[0]], b = room.vertices[room.diagonal[1]]
+    if (a && b) { diagonal = { measuredCm: dm, planCm: Math.hypot(b.x - a.x, b.y - a.y) }; diffs.push(dm - diagonal.planCm) }
+  }
+  if (!diffs.length) return null
+  return { rmsCm: Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length), count: diffs.length, diagonal }
+}
+
 /** Selected walls when two or more are selected, else null. */
 function wallGroup(items: SelItem[]): WallRef[] | null {
   const walls = items.flatMap((s) => (s.kind === 'wall' ? [{ roomId: s.roomId, wallStart: s.wallStart }] : []))
@@ -410,6 +427,13 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
                             <Check size={11} role="img" aria-label="verified" className="ml-0.5 inline align-[-1px]" />
                           </span>
                         )}
+                        {row.verifiedCm !== null && Math.abs(row.verifiedCm - row.lengthCm) >= 0.5 && (
+                          // Remaining error: measured minus plan (after a fit, the error that could not be removed).
+                          <span data-wall-residual={row.label} title={`Plan ${fmtCm(row.lengthCm)} cm`}
+                            className={`rounded px-1 text-[11px] ${Math.abs(row.verifiedCm - row.lengthCm) >= 2 ? 'bg-orange-500/15 text-orange-800 dark:text-orange-300' : MUTED}`}>
+                            {fmtDiffCm(row.verifiedCm - row.lengthCm)}
+                          </span>
+                        )}
                         <span className={`text-[11px] ${MUTED}`}>cm</span>
                       </span>
                       {row.locked && <Lock size={12} role="img" aria-label="locked" className="shrink-0 text-slate-500 dark:text-slate-400" />}
@@ -418,6 +442,17 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
                 )
               })}
             </ul>
+          )
+        })()}
+        {(() => {
+          // Fit check: every measured value (walls + diagonal) against the plan, as one rms number.
+          const fit = fitCheck(doc, room)
+          if (!fit) return null
+          return (
+            <p data-fit-rms className={`text-xs ${fit.rmsCm >= 2 ? 'font-semibold text-orange-700 dark:text-orange-300' : MUTED}`}>
+              {fit.diagonal && <>Diagonal {room.code}-D: measured {fmtCm(fit.diagonal.measuredCm)}, plan {fmtCm(fit.diagonal.planCm)} ({fmtDiffCm(fit.diagonal.measuredCm - fit.diagonal.planCm)}). </>}
+              Fit error {fmtCm(fit.rmsCm)} cm rms over {fit.count} measured value{fit.count === 1 ? '' : 's'}.
+            </p>
           )
         })()}
       </PanelSection>

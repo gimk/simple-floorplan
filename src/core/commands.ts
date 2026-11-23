@@ -16,6 +16,7 @@ import {
   type Wall,
 } from '../model/geometry'
 import { nextRoomCode, surveyIds } from '../model/survey'
+import { relabelMeasurements } from '../model/relabel'
 import type {
   Apartment,
   PlanDoc,
@@ -663,7 +664,7 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
   if (!room) {
     return {
       doc,
-      report: { roomId, code: '?', mode: 'none' as const, appliedWalls: 0, closingErrorCm: 0, oppositeDiffCm: 0, skipped: 'Room not found' },
+      report: { roomId, code: '?', mode: 'none' as const, appliedWalls: 0, closingErrorCm: 0, rmsCm: 0, residuals: [], oppositeDiffCm: 0, skipped: 'Room not found' },
     }
   }
   const ver: { index: number; wallStart: string; label: string; cm: number }[] = []
@@ -683,6 +684,8 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
         mode: 'none' as const,
         appliedWalls: 0,
         closingErrorCm: 0,
+        rmsCm: 0,
+        residuals: [],
         oppositeDiffCm: 0,
         skipped: 'No verified wall lengths',
       },
@@ -691,7 +694,8 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm
-  const solved = solveRoom(room, measured)
+  const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
+  const solved = solveRoom(room, measured, diagonalCm)
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })
   if (walls.some((x) => x.length < 1)) {
     return {
@@ -702,6 +706,8 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
         mode: 'none' as const,
         appliedWalls: 0,
         closingErrorCm: 0,
+        rmsCm: 0,
+        residuals: [],
         oppositeDiffCm: 0,
         skipped: 'A wall would collapse',
       },
@@ -712,8 +718,8 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
   const lockedWalls: string[] = []
   if (lockVerifiedWalls) {
     for (const v of ver) {
-      const got = walls[v.index].length
-      if (solved.mode === 'rect' || Math.abs(got - v.cm) <= 0.5) {
+      const res = solved.residuals.find((x) => x.index === v.index)
+      if (res && Math.abs(res.diffCm) <= 0.5) {
         props[v.wallStart] = { ...wallProps(room, v.wallStart), locked: true }
         lockedWalls.push(v.label)
       }
@@ -763,6 +769,13 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
       mode: solved.mode,
       appliedWalls: ver.length,
       closingErrorCm: Math.round(solved.closingErrorCm * 10) / 10,
+      rmsCm: Math.round(solved.closingErrorCm * 100) / 100,
+      residuals: solved.residuals.map((x) => ({
+        index: x.index,
+        measuredCm: Math.round(x.measuredCm * 100) / 100,
+        solvedCm: Math.round(x.solvedCm * 100) / 100,
+        diffCm: Math.round(x.diffCm * 100) / 100,
+      })),
       oppositeDiffCm: Math.round(solved.oppositeDiffCm * 10) / 10,
       oldAreaM2,
       newAreaM2,
@@ -786,7 +799,23 @@ export function apply(rawDoc: PlanDoc, rawCommand: unknown): ApplyResult {
   const cmd = CommandSchema.parse(rawCommand)
   const warnings: CommandWarning[] = []
 
-  return adoptDoorHosts(runCommand(doc, cmd, warnings), warnings)
+  return keepMeasurementsOnWalls(doc, adoptDoorHosts(runCommand(doc, cmd, warnings), warnings))
+}
+
+/**
+ * After every command: when an outline changed (slice, cutout, merge, corner added or removed),
+ * on-site values move with their wall to its new label. A split or removed wall loses its value
+ * (MEASUREMENT_DROPPED warning: measure it again). See model/relabel.ts.
+ */
+function keepMeasurementsOnWalls(before: PlanDocV1, out: ApplyResult): ApplyResult {
+  const res = relabelMeasurements(before, out.doc, nowIso())
+  if (!res) return out
+  const dropped: CommandWarning[] = res.dropped.length ? [{
+    code: 'MEASUREMENT_DROPPED',
+    message: `Measure again: ${res.dropped.join(', ')}. These walls were split or removed, so their on-site values were removed.`,
+    details: { labels: res.dropped },
+  }] : []
+  return { ...out, doc: { ...out.doc, measurements: res.measurements }, warnings: [...out.warnings, ...dropped] }
 }
 
 /**
@@ -1450,10 +1479,10 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
         const res = applyMeasurementsForRoom(cur, id, cmd.lockVerifiedWalls)
         cur = res.doc
         reports.push(res.report)
-        if ((res.report.mode === 'polygon' || res.report.mode === 'rectilinear') && res.report.closingErrorCm > 2) {
+        if (res.report.mode === 'lsq' && res.report.rmsCm > 2) {
           warnings.push({
             code: 'CLOSING_ERROR',
-            message: `Room ${res.report.code} has a closing error of ${res.report.closingErrorCm} cm.`,
+            message: `Room ${res.report.code} has a fit error of ${res.report.rmsCm} cm rms.`,
           })
         }
       }

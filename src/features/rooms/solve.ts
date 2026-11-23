@@ -1,6 +1,6 @@
-// Solvers for "Apply measured lengths": new room outline from verified wall lengths. Pure, cm.
+// Solver for "Apply measured lengths": new room outline from verified wall lengths and diagonal. Pure, cm.
 // No store or DOM imports: the API worker (core/commands.ts) uses this file too.
-import { dot, len, norm, roomWalls, sub } from '../../model/geometry'
+import { cross, dot, len, norm, roomWalls, sub } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
 import type { PlanDoc, Room, Vec } from '../../model/types'
 
@@ -41,92 +41,173 @@ export function isRectilinear(room: Room): boolean {
   return w.every((x) => Math.abs(dot(x.dir, u)) < AXIS_TOL || Math.abs(Math.abs(dot(x.dir, u)) - 1) < AXIS_TOL)
 }
 
-export type SolveMode = 'rect' | 'rectilinear' | 'polygon'
+export type SolveMode = 'lsq'
 
-export type Solved = { points: Vec[]; closingErrorCm: number; oppositeDiffCm: number; mode: SolveMode }
+/** One measured value after the fit. diffCm = measuredCm - solvedCm. index = wall index, or 'D' for the diagonal. */
+export type SolveResidual = { index: number | 'D'; measuredCm: number; solvedCm: number; diffCm: number }
 
-function solveRect(room: Room, measured: (number | null)[]): Solved {
-  const w = roomWalls(room)
-  const pair = (i: number, j: number) => {
-    const a = measured[i], b = measured[j]
-    if (a !== null && b !== null) return { v: (a + b) / 2, diff: Math.abs(a - b) }
-    if (a !== null) return { v: a, diff: 0 }
-    if (b !== null) return { v: b, diff: 0 }
-    return { v: (w[i].length + w[j].length) / 2, diff: 0 }
-  }
-  const A = pair(0, 2), B = pair(1, 3)
-  const d0 = w[0].dir
-  let n = { x: -d0.y, y: d0.x }
-  if (dot(n, w[1].dir) < 0) n = { x: -n.x, y: -n.y }
-  const p0 = room.vertices[0]
-  const p1 = { x: p0.x + d0.x * A.v, y: p0.y + d0.y * A.v }
-  const p2 = { x: p1.x + n.x * B.v, y: p1.y + n.y * B.v }
-  const p3 = { x: p0.x + n.x * B.v, y: p0.y + n.y * B.v }
-  return { points: [{ x: p0.x, y: p0.y }, p1, p2, p3], closingErrorCm: 0, oppositeDiffCm: Math.max(A.diff, B.diff), mode: 'rect' }
+export type Solved = {
+  points: Vec[]
+  /** Root-mean-square of the measurement residuals (measured walls and diagonal), in cm. */
+  closingErrorCm: number
+  oppositeDiffCm: number
+  mode: SolveMode
+  residuals: SolveResidual[]
 }
 
-/**
- * Rectilinear room (all walls on two perpendicular axes): keep every corner at a right angle.
- * The walls along each axis must sum to zero. The gap on each axis is spread over the
- * unmeasured walls of that axis (by length), or over all its walls when every one is measured.
- */
-function solveRectilinear(room: Room, measured: (number | null)[]): Solved {
-  const w = roomWalls(room), n = w.length
-  const u = w[0].dir, v = { x: -u.y, y: u.x }
-  const onU = w.map((x) => Math.abs(dot(x.dir, u)) > 0.5)
-  const sign = w.map((x, i) => (dot(x.dir, onU[i] ? u : v) >= 0 ? 1 : -1))
-  const L = w.map((x, i) => measured[i] ?? x.length)
-  const gap = (axisU: boolean) => w.reduce((s, _, i) => (onU[i] === axisU ? s + sign[i] * L[i] : s), 0)
-  const eU = gap(true), eV = gap(false)
-  const out = [...L]
-  for (const [axisU, e] of [[true, eU], [false, eV]] as const) {
-    const axis = w.map((_, i) => i).filter((i) => onU[i] === axisU)
-    const free = axis.filter((i) => measured[i] === null)
-    if (free.length) {
-      const total = free.reduce((s, i) => s + L[i], 0) || 1
-      for (const i of free) out[i] -= sign[i] * e * (L[i] / total)
-    } else {
-      for (const i of axis) out[i] -= sign[i] * e / axis.length
+const DEG = 180 / Math.PI
+const dotArr = (a: number[], b: number[]) => a.reduce((s, x, k) => s + x * b[k], 0)
+const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a))
+
+/** Solve A x = b by Gaussian elimination with partial pivoting. Null when A is singular. */
+function solveLinear(A: number[][], b: number[]): number[] | null {
+  const n = b.length
+  const M = A.map((row, i) => [...row, b[i]])
+  for (let c = 0; c < n; c++) {
+    let p = c
+    for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r
+    if (Math.abs(M[p][c]) < 1e-12) return null
+    const tmp = M[c]
+    M[c] = M[p]
+    M[p] = tmp
+    for (let r = c + 1; r < n; r++) {
+      const f = M[r][c] / M[c][c]
+      for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]
     }
   }
-  const pts: Vec[] = [{ x: room.vertices[0].x, y: room.vertices[0].y }]
-  for (let i = 0; i < n - 1; i++) {
-    const d = onU[i] ? u : v, p = pts[i]
-    pts.push({ x: p.x + d.x * sign[i] * out[i], y: p.y + d.y * sign[i] * out[i] })
+  const x = new Array<number>(n).fill(0)
+  for (let r = n - 1; r >= 0; r--) {
+    let s = M[r][n]
+    for (let k = r + 1; k < n; k++) s -= M[r][k] * x[k]
+    x[r] = s / M[r][r]
   }
-  return { points: pts, closingErrorCm: Math.hypot(eU, eV), oppositeDiffCm: 0, mode: 'rectilinear' }
+  return x
 }
 
-function solvePolygon(room: Room, measured: (number | null)[]): Solved {
-  const w = roomWalls(room), n = w.length
-  const L = w.map((x, i) => measured[i] ?? x.length)
-  const v0 = room.vertices[0]
-  // Walk with the kept directions.
-  const walk: Vec[] = [{ x: v0.x, y: v0.y }]
+type Corner = { prev: number; at: number; next: number; kind: 'right' | 'straight' | 'free'; meanLen: number; drawnTurn: number }
+
+/**
+ * One least-squares fit per room. Measured walls and the measured diagonal are constraints; the drawn
+ * right angles are kept strongly; the other corners and the unmeasured walls keep their drawn shape weakly.
+ * Vertex 0 is fixed and wall 0 keeps its direction (vertex 1 slides along it).
+ *
+ * Weights (cm residuals): measured wall 1.0, diagonal 1.0, right angle 10 x mean adjacent length (dot of
+ * unit edges), straight corner 10 x mean length (cross of unit edges), other corner 0.05 x mean length
+ * (turn angle in radians), unmeasured wall 0.01.
+ */
+export function solveRoomLsq(room: Room, measured: (number | null)[], diagonalCm?: number | null): Solved {
+  const n = room.vertices.length
+  const w = roomWalls(room)
+  const drawn: Vec[] = room.vertices.map((v) => ({ x: v.x, y: v.y }))
+  const drawnLen = w.map((x) => x.length)
+  const d0 = w[0].dir
+  const diag = room.diagonal && diagonalCm && diagonalCm > 0 && room.diagonal.every((k) => k >= 0 && k < n)
+    ? { i: room.diagonal[0], j: room.diagonal[1], cm: diagonalCm }
+    : null
+
+  const corners: Corner[] = drawn.map((p, k) => {
+    const prev = (k + n - 1) % n, next = (k + 1) % n
+    const cosA = dot(norm(sub(drawn[prev], p)), norm(sub(drawn[next], p)))
+    const angle = Math.acos(Math.max(-1, Math.min(1, cosA))) * DEG
+    const da = norm(sub(p, drawn[prev])), db = norm(sub(drawn[next], p))
+    const kind = Math.abs(angle - 90) <= 3 ? 'right' : Math.abs(angle - 180) <= 3 ? 'straight' : 'free'
+    return {
+      prev, at: k, next, kind,
+      meanLen: (drawnLen[prev] + drawnLen[k]) / 2,
+      drawnTurn: Math.atan2(cross(da, db), dot(da, db)),
+    }
+  })
+
+  // Unknowns: s = length of wall 0, then x and y of vertices 2..n-1.
+  const toPoints = (p: number[]): Vec[] => {
+    const pts: Vec[] = [drawn[0], { x: drawn[0].x + d0.x * p[0], y: drawn[0].y + d0.y * p[0] }]
+    for (let k = 2; k < n; k++) pts.push({ x: p[2 * k - 3], y: p[2 * k - 2] })
+    return pts
+  }
+  const start = [drawnLen[0]]
+  for (let k = 2; k < n; k++) start.push(drawn[k].x, drawn[k].y)
+
+  const residuals = (p: number[]): number[] => {
+    const v = toPoints(p)
+    const out: number[] = []
+    for (let i = 0; i < n; i++) {
+      const e = len(sub(v[(i + 1) % n], v[i]))
+      const L = measured[i]
+      out.push(L != null ? e - L : (e - drawnLen[i]) * 0.01)
+    }
+    if (diag) out.push(len(sub(v[diag.j], v[diag.i])) - diag.cm)
+    for (const c of corners) {
+      const a = norm(sub(v[c.at], v[c.prev])), b = norm(sub(v[c.next], v[c.at]))
+      if (c.kind === 'right') out.push(dot(a, b) * c.meanLen * 10)
+      else if (c.kind === 'straight') out.push(cross(a, b) * c.meanLen * 10)
+      else out.push(wrapAngle(Math.atan2(cross(a, b), dot(a, b)) - c.drawnTurn) * c.meanLen * 0.05)
+    }
+    return out
+  }
+
+  const cost = (r: number[]) => r.reduce((s, x) => s + x * x, 0)
+  const H = 1e-3
+  let p = start
+  let r = residuals(p)
+  let c = cost(r)
+  let lambda = 1e-3
+  for (let iter = 0; iter < 100; iter++) {
+    // Numeric Jacobian (central differences), one column per unknown.
+    const cols: number[][] = []
+    for (let q = 0; q < p.length; q++) {
+      const plus = [...p]
+      plus[q] += H
+      const minus = [...p]
+      minus[q] -= H
+      const rp = residuals(plus), rm = residuals(minus)
+      cols.push(rp.map((x, k) => (x - rm[k]) / (2 * H)))
+    }
+    const JtJ = cols.map((a) => cols.map((b) => dotArr(a, b)))
+    const Jtr = cols.map((a) => dotArr(a, r))
+    let step: number[] | null = null
+    let accepted = false
+    for (let tries = 0; tries < 20 && !accepted; tries++) {
+      // Levenberg-Marquardt damping on the diagonal.
+      const A = JtJ.map((row, a) => row.map((x, b) => (a === b ? x * (1 + lambda) + 1e-9 : x)))
+      const delta = solveLinear(A, Jtr.map((x) => -x))
+      if (!delta) {
+        lambda *= 10
+        continue
+      }
+      const cand = p.map((x, k) => x + delta[k])
+      const rc = residuals(cand)
+      const cc = cost(rc)
+      if (cc < c) {
+        p = cand
+        r = rc
+        c = cc
+        lambda = Math.max(lambda / 3, 1e-12)
+        accepted = true
+        step = delta
+      } else {
+        lambda *= 4
+      }
+    }
+    if (!accepted || !step || Math.sqrt(dotArr(step, step)) < 1e-6) break
+  }
+
+  const pts = toPoints(p)
+  const fit: SolveResidual[] = []
   for (let i = 0; i < n; i++) {
-    const p = walk[i]
-    walk.push({ x: p.x + w[i].dir.x * L[i], y: p.y + w[i].dir.y * L[i] })
+    const m = measured[i]
+    if (m == null) continue
+    const solvedCm = len(sub(pts[(i + 1) % n], pts[i]))
+    fit.push({ index: i, measuredCm: m, solvedCm, diffCm: m - solvedCm })
   }
-  const e = sub(walk[n], v0)
-  const closingErrorCm = len(e)
-  const unmeasured = w.map((_, i) => i).filter((i) => measured[i] === null)
-  if (!unmeasured.length) {
-    // All measured: the last wall closes the polygon.
-    return { points: walk.slice(0, n), closingErrorCm, oppositeDiffCm: 0, mode: 'polygon' }
+  if (diag) {
+    const solvedCm = len(sub(pts[diag.j], pts[diag.i]))
+    fit.push({ index: 'D', measuredCm: diag.cm, solvedCm, diffCm: diag.cm - solvedCm })
   }
-  const total = unmeasured.reduce((s, i) => s + L[i], 0) || 1
-  const pts: Vec[] = [{ x: v0.x, y: v0.y }]
-  for (let i = 0; i < n - 1; i++) {
-    const share = measured[i] === null ? L[i] / total : 0
-    const p = pts[i]
-    pts.push({ x: p.x + w[i].dir.x * L[i] - e.x * share, y: p.y + w[i].dir.y * L[i] - e.y * share })
-  }
-  return { points: pts, closingErrorCm, oppositeDiffCm: 0, mode: 'polygon' }
+  const rms = fit.length ? Math.sqrt(fit.reduce((s, x) => s + x.diffCm * x.diffCm, 0) / fit.length) : 0
+  return { points: pts, closingErrorCm: rms, oppositeDiffCm: 0, mode: 'lsq', residuals: fit }
 }
 
-/** Pick the solver for the room's shape: rectangle, right-angled polygon, or free polygon. */
-export function solveRoom(room: Room, measured: (number | null)[]): Solved {
-  if (isRightAngledQuad(room)) return solveRect(room, measured)
-  if (isRectilinear(room)) return solveRectilinear(room, measured)
-  return solvePolygon(room, measured)
+/** Solve the room outline from its measured walls and (optional) measured diagonal. */
+export function solveRoom(room: Room, measured: (number | null)[], diagonalCm?: number | null): Solved {
+  return solveRoomLsq(room, measured, diagonalCm)
 }

@@ -230,7 +230,7 @@ async function loadBackgroundFromR2(bg: BackgroundImage): Promise<string> {
 // ---------- server -> local ----------
 function applyServer(fn: (d: PlanDoc) => PlanDoc) {
   applying = true
-  try { useDoc.getState().updateSilent(fn) } finally { applying = false }
+  try { useDoc.getState().updateSilent(fn, { remote: true }) } finally { applying = false }
 }
 
 async function pull() {

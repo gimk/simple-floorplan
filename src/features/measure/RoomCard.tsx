@@ -7,6 +7,7 @@ import type { PlanDoc, Room } from '../../model/types'
 import { ItemsEditor } from './ItemsEditor'
 import { discrepancy, fmtDiff, nextLabel, oppositeWallNotes, roomProgress, squarenessCheck } from './logic'
 import { inputId, setMeasurement } from './actions'
+import { flushAutoApply, wallLabelRoom } from '../rooms/measureRules'
 import { MiniDrawing } from './MiniDrawing'
 import { NumField } from './NumField'
 import { PinsSection } from './PinsSection'
@@ -66,7 +67,7 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
                 placeholder={sid.plannedCm != null ? `plan ${fmtCm(sid.plannedCm)}` : undefined}
                 onValue={(n) => setMeasurement(sid.label, n)}
                 onFocus={() => setFocused(sid.label)}
-                onBlur={() => setFocused((f) => (f === sid.label ? null : f))}
+                onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); const c = wallLabelRoom(sid.label); if (c) flushAutoApply(c) }}
                 onEnter={() => goNext(sid.label)}
               />
               {verified && sid.plannedCm != null && dis && (

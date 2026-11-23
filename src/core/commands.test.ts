@@ -87,6 +87,21 @@ describe('commands: room lifecycle', () => {
   })
 })
 
+describe('commands: measurements follow their wall', () => {
+  it('slice_room keeps whole walls measured, drops split walls with a warning', () => {
+    let doc = apply(emptyDoc(), { type: 'add_room', code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 600, h: 400 } }).doc
+    for (const [label, cm] of [['SE-1', 601], ['SE-2', 402], ['SE-3', 603], ['SE-4', 404], ['SE-H', 250]] as const) {
+      doc = apply(doc, { type: 'set_measurement', label, actualCm: cm }).doc
+    }
+    const res = apply(doc, { type: 'slice_room', roomCode: 'SE', a: { x: 200, y: -10 }, b: { x: 200, y: 410 }, newRoomCode: 'EN', newRoomName: 'Entry' })
+    const w = res.warnings.find((x) => x.code === 'MEASUREMENT_DROPPED')
+    expect(w?.details).toEqual({ labels: ['SE-1', 'SE-3'] })
+    const values = Object.values(res.doc.measurements).map((m) => m.actualCm).sort()
+    expect(values).toEqual([250, 250, 402, 404]) // 2 whole walls + the height copied to both rooms
+    expect(res.doc.measurements['EN-H']?.actualCm).toBe(250)
+  })
+})
+
 describe('commands: geometry ops (slice, cutout, merge)', () => {
   it('slice_room splits a room and preserves elements', () => {
     let doc = apply(emptyDoc(), {

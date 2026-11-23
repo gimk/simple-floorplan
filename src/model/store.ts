@@ -24,21 +24,38 @@ type DocState = {
   doc: PlanDoc
   /** Replace the doc with the result of fn. Creates one undo step. */
   update: (fn: (d: PlanDoc) => PlanDoc) => void
-  /** Same as update but does not create an undo step (drag previews, measurements). */
-  updateSilent: (fn: (d: PlanDoc) => PlanDoc) => void
+  /**
+   * Same as update but does not create an undo step (drag previews, measurements).
+   * `remote`: the change comes from the server; the local edit rules (doc rules) do not run.
+   */
+  updateSilent: (fn: (d: PlanDoc) => PlanDoc, opts?: { remote?: boolean }) => void
   replace: (d: PlanDoc) => void
 }
 
 let silent = false
 
+/**
+ * Rules run after every local edit (update / updateSilent), in the same step, so undo and sync
+ * see one change. `prev` is the doc before the edit, `next` the edited doc. Registered by features
+ * (see features/rooms/measureRules.ts), so this store does not import them.
+ */
+export type DocRule = (prev: PlanDoc, next: PlanDoc) => PlanDoc
+const rules: DocRule[] = []
+export const addDocRule = (rule: DocRule) => { if (!rules.includes(rule)) rules.push(rule) }
+
+const local = (fn: (d: PlanDoc) => PlanDoc) => (d: PlanDoc) => {
+  const next = fn(d)
+  return next === d ? next : rules.reduce((acc, rule) => rule(d, acc), next)
+}
+
 export const useDoc = create<DocState>()(
   temporal(
     (set) => ({
       doc: emptyDoc(),
-      update: (fn) => set((s) => ({ doc: fn(s.doc) })),
-      updateSilent: (fn) => {
+      update: (fn) => set((s) => ({ doc: local(fn)(s.doc) })),
+      updateSilent: (fn, opts) => {
         silent = true
-        set((s) => ({ doc: fn(s.doc) }))
+        set((s) => ({ doc: (opts?.remote ? fn : local(fn))(s.doc) }))
         silent = false
       },
       replace: (d) => set({ doc: d }),

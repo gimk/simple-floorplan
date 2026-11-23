@@ -166,29 +166,34 @@ describe('applyMeasured', () => {
     expect(isRightAngledQuad(withRoom().room)).toBe(true)
     expect(isRightAngledQuad(withRoom([P(0, 0), P(400, 0), P(450, 300), P(0, 300)]).room)).toBe(false)
   })
-  it('rectangle: averages opposite walls and locks them', () => {
+  it('rectangle: fit meets opposite walls in the middle, only the exact wall is locked', () => {
     const { doc, room } = withRoom()
     const d: PlanDoc = { ...doc, measurements: { 'R1-1': meas('R1-1', 410), 'R1-3': meas('R1-3', 414), 'R1-2': meas('R1-2', 305) } }
     const r = applyMeasured(d, room.id)
-    expect(r.report.mode).toBe('rect')
-    expect(r.report.oppositeDiffCm).toBeCloseTo(4)
+    expect(r.report.mode).toBe('lsq')
+    expect(r.report.residuals.find((x) => x.index === 0)?.diffCm).toBeCloseTo(-2, 0)
+    expect(r.report.residuals.find((x) => x.index === 2)?.diffCm).toBeCloseTo(2, 0)
+    expect(r.report.rmsCm).toBeCloseTo(Math.sqrt((4 + 4 + 0) / 3), 1)
     const out = r.doc.rooms[0]
-    expect(len(out)[0]).toBeCloseTo(412)
-    expect(len(out)[2]).toBeCloseTo(412)
+    expect(len(out)[0]).toBeCloseTo(412, 0)
+    expect(len(out)[2]).toBeCloseTo(412, 0)
     expect(len(out)[1]).toBeCloseTo(305)
     expect(len(out)[3]).toBeCloseTo(305)
     expect(isRightAngledQuad(out)).toBe(true)
     expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
-    expect(out.walls[room.vertices[0].id].locked).toBe(true)
+    // |residual| 2 > 0.5: wall 1 is not locked. Wall 2 (305) fits exactly and is locked.
+    expect(out.walls[room.vertices[0].id]?.locked).toBeFalsy()
     expect(out.walls[room.vertices[1].id].locked).toBe(true)
     expect(out.walls[room.vertices[3].id]?.locked).toBeFalsy()
   })
-  it('rectangle: diagonal is only a check', () => {
+  it('rectangle: diagonal is a constraint and its residual is reported', () => {
     const { doc, room } = withRoom()
     const d: PlanDoc = { ...doc, measurements: { 'R1-1': meas('R1-1', 400), 'R1-2': meas('R1-2', 300), 'R1-D': meas('R1-D', 510) } }
     const r = applyMeasured(d, room.id)
-    expect(r.report.diagonal?.diffCm).toBeCloseTo(10)
-    expect(len(r.doc.rooms[0])[0]).toBeCloseTo(400)
+    expect(r.report.residuals.find((x) => x.index === 'D')?.diffCm).toBeGreaterThan(3)
+    expect(r.report.diagonal?.diffCm).toBeGreaterThan(3)
+    // The diagonal is a weight-1 constraint, like the walls: wall 0 gives way by a few cm.
+    expect(Math.abs(len(r.doc.rooms[0])[0] - 400)).toBeLessThan(5)
   })
   it('rectangle: unmeasured pair keeps its size', () => {
     const { doc, room } = withRoom()
@@ -209,31 +214,34 @@ describe('applyMeasured', () => {
     const { doc, room } = withRoom(slanted)
     const d: PlanDoc = { ...doc, measurements: { 'R1-1': meas('R1-1', 410), 'R1-5': meas('R1-5', 304) } }
     const r = applyMeasured(d, room.id)
-    expect(r.report.mode).toBe('polygon')
-    // walking: wall 1 grows by 10 (x), wall 5 grows by 4 (y) => closing error = hypot(10, 4)
-    expect(r.report.closingErrorCm).toBeCloseTo(Math.hypot(10, 4), 5)
+    expect(r.report.mode).toBe('lsq')
+    // Right angles at v0, v1 and v4 fix both measured walls at once: no fit error.
+    expect(r.report.closingErrorCm).toBeCloseTo(0, 1)
     const out = r.doc.rooms[0]
     const l = len(out)
-    expect(l[0]).toBeCloseTo(410, 5)
-    expect(l[4]).toBeCloseTo(304, 5)
+    expect(l[0]).toBeCloseTo(410, 2)
+    expect(l[4]).toBeCloseTo(304, 2)
     // closed: polygon still has its 5 vertices and v0 did not move
     expect(out.vertices).toHaveLength(5)
     expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
     expect(out.walls[room.vertices[0].id].locked).toBe(true)
     expect(out.walls[room.vertices[4].id].locked).toBe(true)
   })
-  it('polygon: all walls measured, the last wall closes and is not locked if it deviates', () => {
+  it('polygon: all walls measured, the fit spreads the error and locks only walls within 0.5 cm', () => {
     const { doc, room } = withRoom(slanted)
     const m: Record<string, Measurement> = {}
     ;[400, 150, 250, 200, 300].forEach((v, i) => { m[`R1-${i + 1}`] = meas(`R1-${i + 1}`, v) })
     m['R1-1'] = meas('R1-1', 420)
     const r = applyMeasured({ ...doc, measurements: m }, room.id)
-    expect(r.report.closingErrorCm).toBeCloseTo(20)
+    expect(r.report.mode).toBe('lsq')
+    expect(r.report.residuals).toHaveLength(5)
+    expect(r.report.closingErrorCm).toBeGreaterThan(1)
+    expect(r.report.closingErrorCm).toBeLessThan(20)
     const out = r.doc.rooms[0]
-    expect(len(out)[0]).toBeCloseTo(420)
-    expect(len(out)[4]).toBeCloseTo(Math.hypot(20, 300)) // closing wall absorbs the error
-    expect(out.walls[room.vertices[0].id].locked).toBe(true)
-    expect(out.walls[room.vertices[4].id]?.locked).toBeFalsy()
+    expect(out.vertices).toHaveLength(5)
+    expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
+    // Wall 1 (420) is pulled by the right angles: not locked.
+    expect(out.walls[room.vertices[0].id]?.locked).toBeFalsy()
   })
 
   const lShape = [P(0, 0), P(400, 0), P(400, 150), P(200, 150), P(200, 300), P(0, 300)]
@@ -242,15 +250,15 @@ describe('applyMeasured', () => {
     expect(isRectilinear(room)).toBe(true)
     const d: PlanDoc = { ...doc, measurements: { 'R1-1': meas('R1-1', 410), 'R1-6': meas('R1-6', 304) } }
     const r = applyMeasured(d, room.id)
-    expect(r.report.mode).toBe('rectilinear')
+    expect(r.report.mode).toBe('lsq')
     const out = r.doc.rooms[0]
     expect(isRectilinear(out)).toBe(true)
     const l = len(out)
-    expect(l[0]).toBeCloseTo(410)
-    expect(l[5]).toBeCloseTo(304)
+    expect(l[0]).toBeCloseTo(410, 1)
+    expect(l[5]).toBeCloseTo(304, 1)
     // x: 410 = wall 3 + wall 5 (were 200 + 200); y: 304 = wall 2 + wall 4 (were 150 + 150)
-    expect(l[2] + l[4]).toBeCloseTo(410)
-    expect(l[1] + l[3]).toBeCloseTo(304)
+    expect(l[2] + l[4]).toBeCloseTo(410, 1)
+    expect(l[1] + l[3]).toBeCloseTo(304, 1)
     expect(out.vertices[0]).toMatchObject({ x: 0, y: 0 })
   })
   it('L shape: all walls measured, the gap is spread and right angles are kept', () => {
@@ -258,16 +266,17 @@ describe('applyMeasured', () => {
     const m: Record<string, Measurement> = {}
     ;[403, 150, 200, 150, 200, 300].forEach((v, i) => { m[`R1-${i + 1}`] = meas(`R1-${i + 1}`, v) })
     const r = applyMeasured({ ...doc, measurements: m }, room.id)
-    expect(r.report.mode).toBe('rectilinear')
-    expect(r.report.closingErrorCm).toBeCloseTo(3)
+    expect(r.report.mode).toBe('lsq')
+    // Six residuals, three of 1 cm: rms = sqrt(3 / 6)
+    expect(r.report.closingErrorCm).toBeCloseTo(Math.sqrt(0.5), 1)
     const out = r.doc.rooms[0]
     expect(isRectilinear(out)).toBe(true)
     const l = len(out)
     // 3 cm over the 3 x walls: 403 -> 402, 200 -> 201, 200 -> 201
-    expect(l[0]).toBeCloseTo(402)
-    expect(l[2]).toBeCloseTo(201)
-    expect(l[4]).toBeCloseTo(201)
-    expect(l[5]).toBeCloseTo(300)
+    expect(l[0]).toBeCloseTo(402, 1)
+    expect(l[2]).toBeCloseTo(201, 1)
+    expect(l[4]).toBeCloseTo(201, 1)
+    expect(l[5]).toBeCloseTo(300, 1)
   })
   it('a neighbour with its own measured walls is not bent, both stay rectangles', () => {
     const d0 = emptyDoc()
@@ -278,7 +287,7 @@ describe('applyMeasured', () => {
       measurements: { 'R1-1': meas('R1-1', 380), 'R1-2': meas('R1-2', 280), 'R2-1': meas('R2-1', 290), 'R2-2': meas('R2-2', 270) },
     }
     const r = applyMeasuredAll(doc)
-    expect(r.reports.map((x) => x.mode)).toEqual(['rect', 'rect'])
+    expect(r.reports.map((x) => x.mode)).toEqual(['lsq', 'lsq'])
     const [aOut, bOut] = r.doc.rooms
     expect(isRightAngledQuad(aOut)).toBe(true)
     expect(isRightAngledQuad(bOut)).toBe(true)
@@ -291,10 +300,12 @@ describe('applyMeasured', () => {
     const b = makeRoom({ ...d0, rooms: [a] }, rectPoints(P(400, 0), P(700, 300)))
     const doc: PlanDoc = { ...d0, rooms: [a, b], measurements: { 'R1-1': meas('R1-1', 420) } }
     const r = applyMeasuredAll(doc)
-    expect(r.reports.map((x) => x.mode)).toEqual(['rect', 'none'])
+    expect(r.reports.map((x) => x.mode)).toEqual(['lsq', 'none'])
     const bOut = r.doc.rooms[1]
-    expect(bOut.vertices[0]).toMatchObject({ x: 420, y: 0 })
-    expect(bOut.vertices[3]).toMatchObject({ x: 420, y: 300 })
+    expect(bOut.vertices[0].x).toBeCloseTo(420, 1)
+    expect(bOut.vertices[0].y).toBeCloseTo(0, 5)
+    expect(bOut.vertices[3].x).toBeCloseTo(420, 1)
+    expect(bOut.vertices[3].y).toBeCloseTo(300, 5)
     expect(bOut.vertices[1]).toMatchObject({ x: 700, y: 0 })
   })
 })

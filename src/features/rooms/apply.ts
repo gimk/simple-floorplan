@@ -2,10 +2,10 @@
 import { dist, roomWalls } from '../../model/geometry'
 import type { PlanDoc, Room, WallProps } from '../../model/types'
 import { moveVertices, movableLinked, type VMove } from './ops'
-import { hasVerifiedWalls, solveRoom, verifiedWalls, type SolveMode } from './solve'
+import { hasVerifiedWalls, solveRoom, verifiedWalls, type SolveMode, type SolveResidual } from './solve'
 import { wallProps } from './walls'
 
-export { hasVerifiedWalls, isRectilinear, isRightAngledQuad, solveRoom, verifiedWalls, type SolveMode, type Solved, type VerifiedWall } from './solve'
+export { hasVerifiedWalls, isRectilinear, isRightAngledQuad, solveRoom, verifiedWalls, type SolveMode, type SolveResidual, type Solved, type VerifiedWall } from './solve'
 
 export type ApplyReport = {
   roomId: string
@@ -13,9 +13,13 @@ export type ApplyReport = {
   /** 'none' = nothing applied (see `skipped`). */
   mode: SolveMode | 'none'
   appliedWalls: number
-  /** Gap left when walking the walls with the verified lengths (0 for rectangles), in cm. */
+  /** Root-mean-square of the measurement residuals (walls and diagonal), in cm. */
   closingErrorCm: number
-  /** Rectangles: largest difference between two measured opposite walls, in cm. */
+  /** Same value as closingErrorCm: the fit error in cm rms. */
+  rmsCm: number
+  /** Fit per measured wall and for the diagonal (measured minus solved). */
+  residuals: SolveResidual[]
+  /** Always 0 with the least-squares fit (kept for the report shape). */
   oppositeDiffCm: number
   /** Check against CODE-D when measured. */
   diagonal?: { measuredCm: number; planCm: number; diffCm: number }
@@ -35,7 +39,7 @@ export function followersForApply(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, 
 }
 
 const none = (room: Room, skipped: string): ApplyReport => ({
-  roomId: room.id, code: room.code, mode: 'none', appliedWalls: 0, closingErrorCm: 0, oppositeDiffCm: 0, skipped,
+  roomId: room.id, code: room.code, mode: 'none', appliedWalls: 0, closingErrorCm: 0, rmsCm: 0, residuals: [], oppositeDiffCm: 0, skipped,
 })
 
 /** Apply the verified wall lengths of one room. Corners shared with other (unlocked) rooms follow. */
@@ -47,16 +51,17 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm
-  const solved = solveRoom(room, measured)
+  const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
+  const solved = solveRoom(room, measured, diagonalCm)
 
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })
   if (walls.some((x) => x.length < 1)) return { doc, report: none(room, 'A wall would collapse') }
 
-  // Lock verified walls (a wall bent by the closing step is not locked).
+  // Lock a verified wall only when the fit keeps it within 0.5 cm of its value.
   const props: Record<string, WallProps> = { ...room.walls }
   for (const v of ver) {
-    const got = walls[v.index].length
-    if (solved.mode === 'rect' || Math.abs(got - v.cm) <= 0.5) props[v.wallStart] = { ...wallProps(room, v.wallStart), locked: true }
+    const res = solved.residuals.find((x) => x.index === v.index)
+    if (res && Math.abs(res.diffCm) <= 0.5) props[v.wallStart] = { ...wallProps(room, v.wallStart), locked: true }
   }
 
   const moves: VMove[] = []
@@ -71,7 +76,7 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
 
   const report: ApplyReport = {
     roomId, code: room.code, mode: solved.mode, appliedWalls: ver.length,
-    closingErrorCm: solved.closingErrorCm, oppositeDiffCm: solved.oppositeDiffCm,
+    closingErrorCm: solved.closingErrorCm, rmsCm: solved.closingErrorCm, residuals: solved.residuals, oppositeDiffCm: solved.oppositeDiffCm,
   }
   if (room.diagonal) {
     const [i, j] = room.diagonal
@@ -116,11 +121,17 @@ export function verifiedAllLocked(doc: Pick<PlanDoc, 'measurements'>, room: Room
 /** One-line summary for the panel. */
 export function describeReport(r: ApplyReport): string {
   if (r.mode === 'none') return `${r.code}: ${r.skipped ?? 'nothing applied'}.`
-  const f = (n: number) => (Math.round(n * 10) / 10).toString().replace('.', ',')
+  const f = (n: number) => n.toFixed(1).replace('.', ',')
   const parts = [`${r.code}: applied ${r.appliedWalls} measured wall${r.appliedWalls === 1 ? '' : 's'}`]
-  if (r.mode === 'polygon') parts.push(`closing error ${f(r.closingErrorCm)} cm`)
-  if (r.mode === 'rectilinear' && r.closingErrorCm > 0.5) parts.push(`closing error ${f(r.closingErrorCm)} cm (spread over the walls, right angles kept)`)
-  if (r.oppositeDiffCm > 0.5) parts.push(`opposite walls differ by ${f(r.oppositeDiffCm)} cm (averaged)`)
+  if (r.rmsCm >= 0.3) {
+    const worst = r.residuals.reduce<SolveResidual | null>((a, x) => (!a || Math.abs(x.diffCm) > Math.abs(a.diffCm) ? x : a), null)
+    let text = `fit error ${f(r.rmsCm)} cm rms`
+    if (worst) {
+      const label = worst.index === 'D' ? `${r.code}-D` : `${r.code}-${worst.index + 1}`
+      text += `; largest: ${label} ${worst.diffCm >= 0 ? '+' : ''}${f(worst.diffCm)} cm`
+    }
+    parts.push(text)
+  }
   if (r.diagonal && r.diagonal.diffCm > 1) parts.push(`diagonal check: measured ${f(r.diagonal.measuredCm)}, plan ${f(r.diagonal.planCm)} (${f(r.diagonal.diffCm)} cm off)`)
   return parts.join('; ') + '.'
 }
