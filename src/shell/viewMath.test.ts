@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { clampZoom, docBounds, EMPTY_BOUNDS, fitView, fmtScale, gridStep, MAX_ZOOM, MIN_ZOOM, scaleBarStep } from './viewMath'
+import { clampZoom, docBounds, EMPTY_BOUNDS, fitView, fmtScale, gridStep, MAX_ZOOM, MIN_ZOOM, scaleBarStep, wheelZoomFactor } from './viewMath'
+
+describe('wheelZoomFactor', () => {
+  it('caps a mouse notch to a small step', () => {
+    expect(wheelZoomFactor(100)).toBeCloseTo(Math.exp(-0.15))
+    expect(wheelZoomFactor(-100)).toBeCloseTo(Math.exp(0.15))
+    expect(wheelZoomFactor(-100)).toBeLessThan(1.2)
+  })
+  it('keeps small trackpad pinch deltas as they are', () => {
+    expect(wheelZoomFactor(-4)).toBeCloseTo(Math.exp(0.04))
+  })
+  it('converts line and page deltas to pixels before the cap', () => {
+    expect(wheelZoomFactor(-3, 1)).toBeCloseTo(Math.exp(0.15))
+    expect(wheelZoomFactor(0.5, 1)).toBeCloseTo(Math.exp(-0.08))
+    expect(wheelZoomFactor(1, 2)).toBeCloseTo(Math.exp(-0.15))
+  })
+})
 import type { PlanDoc } from '../model/types'
 
 const docWithRoom = (xs: number[], ys: number[]): PlanDoc => ({

@@ -7,6 +7,20 @@ export const MAX_ZOOM = 40
 
 export const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
 
+/** Largest wheel delta (px) used for one zoom step. A mouse notch (~100 px) gives about x1.16. */
+const WHEEL_ZOOM_MAX_DELTA = 15
+
+/**
+ * Zoom factor for one ctrl/cmd + wheel event. Trackpad pinch sends many small deltas, so it
+ * keeps its smooth feel; a mouse notch sends one large delta, which is capped.
+ * `deltaMode`: 0 = pixels, 1 = lines, 2 = pages (WheelEvent).
+ */
+export function wheelZoomFactor(deltaY: number, deltaMode = 0): number {
+  const px = deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * 800 : deltaY
+  const d = Math.max(-WHEEL_ZOOM_MAX_DELTA, Math.min(WHEEL_ZOOM_MAX_DELTA, px))
+  return Math.exp(-d * 0.01)
+}
+
 export type Bounds = { minX: number; minY: number; maxX: number; maxY: number }
 
 export const EMPTY_BOUNDS: Bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 }

@@ -1,13 +1,15 @@
 // SVG viewport with pan/zoom. World units = cm. Children are drawn in world coordinates.
 //
-// Pan:  wheel/trackpad scroll, middle mouse drag, space + drag, 'pan' tool, or two-finger touch.
-// Zoom: ctrl/cmd + wheel (trackpad pinch), or two-finger pinch on touch.
+// Pan:  wheel/trackpad scroll, middle or right mouse drag, space + drag, 'pan' tool, or two-finger touch.
+// Zoom: ctrl/cmd + wheel (trackpad pinch; a mouse notch is capped to a small step), or two-finger pinch on touch.
+// The browser context menu is blocked on the canvas.
 //
 // Features use `useViewport()` to convert pointer events to world coords and to size
 // handles in screen pixels (divide by zoom).
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useUi } from '../model/store'
 import type { Vec } from '../model/types'
+import { wheelZoomFactor } from '../shell/viewMath'
 
 type Ctx = {
   /** Screen px per cm. */
@@ -56,7 +58,7 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
       const v = useUi.getState().view
-      if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, v.zoom * Math.exp(-e.deltaY * 0.01))
+      if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, v.zoom * wheelZoomFactor(e.deltaY, e.deltaMode))
       else setUi({ view: { ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom } })
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -88,7 +90,8 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
       e.stopPropagation()
       return
     }
-    if (e.button === 1 || space || tool === 'pan') {
+    // Middle or right mouse button always pans (tools only use the left button).
+    if (e.button === 1 || e.button === 2 || space || tool === 'pan') {
       panStart.current = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }
       ref.current?.setPointerCapture(e.pointerId)
       e.stopPropagation()
@@ -132,6 +135,7 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
         onPointerMoveCapture={onPointerMoveCapture}
         onPointerUpCapture={onPointerUpCapture}
         onPointerCancelCapture={onPointerUpCapture}
+        onContextMenu={(e) => e.preventDefault()}
       >
         <g transform={`scale(${view.zoom}) translate(${-view.x} ${-view.y})`}>
           {children}
