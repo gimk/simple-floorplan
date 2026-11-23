@@ -15,10 +15,12 @@
 // - Many projects: version / since keys are per project, outbox jobs carry their projectId,
 //   and `openDoc()` switches the whole app to another project.
 import { useEffect, useState } from 'react'
-import { ensureStoredGraph } from '../model/graphRule'
+import { toast } from '../features/toast'
+import { ensureV2 } from '../model/v2/ensure'
 import { useDoc, useUi } from '../model/store'
 import type { BackgroundImage, Measurement, PlanDoc } from '../model/types'
 import * as api from './api'
+import { updateAppAndReload } from '../shell/swUpdate'
 import * as idb from './idb'
 import { collectDataUrls, isLocalId, pinsOf, pollIntervalMs, projectKey, replacePhoto, titlePatchForDoc, type PinLike } from './projects'
 import * as queue from './queue'
@@ -86,8 +88,60 @@ const snapshotOf = (d: PlanDoc): Omit<api.SnapshotPayload, 'baseVersion'> => {
   return { ...rest, background: stripBackground(d.background) }
 }
 
+// ---------- "update required": this app version cannot write a project in the new format ----------
+// The server answers 409 { error: 'update_required' } when a v1 app writes to a project already
+// stored as v2 (docs/walls-plan.md 5c, Safety). The app shows one toast and reloads ONCE, so the
+// new version can send the queued change. The outbox keeps every local change, so nothing is lost.
+const UPDATE_RELOAD_KEY = 'simple-floorplan:update-reload-at'
+
+/** True when the reload did not help: the status text says it, and no second reload is tried. */
+let updateRequiredBlocked = false
+
+const readReloadAt = (): number | null => {
+  try {
+    const raw = sessionStorage.getItem(UPDATE_RELOAD_KEY)
+    if (raw === null) return null
+    const n = Number(raw)
+    return Number.isFinite(n) ? n : null
+  } catch {
+    return null // sessionStorage blocked: treated as "never reloaded"
+  }
+}
+
+const writeReloadAt = (ms: number): void => {
+  try {
+    sessionStorage.setItem(UPDATE_RELOAD_KEY, String(ms))
+  } catch {
+    // storage blocked: the page still reloads, only the loop guard is lost
+  }
+}
+
+function handleUpdateRequired(e: unknown): void {
+  const action = api.updateRequiredAction(e, readReloadAt(), Date.now())
+  if (action === 'ignore') return
+  if (action === 'error') {
+    updateRequiredBlocked = true
+    notify()
+    return
+  }
+  writeReloadAt(Date.now())
+  toast('This project uses a newer format. The app reloads to update.', { durationMs: 8000 })
+  // One moment to read the toast. The change waits in the outbox for the new app version.
+  setTimeout(() => {
+    try {
+      // Install the new service worker first: a plain reload could get the old cached app again.
+      void updateAppAndReload()
+    } catch {
+      // no window (tests): the status text still says what to do
+      updateRequiredBlocked = true
+      notify()
+    }
+  }, 1500)
+}
+
 // ---------- sender (wraps the API for the outbox) ----------
-const sender: queue.SendJob = async (job, projectId, signal) => {
+/** One outbox job. The export below adds the "update required" check to every kind. */
+const sendJob: queue.SendJob = async (job, projectId, signal) => {
   const opts = { signal }
   switch (job.kind) {
     case 'snapshot': {
@@ -99,7 +153,9 @@ const sender: queue.SendJob = async (job, projectId, signal) => {
       try {
         setVersion(projectId, (await send(getVersion(projectId))).version)
       } catch (e) {
-        if (e instanceof api.ApiError && e.status === 409) {
+        // A refused v1 write is not a version conflict: retrying with the latest version cannot
+        // help, and the handler below owns that answer.
+        if (e instanceof api.ApiError && e.status === 409 && !api.isUpdateRequired(e)) {
           const latest = (e.body as { latestVersion?: number } | null)?.latestVersion ?? getVersion(projectId)
           setVersion(projectId, (await send(latest)).version)
         } else throw e
@@ -111,6 +167,16 @@ const sender: queue.SendJob = async (job, projectId, signal) => {
     case 'item': await api.putItem(projectId, job.key, job.payload as api.ItemData, opts); return
     case 'delete-item': await api.deleteItem(projectId, job.key, opts); return
     case 'note': await api.putNote(projectId, job.key, job.payload as api.NotePut, opts); return
+  }
+}
+
+/** Every write goes through here, so one check covers every job kind (phase 5c). */
+const sender: queue.SendJob = async (job, projectId, signal) => {
+  try {
+    await sendJob(job, projectId, signal)
+  } catch (e) {
+    if (api.isUpdateRequired(e)) handleUpdateRequired(e)
+    throw e // the job stays in the outbox: no local change is dropped
   }
 }
 
@@ -137,7 +203,7 @@ function diffAndEnqueue(next: PlanDoc, prev: PlanDoc) {
   }
   const pinsChanged = (next as { pins?: unknown }).pins !== (prev as { pins?: unknown }).pins
   if (pinsChanged) void uploadPhotos()
-  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || next.apartment !== prev.apartment || next.oldMeasurements !== prev.oldMeasurements || next.walls !== prev.walls || next.traces !== prev.traces || pinsChanged) {
+  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || next.apartment !== prev.apartment || next.oldMeasurements !== prev.oldMeasurements || next.walls !== prev.walls || next.nodes !== prev.nodes || next.conversion !== prev.conversion || next.traces !== prev.traces || pinsChanged) {
     // Debounce: drags produce many updates.
     if (snapTimer) clearTimeout(snapTimer)
     snapTimer = setTimeout(() => { void queue.enqueue('snapshot', '', null) }, 1500)
@@ -316,8 +382,9 @@ async function connect() {
         try { background = { ...background, src: await loadBackgroundFromR2(background) } } catch { /* show without image */ }
       }
       if (stale()) return
-      // A server doc with no walls (or older rooms) gets its stored graph here, as on load.
-      applyServer(() => ensureStoredGraph({ ...rest, background }))
+      // A server doc enters the v2 model here, as on load: a v1 snapshot is converted, a v2
+      // snapshot keeps its walls and gets its room polygons calculated again (model/v2/ensure.ts).
+      applyServer(() => ensureV2({ ...rest, background }))
       setVersion(d.projectId, v)
     } else if (server.version === 0 || server.version < version || localPending) {
       // First upload, or local geometry is ahead: push everything we have.
@@ -364,13 +431,15 @@ export async function openDoc(doc: PlanDoc): Promise<void> {
   uploadingPhotos = false
   refusedPhotos.clear()
   setPhotoNotice(null)
+  // The project is a load step: its saved rooms and walls go to the v2 model before it is shown.
+  const loaded = ensureV2(doc)
   applying = true
   try {
-    useDoc.getState().replace(doc)
+    useDoc.getState().replace(loaded)
     useDoc.temporal.getState().clear()
   } finally { applying = false }
-  idb.setLastProjectId(doc.projectId)
-  await idb.saveDoc(doc)
+  idb.setLastProjectId(loaded.projectId)
+  await idb.saveDoc(loaded)
   queue.setProjectId(doc.projectId)
   setSync({ conn: 'connecting' })
   void connect()
@@ -419,6 +488,8 @@ export function useSyncState() {
 export function useSyncStatusText(): { text: string; warn: boolean } {
   const s = useSyncState()
   const n = s.pending, ch = `${n} change${n > 1 ? 's' : ''}`
+  // The reload did not update the app: say it until the page is reloaded again.
+  if (updateRequiredBlocked) return { text: 'This project uses a newer format. Reload the app to update it. Your changes stay on this device.', warn: true }
   if (s.conn === 'locked') return { text: 'Passcode needed to save online. Changes are kept on this device.', warn: true }
   if (s.conn === 'no-server') return { text: n ? `${ch} kept on this device only. Online saving is not available here.` : 'Online saving is not available here. Values are kept on this device.', warn: true }
   if (n) return { text: `${ch} waiting to upload. They are safe on this device and upload when the connection is back.${s.lastError ? ` (Last error: ${s.lastError})` : ''}`, warn: true }

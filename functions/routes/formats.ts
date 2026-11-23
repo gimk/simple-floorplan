@@ -11,7 +11,7 @@ import { Hono } from 'hono'
 import { DslParseError, dslToPlan, planToDsl } from '../../src/core/dsl'
 import { planToDxf } from '../../src/core/dxf'
 import { querySummary } from '../../src/core/queries'
-import { commitDoc, loadProjectDoc } from '../store'
+import { commitDoc, loadProjectDoc, UPDATE_REQUIRED_MESSAGE, UpdateRequiredError } from '../store'
 import type { PlanDoc, Room, WallElement } from '../../src/model/types'
 
 type Env = {
@@ -125,7 +125,16 @@ export function registerFormatsRoutes(app: Hono<{ Bindings: Env }>) {
       return c.json({ dryRun: true, version: loaded.version, diff, summary })
     }
     const baseVersion = baseVersionParam !== undefined ? Number(baseVersionParam) : undefined
-    const { version } = await commitDoc(c.env.DB, id, loaded, next, baseVersion)
+    let version: number
+    try {
+      ;({ version } = await commitDoc(c.env.DB, id, loaded, next, baseVersion))
+    } catch (err) {
+      // Safety (docs/walls-plan.md 5c): a .sfp body that would go back to v1 on a v2 project.
+      if (err instanceof UpdateRequiredError) {
+        return c.json({ error: 'update_required', message: UPDATE_REQUIRED_MESSAGE }, 409)
+      }
+      throw err
+    }
     return c.json({ version, diff, summary })
   })
 

@@ -12,6 +12,7 @@ import { parsePlan } from '../../core/schema'
 import { ensureStoredGraph } from '../graphRule'
 import type { PlanDoc } from '../types'
 import { convertToV2 } from './convert'
+import { ensureV2 } from './ensure'
 import { conversionProblems } from './invariants'
 
 // The app tsconfig holds no Node types (it is a browser app), so node:fs is loaded through a
@@ -177,5 +178,48 @@ describe.skipIf(backups.length === 0)('the real projects of the local backup', (
     )
     expect(real.docs.length).toBeGreaterThan(0)
     expect(problems).toEqual([])
+  })
+
+  it('load every project through ensureV2: the graph and the rooms agree, no value is lost', () => {
+    let rooms = 0
+    let walls = 0
+    let faces = 0
+    let values = 0
+    let withTarget = 0
+    const problems: string[] = []
+    for (const doc of real.docs) {
+      const v2 = ensureV2(doc, { now: '2026-11-24T00:00:00.000Z' })
+      expect(v2.schemaVersion).toBe(2)
+      expect(v2.conversion).toBeDefined()
+      rooms += v2.rooms.length
+      walls += v2.walls?.length ?? 0
+      faces += (v2.walls ?? []).reduce((n, w) => n + w.faces.length, 0)
+      values += Object.keys(v2.measurements).length
+      withTarget += Object.values(v2.measurements).filter((m) => !!m.target).length
+      // The load step is idempotent: a second load gives the same document back.
+      if (ensureV2(v2) !== v2) problems.push('ensureV2 is not idempotent')
+      // Every room is in the graph (a cycle), and every face names a wall that is there.
+      const wallIds = new Set((v2.walls ?? []).map((w) => w.id))
+      for (const r of v2.rooms) {
+        if (!r.cycle?.length) problems.push(`room without a cycle (${r.vertices.length} corners)`)
+        for (const f of r.cycle ?? []) if (!wallIds.has(f.wallId)) problems.push('face of a wall that is gone')
+      }
+      // No wall is left without a face, and no value moved.
+      for (const w of v2.walls ?? []) if (!w.faces.length) problems.push('wall without a face')
+      const kept = [...Object.values(v2.measurements), ...(v2.oldMeasurements ?? [])]
+      for (const m of Object.values(doc.measurements)) {
+        if (!kept.some((k) => k.actualCm === m.actualCm)) problems.push('value lost')
+      }
+    }
+    // Counts only.
+    console.log(
+      `[v2 load] projects ${real.docs.length}; rooms ${rooms}, walls ${walls}, faces ${faces}, ` +
+      `values ${values} (with a target ${withTarget}), problems ${problems.length}`,
+    )
+    expect(real.docs.length).toBeGreaterThan(0)
+    expect(problems).toEqual([])
+    // The snapshots hold the geometry only (the values are in their own table), so a target is only
+    // seen here when the snapshot has a value: the conversion itself is checked in the test above.
+    expect(withTarget).toBeLessThanOrEqual(values)
   })
 })

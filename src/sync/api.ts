@@ -118,6 +118,43 @@ async function request<T>(path: string, opts: ReqOpts = {}): Promise<T> {
 
 const enc = encodeURIComponent
 
+// ---------- "this project uses a newer format" (docs/walls-plan.md 5c, Safety) ----------
+
+/** Body the server sends when it refuses a v1 write on a project already stored in v2. */
+export type UpdateRequiredBody = { error: 'update_required'; message?: string }
+
+/** True for the 409 answer of an old app that writes to a converted project. */
+export function isUpdateRequired(e: unknown): boolean {
+  if (!(e instanceof ApiError) || e.status !== 409) return false
+  const body = e.body as { error?: unknown } | null
+  return typeof body === 'object' && body !== null && body.error === 'update_required'
+}
+
+/**
+ * How long after a reload the app treats a new "update required" as the same event. Without it,
+ * an app that still cannot write after the reload would reload again and again.
+ */
+export const UPDATE_RELOAD_GUARD_MS = 60_000
+
+export type UpdateRequiredAction = 'ignore' | 'reload' | 'error'
+
+/**
+ * What to do after a refused write (pure, tested):
+ * - 'ignore': not a 409 update_required (a normal version conflict is handled by the sender);
+ * - 'reload': show the toast and reload once, so the new app version can send the change;
+ * - 'error': already reloaded less than UPDATE_RELOAD_GUARD_MS ago, so show a status forever.
+ */
+export function updateRequiredAction(
+  e: unknown,
+  lastReloadAtMs: number | null,
+  nowMs: number,
+  guardMs = UPDATE_RELOAD_GUARD_MS,
+): UpdateRequiredAction {
+  if (!isUpdateRequired(e)) return 'ignore'
+  if (lastReloadAtMs === null || !Number.isFinite(lastReloadAtMs)) return 'reload'
+  return nowMs - lastReloadAtMs >= guardMs ? 'reload' : 'error'
+}
+
 // ---------- routes ----------
 
 export const listProjects = (opts: { signal?: AbortSignal } = {}) =>

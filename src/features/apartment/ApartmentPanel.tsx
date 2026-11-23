@@ -23,7 +23,9 @@ import {
 import { useAnnotSel } from '../annotations/selection'
 import { renovationSummary } from '../renovation/logic'
 import { undoToast } from '../toast'
+import { conversionToShow, useConversionNotice } from './conversion'
 import { apartmentTotals, compareReference, SOURCE_LABELS, SOURCE_VALUES, type ComparisonLevel } from './logic'
+import { WallConversionSection } from './WallConversionSection'
 import { buildReference, draftAfterAdd, EMPTY_REFERENCE_DRAFT, type ReferenceDraft } from './referenceForm'
 
 const LEVEL_CLASS: Record<ComparisonLevel, string> = {
@@ -223,6 +225,8 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
   const references = doc.apartment?.references ?? []
   // Renovation (7.4): room areas before and after the works, only when a wall is tagged.
   const renovation = renovationSummary(doc)
+  // Conversion report (walls-plan 5c): shown until the user hides it with "Hide this report".
+  const conversion = conversionToShow(doc)
 
   return (
     <PanelSection title="Apartment" icon={<House size={16} />}>
@@ -258,6 +262,8 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
           {formatM2(renovation.after.areaM2)} m² in {renovation.after.rooms} rooms
         </p>
       )}
+
+      {conversion && <WallConversionSection conversion={conversion} />}
 
       <FieldRow label="Default ceiling" htmlFor="apt-default-ceiling">
         <NumberField
@@ -314,6 +320,8 @@ export function ApartmentPanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
   const annotSel = useAnnotSel((s) => s.sel)
+  // The panel is always mounted, so the "plan converted" toast is shown once after the load.
+  useConversionNotice()
   if (annotSel !== null) return null
   return <ApartmentCard doc={doc} selection={selection} />
 }

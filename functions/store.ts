@@ -42,6 +42,46 @@ export class VersionConflictError extends Error {
   }
 }
 
+/**
+ * Refused write of an old client (docs/walls-plan.md 5c, Safety): the project is already in the
+ * walls-as-the-source format (v2) and the write comes from an app that does not know it.
+ * Routes answer HTTP 409 { error: 'update_required', message: UPDATE_REQUIRED_MESSAGE }.
+ */
+export const UPDATE_REQUIRED_MESSAGE = 'This project uses a newer format. Reload the app to update it.'
+
+export class UpdateRequiredError extends Error {
+  constructor() {
+    super(UPDATE_REQUIRED_MESSAGE)
+    this.name = 'UpdateRequiredError'
+  }
+}
+
+/**
+ * True when a write must be refused: the stored document is v2 and the write is v1
+ * (schemaVersion missing or 1). A v2 write on a v1 project is accepted: that is the conversion.
+ */
+export const refusesDowngrade = (storedSchemaVersion: unknown, writeSchemaVersion: unknown): boolean =>
+  storedSchemaVersion === 2 && writeSchemaVersion !== 2
+
+/**
+ * Version and schema version of the newest snapshot of a project, or null when it has none.
+ * `json_extract` is SQLite JSON1, available in D1.
+ */
+export async function latestSnapshot(
+  db: D1Database,
+  id: string,
+): Promise<{ version: number; schemaVersion?: 1 | 2 } | null> {
+  const row = await db
+    .prepare(
+      "SELECT version, json_extract(data_json, '$.schemaVersion') AS schemaVersion FROM floorplan_snapshots WHERE project_id = ? ORDER BY version DESC LIMIT 1",
+    )
+    .bind(id)
+    .first<{ version: number; schemaVersion: number | null }>()
+  if (!row) return null
+  const schemaVersion = row.schemaVersion === 2 ? 2 : row.schemaVersion === 1 ? 1 : undefined
+  return { version: row.version, ...(schemaVersion ? { schemaVersion } : {}) }
+}
+
 const nowIso = (): string => new Date().toISOString()
 
 // A NULL source in the database means "no source given" (old rows), which is no
@@ -113,6 +153,8 @@ export async function loadProjectDoc(db: D1Database, id: string): Promise<Loaded
     ...(Array.isArray(base.oldMeasurements) ? { oldMeasurements: base.oldMeasurements } : {}),
     // Traced walls of the Wall tool (phase 6): a doc field in the snapshot JSON, like rooms.
     ...(Array.isArray(base.traces) ? { traces: base.traces } : {}),
+    // Conversion report (phase 5c): kept, so the app shows it once and can hide it.
+    ...(base.conversion ? { conversion: base.conversion } : {}),
     measurements,
     roomNotes,
   })
@@ -139,6 +181,10 @@ export async function commitDoc(
 ): Promise<{ version: number; updatedAt: string }> {
   if (baseVersion !== undefined && baseVersion !== prev.version) {
     throw new VersionConflictError(prev.version)
+  }
+  // An old client must not write a v1 document over a converted (v2) project (docs/walls-plan.md 5c).
+  if (refusesDowngrade(prev.doc.schemaVersion, nextDoc.schemaVersion)) {
+    throw new UpdateRequiredError()
   }
   const version = prev.version + 1
   const now = nowIso()
@@ -233,8 +279,8 @@ export async function commitDoc(
     }
   }
 
-  // 5. Prune old snapshots (keep the last 50 per project)
-  statements.push(db.prepare(PRUNE_SNAPSHOTS_SQL).bind(id, pruneCutoffVersion(version)))
+  // 5. Prune old snapshots (keep the last 50 per project, never a v1 snapshot of a v2 project)
+  statements.push(db.prepare(PRUNE_SNAPSHOTS_SQL).bind(id, pruneCutoffVersion(version), id))
 
   if (extraStatements) statements.push(...extraStatements)
 

@@ -1,7 +1,7 @@
 // D1 + R2 persistence adapter for the MCP server.
 // Doc load/commit go through the shared implementation in functions/store.ts
 // (same one used by the commands route and the .sfp PUT route).
-import { commitDoc, loadProjectDoc } from '../store'
+import { commitDoc, loadProjectDoc, UPDATE_REQUIRED_MESSAGE, UpdateRequiredError } from '../store'
 import type { PlanDocV1 } from '../../src/core/schema'
 import type { LoadedProject, McpStore, ProjectEvent, ProjectSummaryRow } from './types'
 
@@ -70,7 +70,13 @@ export function createD1McpStore(db: D1Database, images?: R2Bucket): McpStore {
     },
 
     async commitDoc(id: string, prev: LoadedProject, nextDoc: PlanDocV1): Promise<{ version: number; updatedAt: string }> {
-      return commitDoc(db, id, { doc: prev.doc, version: prev.version }, nextDoc)
+      try {
+        return await commitDoc(db, id, { doc: prev.doc, version: prev.version }, nextDoc)
+      } catch (err) {
+        // Safety (docs/walls-plan.md 5c): a v1 write on a v2 project. Say what to do.
+        if (err instanceof UpdateRequiredError) throw new Error(UPDATE_REQUIRED_MESSAGE)
+        throw err
+      }
     },
 
     async listEvents(projectId: string, since?: string, limit?: number): Promise<ProjectEvent[]> {

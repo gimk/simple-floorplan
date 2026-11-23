@@ -18,6 +18,7 @@ import { AnnotationsLayer, PinTool, TapeTool } from './features/annotations'
 import { selectAnnot, useAnnotSel } from './features/annotations/selection'
 import { ClashLayer } from './features/clearance'
 import { ToastHost } from './features/toast'
+import { ConversionNotice } from './features/apartment'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { EmptyState } from './shell/EmptyState'
 import { ZoomControls } from './shell/ZoomControls'
@@ -373,6 +374,8 @@ export default function App() {
       )}
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusTo={shortcutsReturnFocusRef} />
       <ToastHost />
+      {/* Conversion report toast in every mode (phones open in Measuring Mode). */}
+      <ConversionNotice />
       <UpdateToast />
     </div>
   )

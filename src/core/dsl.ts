@@ -79,6 +79,7 @@ import type {
   Vertex,
 } from '../model/types'
 import { parsePlan, type PlanDocV1 } from './schema'
+import { ensureV2 } from '../model/v2/ensure'
 
 // ---------- errors ----------
 
@@ -1098,5 +1099,8 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
         }
       : {}),
   })
-  return doc
+  // An import into a v2 project keeps the walls as the source (docs/walls-plan.md phase 5c): the
+  // rooms of the text go into the wall graph of the project, and the values get their target.
+  // A v1 project, a new project and the CLI keep the v1 document of the text.
+  return baseDoc?.schemaVersion === 2 ? (ensureV2(doc, { now }) as PlanDocV1) : doc
 }

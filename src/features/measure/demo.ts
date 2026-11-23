@@ -1,5 +1,6 @@
 // Demo apartment: 12 rooms from the on-site survey prototype, converted from prototype pixels to cm.
 import { useDoc } from '../../model/store'
+import { ensureV2 } from '../../model/v2/ensure'
 import type { Room } from '../../model/types'
 
 const K = 1.6 // cm per prototype pixel (Séjour ≈ 440 cm wide)
@@ -38,7 +39,7 @@ export function demoRooms(): Room[] {
 
 /** Fill an empty document with the demo apartment. */
 export function loadDemoApartment() {
-  useDoc.getState().update((d) => ({
+  useDoc.getState().update((d) => ensureV2({
     ...d,
     title: d.title === 'New apartment' ? 'Demo apartment' : d.title,
     rooms: demoRooms(),

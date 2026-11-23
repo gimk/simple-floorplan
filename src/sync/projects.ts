@@ -63,7 +63,39 @@ export const pollIntervalMs = (visible: boolean, measuring: boolean): number => 
 /** Highest version that must be deleted so only the last `keep` remain (<= 0: delete nothing). */
 export const pruneCutoffVersion = (newestVersion: number, keep = SNAPSHOTS_TO_KEEP): number => newestVersion - keep
 
-export const PRUNE_SNAPSHOTS_SQL = 'DELETE FROM floorplan_snapshots WHERE project_id = ? AND version <= ?'
+/**
+ * Snapshot versions that a prune run deletes (docs/walls-plan.md 5c, Safety).
+ * The last `keep` versions stay. While the project holds a v2 snapshot, a snapshot saved before
+ * the conversion (schemaVersion missing or 1) is NEVER deleted: the team can go back to it.
+ * Same rule as PRUNE_SNAPSHOTS_SQL below: change both together.
+ */
+export function pruneSnapshotVersions(rows: SnapshotHeader[], keep = SNAPSHOTS_TO_KEEP): number[] {
+  const newest = rows.reduce((m, r) => Math.max(m, r.version), 0)
+  const cutoff = pruneCutoffVersion(newest, keep)
+  const hasV2 = rows.some((r) => r.schemaVersion === 2)
+  return rows
+    .filter((r) => r.version <= cutoff && !(hasV2 && r.schemaVersion !== 2))
+    .map((r) => r.version)
+    .sort((a, b) => a - b)
+}
+
+/** Version and schema version of one stored snapshot. `schemaVersion` is null when it has none. */
+export type SnapshotHeader = { version: number; schemaVersion?: number | null }
+
+/**
+ * Delete the old snapshots of ONE project (D1, SQLite JSON1).
+ * Bind values: project id, the cutoff version, then the project id again (the subquery).
+ * `COALESCE(..., 1)` reads a snapshot saved before schemaVersion as v1, exactly like pruneSnapshotVersions.
+ */
+export const PRUNE_SNAPSHOTS_SQL = `DELETE FROM floorplan_snapshots
+WHERE project_id = ? AND version <= ?
+  AND NOT (
+    COALESCE(json_extract(data_json, '$.schemaVersion'), 1) <> 2
+    AND EXISTS (
+      SELECT 1 FROM floorplan_snapshots v2
+      WHERE v2.project_id = ? AND json_extract(v2.data_json, '$.schemaVersion') = 2
+    )
+  )`
 
 // ---------- photos (pins[].photoKeys) ----------
 

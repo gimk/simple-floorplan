@@ -14,7 +14,7 @@ import { OPENAPI_SPEC } from './openapi'
 import { mcpRoutes } from './routes/mcp'
 import { accessMiddleware, registerAccessRoutes } from './auth'
 import { syncProjectTitle } from './routes/projectTitle'
-import { carryOldMeasurements, commitDoc, loadProjectDoc, type ProjectRow } from './store'
+import { carryOldMeasurements, commitDoc, loadProjectDoc, latestSnapshot, refusesDowngrade, UPDATE_REQUIRED_MESSAGE, UpdateRequiredError, type ProjectRow } from './store'
 import { checkUpload, parseCaps, uploadWindowStartIso } from '../src/core/caps'
 
 /** Bindings and vars this API needs. The Worker entry adds the ASSETS binding. */
@@ -196,12 +196,13 @@ app.put('/projects/:id/snapshot', async (c) => {
   }
   const { baseVersion, measurements: _m, roomNotes: _n, ...snapshotData } = parsed.data
 
-  const latest = await c.env.DB.prepare(
-    'SELECT MAX(version) AS v FROM floorplan_snapshots WHERE project_id = ?',
-  )
-    .bind(id)
-    .first<{ v: number | null }>()
-  const latestVersion = latest?.v ?? 0
+  // Safety (docs/walls-plan.md 5c): a project already stored in v2 refuses a v1 snapshot from an
+  // old cached app. That app shows "update required" and reloads itself.
+  const latest = await latestSnapshot(c.env.DB, id)
+  if (refusesDowngrade(latest?.schemaVersion, parsed.data.schemaVersion)) {
+    return c.json({ error: 'update_required', message: UPDATE_REQUIRED_MESSAGE }, 409)
+  }
+  const latestVersion = latest?.version ?? 0
   if (baseVersion !== latestVersion) {
     return c.json({ error: 'version_conflict', latestVersion }, 409)
   }
@@ -225,8 +226,8 @@ app.put('/projects/:id/snapshot', async (c) => {
     .run()
   // Keep the projects list in sync: projects.title (and a default name) follow the snapshot title.
   await syncProjectTitle(c.env.DB, id, snapshotData.title, now)
-  // Keep only the last 50 snapshots per project.
-  await c.env.DB.prepare(PRUNE_SNAPSHOTS_SQL).bind(id, pruneCutoffVersion(version)).run()
+  // Keep only the last 50 snapshots per project (never a v1 snapshot of a v2 project).
+  await c.env.DB.prepare(PRUNE_SNAPSHOTS_SQL).bind(id, pruneCutoffVersion(version), id).run()
   return c.json({ version })
 })
 
@@ -315,7 +316,16 @@ app.post('/projects/:id/commands', async (c) => {
       ).bind(id, idempotencyKey, JSON.stringify(responsePayload), nowIso()),
     )
   }
-  const { version } = await commitDoc(c.env.DB, id, loaded, nextDoc, baseVersion, extraStatements)
+  let version: number
+  try {
+    ;({ version } = await commitDoc(c.env.DB, id, loaded, nextDoc, baseVersion, extraStatements))
+  } catch (err) {
+    // Safety (docs/walls-plan.md 5c): a write that would go back to v1 on a v2 project.
+    if (err instanceof UpdateRequiredError) {
+      return c.json({ error: 'update_required', message: UPDATE_REQUIRED_MESSAGE }, 409)
+    }
+    throw err
+  }
   return c.json({ ...responsePayload, version })
 })
 

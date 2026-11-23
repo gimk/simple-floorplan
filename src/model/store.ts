@@ -3,6 +3,7 @@ import { temporal } from 'zundo'
 import type { ElementKind, MeasureSource, Mode, PlanDoc, Selection, ToolId, WallType } from './types'
 import type { RenovationView } from '../features/renovation/logic'
 import { ensureStoredGraph } from './graphRule'
+import { ensureV2 } from './v2/ensure'
 import { toggleItem, type SelItem } from './selection'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
 
@@ -70,7 +71,10 @@ export const useDoc = create<DocState>()(
         set((s) => ({ doc: (opts?.remote ? fn : local(fn))(s.doc) }))
         silent = false
       },
-      // A loaded doc without walls gets them here (migration); rooms and values are not touched.
+      // A doc without walls gets them here (migration); rooms and values are not touched.
+      // The v2 load step (`ensureV2`: a v1 doc becomes v2, a v2 doc gets its rooms calculated from
+      // its walls again) runs BEFORE this call, at every load point: hydrate, openDoc, the server
+      // snapshot that connect adopts, the .sfp import and the demo apartment.
       replace: (d) => set({ doc: ensureStoredGraph(d) }),
     }),
     {
@@ -111,7 +115,7 @@ export async function hydrate(): Promise<void> {
   try {
     const saved = await loadInitialDoc()
     if (saved) {
-      useDoc.setState({ doc: ensureStoredGraph({ ...emptyDoc(), ...saved }) })
+      useDoc.setState({ doc: ensureV2({ ...emptyDoc(), ...saved }) })
       useDoc.temporal.getState().clear()
     }
   } catch { /* start with the empty doc */ }

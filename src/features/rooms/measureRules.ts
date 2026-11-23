@@ -1,4 +1,6 @@
 // Measurements control the plan (local edits only; changes from the server are not touched):
+//  0. In a v2 document the walls are the source (docs/walls-plan.md phase 5c): the sync rule keeps
+//     the room polygons and the wall graph in step before the other rules read the plan.
 //  1. When a room outline changes (cutout, slice, merge, corner added or removed), on-site
 //     values move with their wall (model/relabel.ts). In a v2 document each value follows its
 //     stored target instead (model/v2/relabelV2.ts). A split or removed wall loses its value,
@@ -9,6 +11,7 @@ import { graphRule } from '../../model/graphRule'
 import { appendOld, REASON_WORDS, renameOldCode, renamedCodes } from '../../model/oldMeasurements'
 import { relabelMeasurements } from '../../model/relabel'
 import { relabelByTarget } from '../../model/v2/relabelV2'
+import { v2SyncRule } from '../../model/v2/syncRule'
 import { attachTargets, isV2Doc } from '../../model/v2/targets'
 import { removedWallValues } from '../../model/wallValues'
 import { addDocRule, nowIso, useDoc, type DocRule } from '../../model/store'
@@ -71,10 +74,17 @@ const wallValueRule: DocRule = (prev, next) => {
 
 /** Install the rules once, at app start (not in the read-only share viewer). */
 export function installMeasureRules() {
-  addDocRule(relabelRule)
-  // The stored wall graph follows the rooms (after the relabel rule: ids stay stable).
+  // 1. A v2 document keeps its walls and its rooms in step (docs/walls-plan.md phase 5c): the
+  //    polygons that a tool wrote go into the graph, and the polygons follow a wall edit. This rule
+  //    runs FIRST, so every rule after it reads a plan whose rooms and walls agree.
+  addDocRule(v2SyncRule)
+  // 2. A v1 document: the stored wall graph follows the rooms (after the relabel rule: ids stay
+  //    stable). In a v2 document graphRule is a no-op: there the walls are the source.
   addDocRule(graphRule)
-  // The values of a wall that the new graph does not have any more (after the graph rule).
+  // 3. A changed outline (cutout, slice, merge, corner added or removed): values follow their wall,
+  //    by target in a v2 document.
+  addDocRule(relabelRule)
+  // 4. The values of a wall that the new graph does not have any more (after the graph rule).
   addDocRule(wallValueRule)
 }
 

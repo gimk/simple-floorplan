@@ -91,3 +91,39 @@ describe('api client', () => {
     expect((err as api.ApiError).body).toEqual({ error: 'version_conflict', latestVersion: 7 })
   })
 })
+
+describe('api: 409 update_required of an old app (walls-plan 5c)', () => {
+  const refused = () => new api.ApiError(409, { error: 'update_required', message: 'This project uses a newer format.' })
+  const conflict = () => new api.ApiError(409, { error: 'version_conflict', latestVersion: 7 })
+
+  it('isUpdateRequired only matches the 409 answer of a converted project', () => {
+    expect(api.isUpdateRequired(refused())).toBe(true)
+    expect(api.isUpdateRequired(conflict())).toBe(false)
+    expect(api.isUpdateRequired(new api.ApiError(409, null))).toBe(false)
+    expect(api.isUpdateRequired(new api.ApiError(400, { error: 'update_required' }))).toBe(false)
+    expect(api.isUpdateRequired(new Error('update_required'))).toBe(false)
+    expect(api.isUpdateRequired(null)).toBe(false)
+  })
+
+  it('reloads once, then shows the error instead of reloading again', () => {
+    // Nothing reloaded yet: reload.
+    expect(api.updateRequiredAction(refused(), null, 1_000)).toBe('reload')
+    // Reloaded 5 s ago: the app is still too old, so no second reload.
+    expect(api.updateRequiredAction(refused(), 1_000, 6_000)).toBe('error')
+    // Reloaded more than the guard ago: a new deploy can be picked up by a reload again.
+    expect(api.updateRequiredAction(refused(), 1_000, 1_000 + api.UPDATE_RELOAD_GUARD_MS)).toBe('reload')
+  })
+
+  it('a normal version conflict is not an update_required case', () => {
+    expect(api.updateRequiredAction(conflict(), null, 1_000)).toBe('ignore')
+    expect(api.updateRequiredAction(conflict(), 1_000, 2_000)).toBe('ignore')
+  })
+
+  it('gives the wire body of the refusal', async () => {
+    stubFetch(() => jsonResponse({ error: 'update_required', message: 'Reload the app.' }, 409))
+    const err = await api.putSnapshot('p1', { baseVersion: 3 } as api.SnapshotPayload).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(api.ApiError)
+    expect(api.isUpdateRequired(err)).toBe(true)
+    expect((err as api.ApiError).body).toEqual({ error: 'update_required', message: 'Reload the app.' })
+  })
+})

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  POLL_FAST_MS, POLL_SLOW_MS, SNAPSHOTS_TO_KEEP, collectDataUrls, isLocalId, mergeProjectLists, pollIntervalMs,
-  projectKey, pruneCutoffVersion, replacePhoto, titlePatchForDoc,
+  POLL_FAST_MS, POLL_SLOW_MS, PRUNE_SNAPSHOTS_SQL, SNAPSHOTS_TO_KEEP, collectDataUrls, isLocalId,
+  mergeProjectLists, pollIntervalMs, projectKey, pruneCutoffVersion, pruneSnapshotVersions, replacePhoto,
+  titlePatchForDoc,
 } from './projects'
 
 describe('project keys', () => {
@@ -102,5 +103,47 @@ describe('photos: sketch keys follow the upload', () => {
     const next = replacePhoto(pins, dataUrl, 'proj/new.jpg')
     expect(next[0]).toEqual({ id: 'p1', photoKeys: ['proj/new.jpg'] })
     expect(next[1]).toBe(pins[1])
+  })
+})
+
+describe('snapshot pruning (walls-plan 5c: no v1 snapshot is deleted after the conversion)', () => {
+  const v1 = (version: number) => ({ version, schemaVersion: 1 })
+  const v2 = (version: number) => ({ version, schemaVersion: 2 })
+  const unversioned = (version: number) => ({ version })
+
+  it('keeps the last 50 versions and deletes the older ones', () => {
+    const rows = Array.from({ length: 60 }, (_, i) => v2(i + 1))
+    expect(pruneCutoffVersion(60)).toBe(10)
+    expect(pruneSnapshotVersions(rows)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(pruneSnapshotVersions([v2(1), v2(2)])).toEqual([])
+    expect(pruneSnapshotVersions([], 50)).toEqual([])
+  })
+
+  it('never deletes a v1 (or unversioned) snapshot while the project has a v2 snapshot', () => {
+    // 60 snapshots before the conversion, then the conversion wrote v2 at version 61.
+    const rows = [...Array.from({ length: 60 }, (_, i) => v1(i + 1)), v2(61)]
+    expect(pruneSnapshotVersions(rows)).toEqual([])
+    // A snapshot saved long ago without schemaVersion is a v1 snapshot too.
+    const mixed = [...Array.from({ length: 55 }, (_, i) => unversioned(i + 1)), v2(56)]
+    expect(pruneSnapshotVersions(mixed)).toEqual([])
+  })
+
+  it('prunes v2 snapshots of a converted project, and keeps the v1 ones', () => {
+    const rows = [v1(1), v1(2), ...Array.from({ length: 55 }, (_, i) => v2(i + 3))]
+    // Newest version 57: versions <= 7 go, but not 1 and 2 (they are v1 snapshots).
+    expect(pruneSnapshotVersions(rows)).toEqual([3, 4, 5, 6, 7])
+  })
+
+  it('prunes normally when the project has no v2 snapshot (a project not converted yet)', () => {
+    const rows = Array.from({ length: 55 }, (_, i) => v1(i + 1))
+    expect(pruneSnapshotVersions(rows)).toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('the SQL applies the same rule, and takes the project id twice', () => {
+    expect(PRUNE_SNAPSHOTS_SQL).toContain("json_extract(data_json, '$.schemaVersion')")
+    expect(PRUNE_SNAPSHOTS_SQL).toContain('COALESCE')
+    expect(PRUNE_SNAPSHOTS_SQL).toContain('EXISTS')
+    // Bind order: project id, cutoff version, project id of the subquery.
+    expect(PRUNE_SNAPSHOTS_SQL.split('?')).toHaveLength(4)
   })
 })

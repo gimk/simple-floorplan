@@ -1,7 +1,7 @@
 // Pointer interactions of the select tool: vertex drag, corner resize, room drag, wall drag,
 // selection, insert, delete.
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { dot, roomWalls } from '../../model/geometry'
+import { dist, dot, projectOnSegment, roomWalls } from '../../model/geometry'
 import { inGroup, selectedItems, type SelItem } from '../../model/selection'
 import { beginDrag, endDrag, useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, Vec } from '../../model/types'
@@ -20,6 +20,8 @@ import {
   moveRoom, nearestVertex, oppositeVertex, roomHasLockedWall, scaleFactors, scaleRoomWithLinks, type Link,
 } from './transform'
 import { undoToast } from '../toast'
+import { moveNode, moveRoom as roomMove, moveWall } from '../../model/v2/drag'
+import { isV2Doc } from '../../model/v2/targets'
 
 export type Vp = { toWorld: (x: number, y: number) => Vec; px: (n: number) => number }
 
@@ -126,6 +128,112 @@ const newlyCrossing = (before: PlanDoc, after: PlanDoc, roomIds: string[]) =>
 
 const refKey = (r: VRef) => r.roomId + ':' + r.vertexId
 
+// ---------- the wall graph of a v2 document ----------
+// In a v2 document the walls are the source (docs/walls-plan.md phase 5c), so a drag moves NODES of
+// the graph and never a polygon: a corner is a node, a wall is a stored wall, a room is the set of
+// the nodes of its walls. The doc rule (model/v2/syncRule.ts) calculates the polygons of every room
+// from the graph, so the v1 code below is kept for v1 documents only.
+
+/** Index of the face of a room cycle that starts at a corner, or -1. */
+const faceAt = (room: Room, cornerId: string) => (room.cycle ?? []).findIndex((f) => f.cornerId === cornerId)
+
+/**
+ * Id of the stored NODE at a room corner: the node that the walls of the two faces at the corner
+ * share. Null when the corner is not a node (two faces in line on one wall) or when the walls are
+ * not in the graph: the drag then keeps the v1 path.
+ */
+function nodeAtCorner(doc: PlanDoc, room: Room, cornerId: string): string | null {
+  const cycle = room.cycle ?? []
+  const k = faceAt(room, cornerId)
+  if (k < 0) return null
+  const cur = cycle[k]
+  const before = cycle[(k + cycle.length - 1) % cycle.length]
+  if (cur.wallId === before.wallId) return null
+  const walls = doc.walls ?? []
+  const a = walls.find((w) => w.id === before.wallId)
+  const b = walls.find((w) => w.id === cur.wallId)
+  if (!a || !b) return null
+  const ids = new Set([a.a, a.b])
+  return [b.a, b.b].find((id) => ids.has(id)) ?? null
+}
+
+/** Id of the stored wall of the room wall that starts at a corner, or null (a v1 room). */
+function storedWallAtCorner(doc: PlanDoc, room: Room, cornerId: string): string | null {
+  const k = faceAt(room, cornerId)
+  const wallId = k < 0 ? undefined : room.cycle?.[k].wallId
+  if (!wallId) return null
+  return (doc.walls ?? []).some((w) => w.id === wallId) ? wallId : null
+}
+
+/** Rooms whose polygon follows when these nodes move: the rooms with a face on a wall at a node. */
+function roomsOfNodes(doc: PlanDoc, nodeIds: Set<string>): string[] {
+  const touching = new Set((doc.walls ?? []).filter((w) => nodeIds.has(w.a) || nodeIds.has(w.b)).map((w) => w.id))
+  return doc.rooms.filter((r) => (r.cycle ?? []).some((f) => touching.has(f.wallId))).map((r) => r.id)
+}
+
+/** A T junction: a node that lies on a wall that it is not an end of. */
+type Junction = { node: string; wall: string }
+
+/** T junctions of a document: the nodes of one wall that end on another wall. */
+function junctionsOf(doc: PlanDoc): Junction[] {
+  const out: Junction[] = []
+  const nodes = doc.nodes ?? []
+  for (const wall of doc.walls ?? []) {
+    const a = nodes.find((n) => n.id === wall.a)
+    const b = nodes.find((n) => n.id === wall.b)
+    if (!a || !b) continue
+    for (const n of nodes) {
+      if (n.id === wall.a || n.id === wall.b) continue
+      if (projectOnSegment(n, a, b).distance > 1) continue
+      out.push({ node: n.id, wall: wall.id })
+    }
+  }
+  return out
+}
+
+/**
+ * Put the T junctions back on their walls after a move of the graph: a wall of another room that
+ * ends on a wall that moved follows it, so the room that is cut there keeps its corners. A junction
+ * that is already on its wall (a translation, most of the time) is not moved: no useless rebuild.
+ */
+function repairJunctions(before: PlanDoc, after: PlanDoc): PlanDoc {
+  let out = after
+  for (const j of junctionsOf(before)) {
+    const wall = (out.walls ?? []).find((w) => w.id === j.wall)
+    const node = (out.nodes ?? []).find((n) => n.id === j.node)
+    if (!wall || !node) continue
+    const a = (out.nodes ?? []).find((n) => n.id === wall.a)
+    const b = (out.nodes ?? []).find((n) => n.id === wall.b)
+    if (!a || !b) continue
+    const to = projectOnSegment(node, a, b).point
+    if (dist(to, node) > 1) out = moveNode(out, j.node, to)
+  }
+  return out
+}
+
+/**
+ * A corner drag on the graph of a v2 document: the NODE at the corner moves, so every wall that ends
+ * there follows, and the T junctions of the other rooms on those walls slide with them.
+ */
+export function moveCornerNode(doc: PlanDoc, nodeId: string, to: Vec): PlanDoc {
+  return repairJunctions(doc, moveNode(doc, nodeId, to))
+}
+
+/** A wall drag on the graph: the stored wall translates, with the T junctions of its other rooms. */
+export function moveStoredWall(doc: PlanDoc, wallId: string, delta: Vec): PlanDoc {
+  return repairJunctions(doc, moveWall(doc, wallId, delta))
+}
+
+/**
+ * A room drag on the graph: the nodes of the walls of the rooms move, so the neighbours stretch.
+ * `thisRoomOnly` (Shift) keeps the walls that another room also uses, and the room gets its own
+ * copies of them; the T junctions of the walls that stay do not move either.
+ */
+export function moveGraphRooms(doc: PlanDoc, roomIds: string[], delta: Vec, thisRoomOnly: boolean): PlanDoc {
+  const moved = roomIds.reduce((acc, id) => roomMove(acc, id, delta, { thisRoomOnly }), doc)
+  return repairJunctions(doc, moved)
+}
+
 /**
  * Pointer down on a room fill (or its label): select it, then, without `vp`, nothing else
  * (old behaviour). With `vp`, a drag past the 4 px threshold moves the whole room.
@@ -154,6 +262,9 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
     .filter((l) => !idSet.has(l.roomId)).map((l) => [refKey(l), l] as const)).values()]
   const linkedKeysAll = new Set(linkedAll.map(refKey))
   const affected = [...ids, ...new Set(linkedAll.map((l) => l.roomId))]
+  // A v2 document: the walls are the source, so the room drag moves the nodes of its walls and the
+  // T junctions of the other rooms on them follow (Shift = this room only).
+  const graphDrag = isV2Doc(doc0)
   let start: PlanDoc | null = null
   let last: Vec = near
   track(e, {
@@ -189,8 +300,13 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
       last = { x: near.x + d.x, y: near.y + d.y }
       // Always translate the drag-start document, so every move is independent of the last one.
       // The linked corners are read from the drag-start document by the first moveRoom call.
+      // A v2 document: the nodes of the walls of the room move, and the neighbours stretch (a wall
+      // between two rooms is one wall). Shift = this room only: a shared wall stays and the room
+      // gets its own copy of it.
       useDoc.getState().updateSilent(() =>
-        ids.slice(1).reduce((acc, id) => moveRoom(acc, id, d), moveRoom(base, ids[0], d, linked)))
+        graphDrag
+          ? moveGraphRooms(base, ids, d, ev.shiftKey)
+          : ids.slice(1).reduce((acc, id) => moveRoom(acc, id, d), moveRoom(base, ids[0], d, linked)))
     },
     onEnd: () => {
       document.body.style.cursor = ''
@@ -240,6 +356,13 @@ export function onVertexDown(e: ReactPointerEvent, vp: Vp, roomId: string, verte
   const anchor = oppositeVertex(room0, vertexId)
   const down = vp.toWorld(e.clientX, e.clientY)
   const doc0 = useDoc.getState().doc
+  // A v2 document: the corner is a NODE of the wall graph, so the drag moves that node and the
+  // walls at the corner follow (the two rooms of a shared wall stay on it). A corner that is not a
+  // node (two faces in line on one wall), and Ctrl/Cmd + drag (the room resize), keep the v1 path:
+  // the tool writes the polygon and the doc rule writes it into the wall graph.
+  const resizing = e.ctrlKey || e.metaKey
+  const nodeId = isV2Doc(doc0) && !resizing ? nodeAtCorner(doc0, room0, vertexId) : null
+  if (nodeId) { dragCornerNode(e, vp, roomId, vertexId, nodeId, room0, doc0, shift, flip); return }
   // Locked walls: a single point cannot move if a wall at this corner is locked; a resize is
   // refused if any wall of the room is locked (a resize changes every length).
   const pointLocked = locked(room0, i) || locked(room0, i - 1)
@@ -385,6 +508,133 @@ function dragVertexGroup(e: ReactPointerEvent, vp: Vp, roomId: string, vertexId:
   })
 }
 
+/**
+ * Drag the NODE of one corner of a v2 document (docs/walls-plan.md phase 5c). Every wall that ends
+ * at that node follows it, so the two rooms of a shared wall keep sharing it. One undo step per
+ * drag; each pointer move starts again from the drag-start document.
+ */
+function dragCornerNode(
+  e: ReactPointerEvent, vp: Vp, roomId: string, vertexId: string, nodeId: string, room0: Room, doc0: PlanDoc,
+  shift: boolean, flip: () => void,
+) {
+  const i = room0.vertices.findIndex((v) => v.id === vertexId)
+  const n = room0.vertices.length
+  const orig = room0.vertices[i] as Vec
+  const prev = room0.vertices[(i - 1 + n) % n], next = room0.vertices[(i + 1) % n]
+  const down = vp.toWorld(e.clientX, e.clientY)
+  // A locked wall at this corner keeps the node where it is.
+  const pointLocked = locked(room0, i) || locked(room0, i - 1)
+  // The rooms that follow the node: their polygons can become self-intersecting (refused below).
+  // The rooms that follow the node: their polygons can become self-intersecting (refused below).
+  const affected = roomsOfNodes(doc0, new Set([nodeId]))
+  const near = (v: Vec) => dist(v, orig) <= 1
+  let start: PlanDoc | null = null
+  let last: Vec = orig
+  let warned = ''
+  const warn = (msg: string, at: Vec) => { if (warned !== msg) { warned = msg; notify(msg, at) } }
+  track(e, {
+    onStart: () => {
+      if (shift) useUi.getState().select({ kind: 'vertex', roomId, vertexId })
+      start = beginDrag(); setDragInfo({ kind: 'vertex', roomId, vertexId })
+    },
+    onMove: (ev) => {
+      if (!start) return
+      const base = start
+      const w = vp.toWorld(ev.clientX, ev.clientY)
+      const raw = { x: orig.x + (w.x - down.x), y: orig.y + (w.y - down.y) }
+      if (pointLocked) {
+        useGuides.getState().set([])
+        useDoc.getState().updateSilent(() => base)
+        warn(CORNER_LOCKED_MSG, raw)
+        return
+      }
+      // Snap to the other rooms. No vertex on the dragged node itself (its copies in the rooms that
+      // share it), and no wall of this room: those turn with the node.
+      const r = snapPoint(raw, {
+        opts: useUi.getState().snap, refs: [prev, next], tolCm: vp.px(10), disabled: ev.altKey,
+        vertices: otherVertices(base).filter((v) => !near(v)),
+        edges: otherEdges(base, (rid) => rid === roomId),
+      })
+      useGuides.getState().set(r.guides)
+      last = r.point
+      useDoc.getState().updateSilent(() => moveCornerNode(base, nodeId, r.point))
+    },
+    onEnd: () => {
+      setDragInfo(null)
+      if (!start) { if (shift) flip(); return }
+      if (newlyCrossing(start, useDoc.getState().doc, affected)) {
+        useDoc.getState().updateSilent(() => start as PlanDoc)
+        notify(CROSS_MSG, last)
+        return
+      }
+      endDrag(start)
+    },
+  })
+}
+
+/**
+ * Drag one stored WALL of a v2 document: its two nodes move, so the rooms on both sides follow
+ * (one wall, two faces) and the walls at its ends stretch. Shift = this room only is not applied
+ * here: a stored wall belongs to both of its rooms.
+ */
+function dragWallOnGraph(
+  e: ReactPointerEvent, vp: Vp, roomId: string, wallStart: string, wallId: string, room0: Room,
+  a0: Vec, normal: Vec, axisAligned: boolean, down: Vec, shift: boolean,
+  flip: () => void, selectMe: () => void,
+) {
+  const n = room0.vertices.length
+  const i = room0.vertices.findIndex((v) => v.id === wallStart)
+  const aId = room0.vertices[i].id, bId = room0.vertices[(i + 1) % n].id
+  const doc0 = useDoc.getState().doc
+  const wall = (doc0.walls ?? []).find((w) => w.id === wallId)
+  const wallLocked = !!wall?.locked
+  const affected = roomsOfNodes(doc0, new Set([wall?.a, wall?.b].filter((x): x is string => !!x)))
+  let start: PlanDoc | null = null
+  let last: Vec = a0
+  track(e, {
+    onStart: () => { if (shift) selectMe(); start = beginDrag(); setDragInfo({ kind: 'wall', roomId, wallStart }) },
+    onMove: (ev) => {
+      if (!start) return
+      const base = start
+      if (wallLocked) {
+        useGuides.getState().set([])
+        useDoc.getState().updateSilent(() => base)
+        return
+      }
+      const w = vp.toWorld(ev.clientX, ev.clientY)
+      let d = dot({ x: w.x - down.x, y: w.y - down.y }, normal)
+      if (!ev.altKey) {
+        const ui = useUi.getState()
+        if (axisAligned) {
+          // Snap the wall to the walls of the other rooms (the same as a v1 wall drag).
+          const r = snapPoint({ x: a0.x + normal.x * d, y: a0.y + normal.y * d }, {
+            opts: { ...ui.snap, angles: false }, tolCm: vp.px(10),
+            vertices: otherVertices(base, (rid, vid) => rid === roomId && (vid === aId || vid === bId)),
+            edges: otherEdges(base, (rid) => rid === roomId),
+          })
+          useGuides.getState().set(r.guides)
+          d = dot({ x: r.point.x - a0.x, y: r.point.y - a0.y }, normal)
+        } else if (ui.snap.grid && ui.snap.gridCm > 0) {
+          d = Math.round(d / ui.snap.gridCm) * ui.snap.gridCm
+        }
+      } else useGuides.getState().set([])
+      last = { x: a0.x + normal.x * d, y: a0.y + normal.y * d }
+      const delta = { x: normal.x * d, y: normal.y * d }
+      useDoc.getState().updateSilent(() => moveStoredWall(base, wallId, delta))
+    },
+    onEnd: () => {
+      setDragInfo(null)
+      if (!start) { if (shift) flip(); return }
+      if (newlyCrossing(start, useDoc.getState().doc, affected)) {
+        useDoc.getState().updateSilent(() => start as PlanDoc)
+        notify(CROSS_MSG, last)
+        return
+      }
+      endDrag(start)
+    },
+  })
+}
+
 export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallStart: string) {
   if (e.button !== 0 || !e.isPrimary) return
   e.stopPropagation()
@@ -405,6 +655,13 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
   const down = vp.toWorld(e.clientX, e.clientY)
   // Shared corners follow (Shift = this room only).
   const doc0 = useDoc.getState().doc
+  // A v2 document: the wall is a STORED wall, so the drag moves it on the graph: the rooms on both
+  // sides follow and the walls at its ends stretch (docs/walls-plan.md phase 5c).
+  const storedWallId = isV2Doc(doc0) ? storedWallAtCorner(doc0, room0, wallStart) : null
+  if (storedWallId) {
+    dragWallOnGraph(e, vp, roomId, wallStart, storedWallId, room0, a0, normal, axisAligned, down, shift, flip, selectMe)
+    return
+  }
   const linkedAAll = movableLinked(doc0, roomId, aId)
   const linkedBAll = movableLinked(doc0, roomId, bId)
   const linkedKeysAll = new Set([...linkedAAll, ...linkedBAll].map(refKey))

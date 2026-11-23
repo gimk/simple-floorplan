@@ -396,3 +396,63 @@ describe('schema: v2 documents (walls-plan phase 5c)', () => {
     expect(safeParsePlan({ ...v1Doc(), rooms: [{ ...room, cycle: [{ ...cycle[0], wallId: '' }] }] }).ok).toBe(false)
   })
 })
+
+describe('schema: conversion report (walls-plan 5c step 4)', () => {
+  const entry = {
+    wallId: 'W12',
+    rooms: ['EN', 'CO'],
+    linesApartCm: 1.5,
+    thicknesses: [10, 12],
+    types: ['partition', 'partition'],
+    chosen: { type: 'partition', thicknessCm: 12 },
+  }
+  const conversion = {
+    at: '2026-11-24T10:00:00.000Z',
+    report: { entries: [entry], counts: { rooms: 3, walls: 8, sharedWalls: 4, droppedRoomWalls: 0 } },
+  }
+
+  it('keeps doc.conversion and its report through JSON (round trip)', () => {
+    const doc = parsePlan({ projectId: 'p1', schemaVersion: 2, rooms: [], conversion })
+    expect(doc.conversion).toEqual(conversion)
+    expect(doc.conversion?.seen).toBeUndefined()
+    // Saved and read back: the report survives a trip through the snapshot JSON.
+    const back = parsePlan(JSON.parse(JSON.stringify(doc)))
+    expect(back.conversion).toEqual(conversion)
+    expect(back.conversion?.report.entries[0].linesApartCm).toBe(1.5)
+  })
+
+  it('keeps seen = true and reads a report without seen as not seen', () => {
+    const seen = parsePlan({ projectId: 'p1', conversion: { ...conversion, seen: true } })
+    expect(seen.conversion?.seen).toBe(true)
+    const notSeen = parsePlan({ projectId: 'p1', conversion })
+    expect(notSeen.conversion?.seen).not.toBe(true)
+  })
+
+  it('accepts a report without entries and gives the counts, and no conversion at all', () => {
+    const empty = parsePlan({
+      projectId: 'p1',
+      conversion: { at: '2026-11-24T10:00:00.000Z', report: { counts: { rooms: 1, walls: 4 } } },
+    })
+    expect(empty.conversion?.report.entries).toEqual([])
+    expect(empty.conversion?.report.counts).toEqual({ rooms: 1, walls: 4, sharedWalls: 0, droppedRoomWalls: 0 })
+    expect(parsePlan({ projectId: 'p1' }).conversion).toBeUndefined()
+  })
+
+  it('rejects a conversion with no time or a negative count', () => {
+    expect(safeParsePlan({ projectId: 'p1', conversion: { report: { counts: {} } } }).ok).toBe(false)
+    expect(
+      safeParsePlan({
+        projectId: 'p1',
+        conversion: { at: 't', report: { counts: { rooms: -1 } } },
+      }).ok,
+    ).toBe(false)
+  })
+
+  it('accepts conversion in a snapshot body and exposes it in the JSON Schema', () => {
+    const body = SnapshotPutBodySchema.parse({ baseVersion: 2, schemaVersion: 2, conversion })
+    expect(body.conversion).toEqual(conversion)
+    const schema = JSON.stringify(planJsonSchema())
+    expect(schema).toContain('conversion')
+    expect(schema).toContain('sharedWalls')
+  })
+})

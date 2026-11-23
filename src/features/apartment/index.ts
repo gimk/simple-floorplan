@@ -11,3 +11,18 @@ export {
   type ComparisonLevel,
   type ReferenceComparison,
 } from './logic'
+// Conversion report (walls-plan 5c step 4): the toast text, the section and its commands.
+export {
+  CONVERSION_SECTION_ID,
+  CONVERSION_SECTION_TITLE,
+  conversionCountsText,
+  conversionEntryText,
+  conversionNoticeText,
+  conversionToShow,
+  conversionToastText,
+  hideConversionReport,
+  mergedWallCount,
+  openConversionSection,
+  useConversionNotice,
+} from './conversion'
+export { ConversionNotice, WallConversionSection } from './WallConversionSection'

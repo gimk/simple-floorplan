@@ -1,6 +1,7 @@
 // "Update available — reload" toast, shown when a new service worker is waiting.
 import { useEffect, useState } from 'react'
 import { registerSW } from 'virtual:pwa-register'
+import { setServiceWorkerUpdater } from '../../shell/swUpdate'
 
 export function UpdateToast() {
   const [update, setUpdate] = useState<null | (() => Promise<void>)>(null)
@@ -10,6 +11,8 @@ export function UpdateToast() {
       immediate: true,
       onNeedRefresh: () => setUpdate(() => () => updateSW(true)),
     })
+    // The "update required" answer of the server uses it to load the new version (phase 5c).
+    setServiceWorkerUpdater(updateSW)
   }, [])
   if (!update) return null
   return (

@@ -2,9 +2,29 @@
 // in-memory D1 stub that understands exactly the SQL statements the module issues.
 import { describe, expect, it } from 'vitest'
 import { parsePlan, type PlanDocV1 } from '../src/core/schema'
-import { carryOldMeasurements, commitDoc, loadProjectDoc, VersionConflictError } from './store'
+import { PRUNE_SNAPSHOTS_SQL, pruneCutoffVersion } from '../src/sync/projects'
+import {
+  carryOldMeasurements,
+  commitDoc,
+  latestSnapshot,
+  loadProjectDoc,
+  refusesDowngrade,
+  UPDATE_REQUIRED_MESSAGE,
+  UpdateRequiredError,
+  VersionConflictError,
+} from './store'
 
 // ---------- tiny in-memory D1 stub ----------
+
+/** schemaVersion of a stored snapshot, as json_extract would read it (null = absent). */
+const schemaVersionOf = (row: Row): number | null => {
+  try {
+    const parsed = JSON.parse(String(row.data_json)) as { schemaVersion?: unknown }
+    return typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : null
+  } catch {
+    return null
+  }
+}
 
 type Row = Record<string, unknown>
 
@@ -56,6 +76,13 @@ class FakeDB {
       const p = this.projects.get(String(args[0]))
       return p ? { name: p.name, title: p.title } : undefined
     }
+    if (q.startsWith("SELECT version, json_extract(data_json, '$.schemaVersion') AS schemaVersion FROM floorplan_snapshots")) {
+      const rows = this.snapshots
+        .filter((s) => s.project_id === args[0])
+        .sort((a, b) => Number(b.version) - Number(a.version))
+      const row = rows[0]
+      return row ? { version: row.version, schemaVersion: schemaVersionOf(row) } : undefined
+    }
     if (q.startsWith('SELECT data_json, version FROM floorplan_snapshots')) {
       const rows = this.snapshots
         .filter((s) => s.project_id === args[0])
@@ -86,7 +113,18 @@ class FakeDB {
       return
     }
     if (q.startsWith('DELETE FROM floorplan_snapshots WHERE project_id = ? AND version <= ?')) {
-      this.snapshots = this.snapshots.filter((s) => !(s.project_id === args[0] && Number(s.version) <= Number(args[1])))
+      // Same rule as PRUNE_SNAPSHOTS_SQL (docs/walls-plan.md 5c): the last 50 versions go, but a
+      // snapshot without schemaVersion 2 stays while the project holds a v2 snapshot.
+      // The stub does not run SQL: the SQL string itself is checked by
+      // `pruneSnapshotVersions` in src/sync/projects.test.ts.
+      const pid = String(args[0])
+      const cutoff = Number(args[1])
+      expect(String(args[2])).toBe(pid) // the subquery repeats the project id
+      const hasV2 = this.snapshots.some((s) => s.project_id === pid && schemaVersionOf(s) === 2)
+      this.snapshots = this.snapshots.filter((s) => {
+        if (s.project_id !== pid || Number(s.version) > cutoff) return true
+        return hasV2 && schemaVersionOf(s) !== 2
+      })
       return
     }
     if (q.startsWith('DELETE FROM measurements WHERE project_id = ? AND label = ?')) {
@@ -497,5 +535,146 @@ describe('functions/store.ts (shared D1 persistence)', () => {
     expect(carryOldMeasurements(JSON.stringify({ oldMeasurements: [] }))).toBeUndefined()
     expect(carryOldMeasurements(undefined)).toBeUndefined()
     expect(carryOldMeasurements('not json')).toBeUndefined()
+  })
+})
+
+// ---------- safety of the switch (walls-plan phase 5c step 4) ----------
+
+describe('functions/store.ts: v2 project guard, conversion and snapshot pruning', () => {
+  const conversion: NonNullable<PlanDocV1['conversion']> = {
+    at: '2026-11-24T10:00:00.000Z',
+    report: {
+      entries: [
+        {
+          wallId: 'W12',
+          rooms: ['EN', 'CO'],
+          linesApartCm: 1.5,
+          thicknesses: [10, 12],
+          types: ['partition', 'partition'],
+          chosen: { type: 'partition', thicknessCm: 12 },
+        },
+      ],
+      counts: { rooms: 1, walls: 4, sharedWalls: 2, droppedRoomWalls: 0 },
+    },
+  }
+
+  it('refusesDowngrade: only a write without schemaVersion 2 on a stored v2 document', () => {
+    expect(refusesDowngrade(2, 1)).toBe(true)
+    expect(refusesDowngrade(2, undefined)).toBe(true)
+    expect(refusesDowngrade(2, 2)).toBe(false)
+    // A v2 write on a v1 project is the conversion, so it is accepted.
+    expect(refusesDowngrade(1, 2)).toBe(false)
+    expect(refusesDowngrade(undefined, 1)).toBe(false)
+    expect(refusesDowngrade(null, 1)).toBe(false)
+  })
+
+  it('latestSnapshot gives the version and the schema version of the newest snapshot', async () => {
+    const db = new FakeDB()
+    addProject(db, 'v1')
+    expect(await latestSnapshot(db as unknown as D1Database, 'v1')).toBeNull()
+
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'v1'))!
+    await commitDoc(db as unknown as D1Database, 'v1', v0, makeDoc('v1'))
+    expect(await latestSnapshot(db as unknown as D1Database, 'v1')).toEqual({ version: 1, schemaVersion: 1 })
+
+    const v1 = (await loadProjectDoc(db as unknown as D1Database, 'v1'))!
+    await commitDoc(db as unknown as D1Database, 'v1', v1, makeDoc('v1', { schemaVersion: 2 }))
+    expect(await latestSnapshot(db as unknown as D1Database, 'v1')).toEqual({ version: 2, schemaVersion: 2 })
+
+    // A snapshot saved before schemaVersion existed reads as "no version", not as v2.
+    db.snapshots.push({ id: 'x', project_id: 'v1', data_json: JSON.stringify({ rooms: [] }), version: 3, created_at: 't' })
+    expect(await latestSnapshot(db as unknown as D1Database, 'v1')).toEqual({ version: 3 })
+  })
+
+  it('commitDoc accepts the v2 write of a v1 project (that is the conversion)', async () => {
+    const db = new FakeDB()
+    addProject(db, 'c1')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'c1'))!
+    expect(v0.doc.schemaVersion).toBe(1)
+    const next = makeDoc('c1', { schemaVersion: 2, conversion })
+    const { version } = await commitDoc(db as unknown as D1Database, 'c1', v0, next)
+    expect(version).toBe(1)
+
+    const back = (await loadProjectDoc(db as unknown as D1Database, 'c1'))!
+    expect(back.doc.schemaVersion).toBe(2)
+    expect(back.doc.conversion).toEqual(conversion)
+  })
+
+  it('commitDoc refuses a v1 write on a v2 project (routes answer 409 update_required)', async () => {
+    const db = new FakeDB()
+    addProject(db, 'c2')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'c2'))!
+    await commitDoc(db as unknown as D1Database, 'c2', v0, makeDoc('c2', { schemaVersion: 2 }))
+    const v2 = (await loadProjectDoc(db as unknown as D1Database, 'c2'))!
+
+    // The old cached client: schemaVersion 1, or no schemaVersion at all.
+    for (const doc of [makeDoc('c2', { schemaVersion: 1 }), makeDoc('c2', { schemaVersion: undefined })]) {
+      await expect(commitDoc(db as unknown as D1Database, 'c2', v2, doc)).rejects.toBeInstanceOf(UpdateRequiredError)
+      await expect(commitDoc(db as unknown as D1Database, 'c2', v2, doc)).rejects.toThrow(UPDATE_REQUIRED_MESSAGE)
+    }
+    // Nothing was written by the refused commit.
+    expect(db.snapshots.filter((s) => s.project_id === 'c2')).toHaveLength(1)
+    // A v2 write on the same project is still accepted.
+    const { version } = await commitDoc(db as unknown as D1Database, 'c2', v2, makeDoc('c2', { schemaVersion: 2 }))
+    expect(version).toBe(2)
+  })
+
+  it('prune keeps every v1 snapshot while the project has a v2 snapshot', async () => {
+    const db = new FakeDB()
+    addProject(db, 'pz')
+    for (let v = 1; v <= 60; v++) {
+      db.snapshots.push({
+        id: `s${v}`,
+        project_id: 'pz',
+        data_json: JSON.stringify({ schemaVersion: 1, rooms: [] }),
+        version: v,
+        created_at: 't',
+      })
+    }
+    // The conversion writes v2 at version 61.
+    db.snapshots.push({
+      id: 's61',
+      project_id: 'pz',
+      data_json: JSON.stringify({ schemaVersion: 2, rooms: [] }),
+      version: 61,
+      created_at: 't',
+    })
+    await db
+      .prepare(PRUNE_SNAPSHOTS_SQL)
+      .bind('pz', pruneCutoffVersion(61), 'pz')
+      .run()
+    // No v1 snapshot is deleted, so the pre-conversion backups stay.
+    expect(db.snapshots.filter((s) => s.project_id === 'pz' && schemaVersionOf(s) !== 2)).toHaveLength(60)
+    expect(db.snapshots.filter((s) => s.project_id === 'pz')).toHaveLength(61)
+  })
+
+  it('prune still keeps only the last 50 snapshots of a project that has no v1 snapshot', async () => {
+    const db = new FakeDB()
+    addProject(db, 'pv')
+    for (let v = 1; v <= 60; v++) {
+      db.snapshots.push({
+        id: `t${v}`,
+        project_id: 'pv',
+        data_json: JSON.stringify({ schemaVersion: 2, rooms: [] }),
+        version: v,
+        created_at: 't',
+      })
+    }
+    await db
+      .prepare(PRUNE_SNAPSHOTS_SQL)
+      .bind('pv', pruneCutoffVersion(60), 'pv')
+      .run()
+    expect(db.snapshots.filter((s) => s.project_id === 'pv')).toHaveLength(50)
+    expect(Math.min(...db.snapshots.filter((s) => s.project_id === 'pv').map((s) => Number(s.version)))).toBe(11)
+  })
+
+  it('a v2 commit writes a v2 snapshot and the prune statement stays inside the batch', async () => {
+    const db = new FakeDB()
+    addProject(db, 'pb')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'pb'))!
+    await commitDoc(db as unknown as D1Database, 'pb', v0, makeDoc('pb', { schemaVersion: 2, conversion }))
+    expect(db.snapshots).toHaveLength(1)
+    expect(schemaVersionOf(db.snapshots[0])).toBe(2)
+    expect(JSON.parse(String(db.snapshots[0].data_json)).conversion).toEqual(conversion)
   })
 })

@@ -50,6 +50,10 @@ import {
 } from './schema'
 import { findSharedWalls } from './queries'
 import { normalizeDoorHosts } from './doorHost'
+import { appendOld } from '../model/oldMeasurements'
+import { relabelByTarget } from '../model/v2/relabelV2'
+import { v2SyncRule } from '../model/v2/syncRule'
+import { attachTargets } from '../model/v2/targets'
 
 const EPS = 0.05
 const BIG = 1e5
@@ -813,11 +817,46 @@ const round2 = (n: number) => Math.round(n * 100) / 100
  * Every command ends with the door-host rule: a door that opens into a neighbouring room moves there.
  */
 export function apply(rawDoc: PlanDoc, rawCommand: unknown): ApplyResult {
-  const doc = parsePlan(rawDoc)
+  const doc = parseDoc(rawDoc)
   const cmd = CommandSchema.parse(rawCommand)
   const warnings: CommandWarning[] = []
 
-  return keepMeasurementsOnWalls(doc, adoptDoorHosts(runCommand(doc, cmd, warnings), warnings))
+  const out = adoptDoorHosts(runCommand(doc, cmd, warnings), warnings)
+  // A v2 document keeps its walls as the source (docs/walls-plan.md phase 5c); a v1 document keeps
+  // the v1 rule of the values (the client converts it on load).
+  return out.doc.schemaVersion === 2 ? keepWallsAndValuesV2(doc, out) : keepMeasurementsOnWalls(doc, out)
+}
+
+/**
+ * The parsed document, with the fields that the wire schema does not hold yet: the conversion
+ * report of a v2 document (`doc.conversion`) must not be lost by a command.
+ */
+function parseDoc(rawDoc: PlanDoc): PlanDocV1 {
+  const doc = parsePlan(rawDoc)
+  if (doc.conversion === undefined && rawDoc.conversion !== undefined) return { ...doc, conversion: rawDoc.conversion }
+  return doc
+}
+
+/**
+ * After every command on a v2 document: the polygons that the command wrote go into the wall graph
+ * (one wall between two rooms, docs/walls-plan.md phase 5c), then each value follows its stored
+ * target. A value whose face is gone leaves `measurements` for `oldMeasurements`
+ * (MEASUREMENT_DROPPED warning: measure it again).
+ */
+function keepWallsAndValuesV2(before: PlanDocV1, out: ApplyResult): ApplyResult {
+  const now = nowIso()
+  let doc = v2SyncRule(before, out.doc) as PlanDocV1
+  const res = relabelByTarget(attachTargets(before), doc, now)
+  if (!res) return { ...out, doc: attachTargets(doc) as PlanDocV1 }
+  const old = appendOld(doc.oldMeasurements ?? before.oldMeasurements, res.droppedValues, now)
+  doc = attachTargets({ ...doc, measurements: res.measurements, ...(old ? { oldMeasurements: old } : {}) }) as PlanDocV1
+  const again = res.droppedValues.filter((d) => res.dropped.includes(d.measurement.label))
+  const dropped: CommandWarning[] = again.length ? [{
+    code: 'MEASUREMENT_DROPPED',
+    message: `Measure again: ${res.dropped.join(', ')}. These walls were split or removed, so their on-site values were removed.`,
+    details: { labels: res.dropped },
+  }] : []
+  return { ...out, doc, warnings: [...out.warnings, ...dropped] }
 }
 
 /**
@@ -1669,7 +1708,7 @@ export function applyBatch(
   rawDoc: PlanDoc,
   commands: unknown[],
 ): { doc: PlanDocV1; results: Record<string, unknown>[]; warnings: CommandWarning[] } {
-  let cur = parsePlan(rawDoc)
+  let cur = parseDoc(rawDoc)
   const results: Record<string, unknown>[] = []
   const warnings: CommandWarning[] = []
 
