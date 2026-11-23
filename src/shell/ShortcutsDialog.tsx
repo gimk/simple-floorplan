@@ -4,7 +4,7 @@ import { useEffect, useRef, type RefObject } from 'react'
 import { X } from 'lucide-react'
 
 const ROWS: [string, string][] = [
-  ['V / H / R / P / S / X / D / C / T / N', 'Select, Pan, Rectangle, Polygon, Slice, Cutout, Element, Calibrate, Tape, Pin'],
+  ['V / H / R / P / W / M / S / X / D / C / T / N', 'Select, Pan, Rectangle, Polygon, Wall, Make room, Slice, Cutout, Element, Calibrate, Tape, Pin'],
   ['Ctrl/Cmd+Z · Ctrl/Cmd+Shift+Z (or Ctrl+Y)', 'Undo · Redo'],
   ['Esc', 'Cancel in-progress points, then up one level, clear'],
   ['0', 'Fit plan to view'],
@@ -20,6 +20,7 @@ const ROWS: [string, string][] = [
   ['Ctrl/Cmd + drag a corner', 'Resize the whole room from that corner (the opposite corner stays)'],
   ['Ctrl/Cmd + Shift + drag a corner', 'Resize the whole room with a uniform scale'],
   ['Enter / Backspace (Polygon tool)', 'Close room / remove last point'],
+  ['Double-click / Enter / Backspace (Wall tool)', 'End the chain / end the chain / remove last point'],
   ['Shift (Cutout tool)', 'Polygon cutout instead of rectangle'],
   ['Double-click a wall', 'Insert a vertex'],
   ['B (with a wall selected)', 'Toggle bearing / partition'],

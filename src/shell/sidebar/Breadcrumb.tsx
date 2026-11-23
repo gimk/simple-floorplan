@@ -30,6 +30,10 @@ function applyCrumb(select: CrumbSelect) {
       selectAnnot(null)
       useUi.getState().select({ kind: 'element', elementId: select.elementId })
       return
+    case 'trace':
+      selectAnnot(null)
+      useUi.getState().select({ kind: 'trace', id: select.id })
+      return
     case 'tape':
     case 'pin':
       selectAnnot({ kind: select.kind, id: select.id })

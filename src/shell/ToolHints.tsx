@@ -7,6 +7,8 @@ const HINTS: Record<ToolId, string> = {
   pan: 'Drag the canvas to pan · scroll to pan · Ctrl/Cmd+scroll to zoom',
   rect: 'Drag on the canvas to draw a rectangle room · Alt bypasses snap',
   polygon: 'Click to add vertices · Enter closes the room · Backspace removes the last point · Esc cancels',
+  wall: 'Click to start a wall, each click adds a segment · double-click or Enter ends · Backspace removes the last point · Esc cancels · Alt = no snap',
+  'make-room': 'Click inside an area closed by walls to make a room · the area under the pointer is previewed · Esc = Select',
   slice: 'Click two points across a room to split it into two · Esc cancels',
   cutout: 'Drag to carve a rectangular cutout · Shift+click to start a polygon cutout · Esc cancels',
   'place-element': 'Click a wall to place the selected door / window / storage on it',

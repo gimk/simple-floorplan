@@ -141,7 +141,7 @@ function diffAndEnqueue(next: PlanDoc, prev: PlanDoc) {
   }
   const pinsChanged = (next as { pins?: unknown }).pins !== (prev as { pins?: unknown }).pins
   if (pinsChanged) void uploadPhotos()
-  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || next.apartment !== prev.apartment || next.oldMeasurements !== prev.oldMeasurements || next.walls !== prev.walls || pinsChanged) {
+  if (next.rooms !== prev.rooms || next.background !== prev.background || next.title !== prev.title || next.tapes !== prev.tapes || next.elements !== prev.elements || next.apartment !== prev.apartment || next.oldMeasurements !== prev.oldMeasurements || next.walls !== prev.walls || next.traces !== prev.traces || pinsChanged) {
     // Debounce: drags produce many updates.
     if (snapTimer) clearTimeout(snapTimer)
     snapTimer = setTimeout(() => { void queue.enqueue('snapshot', '', null) }, 1500)

@@ -9,11 +9,14 @@
 import { useEffect, useMemo } from 'react'
 import { selectedItems, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
-import type { PlanDoc, Selection } from '../../model/types'
+import type { PlanDoc, Selection, ToolId } from '../../model/types'
 import { wallGroup, setWallTypes, type ActiveHole, type WallRef } from './cards'
 import { useActiveHole } from './holes'
 import { wallProps } from './walls'
 import { GroupCard } from './GroupCard'
+import { NewWallsCardConnected } from './NewWallsCard'
+import { TraceCardConnected } from './TraceCard'
+import { traceById } from './traceActions'
 import { RoomCard } from './RoomCard'
 import { VertexCard } from './VertexCard'
 import { WallCard } from './WallCard'
@@ -30,6 +33,7 @@ export function RoomsPanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
   const multi = useUi((s) => s.multi)
+  const tool = useUi((s) => s.tool)
   const items = useMemo(() => selectedItems({ selection, multi }), [selection, multi])
   const activeHole = useActiveHole()
 
@@ -50,14 +54,22 @@ export function RoomsPanel() {
     return () => window.removeEventListener('keydown', k)
   }, [])
 
-  return <RoomsPanelView doc={doc} selection={selection} items={items} activeHole={activeHole} />
+  return <RoomsPanelView doc={doc} selection={selection} items={items} activeHole={activeHole} tool={tool} />
 }
 
-/** Same panel from plain data, so it can be rendered without the stores (tests, SSR). */
-export function RoomsPanelView({ doc, selection, items = selection ? [selection] : [], activeHole }: {
-  doc: PlanDoc; selection: Selection; items?: SelItem[]; activeHole: ActiveHole
+/**
+ * Same panel from plain data, so it can be rendered without the stores (tests, SSR).
+ * With no selection and the Wall tool active, the "New walls" card shows the thickness and the
+ * type that the tool will use (docs/walls-plan.md phase 6).
+ */
+export function RoomsPanelView({ doc, selection, items = selection ? [selection] : [], activeHole, tool = 'select' }: {
+  doc: PlanDoc; selection: Selection; items?: SelItem[]; activeHole: ActiveHole; tool?: ToolId
 }) {
-  if (!selection) return null
+  if (!selection) return tool === 'wall' ? <NewWallsCardConnected /> : null
+  if (selection.kind === 'trace') {
+    const trace = traceById(doc, selection.id)
+    return trace ? <TraceCardConnected trace={trace} /> : null
+  }
   // Shift + click group: rooms and points show a summary, walls are edited together.
   const groupKind = items.length > 1 ? items[0].kind : null
   if (groupKind === 'room' || groupKind === 'vertex') return <GroupCard kind={groupKind} count={items.length} />

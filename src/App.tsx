@@ -2,15 +2,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import {
-  DoorOpen, Hand, Keyboard, MousePointer2, MapPin, MoreVertical, PanelRightClose, PanelRightOpen,
-  PenTool, Ruler, Scissors, Square, SquareDashed, Undo2, Redo2, Smartphone, Monitor, Crosshair, Cloud, CloudOff, KeyRound,
+  BrickWall, DoorOpen, Hand, Keyboard, MousePointer2, MapPin, MoreVertical, PanelRightClose, PanelRightOpen,
+  PenTool, Ruler, Scissors, Square, SquareDashed, SquareDashedMousePointer, Undo2, Redo2, Smartphone, Monitor, Crosshair, Cloud, CloudOff, KeyRound,
 } from 'lucide-react'
 import { getSyncState, setPasscode, startSync, useSyncState, useSyncStatusText } from './sync/sync'
 import { Viewport } from './canvas/Viewport'
 import { useDoc, useUi } from './model/store'
 import type { ToolId } from './model/types'
 import { BackgroundLayer, CalibrateTool } from './features/background'
-import { RoomsLayer, RoomTools } from './features/rooms'
+import { MakeRoomTool, RoomsLayer, RoomTools, TracesLayer, WallTool } from './features/rooms'
 import { ElementsLayer, PlaceElementTool } from './features/elements'
 import { MeasureMode, MeasurePanel } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
@@ -39,6 +39,8 @@ const TOOLS: { id: ToolId; label: string; key: string; icon: typeof Square }[] =
   { id: 'pan', label: 'Pan', key: 'h', icon: Hand },
   { id: 'rect', label: 'Rectangle room', key: 'r', icon: Square },
   { id: 'polygon', label: 'Polygon room', key: 'p', icon: PenTool },
+  { id: 'wall', label: 'Wall', key: 'w', icon: BrickWall },
+  { id: 'make-room', label: 'Make room', key: 'm', icon: SquareDashedMousePointer },
   { id: 'slice', label: 'Slice room', key: 's', icon: Scissors },
   { id: 'cutout', label: 'Cutout', key: 'x', icon: SquareDashed },
   { id: 'place-element', label: 'Door / window / storage', key: 'd', icon: DoorOpen },
@@ -53,6 +55,8 @@ function ToolOverlay() {
     case 'select': case 'rect': case 'polygon': case 'slice': case 'cutout': {
       const T = RoomTools[tool]; return <T />
     }
+    case 'wall': return <WallTool />
+    case 'make-room': return <MakeRoomTool />
     case 'place-element': return <PlaceElementTool />
     case 'calibrate': return <CalibrateTool />
     case 'tape': return <TapeTool />
@@ -343,6 +347,8 @@ export default function App() {
               <CanvasGrid />
               {layers.background && <BackgroundLayer />}
               <RoomsLayer />
+              {/* Traced walls of the Wall tool: always shown, above the rooms (phase 6). */}
+              <TracesLayer />
               {layers.clashes && <ClashLayer />}
               <ElementsLayer />
               {layers.notes && <AnnotationsLayer />}

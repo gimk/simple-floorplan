@@ -228,6 +228,22 @@ export type PlanDoc = {
   oldMeasurements?: OldMeasurement[]
   /** Optional apartment-level data. Absent in older documents. */
   apartment?: Apartment
+  /** Traced walls of the Wall tool (docs/walls-plan.md phase 6). Absent in older documents. */
+  traces?: TraceWall[]
+}
+
+/**
+ * A traced wall: the centre line of a wall drawn with the Wall tool (docs/walls-plan.md phase 6).
+ * It is a drawing aid that becomes a room with the Make room tool. Absent in older documents.
+ */
+export type TraceWall = {
+  id: string
+  /** Centre line start, cm. */
+  a: Vec
+  /** Centre line end, cm. */
+  b: Vec
+  thicknessCm: number
+  type: WallType
 }
 
 export type Selection =
@@ -235,6 +251,8 @@ export type Selection =
   | { kind: 'vertex'; roomId: string; vertexId: string }
   | { kind: 'wall'; roomId: string; wallStart: string }
   | { kind: 'element'; elementId: string }
+  /** A traced wall. Traces are not inside a room, so they have no roomId. */
+  | { kind: 'trace'; id: string; roomId?: undefined }
   | null
 
 export type ToolId =
@@ -243,6 +261,8 @@ export type ToolId =
   | 'calibrate'
   | 'rect'
   | 'polygon'
+  | 'wall'
+  | 'make-room'
   | 'slice'
   | 'cutout'
   | 'place-element'

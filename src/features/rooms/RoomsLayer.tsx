@@ -136,8 +136,15 @@ export function RoomsLayer() {
   // A 45° pattern tile of `tile` repeats its lines every tile / sqrt(2).
   const stripeGap = px(6)
   const stripeTile = stripeGap * Math.SQRT2
-  // Room whose name is being renamed inline.
-  const [editing, setEditing] = useState<string | null>(null)
+  // Room whose name is being renamed inline: a double-click on the name, or a tool that has just
+  // made the room (Make room tool, docs/walls-plan.md phase 6).
+  const [renaming, setEditing] = useState<string | null>(null)
+  const nameEditRoom = useUi((s) => s.nameEditRoom)
+  const editing = renaming ?? nameEditRoom
+  const closeEditor = () => {
+    setEditing(null)
+    if (nameEditRoom) useUi.getState().set({ nameEditRoom: null })
+  }
   // Walls attached to the vertex/wall being dragged always show their length (7.2 #22).
   const drag = useDragInfo((s) => s.drag)
   const dragRoom = drag ? rooms.find((r) => r.id === drag.roomId) : undefined
@@ -500,7 +507,7 @@ export function RoomsLayer() {
 
       {/* inline room rename editor: topmost, so no hit area can steal its clicks */}
       {rooms.filter((r) => r.id === editing).map((r) => (
-        <RoomNameEditor key={'edit' + r.id} room={r} vp={vp} onClose={() => setEditing(null)} />
+        <RoomNameEditor key={'edit' + r.id} room={r} vp={vp} onClose={closeEditor} />
       ))}
     </g>
   )

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { temporal } from 'zundo'
-import type { ElementKind, MeasureSource, Mode, PlanDoc, Selection, ToolId } from './types'
+import type { ElementKind, MeasureSource, Mode, PlanDoc, Selection, ToolId, WallType } from './types'
 import type { RenovationView } from '../features/renovation/logic'
 import { ensureStoredGraph } from './graphRule'
 import { toggleItem, type SelItem } from './selection'
@@ -177,6 +177,17 @@ type UiState = {
    */
   measureSource: MeasureSource
   /**
+   * Thickness and type of the walls that the Wall tool draws (docs/walls-plan.md phase 6).
+   * Edited in the Inspect tab while the tool is active; the last used values are kept in memory.
+   */
+  wallToolThicknessCm: number
+  wallToolType: WallType
+  /**
+   * Room whose inline name editor must open (the Make room tool asks for the name of the new
+   * room). RoomsLayer opens the editor and clears the field. null = nothing to open.
+   */
+  nameEditRoom: string | null
+  /**
    * Survey label under the pointer, e.g. 'CU-6' (wall), 'CU-D' (diagonal), 'SE-1-T' (thickness).
    * The plan highlights that element (see features/rooms/hoverTarget.ts). null = nothing hovered.
    * Generic on purpose: the Solve tab sets it now, Measuring Mode uses it later.
@@ -224,6 +235,9 @@ export const useUi = create<UiState>()((set) => ({
   },
   renovationView: 'both',
   measureSource: 'tape',
+  wallToolThicknessCm: 10,
+  wallToolType: 'partition',
+  nameEditRoom: null,
   hoverLabel: null,
   hoverDiagonal: null,
   view: { x: -100, y: -100, zoom: 1 },

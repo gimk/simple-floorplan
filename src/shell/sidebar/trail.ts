@@ -8,7 +8,7 @@ import { KIND_LABEL } from '../../features/elements/geometry'
 /** Tape/pin selection (own store, see features/annotations/selection.ts). */
 export type AnnotSelection = { kind: 'tape' | 'pin'; id: string } | null
 
-export type CrumbLevel = 'apartment' | 'room' | 'wall' | 'vertex' | 'element' | 'tape' | 'pin'
+export type CrumbLevel = 'apartment' | 'room' | 'wall' | 'vertex' | 'element' | 'tape' | 'pin' | 'trace'
 
 /** What clicking a crumb must select. */
 export type CrumbSelect =
@@ -19,6 +19,7 @@ export type CrumbSelect =
   | { kind: 'element'; elementId: string }
   | { kind: 'tape'; id: string }
   | { kind: 'pin'; id: string }
+  | { kind: 'trace'; id: string }
 
 export type Crumb = { level: CrumbLevel; text: string; select: CrumbSelect }
 
@@ -67,6 +68,11 @@ export function buildTrail(doc: TrailDoc, selection: Selection, annot: AnnotSele
   }
   if (!selection) return crumbs
 
+  if (selection.kind === 'trace') {
+    // A traced wall belongs to no room yet (docs/walls-plan.md phase 6).
+    crumbs.push({ level: 'trace', text: 'Traced wall', select: { kind: 'trace', id: selection.id } })
+    return crumbs
+  }
   if (selection.kind === 'element') {
     const el = doc.elements.find((e) => e.id === selection.elementId)
     crumbs.push({

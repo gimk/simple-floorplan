@@ -43,6 +43,10 @@
 // Same for room ids (room_<code>), element ids (el_<code>_<wall>_<k>), pins (pin_<n>),
 // tapes (tape_<n>). Measurements keep their baseDoc updatedAt when the label already exists.
 //
+// Not in this DSL: `doc.traces` (traced walls of the Wall tool, docs/walls-plan.md phase 6) and the
+// stored wall graph (`doc.nodes`, `doc.walls`, phase 5a). Both are drawing data that the text form
+// ignores on purpose: a plan written as text has rooms, and its traces and graph are rebuilt.
+//
 // Example:
 //   plan "Apartment 4B" version=1 unit=cm
 //   room EN "Entry" rect(0,0 180x240) ceiling=265 walk=1

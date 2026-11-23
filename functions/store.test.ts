@@ -413,6 +413,20 @@ describe('functions/store.ts (shared D1 persistence)', () => {
     expect(JSON.parse(String(db.snapshots[1].data_json)).oldMeasurements).toEqual(old)
   })
 
+  it('commitDoc keeps the traced walls and loadProjectDoc returns them (round trip)', async () => {
+    const db = new FakeDB()
+    addProject(db, 'g3')
+    const v0 = (await loadProjectDoc(db as unknown as D1Database, 'g3'))!
+    expect(v0.doc.traces).toBeUndefined()
+    const traces = [{ id: 't1', a: { x: 0, y: 0 }, b: { x: 400, y: 0 }, thicknessCm: 10, type: 'partition' as const }]
+    await commitDoc(db as unknown as D1Database, 'g3', v0, makeDoc('g3', { traces }))
+    // A doc field in the snapshot JSON, like rooms: an old cached client cannot drop the field
+    // from the table, because it lives in the snapshot.
+    expect(JSON.parse(String(db.snapshots[0].data_json)).traces).toEqual(traces)
+    const loaded = await loadProjectDoc(db as unknown as D1Database, 'g3')
+    expect(loaded!.doc.traces).toEqual(traces)
+  })
+
   it('carryOldMeasurements keeps the old values for a client that does not send them', () => {
     const old = [{ label: 'SE-2', actualCm: 412 }]
     expect(carryOldMeasurements(JSON.stringify({ rooms: [], oldMeasurements: old }))).toEqual(old)

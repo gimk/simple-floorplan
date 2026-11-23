@@ -227,3 +227,27 @@ describe('schema: measurement source (walls-plan 3a)', () => {
     expect(JSON.stringify(planJsonSchema())).toContain('laser')
   })
 })
+
+describe('schema: traced walls (walls-plan phase 6)', () => {
+  const trace = { id: 't1', a: { x: 0, y: 0 }, b: { x: 400, y: 0 }, thicknessCm: 10, type: 'partition' }
+
+  it('keeps the traces of a doc, and accepts a doc without them (older documents)', () => {
+    const doc = parsePlan({ projectId: 'p1', rooms: [], traces: [trace] })
+    expect(doc.traces).toEqual([trace])
+    const old = parsePlan({ projectId: 'p1', rooms: [] })
+    expect(old.traces).toBeUndefined()
+  })
+
+  it('keeps traces in a snapshot body and exposes them in the JSON Schema', () => {
+    const body = SnapshotPutBodySchema.parse({ baseVersion: 3, traces: [trace] })
+    expect(body.traces).toEqual([trace])
+    expect(JSON.stringify(planJsonSchema())).toContain('thicknessCm')
+    expect(JSON.stringify(planJsonSchema())).toContain('traces')
+  })
+
+  it('rejects a trace with no id, a bad type or a zero thickness', () => {
+    expect(safeParsePlan({ projectId: 'p1', rooms: [], traces: [{ ...trace, id: '' }] }).ok).toBe(false)
+    expect(safeParsePlan({ projectId: 'p1', rooms: [], traces: [{ ...trace, type: 'wood' }] }).ok).toBe(false)
+    expect(safeParsePlan({ projectId: 'p1', rooms: [], traces: [{ ...trace, thicknessCm: 0 }] }).ok).toBe(false)
+  })
+})

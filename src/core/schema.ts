@@ -176,6 +176,15 @@ export const ApartmentSchema = z.object({
   precisionCm: z.union([z.literal(0), z.literal(0.5), z.literal(1)]).optional(),
 })
 
+/** Traced wall of the Wall tool (docs/walls-plan.md phase 6). Optional: older documents have none. */
+export const TraceWallSchema = z.object({
+  id: z.string().min(1),
+  a: VecSchema,
+  b: VecSchema,
+  thicknessCm: z.number().finite().positive(),
+  type: WallTypeSchema,
+})
+
 export const PlanDocV1Schema = z.object({
   schemaVersion: z.literal(1).optional().default(1),
   projectId: z.string().min(1).default('local'),
@@ -191,6 +200,8 @@ export const PlanDocV1Schema = z.object({
   nodes: z.array(StoredNodeSchema).optional(),
   walls: z.array(StoredWallSchema).optional(),
   oldMeasurements: z.array(OldMeasurementSchema).optional(),
+  // Traced walls (docs/walls-plan.md phase 6). Optional: a document saved before it has none.
+  traces: z.array(TraceWallSchema).optional(),
 })
 
 export type PlanDocV1 = PlanDoc & { schemaVersion: 1; pins: NonNullable<PlanDoc['pins']> }
@@ -213,6 +224,8 @@ export const SnapshotPutBodySchema = z.object({
   nodes: z.array(StoredNodeSchema).optional(),
   walls: z.array(StoredWallSchema).optional(),
   oldMeasurements: z.array(OldMeasurementSchema).optional(),
+  // Traced walls are a doc field of the snapshot, like rooms (kept with the geometry).
+  traces: z.array(TraceWallSchema).optional(),
 })
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
@@ -257,6 +270,8 @@ export function parsePlan(json: unknown): PlanDocV1 {
     roomNotes: isRecord(json.roomNotes) ? json.roomNotes : {},
     tapes: Array.isArray(json.tapes) ? json.tapes : [],
     pins,
+    // Traced walls (phase 6): a document saved before it has no field, not an empty one.
+    ...(Array.isArray(json.traces) ? { traces: json.traces } : {}),
   }
 
   return PlanDocV1Schema.parse(migrated) as PlanDocV1

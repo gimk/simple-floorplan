@@ -106,6 +106,8 @@ export async function loadProjectDoc(db: D1Database, id: string): Promise<Loaded
     ...(Array.isArray(base.nodes) ? { nodes: base.nodes } : {}),
     ...(Array.isArray(base.walls) ? { walls: base.walls } : {}),
     ...(Array.isArray(base.oldMeasurements) ? { oldMeasurements: base.oldMeasurements } : {}),
+    // Traced walls of the Wall tool (phase 6): a doc field in the snapshot JSON, like rooms.
+    ...(Array.isArray(base.traces) ? { traces: base.traces } : {}),
     measurements,
     roomNotes,
   })

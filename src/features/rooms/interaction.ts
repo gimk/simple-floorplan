@@ -15,6 +15,7 @@ import {
   type VMove, type VRef,
 } from './ops'
 import { snapPoint, snapTranslation } from './snap'
+import { deleteTrace } from './traces'
 import {
   moveRoom, nearestVertex, oppositeVertex, roomHasLockedWall, scaleFactors, scaleRoomWithLinks, type Link,
 } from './transform'
@@ -547,7 +548,13 @@ export function deleteSelection() {
   const sel = useUi.getState().selection
   if (!sel) return
   const doc = useDoc.getState().doc
-  if (sel.kind === 'vertex') {
+  if (sel.kind === 'trace') {
+    // A traced wall of the Wall tool (docs/walls-plan.md phase 6).
+    if (!(doc.traces ?? []).some((t) => t.id === sel.id)) return
+    useDoc.getState().update((d) => deleteTrace(d, sel.id))
+    useUi.getState().select(null)
+    undoToast('Traced wall deleted', () => useDoc.temporal.getState().undo())
+  } else if (sel.kind === 'vertex') {
     const room = findRoom(sel.roomId)
     if (!room) return
     if (room.vertices.some((v) => v.id === sel.vertexId)) {

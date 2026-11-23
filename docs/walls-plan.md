@@ -139,7 +139,7 @@ The solver tells you which values to measure next, most useful first, and you ty
   as the walk-through.
 - Calculated in a pure function `suggestMeasurements(doc, options)` next to the solver, tested.
 
-## Drawing (phase 6, started 2026-11-23)
+## Drawing (phase 6, done 2026-11-23)
 Rooms stay the editing source. Traced walls are a drawing aid that becomes rooms.
 - **Traces**: `doc.traces?: TraceWall[]` = `{ id, a, b, thicknessCm, type }`, centre lines in cm,
   stored in the snapshot (synced like rooms), shown dashed on the plan, selectable and deletable.
