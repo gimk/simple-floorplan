@@ -19,8 +19,11 @@ export type WallValueLabel = { wallId: string; kind: WallValueKind }
 
 /** A room wall end this close to a stored wall line is on it (cm). */
 const ON_WALL_TOL_CM = 2
-/** |cos| under this between two directions: the walls are perpendicular. */
-const PERP_TOL = 0.05
+/**
+ * |sin| under this between a stored wall and a room wall at its end: the two lines do not cross
+ * (or cross too far away), so that room wall gives no outside corner.
+ */
+const PARALLEL_SIN = 0.02
 /** Face ends closer than this leave no gap (cm). */
 const GAP_TOL_CM = 1
 
@@ -70,14 +73,17 @@ export type RoomWallRef = {
   /** Index of the room wall in its polygon. */
   index: number
   thicknessCm: number
+  /** |sin| of the angle between this wall and the stored wall: 1 when they are perpendicular. */
+  sinToWall: number
 }
 
 /** The room walls that continue the a end and the b end of a stored wall. */
 export type WallEnds = { a: RoomWallRef | null; b: RoomWallRef | null }
 
 /**
- * The perpendicular room walls at the two ends of a stored wall: the walls that give the outside
- * corner at each end. A wall end with no such room wall (a free end) gives null.
+ * The room walls at the two ends of a stored wall: the walls that give the outside corner at each
+ * end (any angle except one in line with the stored wall). A wall end with no such room wall
+ * (a free end) gives null.
  *
  * The room walls that lie ON the stored wall are read first (a stored wall can hold two room walls
  * in line, one per room), so the walls at the two ends are their neighbours in the room polygon.
@@ -115,12 +121,15 @@ export function wallEnds(rooms: Room[], nodes: StoredNode[], wall: StoredWall): 
     const refOf = (index: number, end: Vec): RoomWallRef | null => {
       const w = walls[index]
       if (!w) return null
-      // A wall in line with the stored wall gives no outside corner.
-      if (Math.abs(w.dir.x * d.x + w.dir.y * d.y) > PERP_TOL) return null
+      // The two lines must cross at a useful angle: a wall in line with the stored wall gives no
+      // outside corner. Any other angle is fine, also one that is not a right angle.
+      const sin = Math.abs(w.dir.x * d.y - w.dir.y * d.x)
+      if (sin <= PARALLEL_SIN) return null
       if (projectOnSegment(end, w.start, w.end).distance > ON_WALL_TOL_CM) return null
       return {
         roomId: room.id, roomIndex, wallStart: w.start.id, index,
         thicknessCm: room.walls[w.start.id]?.thicknessCm ?? DEFAULT_WALL_CM,
+        sinToWall: sin,
       }
     }
     // The wall before the first one in the polygon is the wall at the a end (or after, if reversed).
@@ -132,15 +141,18 @@ export function wallEnds(rooms: Room[], nodes: StoredNode[], wall: StoredWall): 
 }
 
 /**
- * Planned OUTSIDE face length from the drawing (cm): the centre line plus half of the thickness of
- * the wall at each end (the two outside corners). An end with no perpendicular wall adds nothing,
- * and the solver skips a value on such a wall (see `wallEnds`).
+ * Planned OUTSIDE face length from the drawing (cm): the centre line plus, at each end, the
+ * distance along this wall from its centre line to the outside face of the end wall. That distance
+ * is half the end wall thickness divided by the sine of the angle between the two walls: half the
+ * thickness for a right angle (the usual case), more for a wall that leans.
+ * An end with no such wall adds nothing, and the solver skips a value on such a wall.
  */
 export function wallOutsidePlanCm(rooms: Room[], nodes: StoredNode[], wall: StoredWall): number | null {
   const centre = wallCentreCm(nodes, wall)
   if (centre === null) return null
   const ends = wallEnds(rooms, nodes, wall)
-  return centre + ((ends.a?.thicknessCm ?? 0) + (ends.b?.thicknessCm ?? 0)) / 2
+  const reach = (r: RoomWallRef | null) => (r ? r.thicknessCm / 2 / r.sinToWall : 0)
+  return centre + reach(ends.a) + reach(ends.b)
 }
 
 /** Stored wall that holds a room wall (roomId + start vertex id), or null. */

@@ -126,7 +126,7 @@ describe('stored wall values in the solver', () => {
     expect(s.skipped).toContainEqual({ label: 'W6-C', reason: 'no perpendicular wall at one end of this wall' })
   })
 
-  it('skips a wall value of a wall that is not horizontal or vertical', () => {
+  it('solves a wall value of a wall at an angle (phase 4b)', () => {
     // A diamond: no wall of it is horizontal or vertical.
     const rs = [room('D', [[0, 0], [400, 300], [0, 600], [-400, 300]])]
     const g = syncStoredGraph(undefined, rs)
@@ -135,7 +135,8 @@ describe('stored wall values in the solver', () => {
       roomNotes: {}, tapes: [], nodes: g.nodes, walls: g.walls,
     }
     const s = solveGlobal(doc)
-    expect(s.skipped.some((x) => x.label === 'W1-C' && x.reason === 'wall is not horizontal or vertical')).toBe(true)
+    expect(s.skipped.some((x) => x.label === 'W1-C')).toBe(false)
+    expect(s.residuals.find((r) => r.label === 'W1-C')?.kind).toBe('centre')
   })
 })
 

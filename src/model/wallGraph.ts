@@ -4,8 +4,10 @@
 // times. `buildWallGraph` groups those copies into ONE wall, with the same rules as the global
 // solver (`src/features/rooms/globalSolve.ts`, sections "edges" and "walls"):
 //   - two facing room walls (opposite sides, overlap > 20 cm, distance <= pairTolCm) are one wall,
-//     nearest pairs first;
-//   - two in-line consecutive walls of one room are one wall.
+//     nearest pairs first. Any direction: the two walls must be parallel within 2 degrees
+//     (docs/walls-plan.md phase 4b), so a wall at an angle is one wall too;
+//   - two in-line consecutive walls of one room are one wall (horizontal or vertical only, to keep
+//     the stored ids of a wall at an angle when a corner is added on it).
 // The centre line of a grouped wall is the mean of the drawn lines, its thickness is the max of
 // the copies, and its properties come from the room first in the walk order.
 //
@@ -75,6 +77,12 @@ const DEFAULTS: Required<WallGraphOptions> = { pairTolCm: 35, alignTolCm: 4 }
 
 /** Two facing walls must share at least this length to be one wall (cm). Same as the solver. */
 const MIN_OVERLAP_CM = 20
+/**
+ * Two walls are parallel when the angle between their normals is under 2 degrees (cosine above
+ * this). Walls at any angle follow the same rules as horizontal and vertical ones, so a wall drawn
+ * two times (once per room) is one wall in every direction (docs/walls-plan.md phase 4b).
+ */
+const PARALLEL_TOL = Math.cos((2 * Math.PI) / 180)
 /** Two wall ends closer than this are one node (cm). */
 const NODE_TOL_CM = 1
 /** A wall end closer than this to another wall's centre line is a T junction (cm). */
@@ -106,12 +114,8 @@ type Edge = {
   end: Vec
   length: number
   orient: Orient
-  /** Drawn x (v) or y (h) of the line. */
-  coord: number
-  lo: number
-  hi: number
-  /** +1 when the room is on the side of larger x (v) or larger y (h). */
-  side: 1 | -1
+  /** Offset of the drawn centre line along the inward normal of this room: inward . start. */
+  c: number
   thicknessCm: number
   props: WallProps
   dir: Vec
@@ -192,10 +196,7 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
         end: w.end,
         length: w.length,
         orient,
-        coord: orient === 'v' ? (w.start.x + w.end.x) / 2 : (w.start.y + w.end.y) / 2,
-        lo: orient === 'v' ? Math.min(w.start.y, w.end.y) : Math.min(w.start.x, w.end.x),
-        hi: orient === 'v' ? Math.max(w.start.y, w.end.y) : Math.max(w.start.x, w.end.x),
-        side: orient === 'v' ? (w.inward.x > 0 ? 1 : -1) : (w.inward.y > 0 ? 1 : -1),
+        c: w.inward.x * w.start.x + w.inward.y * w.start.y,
         thicknessCm: props.thicknessCm,
         props,
         dir: w.dir,
@@ -211,10 +212,14 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
   const parent = edges.map((_, i) => i)
   const groupOf = edges.map((_, i) => [i])
   const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
+  /** Distance between the drawn lines of two parallel walls (cm). */
+  const lineGap = (A: Edge, B: Edge) => Math.abs(A.inward.x * B.start.x + A.inward.y * B.start.y - A.c)
+  /** True when the two walls face each other (their room sides are opposite). */
+  const facing = (A: Edge, B: Edge) => A.inward.x * B.inward.x + A.inward.y * B.inward.y < 0
   const fits = (ga: number[], gb: number[]) => ga.every((a) => gb.every((b) => {
     const A = edges[a], B = edges[b]
-    const d = Math.abs(A.coord - B.coord)
-    return A.side === B.side ? d <= o.alignTolCm : d <= o.pairTolCm
+    const d = lineGap(A, B)
+    return facing(A, B) ? d <= o.pairTolCm : d <= o.alignTolCm
   }))
   const union = (a: number, b: number) => {
     const ra = find(a), rb = find(b)
@@ -223,47 +228,55 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
     groupOf[rb].push(...groupOf[ra])
   }
 
+  /** Length of B that lies over A, along the direction of A (cm). */
+  const overlapAlong = (A: Edge, B: Edge) => {
+    const u1 = dot(sub(B.start, A.start), A.dir)
+    const u2 = dot(sub(B.end, A.start), A.dir)
+    return Math.min(A.length, Math.max(u1, u2)) - Math.max(0, Math.min(u1, u2))
+  }
   const pairs: Pair[] = []
-  const facing: Pair[] = []
+  const facingPairs: Pair[] = []
   const onSameSide: Pair[] = []
   for (let a = 0; a < edges.length; a++) {
     const A = edges[a]
-    if (A.orient === 'o') continue
     for (let b = a + 1; b < edges.length; b++) {
       const B = edges[b]
-      if (B.orient !== A.orient || B.roomIndex === A.roomIndex) continue
-      const overlap = Math.min(A.hi, B.hi) - Math.max(A.lo, B.lo)
-      if (overlap <= MIN_OVERLAP_CM) continue
-      const d = Math.abs(A.coord - B.coord)
+      if (B.roomIndex === A.roomIndex) continue
+      // Parallel within 2 degrees: a wall at any angle pairs like a horizontal or vertical one.
+      if (Math.abs(A.inward.x * B.inward.x + A.inward.y * B.inward.y) < PARALLEL_TOL) continue
+      const d = lineGap(A, B)
       if (d > o.pairTolCm) continue
+      const overlap = overlapAlong(A, B)
+      if (overlap <= MIN_OVERLAP_CM) continue
       const pair: Pair = { d, a, b, overlap }
-      if (A.side !== B.side) {
+      if (facing(A, B)) {
         // Opposite sides: the wall is between the two rooms.
-        facing.push(pair)
+        facingPairs.push(pair)
         pairs.push(pair)
       } else onSameSide.push(pair)
     }
   }
-  // Two walls of one room in line (a straight corner) are one wall.
+  // Two walls of one room in line (a straight corner) are one wall. LIMIT: only for a wall drawn
+  // horizontal or vertical, as before phase 4b: a corner added on a wall at an angle keeps its two
+  // parts, so the stored ids of that wall stay stable (see storedGraph.ts).
   edgeOfRoom.forEach((idx) => {
     idx.forEach((ei, i) => {
       const ej = idx[(i + 1) % idx.length]
       if (ei === undefined || ej === undefined || ei < 0 || ej < 0) return
       const A = edges[ei], B = edges[ej]
-      if (A.orient === 'o' || A.orient !== B.orient || Math.abs(A.coord - B.coord) >= IN_LINE_TOL_CM) return
+      if (A.orient === 'o' || A.orient !== B.orient) return
+      if (lineGap(A, B) >= IN_LINE_TOL_CM) return
       pairs.push({ d: 0, a: Math.min(ei, ej), b: Math.max(ei, ej), overlap: 0 })
     })
   })
+  // A pair of walls on the same side is never merged: it is a conflict, and the union refuses it.
   pairs.sort((p, q) => p.d - q.d || p.a - q.a || p.b - q.b)
   pairs.forEach((p) => union(p.a, p.b))
-
-  // A wall that is not horizontal or vertical keeps its own line: no grouping.
-  const rootOf = (i: number) => (edges[i].orient === 'o' ? -1 - i : find(i))
 
   const walls: Draft[] = []
   const wallOfRoot = new Map<number, number>()
   edges.forEach((e, i) => {
-    const root = rootOf(i)
+    const root = find(i)
     const known = wallOfRoot.get(root)
     if (known === undefined) {
       wallOfRoot.set(root, walls.length)
@@ -276,16 +289,26 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
 
   for (const w of walls) {
     const first = w.members[0]
+    // Normal of the wall: the axis normal of a wall drawn horizontal or vertical, else the inward
+    // normal of its first room wall. The centre line is the MEAN of the drawn lines, in every
+    // direction (docs/walls-plan.md phase 4b).
+    const n = first.orient === 'h' ? { x: 0, y: 1 } : first.orient === 'v' ? { x: 1, y: 0 } : first.inward
+    const offset = mean(w.members.map((m) => {
+      // +1 when the room of this member lies on the side of the normal n.
+      const s = m.inward.x * n.x + m.inward.y * n.y >= 0 ? 1 : -1
+      return s * m.c
+    }))
     if (first.orient === 'h') {
       // y is constant: the centre line is the mean of the drawn lines.
       w.dir = { x: 1, y: 0 }
-      w.origin = { x: 0, y: mean(w.members.map((m) => m.coord)) }
+      w.origin = { x: 0, y: offset }
     } else if (first.orient === 'v') {
       w.dir = { x: 0, y: 1 }
-      w.origin = { x: mean(w.members.map((m) => m.coord)), y: 0 }
+      w.origin = { x: offset, y: 0 }
     } else {
+      // Any direction: the line n . p = offset, with the first room wall starting at distance 0.
       w.dir = first.dir
-      w.origin = first.start
+      w.origin = add(mul(n, offset), mul(first.dir, dot(first.start, first.dir)))
     }
     let uLo = Infinity, uHi = -Infinity
     for (const m of w.members) {
@@ -403,9 +426,9 @@ export function buildWallGraph(rooms: Room[], opts: WallGraphOptions = {}): Wall
       detail: `${label(A)} and ${label(B)} are on the same side: ${fmt(p.overlap)} cm of overlap, ${fmt(p.d)} cm apart`,
     })
   }
-  for (const p of facing) {
+  for (const p of facingPairs) {
     const A = edges[p.a], B = edges[p.b]
-    if (rootOf(p.a) === rootOf(p.b)) continue
+    if (find(p.a) === find(p.b)) continue
     conflicts.push({
       kind: 'unpaired-near',
       roomIds: roomIdsOf(A, B),

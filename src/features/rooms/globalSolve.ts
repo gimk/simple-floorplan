@@ -1,12 +1,31 @@
-// Global solver (prototype): all rooms in ONE least-squares fit. Pure, cm.
+// Global solver: all rooms in ONE least-squares fit. Pure, cm, y points down.
 //
-// Unknowns: for each wall, the position of its centre line and its thickness.
-// Measured values are inside faces: face = centre line moved into the room by half the thickness.
+// WALLS AT ANY ANGLE (docs/walls-plan.md phase 4b). Each wall (one "group" of room walls) has
+// three unknowns:
+//   d      offset of its CENTRE line: n . p = d, with n = (cos theta, sin theta) and p in cm;
+//   t      its thickness;
+//   theta  the angle of n. It is a constant when the wall is drawn horizontal or vertical and the
+//          option `angles` is 'square' (the default, so the result equals the axis-aligned solver);
+//          it is an unknown with prior = the drawn angle (sigma `angleSigmaDeg`) otherwise, and
+//          always for a wall drawn at an angle.
+// A room corner is the crossing of the two face lines (inside polygon) or of the two centre lines
+// (centre polygon) of the walls that meet there. When the two lines are almost parallel
+// (|sin| < 0.02) the corner gets one free unknown s along the line, with prior = the drawn
+// position (as before this phase).
+//
 // A wall seen from two rooms is ONE wall (one centre line, one thickness), so loops of measured
 // values across rooms give the thicknesses. Where no loop crosses a wall, its thickness stays at
 // the prior of its wall type, and the report says that the data does not find it.
 //
-// Scope of the prototype: axis-aligned walls (x or y constant). Other walls keep their drawn place.
+// Every row is written ONCE as a function of the unknowns, with its exact sparse gradient
+// (./autodiff.ts): wall lengths (between two inside corners), diagonals, measured thicknesses,
+// centre (W12-C) and outside face (W12-E) values of stored walls, surfaces (shoelace on the inside
+// corners), walls in line, and the soft right-angle rules of the option `angles: 'free'`.
+//
+// LIMIT of the default mode ('square'): before this phase, a surface reference of a room with a
+// wall at an angle, and a centre / outside value of a stored wall at an angle, had no row (their
+// skip reason is kept). They have a row with `angles: 'free'`, where a room angle is an unknown, so
+// its inside area is the shoelace of its corners and a value of a wall at an angle can be solved.
 //
 // Surface references (docs/walls-plan.md phase 2): a reference of `doc.apartment.references` is a
 // surface written on a document (DPE, Carrez...). It adds one row on the area of the inside face
@@ -24,9 +43,13 @@ import { outsideFaceSide, parseWallValueLabel, wallEnds, wallValueLabel, type Ro
 import { sourceSigmaCm } from '../../model/measureSource'
 import { SOURCE_LABELS } from '../apartment/logic'
 import { wallProps } from './walls'
+import { add, atan2, cos, cst, div, gradList, hypot, mul, scale, sin, sub, variable, type D } from './autodiff'
 
 /** How the solver uses the surface references. */
 export type SurfaceMode = 'off' | 'guide' | 'match'
+
+/** How the solver treats the angle of a wall drawn horizontal or vertical. */
+export type RoomAngles = 'square' | 'free'
 
 /**
  * What the solver reads from a document. The stored wall graph (`walls` / `nodes`) is optional:
@@ -62,6 +85,16 @@ export type GlobalOptions = {
   surfaceSigmaPct?: number
   /** The references to use (normally doc.apartment.references). */
   references?: SurfaceReference[]
+  /**
+   * 'square' (default): a wall drawn horizontal or vertical keeps its drawn angle, so the result
+   * equals the axis-aligned solver. 'free': every wall can turn, so a measured diagonal can show a
+   * room that is not square. A wall drawn at an angle is always solved with its own angle.
+   */
+  angles?: RoomAngles
+  /** Accuracy of the drawn angle of a wall whose angle is solved, in degrees (default 3). */
+  angleSigmaDeg?: number
+  /** Accuracy of the right-angle rule of two walls met at a corner, in degrees (default 0.5). */
+  squareSigmaDeg?: number
 }
 
 const DEFAULTS: Required<GlobalOptions> = {
@@ -77,37 +110,57 @@ const DEFAULTS: Required<GlobalOptions> = {
   surfaceMode: 'off',
   surfaceSigmaPct: 1.5,
   references: [],
+  angles: 'square',
+  angleSigmaDeg: 3,
+  squareSigmaDeg: 0.5,
 }
+
+/** Radians per degree. */
+const DEG = Math.PI / 180
+
+/** |sin| of the angle between two lines under this = the lines are almost parallel. */
+const PARALLEL_SIN = 0.02
 
 type Orient = 'h' | 'v' | 'o'
 
-/** One wall of one room. h: y is constant, v: x is constant, o: other direction. */
+/** One wall of one room (one edge of a room outline). */
 type Edge = {
   room: number
   index: number
   orient: Orient
-  /** Drawn x (v) or y (h) of the centre line. */
-  coord: number
-  lo: number
-  hi: number
-  /** +1 when the room is on the side of larger x (v) or larger y (h). */
-  side: 1 | -1
+  /** Unit inward normal of the room wall (drawn). */
+  nx: number
+  ny: number
+  /** Offset of the drawn centre line along the inward normal: n . p, cm. */
+  c: number
+  /** Unit direction of the room wall (drawn), following the room polygon. */
+  dx: number
+  dy: number
+  /** Middle point of the drawn wall, cm. */
+  mx: number
+  my: number
+  length: number
   thicknessCm: number
   /** Line of the wall that lines up with the next walls (wall props, seen from this room). */
   align: WallAlign
   group: number
+  /** +1 when the room of this wall is on the side of larger n of its group. */
+  sign: 1 | -1
 }
-
-/** Offset of the reference line from the centre line, in half thicknesses, toward larger x / y. */
-const refSign = (e: Edge) => (e.align === 'center' ? 0 : e.align === 'room' ? e.side : -e.side)
 
 export type WallGroup = {
   id: number
-  orient: 'h' | 'v'
+  /** Drawn direction class: 'h' horizontal, 'v' vertical, 'o' any other angle. */
+  orient: Orient
   /** Labels of the room walls that make this wall, e.g. ["SB-4", "SE-6"]. */
   walls: string[]
   drawnCoord: number
+  /** Offset of the solved centre line along its normal (cm). */
   coord: number
+  /** Angle of the normal of the wall after the fit, in degrees. */
+  angleDeg: number
+  /** Standard deviation of that angle after the fit (degrees); 0 when the angle is fixed. */
+  angleSdDeg: number
   priorThicknessCm: number
   thicknessCm: number
   /** Standard deviation of the thickness after the fit (cm). */
@@ -118,9 +171,15 @@ export type WallGroup = {
   rooms: number
 }
 
-export type GlobalResidual = { label: string; kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align' | 'surface' | 'centre' | 'outside'; measuredCm: number; solvedCm: number; diffCm: number
-  /** Accuracy of the row (cm, or cm² for a surface). */
-  sigmaCm: number }
+export type GlobalResidual = {
+  label: string
+  kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align' | 'surface' | 'centre' | 'outside' | 'angle'
+  measuredCm: number
+  solvedCm: number
+  diffCm: number
+  /** Accuracy of the row (cm, cm² for a surface, degrees for an angle). */
+  sigmaCm: number
+}
 
 /** One surface reference, before and after the fit (m²). */
 export type GlobalSurface = {
@@ -136,10 +195,13 @@ export type GlobalSurface = {
   diffPct: number
 }
 
+/** One room corner that the fit did not keep at a right angle ('free' angles only). */
+export type OutOfSquare = { roomCode: string; deg: number }
+
 export type GlobalSolved = {
   groups: WallGroup[]
   residuals: GlobalResidual[]
-  /** Root-mean-square of the wall and diagonal residuals (cm). */
+  /** Root-mean-square of the wall, diagonal, centre and outside residuals (cm). */
   rmsCm: number
   /** New centre line corners, per room id. */
   rooms: Record<string, Vec[]>
@@ -147,50 +209,93 @@ export type GlobalSolved = {
   inner: Record<string, Vec[]>
   /** One line of report per surface reference (empty when the mode is 'off'). */
   surfaces: GlobalSurface[]
+  /** Rooms whose corners are not right angles, most out of square first ('free' angles only). */
+  outOfSquare: OutOfSquare[]
   skipped: { label: string; reason: string }[]
   iterations: number
   /** Rooms that overlap or nearly touch, found by the wall graph. */
   conflicts: GraphConflict[]
 }
 
-/** a + sum coef * x[var] */
-type Lin = { c: number; t: [number, number][] }
-const lin = (c: number, ...t: [number, number][]): Lin => ({ c, t })
-const evalLin = (l: Lin, x: number[]) => l.t.reduce((s, [v, k]) => s + k * x[v], l.c)
-const subLin = (a: Lin, b: Lin): Lin => ({ c: a.c - b.c, t: [...a.t, ...b.t.map(([v, k]) => [v, -k] as [number, number])] })
-const scaleLin = (a: Lin, s: number): Lin => ({ c: a.c * s, t: a.t.map(([v, k]) => [v, k * s] as [number, number]) })
-
-/** One closed polygon of inside face corners, as linear expressions. */
-type AreaPoly = { fx: Lin[]; fy: Lin[] }
-
-type Row =
-  | { kind: 'lin'; l: Lin; target: number; sigma: number }
-  | { kind: 'dist'; ax: Lin; ay: Lin; bx: Lin; by: Lin; target: number; sigma: number }
-  /**
-   * Surface row: the area of one or more inside face polygons, in cm².
-   * With `hinge` it is one-sided: active only when the area passes `t0` on the given side,
-   * and it then pulls back to `t0` (Guide mode). Inactive rows give a zero residual.
-   */
-  | { kind: 'area'; polys: AreaPoly[]; target: number; sigma: number; hinge?: { t0: number; above: boolean } }
-
-/** The geometry of the fit: rooms, their walls, and the corner expressions. */
-type Geom = { rooms: Room[]; edgeOf: Edge[][]; corners: CornerLin[][] }
-
-/** Unknowns of one wall: its centre line and its thickness. */
+/** Unknowns of one wall group. */
 type GroupVar = {
-  coord: number; thick: number; edges: Edge[]; orient: 'h' | 'v'; drawn: number; prior: number
-  /** Reference line = centre + k * thickness / 2. */
+  /** Index of the offset unknown. */
+  d: number
+  /** Index of the thickness unknown. */
+  t: number
+  /** Index of the angle unknown (-1: the angle is a constant). */
+  theta: number
+  /** Drawn angle of the normal, radians. */
+  drawnTheta: number
+  /** Value of the normal angle when it is a constant. */
+  fixedTheta: number
+  /** Drawn offset along the normal, cm. */
+  drawn: number
+  /** Prior of the thickness, cm. */
+  prior: number
+  /** Reference line = centre + k * thickness / 2 (the line that lines up with the next walls). */
   k: number
   drawnRef: number
-  lo: number
-  hi: number
+  orient: Orient
+  edges: Edge[]
+  /** Unit direction along the wall (drawn). */
+  ux: number
+  uy: number
+  /** End points of the room walls of this group, for the in-line rule. */
+  pts: Vec[]
 }
 
-/** Corner k of a room: x and y of the centre line, and of the inside face. */
-type CornerLin = { cx: Lin; cy: Lin; fx: Lin; fy: Lin; okX: boolean; okY: boolean }
+/** One room corner, as a pair of wall groups and (when almost parallel) one free unknown. */
+type CornerSetup = {
+  /** Index of the group of the wall before the corner. */
+  prev: number
+  /** Index of the group of the wall after the corner. */
+  next: number
+  /** Sign of the room side of the wall before / after the corner, in the normal of its group. */
+  prevSign: 1 | -1
+  nextSign: 1 | -1
+  /** True when the two lines are almost parallel: the corner is a free point on the first line. */
+  parallel: boolean
+  /** Unknown of the free position along the line (-1 when the corner is a crossing). */
+  free: number
+}
+
+/** The two parts of the model that the corners and the angles are built from. */
+type Model = Pick<Built, 'groupVars' | 'cornerSetups'>
+
+/** The value of every expression at one x: the normals, the offsets and the corners. */
+type Ctx = {
+  xs: number[]
+  /** Unit normal (cos theta, sin theta) of each group. */
+  n: { nx: D; ny: D }[]
+  /** Offset of the centre line of each group. */
+  d: D[]
+  /** Thickness of each group. */
+  t: D[]
+  /** Corner k of room ri: the crossing of the centre lines (cx, cy) and of the inside faces (fx, fy). */
+  corners: { cx: D; cy: D; fx: D; fy: D }[][]
+}
+
+/** One row of the fit: a value of the plan compared with a measured value. */
+type Row = {
+  label: string
+  kind: GlobalResidual['kind']
+  target: number
+  sigma: number
+  /** The value at the current unknowns, with its exact gradient. */
+  value: (c: Ctx) => D
+  /**
+   * Surface row of the Guide mode: one-sided. Active only when the value passes `t0` on the given
+   * side; it then pulls back to `t0`. An inactive row gives a zero residual.
+   */
+  hinge?: { t0: number; above: boolean }
+}
+
+/** Centre and outside face length of one stored wall, as functions of the unknowns. */
+type WallLins = { centre?: (c: Ctx) => D; outside?: (c: Ctx) => D }
 
 /** One surface reference, ready for a row. */
-type SurfaceEntry = { label: string; roomCode?: string; referenceM2: number; polys: AreaPoly[] }
+type SurfaceEntry = { label: string; roomCode?: string; referenceM2: number; rooms: number[] }
 
 /**
  * Everything the fit needs, built from the document. solveGlobal and solveGlobalWithModel use
@@ -201,103 +306,528 @@ type Built = {
   rooms: Room[]
   edgeOf: Edge[][]
   groupVars: GroupVar[]
-  corners: CornerLin[][]
+  cornerSetups: CornerSetup[][]
   rows: Row[]
   priors: Row[]
-  meta: { label: string; kind: GlobalResidual['kind'] }[]
   skipped: { label: string; reason: string }[]
   surfaceEntries: SurfaceEntry[]
-  /** Centre and outside face length of each stored wall, as expressions of the unknowns. */
-  wallLins: Map<string, { centre?: Lin; outside?: Lin }>
+  wallLins: Map<string, WallLins>
   x0: number[]
   label: (e: Edge) => string
   conflicts: GraphConflict[]
 }
 
-/**
- * Inside-length row of wall i of room ri, as in the measurements section: a positive length
- * between the two inside face corners. Null when the wall cannot carry a row.
- */
-function wallLenLin(g: Geom, ri: number, i: number): Lin | null {
-  const r = g.rooms[ri]
-  const e = g.edgeOf[ri][i]
-  if (!r || !e || e.orient === 'o') return null
-  const n = r.vertices.length
-  const a = g.corners[ri][i], b = g.corners[ri][(i + 1) % n]
-  if (!(e.orient === 'h' ? a.okX && b.okX : a.okY && b.okY)) return null
-  const va = r.vertices[i], vb = r.vertices[(i + 1) % n]
-  const s = e.orient === 'h' ? Math.sign(vb.x - va.x) : Math.sign(vb.y - va.y)
-  return scaleLin(e.orient === 'h' ? subLin(b.fx, a.fx) : subLin(b.fy, a.fy), s)
+/** Exact unit normal of an angle that is a multiple of 90 degrees (no float noise), else cos/sin. */
+function exactNormal(theta: number): { nx: number; ny: number } {
+  const k = Math.round(theta / (Math.PI / 2))
+  if (Math.abs(theta - k * (Math.PI / 2)) < 1e-9) {
+    const q = ((k % 4) + 4) % 4
+    return q === 0 ? { nx: 1, ny: 0 } : q === 1 ? { nx: 0, ny: 1 } : q === 2 ? { nx: -1, ny: 0 } : { nx: 0, ny: -1 }
+  }
+  return { nx: Math.cos(theta), ny: Math.sin(theta) }
 }
 
-/** Inside-corner points of the diagonal between corners i and j of room ri. Null when not possible. */
-function diagonalLins(g: Geom, ri: number, i: number, j: number) {
-  const a = g.corners[ri]?.[i], b = g.corners[ri]?.[j]
-  return a && b ? { ax: a.fx, ay: a.fy, bx: b.fx, by: b.fy } : null
+/** Angle of a vector, in radians in (-pi, pi]. */
+const angleOf = (x: number, y: number) => Math.atan2(y, x)
+
+/** The angle in (-pi, pi]. */
+const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a))
+
+// ---- expressions ----
+
+/** Normal of a group at xs: a variable (cos, sin of theta) or a constant. */
+function normalD(xs: number[], g: GroupVar): { nx: D; ny: D } {
+  if (g.theta < 0) {
+    const n = exactNormal(g.fixedTheta)
+    return { nx: cst(n.nx), ny: cst(n.ny) }
+  }
+  const th = variable(g.theta, xs[g.theta])
+  return { nx: cos(th), ny: sin(th) }
 }
 
 /**
- * Distance between two points at xs, with its gradient in cm per cm (not divided by a sigma).
- * The gradient of a length row is the same expression, with or without the row in the fit.
+ * Crossing of the two lines n1 . p = r1 and n2 . p = r2.
+ * When the corner is almost parallel, the point is a free position s along the FIRST line:
+ * p = r1 * n1 + s * u1, with u1 = (-n1.y, n1.x). One unknown gives both the inside corner and the
+ * centre corner, as before this phase.
  */
-function distAt(d: { ax: Lin; ay: Lin; bx: Lin; by: Lin }, xs: number[]): { value: number; grad: [number, number][] } {
-  const dx = evalLin(d.bx, xs) - evalLin(d.ax, xs), dy = evalLin(d.by, xs) - evalLin(d.ay, xs)
-  const L = Math.hypot(dx, dy) || 1e-9
+function crossLines(c: Ctx, parallel: boolean, free: number, i1: number, r1: D, i2: number, r2: D): { x: D; y: D } {
+  const n1 = c.n[i1], n2 = c.n[i2]
+  if (parallel) {
+    const s = free >= 0 ? variable(free, c.xs[free]) : cst(0)
+    return {
+      x: sub(mul(r1, n1.nx), mul(s, n1.ny)),
+      y: add(mul(r1, n1.ny), mul(s, n1.nx)),
+    }
+  }
+  const det = sub(mul(n1.nx, n2.ny), mul(n1.ny, n2.nx))
   return {
-    value: Math.hypot(dx, dy),
-    grad: [
-      ...d.bx.t.map(([v, k]) => [v, (k * dx) / L] as [number, number]),
-      ...d.ax.t.map(([v, k]) => [v, (-k * dx) / L] as [number, number]),
-      ...d.by.t.map(([v, k]) => [v, (k * dy) / L] as [number, number]),
-      ...d.ay.t.map(([v, k]) => [v, (-k * dy) / L] as [number, number]),
-    ],
+    x: div(sub(mul(r1, n2.ny), mul(n1.ny, r2)), det),
+    y: div(sub(mul(n1.nx, r2), mul(n2.nx, r1)), det),
   }
 }
 
-/** Sum the terms that use the same unknown, so a gradient has one term per unknown. */
-function mergeGrad(t: [number, number][]): [number, number][] {
-  const m = new Map<number, number>()
-  for (const [v, k] of t) m.set(v, (m.get(v) ?? 0) + k)
-  return [...m].filter(([, k]) => k !== 0)
+/** Inside face line of a corner side: the centre line moved into the room by half the thickness. */
+const faceOffset = (d: D, t: D, sign: 1 | -1): D => add(d, scale(t, sign / 2))
+
+/** All values of the model at xs. */
+function buildCtx(b: Model, xs: number[]): Ctx {
+  const n = b.groupVars.map((g) => normalD(xs, g))
+  const d = b.groupVars.map((g) => variable(g.d, xs[g.d]))
+  const t = b.groupVars.map((g) => variable(g.t, xs[g.t]))
+  const c: Ctx = { xs, n, d, t, corners: [] }
+  c.corners = b.cornerSetups.map((list) => list.map((cs) => {
+    const cp = cs.parallel, free = cs.free
+    const centre = crossLines(c, cp, free, cs.prev, d[cs.prev], cs.next, d[cs.next])
+    const inside = crossLines(
+      c, cp, free,
+      cs.prev, faceOffset(d[cs.prev], t[cs.prev], cs.prevSign),
+      cs.next, faceOffset(d[cs.next], t[cs.next], cs.nextSign),
+    )
+    return { cx: centre.x, cy: centre.y, fx: inside.x, fy: inside.y }
+  }))
+  return c
 }
 
-const shoelace = (p: Vec[]) => p.reduce((s, a, i) => {  const b = p[(i + 1) % p.length]
-  return s + a.x * b.y - b.x * a.y
-}, 0)
+/** Distance between two points of the model, as an expression. */
+const distance = (ax: D, ay: D, bx: D, by: D): D => hypot(sub(bx, ax), sub(by, ay))
 
 /**
- * Area of the inside polygons (cm²) and the gradient of that area (d area / d x_k), at xs.
- * Each polygon keeps the sign of its own shoelace sum, so a sum of rooms stays correct when the
- * rooms are drawn in different directions.
+ * Area of inside polygons (cm²) and its gradient, as an expression. Each polygon keeps the sign of
+ * its own shoelace sum, so a sum of rooms stays correct when the rooms are drawn in different
+ * directions.
  */
-function evalArea(polys: AreaPoly[], xs: number[]): { area: number; grad: [number, number][] } {
-  let area = 0
-  const total = new Map<number, number>()
-  const addTo = (m: Map<number, number>, v: number, k: number) => m.set(v, (m.get(v) ?? 0) + k)
-  for (const poly of polys) {
-    const n = poly.fx.length
-    let s = 0
-    const ds = new Map<number, number>()
+function areaD(c: Ctx, rooms: number[]): D {
+  let total: D | null = null
+  for (const ri of rooms) {
+    const cs = c.corners[ri]
+    const n = cs.length
+    let sum: D | null = null
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n
-      const fxi = evalLin(poly.fx[i], xs), fyi = evalLin(poly.fy[i], xs)
-      const fxj = evalLin(poly.fx[j], xs), fyj = evalLin(poly.fy[j], xs)
-      s += fxi * fyj - fxj * fyi
-      // Product rule on fxi * fyj - fxj * fyi.
-      for (const [v, c] of poly.fx[i].t) addTo(ds, v, c * fyj)
-      for (const [v, c] of poly.fy[j].t) addTo(ds, v, fxi * c)
-      for (const [v, c] of poly.fx[j].t) addTo(ds, v, -c * fyi)
-      for (const [v, c] of poly.fy[i].t) addTo(ds, v, -fxj * c)
+      // fxi * fyj - fxj * fyi
+      const term = sub(mul(cs[i].fx, cs[j].fy), mul(cs[j].fx, cs[i].fy))
+      sum = sum ? add(sum, term) : term
     }
-    const sign = s >= 0 ? 1 : -1
-    area += (sign * s) / 2
-    for (const [v, c] of ds) addTo(total, v, (sign * c) / 2)
+    if (!sum) continue
+    const signed = sum.v >= 0 ? sum : scale(sum, -1)
+    total = total ? add(total, signed) : signed
   }
-  return { area, grad: [...total].map(([v, c]) => [v, c] as [number, number]) }
+  return scale(total ?? cst(0), 0.5)
 }
 
-/** Area of the inside polygons at xs, in cm². */
-const areaValue = (polys: AreaPoly[], xs: number[]) => evalArea(polys, xs).area
+function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
+  // The references come from the options, or from the document (doc.apartment.references).
+  const o = { ...DEFAULTS, ...options, references: options.references ?? doc.apartment?.references ?? [] }
+  const rooms = doc.rooms
+
+  // ---- edges ----
+  // Each room wall gives its drawn line: the inward normal, its offset and its direction. A wall
+  // drawn within about 1 degree of an axis counts as horizontal or vertical (as in the graph).
+  const edges: Edge[] = []
+  const edgeOf: Edge[][] = []
+  rooms.forEach((r, ri) => {
+    const v = r.vertices
+    const n = v.length
+    const s = shoelaceSign(v)
+    edgeOf.push(v.map((a, i) => {
+      const b = v[(i + 1) % n]
+      const dx = b.x - a.x, dy = b.y - a.y
+      const l = Math.hypot(dx, dy) || 1
+      const ux = dx / l, uy = dy / l
+      const inward = { x: -uy * s, y: ux * s }
+      const orient: Orient = Math.abs(dx) / l < 0.02 ? 'v' : Math.abs(dy) / l < 0.02 ? 'h' : 'o'
+      const e: Edge = {
+        room: ri, index: i, orient,
+        nx: inward.x, ny: inward.y,
+        c: inward.x * a.x + inward.y * a.y,
+        dx: ux, dy: uy,
+        mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
+        length: l,
+        thicknessCm: wallProps(r, a.id).thicknessCm,
+        align: wallProps(r, a.id).align ?? 'room',
+        group: -1,
+        sign: 1,
+      }
+      edges.push(e)
+      return e
+    }))
+  })
+
+  // ---- walls: one group per wall of the wall graph ----
+  // The graph (src/model/wallGraph.ts) does the grouping, in any direction: facing walls of two
+  // rooms and in-line walls of one room. The group of a room wall is the wall of its first face.
+  const graph = buildWallGraph(rooms, { pairTolCm: o.pairTolCm, alignTolCm: o.alignTolCm })
+  const wallKeyOf = (e: Edge): string => {
+    const fi = graph.roomFaces[rooms[e.room].id]?.[e.index]?.faceIndexes[0]
+    const wallId = fi === undefined ? undefined : graph.faces[fi]?.wallId
+    // A wall with no face (zero length) keeps its own group.
+    return wallId ?? `own:${e.room}:${e.index}`
+  }
+
+  // ---- unknowns ----
+  const x0: number[] = []
+  const priors: Row[] = []
+  const newVar = (start: number, sigma: number) => {
+    const k = x0.length
+    x0.push(start)
+    priors.push({ label: `#${k}`, kind: 'align', target: start, sigma, value: (c) => variable(k, c.xs[k]) })
+    return k
+  }
+  const label = (e: Edge) => `${rooms[e.room].code}-${e.index + 1}`
+  const groupVars: GroupVar[] = []
+  const keyToGroup = new Map<string, number>()
+  edges.forEach((e) => {
+    const key = wallKeyOf(e)
+    let g = keyToGroup.get(key)
+    if (g === undefined) {
+      g = groupVars.length
+      keyToGroup.set(key, g)
+      groupVars.push({
+        d: -1, t: -1, theta: -1, drawnTheta: 0, fixedTheta: 0, drawn: 0, prior: 0, k: 0, drawnRef: 0,
+        orient: e.orient, edges: [], ux: 1, uy: 0, pts: [],
+      })
+    }
+    e.group = g
+    groupVars[g].edges.push(e)
+  })
+  // Owner of a wall: the room wall of the room first in the walk-through (it sets the line that
+  // lines up with the next walls, as before this phase).
+  const ownerOf = (g: GroupVar) => g.edges.reduce((a, e) => {
+    const ra = rooms[a.room], re = rooms[e.room]
+    return re.walkOrder < ra.walkOrder || (re.walkOrder === ra.walkOrder && re.code < ra.code) ? e : a
+  })
+  for (const g of groupVars) {
+    const owner = ownerOf(g)
+    // Canonical normal: the axis normal for a wall drawn horizontal or vertical (so the offset is
+    // the x or y of the old solver), else the inward normal of the owner.
+    let n: { x: number; y: number }
+    if (owner.orient === 'h') n = { x: 0, y: 1 }
+    else if (owner.orient === 'v') n = { x: 1, y: 0 }
+    else n = { x: owner.nx, y: owner.ny }
+    g.drawnTheta = owner.orient === 'h' ? Math.PI / 2 : owner.orient === 'v' ? 0 : angleOf(n.x, n.y)
+    g.fixedTheta = g.drawnTheta
+    g.orient = owner.orient
+    g.ux = -n.y
+    g.uy = n.x
+    // The drawn line is the mean of the drawn lines of its room walls, in the normal of the wall.
+    g.drawn = g.edges.reduce((sum, e) => sum + (e.nx * n.x + e.ny * n.y >= 0 ? 1 : -1) * e.c, 0) / g.edges.length
+    g.prior = Math.max(...g.edges.map((e) => e.thicknessCm))
+    for (const e of g.edges) e.sign = e.nx * n.x + e.ny * n.y >= 0 ? 1 : -1
+    g.k = owner.align === 'center' ? 0 : owner.align === 'room' ? owner.sign : -owner.sign
+    g.drawnRef = g.drawn + (g.k * g.prior) / 2
+    g.pts = g.edges.flatMap((e) => [{ x: e.mx - (e.dx * e.length) / 2, y: e.my - (e.dy * e.length) / 2 }, { x: e.mx + (e.dx * e.length) / 2, y: e.my + (e.dy * e.length) / 2 }])
+    g.d = newVar(g.drawn, o.positionSigmaCm)
+    g.t = newVar(g.prior, o.thicknessSigmaCm)
+    // A wall drawn at an angle is always solved with its own angle. A wall drawn horizontal or
+    // vertical keeps its drawn angle with the option 'square' (the default).
+    if (g.orient === 'o' || o.angles === 'free') g.theta = newVar(g.drawnTheta, o.angleSigmaDeg * DEG)
+  }
+
+  // Corner k of room r is between the wall before it and the wall after it. Almost parallel lines
+  // get one free unknown for the position of the corner along the first line.
+  const cornerSetups: CornerSetup[][] = rooms.map((r, ri) => {
+    const es = edgeOf[ri]
+    const n = es.length
+    return r.vertices.map((_, k) => {
+      const prev = es[(k + n - 1) % n], next = es[k]
+      const gp = groupVars[prev.group], gn = groupVars[next.group]
+      const parallel = Math.abs(Math.sin(gn.drawnTheta - gp.drawnTheta)) < PARALLEL_SIN
+      let free = -1
+      if (parallel) {
+        // Prior of the free position: the drawn corner, projected on the first line.
+        const nn = exactNormal(gp.drawnTheta)
+        const s0 = -nn.ny * r.vertices[k].x + nn.nx * r.vertices[k].y
+        free = newVar(s0, o.positionSigmaCm)
+      }
+      return { prev: prev.group, next: next.group, prevSign: prev.sign, nextSign: next.sign, parallel, free }
+    })
+  })
+
+  // ---- measurements ----
+  const rows: Row[] = []
+  // Current inside lengths, for locked walls with no measured value.
+  const innerLengths = rooms.map((r) => innerWallLengths(r))
+  const skipped: { label: string; reason: string }[] = []
+  const thickRow = (gi: number, target: number, sigma: number, lab: string, kind: GlobalResidual['kind']): Row =>
+    ({ label: lab, kind, target, sigma, value: (c) => c.t[gi] })
+  rooms.forEach((r, ri) => {
+    edgeOf[ri].forEach((e, i) => {
+      // Measured thickness (CODE-n-T): a direct value for the wall.
+      const tLab = thicknessLabel(r.code, i)
+      const tm = doc.measurements[tLab]?.actualCm
+      if (tm && tm > 0) rows.push(thickRow(e.group, tm, o.thicknessMeasureSigmaCm, tLab, 'thickness'))
+      const lab = `${r.code}-${i + 1}`
+      const measuredCm = doc.measurements[lab]?.actualCm
+      const hasValue = !!(measuredCm && Number.isFinite(measuredCm) && measuredCm > 0)
+      // A locked wall keeps its value (measured) or its current inside length (no value), strongly.
+      const locked = o.keepLocked && !!wallProps(r, r.vertices[i].id).locked
+      if (!hasValue && !locked) return
+      const m = hasValue ? measuredCm! : innerLengths[ri][i]
+      const sigma = locked ? o.lockedSigmaCm : sourceSigmaCm(doc.measurements[lab]?.source) * o.measureSigmaCm
+      const kind: GlobalResidual['kind'] = hasValue ? 'wall' : 'locked'
+      const j = (i + 1) % edgeOf[ri].length
+      // Wall length: the distance between the two inside face corners, in any direction.
+      rows.push({ label: lab, kind, target: m, sigma, value: (c) => distance(c.corners[ri][i].fx, c.corners[ri][i].fy, c.corners[ri][j].fx, c.corners[ri][j].fy) })
+    })
+    const d = doc.measurements[`${r.code}-D`]?.actualCm
+    if (r.diagonal && d && d > 0) {
+      const [i, j] = r.diagonal
+      if (edgeOf[ri][i] && edgeOf[ri][j]) {
+        rows.push({
+          label: `${r.code}-D`, kind: 'diagonal', target: d,
+          sigma: sourceSigmaCm(doc.measurements[`${r.code}-D`]?.source) * o.measureSigmaCm,
+          value: (c) => distance(c.corners[ri][i].fx, c.corners[ri][i].fy, c.corners[ri][j].fx, c.corners[ri][j].fy),
+        })
+      }
+    }
+  })
+
+  // ---- centre line and outside face values of stored walls (docs/walls-plan.md phase 5b/4b) ----
+  // W12-C: the length between the CENTRE lines of the walls at its two ends (the crossing of the
+  //        centre line of this wall with the centre line of each end wall).
+  // W12-E: the length between the OUTSIDE faces: the crossing of the outside face of this wall with
+  //        the face of each end wall that looks away from it (the outside corner of the plan).
+  // In any direction these are distances between two crossings, so a facade value finds the
+  // thickness of an exterior wall that no loop crosses, also for a wall at an angle.
+  // A centre value read on a plan has no source more often than not: no source counts as 'plan'.
+  const wallLins = new Map<string, WallLins>()
+  const storedNodes: StoredNode[] = doc.nodes ?? []
+  const storedWalls: StoredWall[] = doc.walls ?? []
+  const nodeAt = new Map(storedNodes.map((n) => [n.id, n]))
+  // A value of a wall has a row only when the document has the stored wall graph.
+  if (!storedWalls.length) {
+    for (const lab of Object.keys(doc.measurements)) {
+      if (parseWallValueLabel(lab)) skipped.push({ label: lab, reason: 'the plan has no stored wall graph' })
+    }
+  }
+  /** Group of a room wall, and the drawn angle of its normal. */
+  const groupOfRoomWall = (ref: RoomWallRef | null): { g: number; theta: number } | null => {
+    if (!ref) return null
+    const e = edgeOf[ref.roomIndex]?.[ref.index]
+    if (!e || e.group < 0) return null
+    return { g: e.group, theta: groupVars[e.group].drawnTheta }
+  }
+  for (const wall of storedWalls) {
+    const na = nodeAt.get(wall.a), nb = nodeAt.get(wall.b)
+    if (!na || !nb) continue
+    const dx = nb.x - na.x, dy = nb.y - na.y
+    const centreCm = Math.hypot(dx, dy)
+    if (centreCm < 1) continue
+    const centreLabel = wallValueLabel(wall.id, 'centre')
+    const outsideLabel = wallValueLabel(wall.id, 'outside')
+    const centreValue = doc.measurements[centreLabel]?.actualCm
+    const outsideValue = doc.measurements[outsideLabel]?.actualCm
+    const hasCentre = !!centreValue && Number.isFinite(centreValue) && centreValue > 0
+    const hasOutside = !!outsideValue && Number.isFinite(outsideValue) && outsideValue > 0
+    const entry: WallLins = {}
+    wallLins.set(wall.id, entry)
+    const ends = wallEnds(rooms, storedNodes, wall)
+    const gA = groupOfRoomWall(ends.a), gB = groupOfRoomWall(ends.b)
+    const endReason = !ends.a || !ends.b
+      ? 'no perpendicular wall at one end of this wall'
+      : 'the lines of the walls at one end do not cross'
+    // The line of this wall: the group of a room wall drawn on it (so the fit moves it), else its
+    // drawn line as a constant.
+    const ownRef = wall.faces.find((f) => f.roomId !== undefined && f.wallStart !== undefined)
+    let own: { g: number; theta: number } | null = null
+    if (ownRef && ownRef.roomId !== undefined) {
+      const ri = rooms.findIndex((r) => r.id === ownRef.roomId)
+      const k = ri < 0 ? -1 : rooms[ri].vertices.findIndex((v) => v.id === ownRef.wallStart)
+      const e = k < 0 ? undefined : edgeOf[ri]?.[k]
+      if (e && e.group >= 0) own = { g: e.group, theta: groupVars[e.group].drawnTheta }
+    }
+    const ux = dx / centreCm, uy = dy / centreCm
+    const left = { x: -uy, y: ux }
+    const ownTheta = own ? own.theta : angleOf(left.x, left.y)
+    const ownNormal = exactNormal(ownTheta)
+    const mid = { x: (na.x + nb.x) / 2, y: (na.y + nb.y) / 2 }
+    /** +1 when the middle of this wall is on the side of larger n of an end wall. */
+    const sgnOf = (g: { g: number; theta: number }) => {
+      const n = exactNormal(g.theta)
+      return n.nx * mid.x + n.ny * mid.y - groupVars[g.g].drawn >= 0 ? 1 : -1
+    }
+    const side = outsideFaceSide(wall, centreCm)
+    const outsideNormal = side === 'L' ? left : { x: -left.x, y: -left.y }
+    const outsideSign: 1 | -1 = outsideNormal.x * ownNormal.nx + outsideNormal.y * ownNormal.ny >= 0 ? 1 : -1
+    const sgnA = gA ? sgnOf(gA) : 1
+    const sgnB = gB ? sgnOf(gB) : 1
+    /** The lines of this wall and of an end wall must cross, else there is no length to give. */
+    const crosses = (g: { theta: number } | null) => !!g && Math.abs(Math.sin(g.theta - ownTheta)) > PARALLEL_SIN
+    /**
+     * Length between the two crossings with the end walls, along the centre line of this wall, or
+     * along its outside face. The face of an end wall that is used is the one away from this wall:
+     * that is the outside corner of the plan.
+     */
+    const lengthRow = (outside: boolean): ((c: Ctx) => D) | undefined => {
+      if (!own || !gA || !gB || !crosses(gA) || !crosses(gB)) return undefined
+      const og = own.g
+      const ownLine = (c: Ctx): D => (outside ? faceOffset(c.d[og], c.t[og], outsideSign) : c.d[og])
+      const endLine = (c: Ctx, g: number, sgn: 1 | -1): D =>
+        outside ? sub(c.d[g], scale(c.t[g], sgn / 2)) : c.d[g]
+      const point = (c: Ctx, g: number, sgn: 1 | -1): { x: D; y: D } =>
+        crossLines(c, false, -1, og, ownLine(c), g, endLine(c, g, sgn))
+      return (c: Ctx) => {
+        const a = point(c, gA.g, sgnA)
+        const b = point(c, gB.g, sgnB)
+        return hypot(sub(b.x, a.x), sub(b.y, a.y))
+      }
+    }
+    entry.centre = lengthRow(false)
+    entry.outside = side ? lengthRow(true) : undefined
+    if (hasCentre) {
+      if (!entry.centre) skipped.push({ label: centreLabel, reason: endReason })
+      else {
+        // No source counts as 'plan': the value of a centre line is usually read on a plan.
+        rows.push({
+          label: centreLabel, kind: 'centre', target: centreValue!,
+          sigma: sourceSigmaCm(doc.measurements[centreLabel]?.source ?? 'plan') * o.measureSigmaCm,
+          value: entry.centre,
+        })
+      }
+    }
+    if (hasOutside) {
+      if (!side) skipped.push({ label: outsideLabel, reason: 'the wall has no outside face on its whole length' })
+      else if (!entry.outside) skipped.push({ label: outsideLabel, reason: endReason })
+      else {
+        rows.push({
+          label: outsideLabel, kind: 'outside', target: outsideValue!,
+          sigma: sourceSigmaCm(doc.measurements[outsideLabel]?.source) * o.measureSigmaCm,
+          value: entry.outside,
+        })
+      }
+    }
+  }
+
+  // ---- surface references (docs/walls-plan.md phase 2) ----
+  // One row per reference: the area of the inside face polygon of its room, or the sum of the
+  // inside areas of every indoor room. Sigma is a small % of the surface, so a measured wall
+  // (1 cm) always wins over the reference.
+  const surfaceEntries: SurfaceEntry[] = []
+  if (o.surfaceMode !== 'off') {
+    // A room drawn with a wall at an angle keeps its drawn area with Room angles = Square (before
+    // this phase its surface was skipped); with 'free' the shoelace of its corners gives the area.
+    // Every room counts, whatever the direction of its walls (a wall at an angle has its own angle unknown).
+    const usable = (ri: number) => !rooms[ri].outdoor
+    const indoor = rooms.map((_, ri) => ri).filter(usable)
+    for (const ref of o.references) {
+      const lab = ref.label?.trim() || SOURCE_LABELS[ref.source]
+      const sigma = (ref.surfaceM2 * 10000 * o.surfaceSigmaPct) / 100
+      if (!(ref.surfaceM2 > 0) || !Number.isFinite(sigma) || !(sigma > 0)) {
+        skipped.push({ label: lab, reason: 'the reference surface is not a positive number' })
+        continue
+      }
+      let roomIndexes: number[]
+      let roomCode: string | undefined
+      if (ref.roomCode) {
+        const code = ref.roomCode.trim().toLowerCase()
+        const ri = rooms.findIndex((r) => r.code.trim().toLowerCase() === code)
+        if (ri < 0) {
+          skipped.push({ label: lab, reason: `the plan has no room ${ref.roomCode}` })
+          continue
+        }
+        roomCode = rooms[ri].code
+        roomIndexes = [ri]
+      } else {
+        if (!indoor.length) {
+          skipped.push({ label: lab, reason: 'the plan has no indoor room' })
+          continue
+        }
+        roomIndexes = indoor
+      }
+      const targetCm2 = ref.surfaceM2 * 10000
+      surfaceEntries.push({ label: lab, roomCode, referenceM2: ref.surfaceM2, rooms: roomIndexes })
+      const a0 = areaD(buildCtx({ groupVars, cornerSetups }, x0), roomIndexes).v
+      if (o.surfaceMode === 'match') {
+        rows.push({ label: lab, kind: 'surface', target: targetCm2, sigma, value: (c) => areaD(c, roomIndexes) })
+      } else if (Math.abs(a0 - targetCm2) > 1e-6) {
+        // Guide: hinge on the drawn area. Below the reference the plan must not go smaller,
+        // above it the plan must not go bigger.
+        rows.push({ label: lab, kind: 'surface', target: a0, sigma, hinge: { t0: a0, above: a0 > targetCm2 }, value: (c) => areaD(c, roomIndexes) })
+      }
+    }
+  }
+
+  // ---- walls in line (soft) ----
+  // Two walls that continue each other (end to end, drawn on one line) keep their REFERENCE lines
+  // in line: by default the face in the room, so a 30 cm wall and a 10 cm wall are flush inside.
+  const proj = (u: { x: number; y: number }, p: Vec) => u.x * p.x + u.y * p.y
+  for (let a = 0; a < groupVars.length; a++) {
+    for (let b = a + 1; b < groupVars.length; b++) {
+      const A = groupVars[a], B = groupVars[b]
+      const na = exactNormal(A.drawnTheta), nb = exactNormal(B.drawnTheta)
+      const same = na.nx * nb.nx + na.ny * nb.ny
+      // Parallel within 2 degrees (the direction of the normals can be opposite).
+      if (Math.abs(same) < Math.cos(2 * DEG)) continue
+      const flip = same >= 0 ? 1 : -1
+      if (Math.abs(A.drawnRef - flip * B.drawnRef) > o.alignTolCm) continue
+      const u = { x: A.ux, y: A.uy }
+      const pa = A.pts.map((p) => proj(u, p)), pb = B.pts.map((p) => proj(u, p))
+      const gap = Math.max(Math.min(...pa), Math.min(...pb)) - Math.min(Math.max(...pa), Math.max(...pb))
+      if (gap > o.pairTolCm) continue
+      rows.push({
+        label: `${label(A.edges[0])} / ${label(B.edges[0])}`, kind: 'align', target: 0, sigma: o.alignSigmaCm,
+        value: (c) => sub(add(c.d[a], scale(c.t[a], A.k / 2)), scale(add(c.d[b], scale(c.t[b], B.k / 2)), flip)),
+      })
+    }
+  }
+
+  // ---- right angles (soft), only with Room angles = Free ----
+  // Two walls that meet at a room corner and were drawn at a right angle (within 3 degrees) or
+  // parallel keep that relation. With Room angles = Square the drawn directions are fixed, so the
+  // rule is not needed.
+  if (o.angles === 'free') {
+    const seen = new Set<string>()
+    rooms.forEach((_r, ri) => {
+      edgeOf[ri].forEach((e, i) => {
+        const j = (i + 1) % edgeOf[ri].length
+        const a = e.group, b = edgeOf[ri][j].group
+        if (a === b) return
+        const A = groupVars[a], B = groupVars[b]
+        const key = a < b ? `${a}<${b}` : `${b}<${a}`
+        if (seen.has(key)) return
+        const drawn = wrapPi(B.drawnTheta - A.drawnTheta)
+        const target = Math.round(drawn / (Math.PI / 2)) * (Math.PI / 2)
+        if (Math.abs(wrapPi(drawn - target)) > 3 * DEG) return
+        seen.add(key)
+        // The angle from the normal of A to the normal of B, in degrees: atan2 of the cross and
+        // the dot product of the two normals.
+        const angleDeg = (c: Ctx) => {
+          const na = c.n[a], nb = c.n[b]
+          const cross = sub(mul(na.nx, nb.ny), mul(na.ny, nb.nx))
+          const dot = add(mul(na.nx, nb.nx), mul(na.ny, nb.ny))
+          return scale(atan2(cross, dot), 1 / DEG)
+        }
+        rows.push({
+          label: `${label(e)} / ${label(edgeOf[ri][j])}`, kind: 'angle', target: target / DEG, sigma: o.squareSigmaDeg,
+          value: angleDeg,
+        })
+      })
+    })
+  }
+
+  return {
+    o, rooms, edgeOf, groupVars, cornerSetups, rows, priors, skipped, surfaceEntries, wallLins, x0, label,
+    conflicts: graph.conflicts,
+  }
+}
+
+// ---- Gauss-Newton ----
+
+/** Residual and gradient (divided by sigma) of one row, at the values of ctx. */
+function residualAndGrad(row: Row, c: Ctx): { r: number; g: [number, number][] } {
+  const d = row.value(c)
+  // The Guide hinge is active only when the value went past t0 on the given side, so it lets the
+  // value move the right way and blocks the wrong way only. Activity is tested again at each
+  // iteration, with the current value.
+  let target = row.target
+  if (row.hinge) {
+    const { t0, above } = row.hinge
+    if (above ? d.v <= t0 : d.v >= t0) return { r: 0, g: [] }
+    target = t0
+  }
+  return { r: (d.v - target) / row.sigma, g: gradList(d).map(([v, k]) => [v, k / row.sigma] as [number, number]) }
+}
 
 /** Cholesky solve of the SPD system N x = b. Null when N is not positive definite. */
 function cholesky(N: number[][]): number[][] | null {
@@ -333,352 +863,23 @@ function cholSolve(L: number[][], b: number[]): number[] {
   return x
 }
 
-function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
-  // The references come from the options, or from the document (doc.apartment.references).
-  const o = { ...DEFAULTS, ...options, references: options.references ?? doc.apartment?.references ?? [] }
-  const rooms = doc.rooms
-
-  // ---- edges ----
-  const edges: Edge[] = []
-  const edgeOf: Edge[][] = []
-  rooms.forEach((r, ri) => {
-    const v = r.vertices
-    const n = v.length
-    const s = shoelace(v) > 0 ? 1 : -1
-    edgeOf.push(v.map((a, i) => {
-      const b = v[(i + 1) % n]
-      const dx = b.x - a.x, dy = b.y - a.y
-      const l = Math.hypot(dx, dy) || 1
-      const inward = { x: (-dy / l) * s, y: (dx / l) * s }
-      const orient: Orient = Math.abs(dx) / l < 0.02 ? 'v' : Math.abs(dy) / l < 0.02 ? 'h' : 'o'
-      const e: Edge = {
-        room: ri, index: i, orient,
-        coord: orient === 'v' ? (a.x + b.x) / 2 : (a.y + b.y) / 2,
-        lo: orient === 'v' ? Math.min(a.y, b.y) : Math.min(a.x, b.x),
-        hi: orient === 'v' ? Math.max(a.y, b.y) : Math.max(a.x, b.x),
-        side: orient === 'v' ? (inward.x > 0 ? 1 : -1) : (inward.y > 0 ? 1 : -1),
-        thicknessCm: wallProps(r, a.id).thicknessCm,
-        align: wallProps(r, a.id).align ?? 'room',
-        group: -1,
-      }
-      edges.push(e)
-      return e
-    }))
-  })
-
-  // ---- walls: one wall group per axis-aligned wall of the wall graph ----
-  // The graph (src/model/wallGraph.ts) does the grouping: facing walls of two rooms and in-line
-  // walls of one room. The group of a room wall is the wall of its first face.
-  const graph = buildWallGraph(rooms, { pairTolCm: o.pairTolCm, alignTolCm: o.alignTolCm })
-  const wallKeyOf = (e: Edge): string => {
-    const fi = graph.roomFaces[rooms[e.room].id]?.[e.index]?.faceIndexes[0]
-    const wallId = fi === undefined ? undefined : graph.faces[fi]?.wallId
-    // A wall with no face (zero length) keeps its own group.
-    return wallId ?? `own:${e.room}:${e.index}`
-  }
-
-  // ---- unknowns ----
-  const x0: number[] = []
-  const priors: Row[] = []
-  const newVar = (start: number, sigma: number) => {
-    const k = x0.length
-    x0.push(start)
-    priors.push({ kind: 'lin', l: lin(0, [k, 1]), target: start, sigma })
-    return k
-  }
-  const label = (e: Edge) => `${rooms[e.room].code}-${e.index + 1}`
-  const groupVars: GroupVar[] = []
-  const keyToGroup = new Map<string, number>()
-  edges.forEach((e) => {
-    if (e.orient === 'o') return
-    const key = wallKeyOf(e)
-    let g = keyToGroup.get(key)
-    if (g === undefined) {
-      g = groupVars.length
-      keyToGroup.set(key, g)
-      groupVars.push({ coord: -1, thick: -1, edges: [], orient: e.orient, drawn: 0, prior: 0, k: 0, drawnRef: 0, lo: 0, hi: 0 })
-    }
-    e.group = g
-    groupVars[g].edges.push(e)
-  })
-  for (const g of groupVars) {
-    g.drawn = g.edges.reduce((s, e) => s + e.coord, 0) / g.edges.length
-    g.prior = Math.max(...g.edges.map((e) => e.thicknessCm))
-    // The wall's reference line comes from its owner: the room first in the walk-through.
-    const owner = g.edges.reduce((a, e) => {
-      const ra = rooms[a.room], re = rooms[e.room]
-      return re.walkOrder < ra.walkOrder || (re.walkOrder === ra.walkOrder && re.code < ra.code) ? e : a
-    })
-    g.k = refSign(owner)
-    g.drawnRef = g.drawn + (g.k * g.prior) / 2
-    g.lo = Math.min(...g.edges.map((e) => e.lo))
-    g.hi = Math.max(...g.edges.map((e) => e.hi))
-    g.coord = newVar(g.drawn, o.positionSigmaCm)
-    g.thick = newVar(g.prior, o.thicknessSigmaCm)
-  }
-
-  // Corner k of room r: x and y of the centre line, and of the inside face.
-  // The x comes from the vertical wall at the corner, the y from the horizontal one.
-  // A corner with no wall in one direction gets a free unknown there.
-  const corners: CornerLin[][] = rooms.map((r, ri) => {
-    const es = edgeOf[ri]
-    const n = es.length
-    return r.vertices.map((p, k) => {
-      const prev = es[(k + n - 1) % n], next = es[k]
-      const pick = (axis: 'h' | 'v') => (prev.orient === axis ? prev : next.orient === axis ? next : null)
-      const vx = pick('v'), hy = pick('h')
-      const along = (e: Edge | null, drawn: number): { c: Lin; f: Lin; ok: boolean } => {
-        if (!e) {
-          const k2 = newVar(drawn, o.positionSigmaCm)
-          return { c: lin(0, [k2, 1]), f: lin(0, [k2, 1]), ok: false }
-        }
-        const g = groupVars[e.group]
-        return { c: lin(0, [g.coord, 1]), f: lin(0, [g.coord, 1], [g.thick, e.side / 2]), ok: true }
-      }
-      const X = along(vx, p.x), Y = along(hy, p.y)
-      return { cx: X.c, cy: Y.c, fx: X.f, fy: Y.f, okX: X.ok, okY: Y.ok }
-    })
-  })
-
-  // The geometry of the fit, for the row builders (walls, diagonals).
-  const geom: Geom = { rooms, edgeOf, corners }
-
-  // ---- measurements ----
-  const rows: Row[] = []
-  // Current inside lengths, for locked walls with no measured value.
-  const innerLengths = rooms.map((r) => innerWallLengths(r))
-  const meta: { label: string; kind: GlobalResidual['kind'] }[] = []
-  const skipped: { label: string; reason: string }[] = []
-  rooms.forEach((r, ri) => {
-    edgeOf[ri].forEach((e, i) => {
-      // Measured thickness (CODE-n-T): a direct value for the wall.
-      const tLab = thicknessLabel(r.code, i)
-      const tm = doc.measurements[tLab]?.actualCm
-      if (tm && tm > 0) {
-        if (e.orient === 'o') skipped.push({ label: tLab, reason: 'wall is not horizontal or vertical' })
-        else {
-          rows.push({ kind: 'lin', l: lin(0, [groupVars[e.group].thick, 1]), target: tm, sigma: o.thicknessMeasureSigmaCm })
-          meta.push({ label: tLab, kind: 'thickness' })
-        }
-      }
-      const lab = `${r.code}-${i + 1}`
-      const measuredCm = doc.measurements[lab]?.actualCm
-      const hasValue = !!(measuredCm && Number.isFinite(measuredCm) && measuredCm > 0)
-      // A locked wall keeps its value (measured) or its current inside length (no value), strongly.
-      const locked = o.keepLocked && !!wallProps(r, r.vertices[i].id).locked
-      if (!hasValue && !locked) return
-      const m = hasValue ? measuredCm! : innerLengths[ri][i]
-      const sigma = locked ? o.lockedSigmaCm : sourceSigmaCm(doc.measurements[lab]?.source) * o.measureSigmaCm
-      const kind: GlobalResidual['kind'] = hasValue ? 'wall' : 'locked'
-      const l = wallLenLin(geom, ri, i)
-      if (!l) {
-        const reason = e.orient === 'o' ? 'wall is not horizontal or vertical' : 'a wall at its end is not horizontal or vertical'
-        return skipped.push({ label: lab, reason }), undefined
-      }
-      rows.push({ kind: 'lin', l, target: m, sigma })
-      meta.push({ label: lab, kind })
-    })
-    const d = doc.measurements[`${r.code}-D`]?.actualCm
-    if (r.diagonal && d && d > 0) {
-      const [i, j] = r.diagonal
-      const dl = diagonalLins(geom, ri, i, j)
-      if (dl) {
-        rows.push({ kind: 'dist', ...dl, target: d, sigma: sourceSigmaCm(doc.measurements[`${r.code}-D`]?.source) * o.measureSigmaCm })
-        meta.push({ label: `${r.code}-D`, kind: 'diagonal' })
-      }
-    }
-  })
-
-  // ---- centre line and outside face values of stored walls (docs/walls-plan.md phase 5b) ----
-  // W12-C: the length between the CENTRE lines of the perpendicular walls at its two ends.
-  // W12-E: the length between their OUTSIDE faces, that is the outside corner to outside corner:
-  //   length = s * (coordB - coordA) + (tA + tB) / 2
-  // with s = +1 when the wall goes toward larger x (horizontal) or larger y (vertical), coordA /
-  // coordB the centre lines of the two end walls and tA / tB their thicknesses. The half thickness
-  // of each end wall is added because the outside face of the end wall is half a thickness past
-  // its centre line, away from the wall.
-  // A centre value read on a plan has no source more often than not: no source counts as 'plan'.
-  const wallLins = new Map<string, { centre?: Lin; outside?: Lin }>()
-  const storedNodes: StoredNode[] = doc.nodes ?? []
-  const storedWalls: StoredWall[] = doc.walls ?? []
-  const nodeAt = new Map(storedNodes.map((n) => [n.id, n]))
-  // A value of a wall has a row only when the document has the stored wall graph.
-  if (!storedWalls.length) {
-    for (const label of Object.keys(doc.measurements)) {
-      if (parseWallValueLabel(label)) skipped.push({ label, reason: 'the plan has no stored wall graph' })
-    }
-  }
-  for (const wall of storedWalls) {
-    const na = nodeAt.get(wall.a), nb = nodeAt.get(wall.b)
-    if (!na || !nb) continue
-    const dx = nb.x - na.x, dy = nb.y - na.y
-    const centreCm = Math.hypot(dx, dy)
-    if (centreCm < 1) continue
-    const centreLabel = wallValueLabel(wall.id, 'centre')
-    const outsideLabel = wallValueLabel(wall.id, 'outside')
-    const centreValue = doc.measurements[centreLabel]?.actualCm
-    const outsideValue = doc.measurements[outsideLabel]?.actualCm
-    const hasCentre = !!centreValue && Number.isFinite(centreValue) && centreValue > 0
-    const hasOutside = !!outsideValue && Number.isFinite(outsideValue) && outsideValue > 0
-    const entry: { centre?: Lin; outside?: Lin } = {}
-    wallLins.set(wall.id, entry)
-    // Only horizontal or vertical walls can carry a row (scope of the solver).
-    const vertical = Math.abs(dy) <= 1
-    const horizontal = Math.abs(dx) <= 1
-    if (!vertical && !horizontal) {
-      const reason = 'wall is not horizontal or vertical'
-      if (hasCentre) skipped.push({ label: centreLabel, reason })
-      if (hasOutside) skipped.push({ label: outsideLabel, reason })
-      continue
-    }
-    const ends = wallEnds(rooms, storedNodes, wall)
-    const groupAt = (ref: RoomWallRef | null) => {
-      if (!ref) return null
-      const e = edgeOf[ref.roomIndex]?.[ref.index]
-      return e && e.orient !== 'o' && e.group >= 0 ? groupVars[e.group] ?? null : null
-    }
-    const gA = groupAt(ends.a), gB = groupAt(ends.b)
-    const endReason = !ends.a || !ends.b
-      ? 'no perpendicular wall at one end of this wall'
-      : 'a wall at its end is not horizontal or vertical'
-    // s: +1 when the wall goes toward larger x (horizontal) or larger y (vertical).
-    const s = (vertical ? Math.sign(dy) : Math.sign(dx)) || 1
-    // The expressions are built for every wall, also without a value: a suggestion needs them.
-    if (gA && gB) {
-      entry.centre = lin(0, [gB.coord, s], [gA.coord, -s])
-      entry.outside = lin(0, [gB.coord, s], [gA.coord, -s], [gB.thick, 0.5], [gA.thick, 0.5])
-    }
-    if (hasCentre) {
-      if (!entry.centre) skipped.push({ label: centreLabel, reason: endReason })
-      else {
-        // No source counts as 'plan': the value of a centre line is usually read on a plan.
-        const sigma = sourceSigmaCm(doc.measurements[centreLabel]?.source ?? 'plan') * o.measureSigmaCm
-        rows.push({ kind: 'lin', l: entry.centre, target: centreValue!, sigma })
-        meta.push({ label: centreLabel, kind: 'centre' })
-      }
-    }
-    if (hasOutside) {
-      if (!outsideFaceSide(wall, centreCm)) {
-        skipped.push({ label: outsideLabel, reason: 'the wall has no outside face on its whole length' })
-      } else if (!entry.outside) skipped.push({ label: outsideLabel, reason: endReason })
-      else {
-        const sigma = sourceSigmaCm(doc.measurements[outsideLabel]?.source) * o.measureSigmaCm
-        rows.push({ kind: 'lin', l: entry.outside, target: outsideValue!, sigma })
-        meta.push({ label: outsideLabel, kind: 'outside' })
-      }
-    }
-  }
-
-  // ---- surface references (docs/walls-plan.md phase 2) ----
-  // One row per reference: the area of the inside face polygon of its room, or the sum of the
-  // inside areas of every indoor room. Sigma is a small % of the surface, so a measured wall
-  // (1 cm) always wins over the reference.
-  const surfaceEntries: SurfaceEntry[] = []
-  if (o.surfaceMode !== 'off') {
-    const insidePoly = (ri: number): AreaPoly => ({ fx: corners[ri].map((c) => c.fx), fy: corners[ri].map((c) => c.fy) })
-    // Walls that are not horizontal or vertical keep their drawn place, so their area is fixed.
-    const axisAligned = (ri: number) => edgeOf[ri].every((e) => e.orient !== 'o')
-    const indoor = rooms.map((_, ri) => ri).filter((ri) => !rooms[ri].outdoor && axisAligned(ri))
-    for (const ref of o.references) {
-      const label = ref.label?.trim() || SOURCE_LABELS[ref.source]
-      const sigma = (ref.surfaceM2 * 10000 * o.surfaceSigmaPct) / 100
-      if (!(ref.surfaceM2 > 0) || !Number.isFinite(sigma) || !(sigma > 0)) {
-        skipped.push({ label, reason: 'the reference surface is not a positive number' })
-        continue
-      }
-      let polys: AreaPoly[]
-      let roomCode: string | undefined
-      if (ref.roomCode) {
-        const code = ref.roomCode.trim().toLowerCase()
-        const ri = rooms.findIndex((r) => r.code.trim().toLowerCase() === code)
-        if (ri < 0) {
-          skipped.push({ label, reason: `the plan has no room ${ref.roomCode}` })
-          continue
-        }
-        if (!axisAligned(ri)) {
-          skipped.push({ label, reason: `room ${rooms[ri].code} has a wall that is not horizontal or vertical` })
-          continue
-        }
-        roomCode = rooms[ri].code
-        polys = [insidePoly(ri)]
-      } else {
-        if (!indoor.length) {
-          skipped.push({ label, reason: 'the plan has no indoor room with only horizontal and vertical walls' })
-          continue
-        }
-        const leftOut = rooms.filter((_, ri) => !rooms[ri].outdoor && !axisAligned(ri)).map((r) => r.code)
-        if (leftOut.length) {
-          skipped.push({ label, reason: `${leftOut.join(', ')} left out of the sum: a wall is not horizontal or vertical` })
-        }
-        polys = indoor.map(insidePoly)
-      }
-      const targetCm2 = ref.surfaceM2 * 10000
-      const a0 = areaValue(polys, x0)
-      surfaceEntries.push({ label, roomCode, referenceM2: ref.surfaceM2, polys })
-      if (o.surfaceMode === 'match') {
-        rows.push({ kind: 'area', polys, target: targetCm2, sigma })
-        meta.push({ label, kind: 'surface' })
-      } else if (Math.abs(a0 - targetCm2) > 1e-6) {
-        // Guide: hinge on the drawn area. Below the reference the plan must not go smaller,
-        // above it the plan must not go bigger.
-        rows.push({ kind: 'area', polys, target: a0, sigma, hinge: { t0: a0, above: a0 > targetCm2 } })
-        meta.push({ label, kind: 'surface' })
-      }
-    }
-  }
-
-  // ---- walls in line (soft) ----
-  // Two walls that continue each other (end to end, drawn on one line) keep their REFERENCE lines
-  // in line: by default the face in the room, so a 30 cm wall and a 10 cm wall are flush inside.
-  for (let a = 0; a < groupVars.length; a++) {
-    for (let b = a + 1; b < groupVars.length; b++) {
-      const A = groupVars[a], B = groupVars[b]
-      if (A.orient !== B.orient || Math.abs(A.drawnRef - B.drawnRef) > o.alignTolCm) continue
-      const gap = Math.max(A.lo, B.lo) - Math.min(A.hi, B.hi)
-      if (gap > o.pairTolCm) continue
-      const ref = (g: GroupVar): [number, number][] => [[g.coord, 1], [g.thick, g.k / 2]]
-      rows.push({ kind: 'lin', l: lin(0, ...ref(A), ...ref(B).map(([v, k]) => [v, -k] as [number, number])), target: 0, sigma: o.alignSigmaCm })
-      meta.push({ label: `${label(A.edges[0])} / ${label(B.edges[0])}`, kind: 'align' })
-    }
-  }
-
-  return { o, rooms, edgeOf, groupVars, corners, rows, priors, meta, skipped, surfaceEntries, wallLins, x0, label, conflicts: graph.conflicts }
-}
-
-// ---- Gauss-Newton ----
-
-/** Residual and gradient (divided by sigma) of one row, at xs. */
-function residualAndGrad(row: Row, xs: number[]): { r: number; g: [number, number][] } {
-  if (row.kind === 'lin') return { r: (evalLin(row.l, xs) - row.target) / row.sigma, g: row.l.t.map(([v, k]) => [v, k / row.sigma]) }
-  if (row.kind === 'area') {
-    const { area, grad } = evalArea(row.polys, xs)
-    // The Guide hinge is active only when the area went past t0 on the given side, so it lets
-    // the area move the right way and blocks the wrong way only. Activity is tested again at
-    // each iteration, with the current area.
-    const target = row.hinge ? (row.hinge.above ? (area > row.hinge.t0 ? row.hinge.t0 : null) : (area < row.hinge.t0 ? row.hinge.t0 : null)) : row.target
-    if (target === null) return { r: 0, g: [] }
-    return { r: (area - target) / row.sigma, g: grad.map(([v, k]) => [v, k / row.sigma]) }
-  }
-  const d = distAt(row, xs)
-  return { r: (d.value - row.target) / row.sigma, g: d.grad.map(([v, k]) => [v, k / row.sigma]) }
-}
-
 /** The fit itself: x at the end, the normal matrix there, and its Cholesky factor. */
 function fitModel(b: Built): { x: number[]; normal: number[][]; chol: number[][] | null; iterations: number } {
   const all = [...b.rows, ...b.priors]
   const nv = b.x0.length
   let x = [...b.x0]
   const normal = (xs: number[]) => {
+    const c = buildCtx(b, xs)
     const N = Array.from({ length: nv }, () => new Array<number>(nv).fill(0))
-    const b = new Array<number>(nv).fill(0)
+    const rhs = new Array<number>(nv).fill(0)
     for (const row of all) {
-      const { r, g } = residualAndGrad(row, xs)
+      const { r, g } = residualAndGrad(row, c)
       for (const [i, gi] of g) {
-        b[i] -= gi * r
+        rhs[i] -= gi * r
         for (const [j, gj] of g) N[i][j] += gi * gj
       }
     }
-    return { N, b }
+    return { N, b: rhs }
   }
   let iterations = 0
   let chol: number[][] | null = null
@@ -695,16 +896,27 @@ function fitModel(b: Built): { x: number[]; normal: number[][]; chol: number[][]
   return { x, normal: N, chol: cholesky(N), iterations }
 }
 
+/** Sign of the shoelace sum of a polygon (1 = its own direction, -1 = the other one). */
+function shoelaceSign(p: Vec[]): number {
+  let s = 0
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length]
+    s += a.x * b.y - b.x * a.y
+  }
+  return s > 0 ? 1 : -1
+}
+
 /**
  * Report of one fit. Also the single place that turns `x` into user values, so the solved plan and
  * the model used by the suggestions always agree.
  */
 function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; iterations: number }): GlobalSolved {
   const { x, chol, iterations } = fitted
-  const { o, rooms, groupVars, corners, rows, meta, skipped, surfaceEntries, x0, label } = b
+  const { o, rooms, groupVars, rows, skipped, surfaceEntries, x0, label } = b
   const nv = x0.length
+  const c = buildCtx(b, x)
   const variance = (k: number) => {
-    if (!chol) return NaN
+    if (!chol || k < 0) return NaN
     const e = new Array<number>(nv).fill(0)
     e[k] = 1
     return cholSolve(chol, e)[k]
@@ -712,37 +924,36 @@ function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; i
 
   // ---- report ----
   const groups: WallGroup[] = groupVars.map((g, id) => {
-    const sd = Math.sqrt(variance(g.thick))
+    const sd = Math.sqrt(variance(g.t))
+    const angleSd = g.theta < 0 ? 0 : Math.sqrt(Math.max(0, variance(g.theta))) / DEG
     return {
       id, orient: g.orient,
       walls: g.edges.map(label),
-      drawnCoord: g.drawn, coord: x[g.coord],
-      priorThicknessCm: g.prior, thicknessCm: x[g.thick], thicknessSdCm: sd,
+      drawnCoord: g.drawn, coord: x[g.d],
+      angleDeg: (g.theta < 0 ? g.fixedTheta : x[g.theta]) / DEG,
+      angleSdDeg: angleSd,
+      priorThicknessCm: g.prior, thicknessCm: x[g.t], thicknessSdCm: sd,
       determined: sd < o.thicknessSigmaCm * 0.5,
       rooms: new Set(g.edges.map((e) => e.room)).size,
     }
   })
-  const residuals: GlobalResidual[] = rows.map((row, k) => {
-    const solved = row.kind === 'lin'
-      ? evalLin(row.l, x)
-      : row.kind === 'area'
-        ? areaValue(row.polys, x)
-        : Math.hypot(evalLin(row.bx, x) - evalLin(row.ax, x), evalLin(row.by, x) - evalLin(row.ay, x))
-    return { label: meta[k].label, kind: meta[k].kind, measuredCm: row.target, solvedCm: solved, diffCm: row.target - solved, sigmaCm: row.sigma }
+  const residuals: GlobalResidual[] = rows.map((row) => {
+    const solved = row.hinge ? row.hinge.t0 : row.value(c).v
+    return { label: row.label, kind: row.kind, measuredCm: row.target, solvedCm: solved, diffCm: row.target - solved, sigmaCm: row.sigma }
   })
-  // Surface rows are in cm² and they are weak: they stay out of rmsCm.
-  // A centre or outside face value is a length of the plan too: it counts in rmsCm.
+  // Surface and angle rows are weak rules and stay out of rmsCm. A centre or outside face value is
+  // a length of the plan too: it counts in rmsCm.
   const fit = residuals.filter((r) => r.kind === 'wall' || r.kind === 'diagonal' || r.kind === 'centre' || r.kind === 'outside')
   const rmsCm = fit.length ? Math.sqrt(fit.reduce((s, r) => s + r.diffCm ** 2, 0) / fit.length) : 0
   const out: Record<string, Vec[]> = {}
   const inner: Record<string, Vec[]> = {}
   rooms.forEach((r: Room, ri) => {
-    out[r.id] = corners[ri].map((c) => ({ x: evalLin(c.cx, x), y: evalLin(c.cy, x) }))
-    inner[r.id] = corners[ri].map((c) => ({ x: evalLin(c.fx, x), y: evalLin(c.fy, x) }))
+    out[r.id] = c.corners[ri].map((p) => ({ x: p.cx.v, y: p.cy.v }))
+    inner[r.id] = c.corners[ri].map((p) => ({ x: p.fx.v, y: p.fy.v }))
   })
   const surfaces: GlobalSurface[] = surfaceEntries.map((e) => {
-    const beforeM2 = areaValue(e.polys, x0) / 10000
-    const afterM2 = areaValue(e.polys, x) / 10000
+    const beforeM2 = areaD(buildCtx(b, x0), e.rooms).v / 10000
+    const afterM2 = areaD(c, e.rooms).v / 10000
     return {
       label: e.label,
       ...(e.roomCode ? { roomCode: e.roomCode } : {}),
@@ -752,13 +963,26 @@ function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; i
       diffPct: ((afterM2 - e.referenceM2) / e.referenceM2) * 100,
     }
   })
-  return { groups, residuals, rmsCm, rooms: out, inner, surfaces, skipped, iterations, conflicts: b.conflicts }
+  // Rooms that the fit did not keep square: the turn of each inside corner against 90 degrees.
+  const outOfSquare: OutOfSquare[] = o.angles !== 'free' ? [] : rooms.map((r) => {
+    const p = inner[r.id]
+    let worst = 0
+    for (let k = 0; k < p.length; k++) {
+      const a = p[(k + p.length - 1) % p.length], b = p[k], d = p[(k + 1) % p.length]
+      const v1 = { x: b.x - a.x, y: b.y - a.y }, v2 = { x: d.x - b.x, y: d.y - b.y }
+      // The turn from one wall to the next is 90 degrees at a right angle, in both directions.
+      const turn = Math.abs(Math.atan2(v1.x * v2.y - v1.y * v2.x, v1.x * v2.x + v1.y * v2.y)) / DEG
+      worst = Math.max(worst, Math.abs(turn - 90))
+    }
+    return { roomCode: r.code, deg: worst }
+  }).filter((e) => e.deg > 0.2).sort((a, z) => z.deg - a.deg)
+  return { groups, residuals, rmsCm, rooms: out, inner, surfaces, outOfSquare, skipped, iterations, conflicts: b.conflicts }
 }
 
 /** Defaults of the solver, for callers that must use the same sigmas (see the suggestions). */
 export const GLOBAL_SOLVE_DEFAULTS: Required<GlobalOptions> = DEFAULTS
 
-/** All rooms in one least-squares fit. Same result as before the model was split out. */
+/** All rooms in one least-squares fit. */
 export function solveGlobal(doc: SolveDoc, options: GlobalOptions = {}): GlobalSolved {
   const b = buildModel(doc, options)
   return reportModel(b, fitModel(b))
@@ -804,8 +1028,11 @@ export type SolveModel = {
   normal: number[][]
   /** Cholesky factor of `normal` (N = L Lᵀ). Null when N is not positive definite. */
   chol: number[][] | null
-  /** Unknown index of the centre line and of the thickness of each wall group (same order as solved.groups). */
-  groupVars: { coord: number; thick: number }[]
+  /**
+   * Unknown index of the offset, of the thickness and of the angle of each wall group (same order
+   * as solved.groups). `angle` is -1 when the angle of the wall is a constant.
+   */
+  groupVars: { coord: number; thick: number; angle: number }[]
   /** Value and gradient at x, or null when the quantity cannot be a row. */
   quantity(q: CandidateQuantity): QuantityAtX | null
 }
@@ -819,28 +1046,34 @@ export function solveGlobalWithModel(doc: SolveDoc, options: GlobalOptions = {})
   const fitted = fitModel(b)
   const solved = reportModel(b, fitted)
   const x = fitted.x
-  const geom: Geom = { rooms: b.rooms, edgeOf: b.edgeOf, corners: b.corners }
+  const c = buildCtx(b, x)
   const quantity = (q: CandidateQuantity): QuantityAtX | null => {
     if (q.kind === 'thickness') {
       const g = b.groupVars[q.groupId]
-      return g ? { value: x[g.thick], grad: [[g.thick, 1]] } : null
+      return g ? { value: x[g.t], grad: [[g.t, 1]] } : null
     }
     if (q.kind === 'centre' || q.kind === 'outside') {
-      const l = b.wallLins.get(q.wallId)?.[q.kind]
-      return l ? { value: evalLin(l, x), grad: mergeGrad(l.t) } : null
+      const f = b.wallLins.get(q.wallId)?.[q.kind]
+      return f ? fromD(f(c)) : null
     }
     const ri = b.rooms.findIndex((r) => r.id === q.roomId)
     if (ri < 0) return null
+    const corners = c.corners[ri]
+    if (!corners) return null
     if (q.kind === 'wall') {
-      const l = wallLenLin(geom, ri, q.wallIndex)
-      return l ? { value: evalLin(l, x), grad: mergeGrad(l.t) } : null
+      const j = (q.wallIndex + 1) % corners.length
+      const a = corners[q.wallIndex], z = corners[j]
+      return a && z ? fromD(distance(a.fx, a.fy, z.fx, z.fy)) : null
     }
-    const d = diagonalLins(geom, ri, q.i, q.j)
-    return d ? distAt(d, x) : null
+    const a = corners[q.i], z = corners[q.j]
+    return a && z ? fromD(distance(a.fx, a.fy, z.fx, z.fy)) : null
   }
   return {
     solved, x, normal: fitted.normal, chol: fitted.chol,
-    groupVars: b.groupVars.map((g) => ({ coord: g.coord, thick: g.thick })),
+    groupVars: b.groupVars.map((g) => ({ coord: g.d, thick: g.t, angle: g.theta })),
     quantity,
   }
 }
+
+/** Value and gradient of an expression. */
+const fromD = (d: D): QuantityAtX => ({ value: d.v, grad: gradList(d) })

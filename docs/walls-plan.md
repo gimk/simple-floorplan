@@ -164,7 +164,9 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
 4. **Solver on the graph**: `globalSolve` reads `buildWallGraph` (same results); remove its own
    pairing code; graph conflicts in the report; snap thicknesses; preview before apply. Centre and
    outside face rows need stable wall labels: they move to phase 5.
-4b. **Walls in any direction** (section above), after 5b.
+4b. **Walls in any direction** (section above). Done 2026-11-23: autodiff solver, Room angles Square | Free,
+   walls at an angle solved in both modes. Limit: a corner added on a wall at an angle still makes two
+   stored walls (kept in line by the align row).
 5a. **Stored graph, stable ids, no lost values** (decided 2026-11-23: auto-migrate). The rooms stay
    the editing source for now. `doc.nodes` and `doc.walls` (with their faces) are STORED and kept in
    sync by a doc rule: after each outline change the graph is built again and each wall keeps its

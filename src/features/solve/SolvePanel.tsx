@@ -11,7 +11,7 @@ import type { PlanDoc } from '../../model/types'
 import { BTN, CheckboxRow, EmptyHint, FieldRow, MUTED, PanelSection, Segmented } from '../../shell/panel'
 import { applyMeasuredAll, describeReport, verifiedWalls } from '../rooms/apply'
 import { applyGlobal, describeGlobal, previewGlobal, type GlobalPreview } from '../rooms/applyGlobal'
-import type { SurfaceMode } from '../rooms/globalSolve'
+import type { RoomAngles, SurfaceMode } from '../rooms/globalSolve'
 import { MeasureNext } from './MeasureNext'
 import { progressRows, progressTotals, type ProgressRow } from './logic'
 
@@ -95,6 +95,28 @@ function SurfaceModeRow({ mode, hasReferences, onChange }: {
       ) : (
         <EmptyHint>Add surface references in the Apartment card.</EmptyHint>
       )}
+    </>
+  )
+}
+
+const ROOM_ANGLES = [
+  { value: 'square', label: 'Square', title: 'Keep walls drawn horizontal or vertical at their drawn angle' },
+  { value: 'free', label: 'Free', title: 'Let every wall turn: a measured diagonal can show a room that is not square' },
+] as const
+
+/** "Solve whole plan" option: do the walls keep right angles, or can a room be out of square? */
+function RoomAnglesRow({ angles, onChange }: { angles: RoomAngles; onChange: (a: RoomAngles) => void }) {
+  return (
+    <>
+      <FieldRow label="Room angles" stacked>
+        <Segmented
+          ariaLabel="Room angles: Square or Free"
+          options={ROOM_ANGLES}
+          value={angles}
+          onChange={(v) => onChange(v as RoomAngles)}
+        />
+      </FieldRow>
+      <EmptyHint>Free: a measured diagonal can show a room that is not square.</EmptyHint>
     </>
   )
 }
@@ -230,6 +252,7 @@ function Actions({ doc, initialPreview }: { doc: PlanDoc; initialPreview?: Globa
     keepLocked: useUi.getState().solveKeepLocked,
     surfaceMode: useUi.getState().solveSurfaceMode,
     snapThickness: useUi.getState().solveSnapThickness,
+    angles: useUi.getState().solveAngles,
   })
 
   const showPreview = () => setPreview(previewGlobal(useDoc.getState().doc, globalOpts()))
@@ -262,18 +285,23 @@ function Actions({ doc, initialPreview }: { doc: PlanDoc; initialPreview?: Globa
 }
 
 /** The whole tab from plain data, so it can be rendered without the stores (tests, SSR). */
-export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode, preview }: {
+export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode, angles, onAngles, preview }: {
   doc: PlanDoc
   report: string | null
   /** Current surface reference mode (default: the value of the UI store). */
   surfaceMode?: SurfaceMode
   onSurfaceMode?: (m: SurfaceMode) => void
+  /** Current room angles mode (default: the value of the UI store). */
+  angles?: RoomAngles
+  onAngles?: (a: RoomAngles) => void
   /** Preview to show at the first render (tests); the panel makes its own when the user clicks. */
   preview?: GlobalPreview | null
 }) {
   const rows = progressRows(doc)
   const mode = surfaceMode ?? useUi.getState().solveSurfaceMode
   const setMode = onSurfaceMode ?? ((m: SurfaceMode) => useUi.getState().set({ solveSurfaceMode: m }))
+  const roomAngles = angles ?? useUi.getState().solveAngles
+  const setAngles = onAngles ?? ((a: RoomAngles) => useUi.getState().set({ solveAngles: a }))
   return (
     <>
       <PanelSection id="solve-progress" title="Progress" icon={<Ruler size={16} />} collapsible>
@@ -300,9 +328,10 @@ export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode, previe
           hasReferences={(doc.apartment?.references ?? []).length > 0}
           onChange={setMode}
         />
+        <RoomAnglesRow angles={roomAngles} onChange={setAngles} />
       </PanelSection>
 
-      <MeasureNext doc={doc} surfaceMode={mode} />
+      <MeasureNext doc={doc} surfaceMode={mode} angles={roomAngles} />
 
       <PanelSection id="solve-actions" title="Actions" icon={<Crosshair size={16} />}>
         <Actions doc={doc} initialPreview={preview} />
@@ -322,5 +351,6 @@ export function SolvePanel() {
   const doc = useDoc((s) => s.doc)
   const report = useUi((s) => s.solveReport)
   const surfaceMode = useUi((s) => s.solveSurfaceMode)
-  return <SolvePanelView doc={doc} report={report} surfaceMode={surfaceMode} />
+  const angles = useUi((s) => s.solveAngles)
+  return <SolvePanelView doc={doc} report={report} surfaceMode={surfaceMode} angles={angles} />
 }

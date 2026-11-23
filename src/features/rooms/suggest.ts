@@ -226,11 +226,13 @@ export function suggestMeasurements(doc: SolveDoc, opts: SuggestOptions = {}): S
   const candidates = buildCandidates(doc, model)
   if (!model.chol || !candidates.length || !limit) return { suggestions: NO_SUGGESTIONS, remeasure }
 
-  // W: 1 on the centre line and the thickness of a wall. A free corner is not a wall position.
+  // W: 1 on the centre line, the thickness and the angle of a wall (a wall direction is part of
+  // its position, and it is an unknown when Room angles = Free). A free corner is not.
   const matters = new Array<boolean>(model.x.length).fill(false)
   for (const g of model.groupVars) {
     matters[g.coord] = true
     matters[g.thick] = true
+    if (g.angle >= 0) matters[g.angle] = true
   }
   const weight = (v: number[]) => v.reduce((s, x, i) => (matters[i] ? s + x * x : s), 0)
 

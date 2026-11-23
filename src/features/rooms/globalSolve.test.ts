@@ -222,15 +222,14 @@ describe('solveGlobal surface references', () => {
     expect(solve('match', [ref({ surfaceM2: 12, source: 'carrez' })]).surfaces[0].label).toBe('Loi Carrez')
   })
 
-  it('skips a room reference whose room has a wall that is not horizontal or vertical', () => {
+  it('uses a room reference whose room has a wall at an angle (phase 4b)', () => {
     const slant: Room = room('SE', [[0, 0], [400, 0], [380, 300], [0, 300]])
     const s = solveGlobal(
       { rooms: [slant], measurements: meas({}), apartment: { references: dpe } },
       { surfaceMode: 'match' },
     )
-    expect(s.surfaces).toEqual([])
-    expect(s.residuals.filter((r) => r.kind === 'surface')).toEqual([])
-    expect(s.skipped).toEqual([{ label: 'DPE 2023', reason: 'room SE has a wall that is not horizontal or vertical' }])
+    expect(s.surfaces).toHaveLength(1)
+    expect(s.skipped).toEqual([])
   })
 
   it('skips a room reference that names a room the plan does not have', () => {

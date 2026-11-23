@@ -160,6 +160,12 @@ type UiState = {
   solveSnapThickness: boolean
   /** "Solve whole plan" and doc.apartment.references: off, guide (one-sided) or match. */
   solveSurfaceMode: 'off' | 'guide' | 'match'
+  /**
+   * "Solve whole plan": 'square' (default) keeps walls drawn horizontal or vertical at their drawn
+   * angle; 'free' lets every wall turn, so a measured diagonal can show a room that is out of square
+   * (docs/walls-plan.md phase 4b).
+   */
+  solveAngles: 'square' | 'free'
   /** Report of the last run of the Solve tab (whole plan, not per room). */
   solveReport: string | null
   layers: Layers
@@ -210,6 +216,7 @@ export const useUi = create<UiState>()((set) => ({
   solveKeepLocked: true,
   solveSnapThickness: false,
   solveSurfaceMode: 'off',
+  solveAngles: 'square',
   solveReport: null,
   layers: {
     background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,

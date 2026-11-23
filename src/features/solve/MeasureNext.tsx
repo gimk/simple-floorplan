@@ -11,7 +11,7 @@ import { EmptyHint, IconButton, INPUT_BARE, MUTED, PanelSection, inputGroup } fr
 import { setMeasurement } from '../measure/actions'
 import { sourceSigmaCm } from '../../model/measureSource'
 import { parseCm } from '../measure/logic'
-import type { SurfaceMode } from '../rooms/globalSolve'
+import type { RoomAngles, SurfaceMode } from '../rooms/globalSolve'
 import { scheduleAutoApply } from '../rooms/measureRules'
 import { suggestMeasurements, type Remeasure, type Suggestion } from '../rooms/suggest'
 
@@ -169,21 +169,25 @@ function RemeasureRow({ r }: { r: Remeasure }) {
  * Section "Measure next": the values to measure again, then the best measurements in order.
  * `surfaceMode` and `keepLocked` default to the Solve settings of the UI store.
  */
-export function MeasureNext({ doc, surfaceMode, keepLocked }: {
+export function MeasureNext({ doc, surfaceMode, keepLocked, angles }: {
   doc: PlanDoc
   surfaceMode?: SurfaceMode
   keepLocked?: boolean
+  /** Room angles of the solve ('Square' by default, or 'Free'). */
+  angles?: RoomAngles
 }) {
   const uiSurface = useUi((s) => s.solveSurfaceMode)
   const uiKeepLocked = useUi((s) => s.solveKeepLocked)
+  const uiAngles = useUi((s) => s.solveAngles)
   const mode = surfaceMode ?? uiSurface
   const keep = keepLocked ?? uiKeepLocked
+  const free = angles ?? uiAngles
   // The value will be typed with the source picked in Measuring Mode: it sets its accuracy.
   const source = useUi((s) => s.measureSource)
   // Same solve as "Solve whole plan", so the list follows every value and every setting.
   const { suggestions, remeasure } = useMemo(
-    () => suggestMeasurements(doc, { keepLocked: keep, surfaceMode: mode, sigmaCm: sourceSigmaCm(source) }),
-    [doc, keep, mode, source],
+    () => suggestMeasurements(doc, { keepLocked: keep, surfaceMode: mode, angles: free, sigmaCm: sourceSigmaCm(source) }),
+    [doc, keep, mode, free, source],
   )
   return (
     <PanelSection id="solve-measure-next" title="Measure next" icon={<Crosshair size={16} />} collapsible>

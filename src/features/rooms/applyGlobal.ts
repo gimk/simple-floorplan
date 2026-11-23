@@ -2,7 +2,7 @@
 import { planPrecision, roundTo } from '../../model/precision'
 import type { PlanDoc } from '../../model/types'
 import type { GraphConflict } from '../../model/wallGraph'
-import { solveGlobal, type GlobalSolved, type GlobalSurface, type SurfaceMode } from './globalSolve'
+import { solveGlobal, type GlobalSolved, type GlobalSurface, type OutOfSquare, type RoomAngles, type SurfaceMode } from './globalSolve'
 import { wallProps } from './walls'
 
 export type GlobalReport = {
@@ -18,6 +18,8 @@ export type GlobalReport = {
   surfaces: GlobalSurface[]
   /** Rooms that overlap or nearly touch (from the wall graph): the user should check them. */
   conflicts?: { roomCodes: string[]; kind: GraphConflict['kind']; detail: string }[]
+  /** Room corners that the fit did not keep at a right angle (Room angles = Free only). */
+  outOfSquare?: OutOfSquare[]
 }
 
 export type GlobalApplyOptions = {
@@ -28,6 +30,8 @@ export type GlobalApplyOptions = {
   surfaceSigmaPct?: number
   /** A wall that the data does not determine, but that moved from its prior, gets a usual thickness. Default false. */
   snapThickness?: boolean
+  /** 'square' (default) keeps walls drawn horizontal or vertical at their drawn angle; 'free' lets them turn. */
+  angles?: RoomAngles
 }
 
 /** Usual wall thicknesses (cm) for the snap option. */
@@ -59,6 +63,7 @@ export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc:
   const solved = solveGlobal(doc, {
     keepLocked: opts.keepLocked ?? true,
     surfaceMode: opts.surfaceMode ?? 'off',
+    ...(opts.angles !== undefined ? { angles: opts.angles } : {}),
     ...(opts.surfaceSigmaPct !== undefined ? { surfaceSigmaPct: opts.surfaceSigmaPct } : {}),
     references: doc.apartment?.references ?? [],
   })
@@ -76,6 +81,7 @@ export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc:
     ...(worst && Math.abs(worst.diffCm) > 1 ? { worst: { label: worst.label, diffCm: worst.diffCm } } : {}),
     surfaces: solved.surfaces,
     conflicts: pairConflicts(doc, solved.conflicts ?? []),
+    outOfSquare: solved.outOfSquare,
   }
   const ok = doc.rooms.every((r) => solved.rooms[r.id]?.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)))
   if (!ok || !fit.length) return { doc, report, solved, thicknessChanges: [] }
@@ -160,6 +166,7 @@ export function describeGlobal(r: GlobalReport): string {
     : 'no thickness found from the values (measure CODE-n-T at a door frame)')
   const lines = [parts.join('; ') + '.']
   for (const s of r.surfaces ?? []) lines.push(describeSurface(s))
+  for (const q of r.outOfSquare ?? []) lines.push(`Out of square: room ${q.roomCode} ${f(q.deg)} deg`)
   for (const c of r.conflicts ?? []) {
     const what = c.kind === 'same-side-overlap' ? 'overlap' : 'touch without sharing one wall'
     lines.push(`Check: rooms ${c.roomCodes.join(' and ')} ${what} (${c.detail})`)

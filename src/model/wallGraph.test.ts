@@ -180,6 +180,35 @@ describe('buildWallGraph', () => {
     expect(faces[0].to).toBeCloseTo(Math.hypot(400, 100), 2)
   })
 
+  it('makes one wall of the two drawn copies of a wall at an angle', () => {
+    // Two rooms side by side, the wall between them at about 10 degrees (docs/walls-plan.md 4b).
+    const A = room('A', [[0, 0], [304, 0], [375, 398], [0, 398]], 1)
+    const B = room('B', [[304, 0], [601, 0], [601, 398], [375, 398]], 2)
+    const g = buildWallGraph([A, B])
+    const shared = sharedWall(g, 'A', 'B')
+    expect(shared).toHaveLength(1)
+    const faces = facesOf(g, shared[0].id)
+    expect(faces.map((f) => f.roomId).sort()).toEqual(['A', 'B'])
+    expect(new Set(faces.map((f) => f.side)).size).toBe(2)
+    for (const f of faces) expect(f.to).toBeCloseTo(Math.hypot(71, 398), 1)
+    // The centre line is the mean of the two drawn lines: the same line here.
+    const byId = new Map(g.nodes.map((n) => [n.id, n]))
+    expect(byId.get(shared[0].a)!.x).toBeCloseTo(304, 6)
+    expect(byId.get(shared[0].b)!.x).toBeCloseTo(375, 6)
+  })
+
+  it('keeps two walls apart when they are more than 2 degrees from parallel', () => {
+    // The same two rooms, but B's left wall is 5 degrees away from A's right wall.
+    const A = room('A', [[0, 0], [304, 0], [375, 398], [0, 398]], 1)
+    const B = room('B', [[304, 0], [601, 0], [601, 398], [402, 398]], 2)
+    const g = buildWallGraph([A, B])
+    expect(sharedWall(g, 'A', 'B')).toEqual([])
+    // Every room keeps its 4 walls, and no pair is reported: the two walls are not candidates
+    // to be one wall, because they are not parallel.
+    expect(g.walls).toHaveLength(8)
+    expect(g.conflicts).toEqual([])
+  })
+
   it('makes one wall of two in-line walls of one room', () => {
     // A straight corner at (200, 0): walls 1 and 2 are on one line.
     const g = buildWallGraph([room('A', [[0, 0], [200, 0], [400, 0], [400, 400], [0, 400]])])
