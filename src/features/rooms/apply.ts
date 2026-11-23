@@ -2,7 +2,7 @@
 import { dist, roomWalls } from '../../model/geometry'
 import type { PlanDoc, Room, WallProps } from '../../model/types'
 import { moveVertices, movableLinked, type VMove } from './ops'
-import { hasVerifiedWalls, solveRoom, verifiedWalls, type SolveMode, type SolveResidual } from './solve'
+import { hasVerifiedWalls, measuredNeighbours, solveRoom, twinValues, verifiedWalls, type SolveMode, type SolveResidual } from './solve'
 import { wallProps } from './walls'
 
 export { hasVerifiedWalls, isRectilinear, isRightAngledQuad, solveRoom, verifiedWalls, type SolveMode, type SolveResidual, type Solved, type VerifiedWall } from './solve'
@@ -51,6 +51,8 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm
+  // A shared wall with no value here takes the value measured from the next room.
+  for (const t of twinValues(doc, room)) measured[t.index] = t.cm
   const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
   const solved = solveRoom(room, measured, diagonalCm)
 
@@ -87,6 +89,18 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
     }
   }
   return { doc: next, report }
+}
+
+/**
+ * Apply one room, then the rooms with their own values that share a measured wall with it:
+ * they read that value for their side of the wall, so both sides keep the same length.
+ */
+export function applyMeasuredNear(doc: PlanDoc, roomId: string): { doc: PlanDoc; reports: ApplyReport[] } {
+  const first = applyMeasured(doc, roomId)
+  const room = first.doc.rooms.find((r) => r.id === roomId)
+  if (!room || first.report.mode === 'none') return { doc: first.doc, reports: [first.report] }
+  const rest = applyMeasuredAll(first.doc, measuredNeighbours(first.doc, room).map((r) => r.id))
+  return { doc: rest.doc, reports: [first.report, ...rest.reports] }
 }
 
 /** Apply to several rooms (default: all). One resulting doc, so one undo step. */

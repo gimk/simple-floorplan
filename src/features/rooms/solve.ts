@@ -211,3 +211,39 @@ export function solveRoomLsq(room: Room, measured: (number | null)[], diagonalCm
 export function solveRoom(room: Room, measured: (number | null)[], diagonalCm?: number | null): Solved {
   return solveRoomLsq(room, measured, diagonalCm)
 }
+
+/** Corners closer than this (cm) make two walls of different rooms the same wall. */
+export const TWIN_TOL_CM = 3
+
+export type TwinValue = { index: number; cm: number; label: string }
+
+/**
+ * Walls of `room` with no value of their own whose twin (the same wall seen from the next room:
+ * both ends at the same place) has one. Both sides of a shared wall have the same length, so the
+ * solver uses the twin's value. These walls are not locked: the value belongs to the other room.
+ */
+export function twinValues(doc: Pick<PlanDoc, 'measurements' | 'rooms'>, room: Room): TwinValue[] {
+  const own = new Set(verifiedWalls(doc, room).map((v) => v.index))
+  const near = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y) <= TWIN_TOL_CM
+  const others = doc.rooms.filter((r) => r.id !== room.id).map((r) => ({ r, ver: verifiedWalls(doc, r) })).filter((x) => x.ver.length)
+  const out: TwinValue[] = []
+  const n = room.vertices.length
+  room.vertices.forEach((a, i) => {
+    if (own.has(i)) return
+    const b = room.vertices[(i + 1) % n]
+    for (const { r, ver } of others) {
+      const m = r.vertices.length
+      const hit = ver.find((v) => {
+        const c = r.vertices[v.index], d = r.vertices[(v.index + 1) % m]
+        return (near(a, c) && near(b, d)) || (near(a, d) && near(b, c))
+      })
+      if (hit) { out.push({ index: i, cm: hit.cm, label: hit.label }); return }
+    }
+  })
+  return out
+}
+
+/** Rooms with their own values that share a measured wall with `room` (they are solved after it). */
+export function measuredNeighbours(doc: Pick<PlanDoc, 'measurements' | 'rooms'>, room: Room): Room[] {
+  return doc.rooms.filter((r) => r.id !== room.id && hasVerifiedWalls(doc, r) && twinValues(doc, r).some((t) => t.label.startsWith(room.code + '-')))
+}

@@ -31,7 +31,7 @@ import type {
 } from '../model/types'
 import { defaultElement, overflows } from '../features/elements/geometry'
 import { wallProps } from '../features/rooms/walls'
-import { hasVerifiedWalls, solveRoom } from '../features/rooms/solve'
+import { hasVerifiedWalls, solveRoom, twinValues } from '../features/rooms/solve'
 import {
   ElementKindSchema,
   ElementVariantSchema,
@@ -694,6 +694,8 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm
+  // A shared wall with no value here takes the value measured from the next room.
+  for (const t of twinValues(doc, room)) measured[t.index] = t.cm
   const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
   const solved = solveRoom(room, measured, diagonalCm)
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })

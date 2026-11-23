@@ -7,7 +7,7 @@
 import { relabelMeasurements } from '../../model/relabel'
 import { addDocRule, nowIso, useDoc, type DocRule } from '../../model/store'
 import { toast } from '../toast'
-import { applyMeasured, describeReport } from './apply'
+import { applyMeasuredNear, describeReport } from './apply'
 
 const relabelRule: DocRule = (prev, next) => {
   const res = relabelMeasurements(prev, next, nowIso())
@@ -41,9 +41,9 @@ export function applyRoomNow(code: string): string | null {
   const doc = useDoc.getState().doc
   const room = doc.rooms.find((r) => r.code === code)
   if (!room) return null
-  const r = applyMeasured(doc, room.id)
+  const r = applyMeasuredNear(doc, room.id)
   if (r.doc !== doc) useDoc.getState().update(() => r.doc)
-  return r.report.mode === 'none' ? null : describeReport(r.report)
+  return r.reports[0].mode === 'none' ? null : describeReport(r.reports[0])
 }
 
 /**
