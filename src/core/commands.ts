@@ -50,7 +50,7 @@ import {
 } from './schema'
 import { findSharedWalls } from './queries'
 import { normalizeDoorHosts } from './doorHost'
-import { appendOld } from '../model/oldMeasurements'
+import { appendOld, renameOldCode } from '../model/oldMeasurements'
 import { relabelByTarget } from '../model/v2/relabelV2'
 import { v2SyncRule } from '../model/v2/syncRule'
 import { attachTargets } from '../model/v2/targets'
@@ -846,7 +846,10 @@ function parseDoc(rawDoc: PlanDoc): PlanDocV1 {
 function keepWallsAndValuesV2(before: PlanDocV1, out: ApplyResult): ApplyResult {
   const now = nowIso()
   let doc = v2SyncRule(before, out.doc) as PlanDocV1
-  const res = relabelByTarget(attachTargets(before), doc, now)
+  // The guard compares `doc` with the measurements of the RAW document: `attachTargets` gives a new
+  // object when a value has no target (a value from the server), and a relabel that does not run
+  // would keep the values under labels of faces that are gone (review finding 1).
+  const res = relabelByTarget(attachTargets(before), doc, now, { rawMeasurements: before.measurements })
   if (!res) return { ...out, doc: attachTargets(doc) as PlanDocV1 }
   const old = appendOld(doc.oldMeasurements ?? before.oldMeasurements, res.droppedValues, now)
   doc = attachTargets({ ...doc, measurements: res.measurements, ...(old ? { oldMeasurements: old } : {}) }) as PlanDocV1
@@ -953,6 +956,8 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
 
       let measurements = doc.measurements
       let roomNotes = doc.roomNotes
+      // The values of split or removed walls follow the new code too (review finding 8).
+      const oldMeasurements = nextCode === oldCode ? doc.oldMeasurements : renameOldCode(doc.oldMeasurements, oldCode, nextCode)
       if (nextCode !== oldCode) {
         measurements = {}
         for (const [k, m] of Object.entries(doc.measurements)) {
@@ -984,6 +989,7 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
         rooms: doc.rooms.map((r) => (r.id === room.id ? updated : r)),
         measurements,
         roomNotes,
+        ...(oldMeasurements ? { oldMeasurements } : {}),
       }
       return {
         doc: next,
@@ -1002,11 +1008,23 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
 
     case 'delete_room': {
       const room = resolveRoom(doc, cmd)
-      const removedElements = doc.elements.filter((e) => e.roomId === room.id).map((e) => e.id)
+      // A wall that another room also uses stays: a door on a shared wall is ONE element, so the
+      // element stays on its wall and the sync rule gives it the room on the other side
+      // (docs/walls-plan.md phase 7, review finding 8).
+      const keptWalls = new Set<string>()
+      if (doc.schemaVersion === 2) {
+        for (const r of doc.rooms) {
+          if (r.id === room.id) continue
+          for (const f of r.cycle ?? []) keptWalls.add(f.wallId)
+        }
+      }
+      const goes = (e: WallElement) =>
+        e.roomId === room.id && !(doc.schemaVersion === 2 && e.wallId !== undefined && keptWalls.has(e.wallId))
+      const removedElements = doc.elements.filter(goes).map((e) => e.id)
       const next: PlanDocV1 = {
         ...doc,
         rooms: doc.rooms.filter((r) => r.id !== room.id),
-        elements: doc.elements.filter((e) => e.roomId !== room.id),
+        elements: doc.elements.filter((e) => !goes(e)),
       }
       return {
         doc: next,
@@ -1282,6 +1300,9 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
         thicknessCm: nextThickness,
         ...(nextLocked !== undefined ? { locked: nextLocked } : {}),
         ...(nextStatus !== undefined ? { status: nextStatus } : {}),
+        // The line of the wall with the next walls is not a property that this command sets: it
+        // stays, or the write of the polygon into the graph would erase it (review finding 8).
+        ...(cur.align !== undefined ? { align: cur.align } : {}),
       }
       // A demolished structural wall is allowed but flagged: the plan is asking for a risk.
       if (nextStatus === 'demolish' && (nextType === 'bearing' || nextType === 'exterior')) {
@@ -1449,6 +1470,13 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
         offsetCm: cmd.offsetCm ?? cur.offsetCm,
         widthCm: cmd.widthCm ?? cur.widthCm,
         updatedAt: nowIso(),
+      }
+      if (cmd.wall) {
+        // The element moves to the wall of the view: its wall (`wallId`) and its distance from node
+        // a (`alongCm`) are calculated again from the new face, or the old wall of the element would
+        // put it back (docs/walls-plan.md phase 7, review finding 3).
+        delete updated.wallId
+        delete updated.alongCm
       }
       const optFields = ['variant', 'heightCm', 'sillCm', 'depthCm', 'hinge', 'swing', 'note'] as const
       for (const k of optFields) {

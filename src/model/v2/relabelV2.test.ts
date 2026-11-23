@@ -131,6 +131,77 @@ describe('relabelByTarget: a v2 document', () => {
     const after = plan([rect()], rectValues())
     expect(relabelByTarget(before, after, NOW)).toBeNull()
   })
+
+  it('relabels when a value of the previous document had no target (review finding 1)', () => {
+    // A value that came from the server without its target (or an old label): `attachTargets`
+    // gives it one, so its measurements object is NOT the object of the raw document.
+    const full = v2([rect()], rectValues())
+    const before: PlanDoc = { ...full, measurements: { ...full.measurements, 'R1-2': value('R1-2', 302) } }
+    expect(before.measurements['R1-2'].target).toBeUndefined()
+    const attached = attachTargets(before)
+    expect(attached).not.toBe(before)
+    expect(attached.measurements).not.toBe(before.measurements)
+
+    // A corner added before the measured walls: every label shifts by one.
+    const after = edited(before, [mk('R1', [[0, 0], [200, 0], [400, 0], [400, 300], [0, 300]], 1)])
+
+    // Without the raw measurements the rule stops on the reference check (the failure).
+    expect(relabelByTarget(attached, after, NOW)).toBeNull()
+    // With them, the value of wall 2 follows its wall to label 3.
+    const res = relabelByTarget(attached, after, NOW, { rawMeasurements: before.measurements })!
+    expect(res).not.toBeNull()
+    expect(res.measurements['R1-3']?.actualCm).toBe(302)
+    expect(res.measurements['R1-2']).toBeUndefined()
+    expectConservation(before, res)
+  })
+
+  it('a stretched wall gives its values the new span (review finding 9)', () => {
+    // A room whose first wall is 100 cm, measured.
+    const small = () => mk('R1', [[0, 0], [100, 0], [100, 300], [0, 300]], 1)
+    const before = v2([small()], { 'R1-1': value('R1-1', 101) })
+    expect(before.measurements['R1-1'].target).toMatchObject({ from: 0, to: 100 })
+
+    // The wall is stretched to 400 cm: the value stays on it, and its target takes the new span.
+    const stretched = edited(before, [mk('R1', [[0, 0], [400, 0], [400, 300], [0, 300]], 1)])
+    const afterStretch = relabelByTarget(before, stretched, NOW)!
+    expect(afterStretch).not.toBeNull()
+    expect(afterStretch.measurements['R1-1'].actualCm).toBe(101)
+    expect(afterStretch.measurements['R1-1'].target).toMatchObject({ from: 0, to: 400 })
+
+    // A corner added at 150 cm cuts the wall in two faces: [0, 150] and [150, 400].
+    const cutWith = (values: PlanDoc['measurements']) =>
+      edited({ ...stretched, measurements: values }, [mk('R1', [[0, 0], [150, 0], [400, 0], [400, 300], [0, 300]], 1)])
+
+    // With the stale span [0, 100] the value stays on the small first face (100 of 150 cm), which
+    // is only 100 cm of the 400 cm that it measured (the failure).
+    const staleValues: PlanDoc = { ...stretched, measurements: before.measurements }
+    const stale = relabelByTarget(staleValues, cutWith(before.measurements), NOW)!
+    expect(stale.measurements['R1-1']?.actualCm).toBe(101)
+
+    // With the span of the real face it follows the face that holds most of it.
+    const fixedValues: PlanDoc = { ...stretched, measurements: afterStretch.measurements }
+    const fixed = relabelByTarget(fixedValues, cutWith(afterStretch.measurements), NOW)!
+    expect(fixed.measurements['R1-1']).toBeUndefined()
+    expect(fixed.measurements['R1-2']?.actualCm).toBe(101)
+  })
+
+  it('a drag preview keeps a value whose face has no label, without a drop (review finding 7)', () => {
+    // The first wall is cut in two equal parts: the value has no label any more.
+    const before = v2([rect()], rectValues())
+    const after = edited(before, [mk('R1', [[0, 0], [200, 0], [400, 0], [400, 300], [0, 300]], 1)])
+
+    // A real edit: the value leaves the measurements (it goes to the old values).
+    const real = relabelByTarget(before, after, NOW)!
+    expect(real.dropped).toEqual(['R1-1'])
+
+    // A move of a drag: the value keeps its label, so nothing is lost while the drag continues.
+    const preview = relabelByTarget(before, after, NOW, { preview: true })!
+    expect(preview.dropped).toEqual([])
+    expect(preview.droppedValues).toEqual([])
+    expect(preview.measurements['R1-1']?.actualCm).toBe(401)
+    // The other values still follow their faces during the move.
+    expect(preview.measurements['R1-3']?.actualCm).toBe(302)
+  })
 })
 
 describe('THE ENTREE / COULOIR WALL (one wall, two sides cut differently)', () => {

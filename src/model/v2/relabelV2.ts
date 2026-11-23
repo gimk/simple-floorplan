@@ -9,11 +9,12 @@
 // follows its room when the room code changed, and it goes to the old values when the room is gone.
 //
 // `before` must be the document BEFORE the edit (best: `attachTargets(before)`, so every value that
-// can hold a target holds one). No store import.
+// can hold a target holds one); give `rawMeasurements: before.measurements` with it, because that
+// step makes a new measurements object. No store import.
 import { labelRoomCode } from '../survey'
 import type { MeasureTarget, Measurement, OldMeasurement, PlanDoc } from '../types'
 import type { DroppedValue } from '../relabel'
-import { isV2Doc, labelOfTarget } from './targets'
+import { isV2Doc, labelOfTarget, refreshTargetSpan } from './targets'
 
 export type RelabelTargetsResult = {
   measurements: PlanDoc['measurements']
@@ -21,6 +22,23 @@ export type RelabelTargetsResult = {
   dropped: string[]
   /** Every value that left `measurements`, with its room code and the reason. Never lost. */
   droppedValues: DroppedValue[]
+}
+
+export type RelabelTargetsOptions = {
+  /**
+   * `before.measurements` of the RAW document before the edit. `before` is best given with
+   * `attachTargets(before)`, which makes a new measurements object: the guard "the edit wrote the
+   * values itself" must compare `after` with the raw object, or every value without a target stops
+   * the relabel (review finding 1).
+   */
+  rawMeasurements?: PlanDoc['measurements']
+  /**
+   * A move of a long edit (a drag): a value whose face has no label keeps its old label, and no
+   * target is refreshed. Nothing leaves the plan and no toast fires before the end of the drag
+   * (measureRules.ts settle rule), so a corner that the user drags back gives no false "Measure
+   * again" (review finding 7).
+   */
+  preview?: boolean
 }
 
 /** Room code of the room that a target belongs to ('' for a value of a stored wall). */
@@ -43,10 +61,16 @@ function gapReason(after: PlanDoc, target: MeasureTarget): OldMeasurement['reaso
  * target of every value still gives its label, or the edit wrote the values itself).
  * `now` is the updatedAt of the values that moved, so the server's last-write-wins keeps them.
  */
-export function relabelByTarget(before: PlanDoc, after: PlanDoc, now: string): RelabelTargetsResult | null {
+export function relabelByTarget(
+  before: PlanDoc,
+  after: PlanDoc,
+  now: string,
+  opts: RelabelTargetsOptions = {},
+): RelabelTargetsResult | null {
   // An edit that already wrote the measurements (a value entered, a room code renamed) is not
-  // relabelled: same guard as the v1 rule.
-  if (after.measurements !== before.measurements) return null
+  // relabelled: same guard as the v1 rule. The reference is the RAW measurements of `before`,
+  // because `attachTargets(before)` gives a new object when a value had no target (finding 1).
+  if (after.measurements !== (opts.rawMeasurements ?? before.measurements)) return null
   if (!isV2Doc(after)) return null
   const m = before.measurements
   const labels = Object.keys(m)
@@ -76,8 +100,17 @@ export function relabelByTarget(before: PlanDoc, after: PlanDoc, now: string): R
     const v = m[label]
     if (v.target) {
       const nl = labelOfTarget(after, v.target)
-      if (nl) put(nl, v, nl !== label)
-      else drop(label, roomCodeOf(before, v.target) || labelRoomCode(label), gapReason(after, v.target), v)
+      if (!nl) {
+        // A move of a drag keeps the value under its old label: a value never leaves the plan in
+        // the middle of an edit, and no toast says "Measure again" for a face that comes back.
+        if (opts.preview) put(label, v, false)
+        else drop(label, roomCodeOf(before, v.target) || labelRoomCode(label), gapReason(after, v.target), v)
+        continue
+      }
+      // The span of the matched face can change (a wall stretched, a face cut): the target follows
+      // it, so the next edit is compared with the real span (review finding 9).
+      const target = opts.preview ? v.target : refreshTargetSpan(after, v.target)
+      put(nl, target === v.target ? v : { ...v, target }, nl !== label || target !== v.target)
       continue
     }
     // No target: the label stays, and follows the code of its room when the room was renamed.

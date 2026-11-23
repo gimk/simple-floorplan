@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Measurement, PlanDoc, Room, RoomFace } from '../types'
 import { convertToV2 } from './convert'
-import { attachTargets, labelOfTarget, targetOfLabel } from './targets'
+import { attachTargets, labelOfTarget, refreshTargetSpan, targetOfLabel } from './targets'
 
 /** A v1 document with these rooms. */
 const plan = (rooms: Room[], measurements: Record<string, Measurement> = {}): PlanDoc => ({
@@ -188,5 +188,35 @@ describe('attachTargets', () => {
     expect(attachTargets(once)).toBe(once)
     const v1 = plan(rooms(), { 'CO-1': value('CO-1', 196) })
     expect(attachTargets(v1)).toBe(v1)
+  })
+})
+
+describe('refreshTargetSpan (review finding 9)', () => {
+  it('takes the span of the matched face, and the same object when it did not change', () => {
+    const doc = v2()
+    const target = targetOfLabel(doc, 'EN-3')!
+    expect(target).toMatchObject({ from: 0, to: 600 })
+    // Nothing moved: the same target object.
+    expect(refreshTargetSpan(doc, target)).toBe(target)
+
+    // EN's face on the shared wall is stretched to 700 cm: the target follows the face.
+    const en = room(doc, 'EN')
+    const i = en.cycle!.findIndex((f) => f.wallId === target.wallId)
+    const face = en.cycle![i]
+    const cycle = [...en.cycle!]
+    cycle.splice(i, 1, { ...face, to: 700 })
+    const stretched: PlanDoc = { ...doc, rooms: doc.rooms.map((r) => (r.code === 'EN' ? { ...r, cycle } : r)) }
+    expect(refreshTargetSpan(stretched, target)).toMatchObject({ from: 0, to: 700 })
+  })
+
+  it('leaves a thickness, a diagonal and a value without a span as they are', () => {
+    const doc = v2()
+    const thickness = targetOfLabel(doc, 'CO-1-T')!
+    expect(refreshTargetSpan(doc, thickness)).toBe(thickness)
+    const diagonal = targetOfLabel(doc, 'CO-D')!
+    expect(refreshTargetSpan(doc, diagonal)).toBe(diagonal)
+    // A target without from/to measures the whole wall: it is not turned into a span.
+    const whole = { ...targetOfLabel(doc, 'EN-3')!, from: undefined, to: undefined }
+    expect(refreshTargetSpan(doc, whole)).toBe(whole)
   })
 })

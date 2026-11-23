@@ -10,12 +10,12 @@
 import { graphRule } from '../../model/graphRule'
 import { appendOld, REASON_WORDS, renameOldCode, renamedCodes } from '../../model/oldMeasurements'
 import { relabelMeasurements } from '../../model/relabel'
-import { relabelByTarget } from '../../model/v2/relabelV2'
+import { relabelByTarget, type RelabelTargetsResult } from '../../model/v2/relabelV2'
 import { v2SyncRule } from '../../model/v2/syncRule'
 import { attachTargets, isV2Doc } from '../../model/v2/targets'
 import { removedWallValues } from '../../model/wallValues'
-import { addDocRule, nowIso, useDoc, type DocRule } from '../../model/store'
-import type { PlanDoc } from '../../model/types'
+import { addDocRule, addSettleRule, isSilentEdit, nowIso, useDoc, type DocRule, type SettleRule } from '../../model/store'
+import type { OldMeasurement, PlanDoc } from '../../model/types'
 import { toast } from '../toast'
 import { applyMeasuredNear, describeReport } from './apply'
 
@@ -30,19 +30,8 @@ export function measureAgainText(dropped: { label: string; reason: 'wall-split' 
 /** In a v2 document every value that can hold a target gets one (a height cannot). */
 const withTargets = (on: boolean, d: PlanDoc) => (on ? attachTargets(d) : d)
 
-const relabelRule: DocRule = (prev, next) => {
-  const now = nowIso()
-  // A renamed room: its old values follow the new code.
-  let old = next.oldMeasurements ?? prev.oldMeasurements
-  for (const r of renamedCodes(prev, next)) old = renameOldCode(old, r.from, r.to)
-  // A v2 document relabels by stored target (stable wall ids); a v1 document by its corner ids.
-  const byTarget = isV2Doc(next)
-  const res = byTarget
-    ? relabelByTarget(attachTargets(prev), next, now)
-    : relabelMeasurements(prev, next, now)
-  if (!res) return withTargets(byTarget, old === next.oldMeasurements ? next : { ...next, oldMeasurements: old })
-  // The values that leave `measurements` are kept in `oldMeasurements`, never lost.
-  old = appendOld(old, res.droppedValues, now)
+/** Tell the user which walls to measure again (the values themselves are kept in the room card). */
+function showRelabelToasts(res: RelabelTargetsResult) {
   const again = res.droppedValues.filter((d) => res.dropped.includes(d.measurement.label) && d.reason !== 'room-deleted')
   if (again.length) {
     const text = measureAgainText(again.map((d) => ({ label: d.measurement.label, reason: d.reason })))
@@ -54,8 +43,57 @@ const relabelRule: DocRule = (prev, next) => {
     const code = gone[0].roomCode
     queueMicrotask(() => toast(`Room ${code} deleted. ${gone.length} measured value${gone.length > 1 ? 's are' : ' is'} kept under "Old values".`, { durationMs: 8000 }))
   }
-  const out: PlanDoc = { ...next, measurements: res.measurements, ...(old ? { oldMeasurements: old } : {}) }
+}
+
+/**
+ * The document with the result of a relabel: the values that left `measurements` go to the old
+ * values (never lost), and the user is told what to measure again when `toastIt` is true.
+ */
+function withRelabel(
+  next: PlanDoc,
+  old: OldMeasurement[] | undefined,
+  res: RelabelTargetsResult,
+  byTarget: boolean,
+  now: string,
+  toastIt: boolean,
+): PlanDoc {
+  const kept = appendOld(old, res.droppedValues, now)
+  if (toastIt) showRelabelToasts(res)
+  const out: PlanDoc = { ...next, measurements: res.measurements, ...(kept ? { oldMeasurements: kept } : {}) }
   return withTargets(byTarget, out)
+}
+
+const relabelRule: DocRule = (prev, next) => {
+  const now = nowIso()
+  // A renamed room: its old values follow the new code.
+  let old = next.oldMeasurements ?? prev.oldMeasurements
+  for (const r of renamedCodes(prev, next)) old = renameOldCode(old, r.from, r.to)
+  // A v2 document relabels by stored target (stable wall ids); a v1 document by its corner ids.
+  const byTarget = isV2Doc(next)
+  // A move of a drag (updateSilent) is a preview: the values follow their faces, but a value whose
+  // face has no label stays under its old label. Nothing leaves the plan and no toast fires until
+  // the drag ends (settleRelabel), so a corner dragged back gives no false "Measure again"
+  // (review finding 7).
+  const preview = byTarget && isSilentEdit()
+  const res = byTarget
+    ? relabelByTarget(attachTargets(prev), next, now, { rawMeasurements: prev.measurements, preview })
+    : relabelMeasurements(prev, next, now)
+  if (!res) return withTargets(byTarget, old === next.oldMeasurements ? next : { ...next, oldMeasurements: old })
+  return withRelabel(next, old, res, byTarget, now, !preview)
+}
+
+/**
+ * The end of an edit (every `update`, and the end of a drag): in a v2 document the values follow
+ * their target in the FINAL document, a value whose face is gone goes to the old values (one
+ * "Measure again" toast), and a wall that was stretched gives its values the new span. The drag
+ * preview above already moved the labels, so this step only finishes the job (findings 7 and 9).
+ */
+const settleRelabel: SettleRule = (doc) => {
+  if (!isV2Doc(doc)) return doc
+  const now = nowIso()
+  const res = relabelByTarget(doc, doc, now)
+  if (!res) return doc
+  return withRelabel(doc, doc.oldMeasurements, res, true, now, true)
 }
 
 /**
@@ -86,6 +124,9 @@ export function installMeasureRules() {
   addDocRule(relabelRule)
   // 4. The values of a wall that the new graph does not have any more (after the graph rule).
   addDocRule(wallValueRule)
+  // 5. The end of an edit: a drag preview that is over (a value whose face is gone, a wall that was
+  //    stretched). Runs after the rules, on every update and at the end of a drag.
+  addSettleRule(settleRelabel)
 }
 
 // ---------- auto-apply after a wall value is entered ----------

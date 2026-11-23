@@ -37,6 +37,12 @@ type DocState = {
 let silent = false
 
 /**
+ * True inside `updateSilent`: the change is a preview (a drag move), and the rules must not do what
+ * a finished edit does (a value that leaves the plan, a toast). The settle rules run at the end.
+ */
+export const isSilentEdit = () => silent
+
+/**
  * Rules run after every local edit (update / updateSilent), in the same step, so undo and sync
  * see one change. `prev` is the doc before the edit, `next` the edited doc. Registered by features
  * (see features/rooms/measureRules.ts), so this store does not import them.

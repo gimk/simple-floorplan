@@ -164,6 +164,22 @@ function sides(cycle: RoomFace[], side: number[], parts: Set<string>, wallId: st
   return [...onWall, ...mine.filter((i) => cycle[i].wallId !== wallId)]
 }
 
+/** The frames of the parts of a target wall: a face of a split part is read in the target frame. */
+function framesOfTarget(doc: PlanDoc, wallId: string): Map<string, { offset: number; scale: number }> {
+  return partFrames(doc, wallId, partnerWalls(doc, wallId))
+}
+
+/** Span of a face of the room cycle, in the frame of the target wall (the parts are in line). */
+function spanInFrame(
+  frames: Map<string, { offset: number; scale: number }>,
+  f: RoomFace,
+): { from: number; to: number } {
+  const fr = frames.get(f.wallId) ?? { offset: 0, scale: 1 }
+  const lo = Math.min(f.from, f.to)
+  const hi = Math.max(f.from, f.to)
+  return fr.scale > 0 ? { from: fr.offset + lo, to: fr.offset + hi } : { from: fr.offset - hi, to: fr.offset - lo }
+}
+
 /**
  * Index in `room.cycle` of the face that a target measures: the same span when it still exists,
  * else the face of the same side with the largest overlap (see the header of this file).
@@ -190,12 +206,7 @@ function faceIndexOf(doc: PlanDoc, room: Room, target: MeasureTarget): number | 
 
   // A target saved without from/to measures the whole wall.
   const frames = partFrames(doc, target.wallId, parts)
-  const frameSpan = (f: RoomFace): { from: number; to: number } => {
-    const fr = frames.get(f.wallId) ?? { offset: 0, scale: 1 }
-    const lo = Math.min(f.from, f.to)
-    const hi = Math.max(f.from, f.to)
-    return fr.scale > 0 ? { from: fr.offset + lo, to: fr.offset + hi } : { from: fr.offset - hi, to: fr.offset - lo }
-  }
+  const frameSpan = (f: RoomFace) => spanInFrame(frames, f)
   const wall = (doc.walls ?? []).find((w) => w.id === target.wallId)
   const length = wall ? wallLengthCm(doc.nodes ?? [], wall) : 0
   const from = target.from ?? 0
@@ -215,6 +226,26 @@ function faceIndexOf(doc: PlanDoc, room: Room, target: MeasureTarget): number | 
   // A cut in two equal parts (or more) is ambiguous: the value must be measured again.
   if (overlaps.some((x) => x.i !== best.i && Math.abs(x.o - best.o) <= SAME_SPAN_CM)) return undefined
   return best.i
+}
+
+/**
+ * The target with the span of the face it matches in `doc`. A wall that is stretched, and a face
+ * that a new junction cuts, move the span of the face: the stored target follows it, so the next
+ * edit compares the value with the span it really has (review finding 9). A target without from/to
+ * (the whole wall), a thickness, a diagonal, and a target that no face matches stay as they are.
+ * Same object when the span did not change.
+ */
+export function refreshTargetSpan(doc: PlanDoc, target: MeasureTarget): MeasureTarget {
+  if ((target.kind ?? 'face') !== 'face') return target
+  if (target.from === undefined || target.to === undefined) return target
+  const room = target.roomId === undefined ? undefined : doc.rooms.find((r) => r.id === target.roomId)
+  if (!room) return target
+  const i = faceIndexOf(doc, room, target)
+  const face = i === undefined ? undefined : room.cycle?.[i]
+  if (!face) return target
+  const span = spanInFrame(framesOfTarget(doc, target.wallId), face)
+  const near = (a: number, b: number) => Math.abs(a - b) <= SAME_SPAN_CM
+  return near(target.from, span.from) && near(target.to, span.to) ? target : { ...target, from: span.from, to: span.to }
 }
 
 /**

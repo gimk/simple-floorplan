@@ -591,13 +591,16 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
     }
     const prev = baseDoc?.measurements?.[label]
     // The .sfp text holds only the value: keep how the old value was measured (source) and what it
-    // measures on the wall graph (target, docs/walls-plan.md phase 5c).
+    // measures on the wall graph (target, docs/walls-plan.md phase 5c). An import into a v2 project
+    // builds the wall graph again (ensureV2 below), so a stored target would name a wall of the OLD
+    // graph: the target is calculated again from the label (review finding 2).
+    const keepTarget = baseDoc?.schemaVersion !== 2 && prev?.target !== undefined
     measurements[label] = {
       label,
       actualCm: value,
       updatedAt: prev?.updatedAt ?? now,
       ...(prev?.source ? { source: prev.source } : {}),
-      ...(prev?.target ? { target: prev.target } : {}),
+      ...(keepTarget ? { target: prev.target } : {}),
     }
   }
 
@@ -1102,5 +1105,18 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
   // An import into a v2 project keeps the walls as the source (docs/walls-plan.md phase 5c): the
   // rooms of the text go into the wall graph of the project, and the values get their target.
   // A v1 project, a new project and the CLI keep the v1 document of the text.
-  return baseDoc?.schemaVersion === 2 ? (ensureV2(doc, { now }) as PlanDocV1) : doc
+  if (baseDoc?.schemaVersion !== 2) return doc
+  // The fields that the .sfp text does not hold are kept as they are (review finding 2): an import
+  // must not delete the values of removed walls, the traced walls or the rounding precision.
+  const precisionCm = baseDoc.apartment?.precisionCm
+  const carried: PlanDocV1 = {
+    ...doc,
+    ...(baseDoc.oldMeasurements ? { oldMeasurements: baseDoc.oldMeasurements } : {}),
+    ...(baseDoc.traces ? { traces: baseDoc.traces } : {}),
+    ...(precisionCm !== undefined ? { apartment: { ...(doc.apartment ?? {}), precisionCm } } : {}),
+  }
+  const out = ensureV2(carried, { now }) as PlanDocV1
+  // `ensureV2` writes the report of ITS conversion: the report of the project (already shown once)
+  // is kept instead, so an import does not show the conversion report again.
+  return baseDoc.conversion ? { ...out, conversion: baseDoc.conversion } : out
 }
