@@ -123,7 +123,9 @@ describe('RoomsPanelView', () => {
     const vertex = render({ kind: 'vertex', roomId: 'r1', vertexId: 'v1' })
     // react-dom/server separates interpolated text nodes with <!-- -->, so match fragments.
     expect(vertex).toContain('aria-label="Vertex"')
-    expect(vertex).toContain('cm. Press Delete to remove it')
+    expect(vertex).toContain('id="vertex-x"')
+    expect(vertex).toContain('id="vertex-y"')
+    expect(vertex).toContain('Press Delete to remove it')
     expect(vertex).not.toContain('a room needs 3 vertices')
     const hole = render({ kind: 'room', roomId: 'r1' }, doc(), { roomId: 'r1', holeIndex: 0 })
     expect(hole).toContain('Hole selected. Drag its handles to reshape it.')

@@ -24,9 +24,9 @@ import {
   formatM2,
 } from '../../shell/panel'
 import { undoToast } from '../toast'
-import { applyMeasured, applyMeasuredAll, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
+import { applyMeasuredAll, applyMeasuredNear, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
 import { useActiveHole } from './holes'
-import { deleteRoom, perimeter, setRoomCode } from './ops'
+import { deleteRoom, moveHoleVertex, moveVertices, movableLinked, perimeter, setRoomCode, vertexLocked } from './ops'
 import { elementRows, wallElementRows, wallRows, WALL_TYPE_CHIP, type ElementRow } from './roomLists'
 import { wallProps } from './walls'
 
@@ -106,6 +106,13 @@ function setWallLength(roomId: string, startId: string, length: number) {
       return { ...r, vertices: r.vertices.map((v) => (v.id === w.end.id ? { ...v, ...end } : v)) }
     }),
   }))
+}
+
+/** Move a point to typed coordinates. Corners of other rooms at the same place follow, like a drag. */
+function setVertexPos(roomId: string, vertexId: string, hole: boolean, to: { x: number; y: number }) {
+  update((d) => hole
+    ? moveHoleVertex(d, roomId, vertexId, to)
+    : moveVertices(d, [{ roomId, vertexId, ...to }, ...movableLinked(d, roomId, vertexId).map((ref) => ({ ...ref, ...to }))]))
 }
 
 /** One clickable row of an element list: kind + variant, then wall label (room list) or
@@ -210,7 +217,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
 
   const runApply = (all: boolean) => {
     const current = useDoc.getState().doc
-    const r = all ? applyMeasuredAll(current) : (() => { const x = applyMeasured(current, room.id); return { doc: x.doc, reports: [x.report] } })()
+    const r = all ? applyMeasuredAll(current) : applyMeasuredNear(current, room.id)
     if (r.doc !== current) update(() => r.doc)
     const done = r.reports.filter((x) => x.mode !== 'none')
     setNote({ roomId: room.id, text: all
@@ -295,8 +302,23 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
 
       {vertex && (
         <PanelSection title={holeVertex ? 'Hole vertex' : 'Vertex'}>
+          {(['x', 'y'] as const).map((axis) => (
+            <FieldRow key={axis} label={axis.toUpperCase()} htmlFor={`vertex-${axis}`}>
+              <NumberField
+                id={`vertex-${axis}`}
+                name={`vertex-${axis}`}
+                unit="cm"
+                value={Math.round(vertex[axis] * 10) / 10}
+                disabled={!holeVertex && vertexLocked(room, vertex.id)}
+                onCommit={(v) => {
+                  if (v === null || !Number.isFinite(v)) return false
+                  setVertexPos(room.id, vertex.id, !!holeVertex, { x: vertex.x, y: vertex.y, [axis]: v })
+                }}
+              />
+            </FieldRow>
+          ))}
           <p className={MUTED}>
-            {holeVertex ? 'Hole vertex' : 'Vertex'} at {fmtCm(vertex.x)} / {fmtCm(vertex.y)} cm. Press Delete to remove it
+            Corners of other rooms at the same place move too{!holeVertex && vertexLocked(room, vertex.id) ? ' (locked: a wall at this corner is locked)' : ''}. Press Delete to remove it
             {holeVertex ? ((holeRing?.length ?? 0) <= 3 ? ' (a hole needs 3 vertices)' : '') : (room.vertices.length <= 3 ? ' (a room needs 3 vertices)' : '')}.
           </p>
         </PanelSection>
