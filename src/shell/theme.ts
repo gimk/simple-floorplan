@@ -1,38 +1,14 @@
-// Light / Dark / System theme. Stored in localStorage; the effective theme is set as
-// data-theme on <html> and Tailwind's dark: variant follows it (see index.css).
-export type ThemePref = 'light' | 'dark' | 'system'
+// The app is always dark: no theme toggle, the stored preference and the system setting are
+// ignored. The theme is set as data-theme on <html>, and Tailwind's dark: variant follows it
+// (see index.css).
 
-const KEY = 'simple-floorplan:theme'
-
-export function getThemePref(): ThemePref {
-  try {
-    const v = localStorage.getItem(KEY)
-    if (v === 'light' || v === 'dark' || v === 'system') return v
-  } catch { /* ignore */ }
-  return 'system'
-}
-
-export function effectiveIsDark(pref: ThemePref): boolean {
-  if (pref === 'dark') return true
-  if (pref === 'light') return false
-  return typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches
-}
-
-export function applyTheme(pref: ThemePref): void {
-  document.documentElement.dataset.theme = effectiveIsDark(pref) ? 'dark' : 'light'
-}
-
-export function setThemePref(pref: ThemePref): void {
-  try { localStorage.setItem(KEY, pref) } catch { /* ignore */ }
-  applyTheme(pref)
-}
-
-/** Call once at app startup (module scope of App) so the first paint already has the theme. */
-export function initTheme(): void {
+/** Set data-theme='dark' on <html>. */
+export function applyTheme(): void {
   if (typeof document === 'undefined') return
-  applyTheme(getThemePref())
-  if (typeof matchMedia !== 'undefined') {
-    const mq = matchMedia('(prefers-color-scheme: dark)')
-    mq.addEventListener('change', () => applyTheme(getThemePref()))
-  }
+  document.documentElement.dataset.theme = 'dark'
+}
+
+/** Call once at app startup (module scope of App and of ShareViewer) so the first paint is dark. */
+export function initTheme(): void {
+  applyTheme()
 }

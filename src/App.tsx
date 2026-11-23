@@ -25,7 +25,6 @@ import { ViewMenu } from './shell/view/ViewMenu'
 import { ToolHints } from './shell/ToolHints'
 import { SnapPopover } from './shell/SnapPopover'
 import { ShortcutsDialog } from './shell/ShortcutsDialog'
-import { ThemeToggle } from './shell/ThemeToggle'
 import { Sidebar } from './shell/sidebar/Sidebar'
 import { parentSelection } from './shell/sidebar/trail'
 import { installBridge } from './shell/bridge'
@@ -264,7 +263,6 @@ export default function App() {
           </button>
           <SnapPopover />
           <div className="hidden items-center gap-1 sm:flex">
-            <ThemeToggle />
             <button
               ref={shortcutsBtnRef}
               className={btn} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"
@@ -287,7 +285,6 @@ export default function App() {
             </button>
             {moreOpen && (
               <div className="absolute right-0 top-full z-50 mt-1 flex flex-col gap-1 rounded-lg border border-black/10 bg-white p-1.5 shadow-lg dark:border-white/15 dark:bg-[#1b2128]">
-                <ThemeToggle showLabel />
                 <button
                   type="button"
                   className={btn}

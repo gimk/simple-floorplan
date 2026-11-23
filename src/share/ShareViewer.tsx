@@ -16,7 +16,7 @@ import { ShareApiError, fetchDxf, fetchPlan, whoAmI, type SharePlan } from './sh
 import { problemForStatus, problemText, tokenFromHash, type ShareProblem } from './shareLink'
 import { DimensionsTable, NotesList, OpeningsTable, PlanImage, RoomsTable } from './ShareSections'
 
-// First paint in the saved light/dark theme, like App (src/shell/theme.ts is shared).
+// First paint is dark, like App (src/shell/theme.ts is shared and it always sets dark).
 initTheme()
 
 const CARD = `${PANEL_CARD} ${SECTION_PAD} bg-white dark:bg-[#1b2128]`

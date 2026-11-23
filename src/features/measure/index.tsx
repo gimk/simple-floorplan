@@ -10,9 +10,7 @@ import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from 
 import { inputId } from './actions'
 import { Overview } from './Overview'
 import { RoomCard } from './RoomCard'
-import { SourcePicker } from './SourcePicker'
 import { useWakeLock } from './useWakeLock'
-import { VoiceButton } from './VoiceButton'
 
 type Filter = 'all' | 'missing' | 'flagged'
 const FILTERS: { id: Filter; label: string }[] = [
@@ -37,10 +35,6 @@ export function MeasureMode() {
   const labels = allRequiredSurveyIds(doc).map((s) => s.label)
   const { done, total } = docProgress(doc)
   const hasRooms = allRooms.length > 0
-
-  // Source saved with every value typed below (tape / laser / plan). Memory only.
-  const measureSource = useUi((s) => s.measureSource)
-  const setMeasureSource = useUi((s) => s.setMeasureSource)
 
   const [filter, setFilter] = useState<Filter>('all')
   const [keepOn, setKeepOn] = useState(() => readFlag('measure-keep-screen-on', true))
@@ -170,8 +164,6 @@ export function MeasureMode() {
                 <span className="hidden truncate text-slate-500 sm:inline dark:text-slate-400">{status}</span>
               </span>
             )}
-            <SourcePicker value={measureSource} onChange={setMeasureSource} className="w-40 flex-none" />
-            <VoiceButton labels={labels} />
             <span role="group" aria-label="Filter rooms" className="flex flex-none overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
               {FILTERS.map((f) => (
                 <button
@@ -208,8 +200,7 @@ export function MeasureMode() {
         ) : (
           <>
             <p className="text-sm text-slate-600 dark:text-slate-300">
-              Type each length in cm. Tap a room on the plan to go to it. Tap a wall ID in a room drawing to fill it in. Every value saves when you type it,
-              with the source selected in the header (Tape, Laser or Plan).
+              Type each length in cm. Tap a room on the plan to go to it. Tap a wall ID in a room drawing to fill it in. Every value saves when you type it.
             </p>
             <Overview doc={doc} rooms={allRooms} />
             {rooms.length === 0 && (

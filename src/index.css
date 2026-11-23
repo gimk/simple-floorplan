@@ -1,17 +1,16 @@
 @import "tailwindcss";
 
-/* dark: follows the data-theme attribute set by src/shell/theme.ts (Light/Dark/System). */
+/* The app is always dark. src/shell/theme.ts sets data-theme="dark" on <html>, and the
+   dark: variant follows that attribute. */
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
-:root { color-scheme: light; }
-html[data-theme="dark"] { color-scheme: dark; }
+:root { color-scheme: dark; }
 html, body, #root { height: 100%; margin: 0; }
 
 /* No visible scroll bars anywhere: the panels still scroll with the wheel, the trackpad and touch. */
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { display: none; }
-body { font-family: system-ui, -apple-system, sans-serif; background: #f6f7f5; color: #1b2430; }
-html[data-theme="dark"] body { background: #12161b; color: #e8ecef; }
+body { font-family: system-ui, -apple-system, sans-serif; background: #12161b; color: #e8ecef; }
 
 @layer base {
   button:focus-visible,
