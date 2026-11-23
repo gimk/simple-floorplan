@@ -19,6 +19,7 @@
 import { innerWallLengths } from '../../model/geometry'
 import type { PlanDoc, Room, SurfaceReference, Vec, WallAlign } from '../../model/types'
 import { thicknessLabel } from '../../model/survey'
+import { sourceSigmaCm } from '../../model/measureSource'
 import { SOURCE_LABELS } from '../apartment/logic'
 import { wallProps } from './walls'
 
@@ -30,6 +31,10 @@ export type GlobalOptions = {
   pairTolCm?: number
   /** Two walls that continue each other, with reference lines drawn closer than this (cm), are kept in line (soft). */
   alignTolCm?: number
+  /**
+   * Scale of the accuracy of a measured wall or diagonal. The accuracy of one value is
+   * sourceSigmaCm(source) * measureSigmaCm: laser 0.3 cm, tape 1 cm, plan 3 cm with the default 1.
+   */
   measureSigmaCm?: number
   /** Accuracy of a measured thickness (CODE-n-T), cm. */
   thicknessMeasureSigmaCm?: number
@@ -101,7 +106,9 @@ export type WallGroup = {
   rooms: number
 }
 
-export type GlobalResidual = { label: string; kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align' | 'surface'; measuredCm: number; solvedCm: number; diffCm: number }
+export type GlobalResidual = { label: string; kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align' | 'surface'; measuredCm: number; solvedCm: number; diffCm: number
+  /** Accuracy of the row (cm, or cm² for a surface). */
+  sigmaCm: number }
 
 /** One surface reference, before and after the fit (m²). */
 export type GlobalSurface = {
@@ -473,7 +480,7 @@ function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, 
       const locked = o.keepLocked && !!wallProps(r, r.vertices[i].id).locked
       if (!hasValue && !locked) return
       const m = hasValue ? measuredCm! : innerLengths[ri][i]
-      const sigma = locked ? o.lockedSigmaCm : o.measureSigmaCm
+      const sigma = locked ? o.lockedSigmaCm : sourceSigmaCm(doc.measurements[lab]?.source) * o.measureSigmaCm
       const kind: GlobalResidual['kind'] = hasValue ? 'wall' : 'locked'
       const l = wallLenLin(geom, ri, i)
       if (!l) {
@@ -488,7 +495,7 @@ function buildModel(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, 
       const [i, j] = r.diagonal
       const dl = diagonalLins(geom, ri, i, j)
       if (dl) {
-        rows.push({ kind: 'dist', ...dl, target: d, sigma: o.measureSigmaCm })
+        rows.push({ kind: 'dist', ...dl, target: d, sigma: sourceSigmaCm(doc.measurements[`${r.code}-D`]?.source) * o.measureSigmaCm })
         meta.push({ label: `${r.code}-D`, kind: 'diagonal' })
       }
     }
@@ -653,7 +660,7 @@ function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; i
       : row.kind === 'area'
         ? areaValue(row.polys, x)
         : Math.hypot(evalLin(row.bx, x) - evalLin(row.ax, x), evalLin(row.by, x) - evalLin(row.ay, x))
-    return { label: meta[k].label, kind: meta[k].kind, measuredCm: row.target, solvedCm: solved, diffCm: row.target - solved }
+    return { label: meta[k].label, kind: meta[k].kind, measuredCm: row.target, solvedCm: solved, diffCm: row.target - solved, sigmaCm: row.sigma }
   })
   // Surface rows are in cm² and they are weak: they stay out of rmsCm.
   const fit = residuals.filter((r) => r.kind === 'wall' || r.kind === 'diagonal')

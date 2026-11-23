@@ -9,6 +9,7 @@ import { nowIso, useDoc, useUi } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
 import { EmptyHint, IconButton, INPUT_BARE, MUTED, PanelSection, inputGroup } from '../../shell/panel'
 import { setMeasurement } from '../measure/actions'
+import { sourceSigmaCm } from '../../model/measureSource'
 import { parseCm } from '../measure/logic'
 import type { SurfaceMode } from '../rooms/globalSolve'
 import { scheduleAutoApply } from '../rooms/measureRules'
@@ -114,10 +115,12 @@ export function MeasureNext({ doc, surfaceMode, keepLocked }: {
   const uiKeepLocked = useUi((s) => s.solveKeepLocked)
   const mode = surfaceMode ?? uiSurface
   const keep = keepLocked ?? uiKeepLocked
+  // The value will be typed with the source picked in Measuring Mode: it sets its accuracy.
+  const source = useUi((s) => s.measureSource)
   // Same solve as "Solve whole plan", so the list follows every value and every setting.
   const { suggestions, remeasure } = useMemo(
-    () => suggestMeasurements(doc, { keepLocked: keep, surfaceMode: mode }),
-    [doc, keep, mode],
+    () => suggestMeasurements(doc, { keepLocked: keep, surfaceMode: mode, sigmaCm: sourceSigmaCm(source) }),
+    [doc, keep, mode, source],
   )
   return (
     <PanelSection id="solve-measure-next" title="Measure next" icon={<Crosshair size={16} />} collapsible>

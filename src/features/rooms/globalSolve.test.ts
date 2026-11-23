@@ -307,3 +307,35 @@ describe('applyGlobal surface references', () => {
     expect(describeGlobal(report).split('\n')).toHaveLength(1)
   })
 })
+
+describe('solveGlobal measurement sources', () => {
+  // One room, two values for its width that do not agree: wall 1 = 300, wall 3 = 306.
+  const one = [room('S', [[0, 0], [310, 0], [310, 210], [0, 210]])]
+  const width = (src1?: Measurement['source'], src3?: Measurement['source']) => {
+    const m = meas({ 'S-1': 300, 'S-2': 200, 'S-3': 306, 'S-4': 200 })
+    if (src1) m['S-1'] = { ...m['S-1'], source: src1 }
+    if (src3) m['S-3'] = { ...m['S-3'], source: src3 }
+    const s = solveGlobal({ rooms: one, measurements: m })
+    return s.residuals.find((r) => r.label === 'S-1')!.solvedCm
+  }
+
+  it('gives the same weight to two values with the same source', () => {
+    expect(width()).toBeCloseTo(303, 0)
+  })
+
+  it('makes a laser value win over a tape value', () => {
+    // Weights 1 / 0.3² against 1 / 1²: the mean moves near the laser value.
+    expect(width('laser')).toBeLessThan(301)
+  })
+
+  it('makes a plan value weaker than a tape value', () => {
+    expect(width('plan')).toBeGreaterThan(305)
+  })
+
+  it('gives each residual the accuracy of its source', () => {
+    const m = { ...meas({ 'S-1': 300 }), 'S-2': { label: 'S-2', actualCm: 200, updatedAt: '', source: 'plan' as const } }
+    const s = solveGlobal({ rooms: one, measurements: m })
+    expect(s.residuals.find((r) => r.label === 'S-1')!.sigmaCm).toBe(1)
+    expect(s.residuals.find((r) => r.label === 'S-2')!.sigmaCm).toBe(3)
+  })
+})
