@@ -46,7 +46,11 @@ export function NumberField({
   className,
   inputClassName,
 }: NumberFieldProps) {
-  const [draft, setDraft] = useState<string | null>(null)
+  const [draft, setDraftState] = useState<string | null>(null)
+  // Same draft, readable at once: Enter commits and then blurs, and the blur handler still
+  // has the old `draft` in its closure. Without this it would commit a second time.
+  const draftRef = useRef<string | null>(null)
+  const setDraft = (d: string | null) => { draftRef.current = d; setDraftState(d) }
   // Rejected text + its message. The message is derived from the current text, so it
   // disappears as soon as the user edits or the store value changes: no effect needed.
   const [rejected, setRejected] = useState<{ text: string; message: string } | null>(null)
@@ -68,6 +72,7 @@ export function NumberField({
 
   /** Returns true when the draft was accepted (or there was nothing to commit). */
   const commit = (): boolean => {
+    const draft = draftRef.current
     if (draft === null) return true
     const trimmed = draft.trim()
     if (trimmed === '') {
