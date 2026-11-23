@@ -1,5 +1,5 @@
 // Pure logic for Measuring Mode. No React here, so it is easy to test.
-import { dist, lerp, pointInPolygon, roomWalls } from '../../model/geometry'
+import { lerp, roomWalls } from '../../model/geometry'
 import type { Wall } from '../../model/geometry'
 import { allSurveyIds, surveyIds } from '../../model/survey'
 import type { ElementKind, PlanDoc, Room, Vec, WallElement } from '../../model/types'
@@ -157,21 +157,6 @@ export function adjacentItems(doc: PlanDoc, room: Room) {
     }
   }
   return out
-}
-
-/** A point inside the polygon, near its centroid, for placing a label. */
-export function labelPoint(pts: Vec[], centre: Vec): Vec {
-  if (pointInPolygon(centre, pts)) return centre
-  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y)
-  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys)
-  let best = centre, bd = Infinity
-  for (let i = 0; i <= 20; i++) for (let j = 0; j <= 20; j++) {
-    const p = { x: x0 + ((x1 - x0) * i) / 20, y: y0 + ((y1 - y0) * j) / 20 }
-    if (!pointInPolygon(p, pts)) continue
-    const d = dist(p, centre)
-    if (d < bd) { bd = d; best = p }
-  }
-  return best
 }
 
 export const KIND_LABEL: Record<ElementKind, string> = {

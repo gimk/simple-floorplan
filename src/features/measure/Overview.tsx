@@ -1,7 +1,7 @@
-import { centroid } from '../../model/geometry'
+import { labelPoint } from '../../model/geometry'
 import type { PlanDoc, Room } from '../../model/types'
 import { goRoom } from './actions'
-import { labelPoint, roomProgress } from './logic'
+import { roomProgress } from './logic'
 
 const FILL = {
   none: 'fill-slate-100 dark:fill-slate-800',
@@ -26,7 +26,7 @@ export function Overview({ doc, rooms }: { doc: PlanDoc; rooms: Room[] }) {
         {rooms.map((r) => {
           if (r.vertices.length < 3) return null
           const { done, total, state: st } = roomProgress(doc, r)
-          const lp = labelPoint(r.vertices, centroid(r.vertices))
+          const lp = labelPoint([r.vertices, ...r.holes])
           return (
             <g
               key={r.id} onClick={() => goRoom(r.code)}

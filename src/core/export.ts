@@ -1,6 +1,6 @@
 // Pure headless SVG renderer for PlanDoc (zero React, zero DOM).
 // Safe for Cloudflare Workers, Node, CLI, and browsers. World units are cm.
-import { centroid, fmtCm, roomAreaM2, roomWalls, wallByStart } from '../model/geometry'
+import { fmtCm, labelPoint, roomAreaM2, roomWalls, wallByStart } from '../model/geometry'
 import type { ElementKind, ElementVariant, PlanDoc, Room, Vec, WallType } from '../model/types'
 import { elementFrame, wallThickness } from '../features/elements/geometry'
 
@@ -362,7 +362,7 @@ export function renderPlanSvg(doc: PlanDoc, opts: RenderSvgOptions = {}): Render
 
   // Room labels
   for (const r of doc.rooms) {
-    const c = centroid(r.vertices)
+    const c = labelPoint([r.vertices, ...(r.holes ?? [])])
     parts.push(
       `<text x="${num(c.x)}" y="${num(c.y)}" text-anchor="middle" fill="#0f172a" font-size="${num(fs)}"><tspan x="${num(c.x)}" font-weight="700">${esc(r.name)}</tspan><tspan x="${num(c.x)}" dy="${num(fs * 1.15)}" font-size="${num(fs * 0.85)}" fill="#475569">${roomAreaM2(r).toFixed(2).replace('.', ',')} m²</tspan></text>`,
     )

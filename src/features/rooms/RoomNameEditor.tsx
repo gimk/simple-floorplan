@@ -1,7 +1,7 @@
 // Inline room name editor: an HTML <input> inside a <foreignObject>, placed where the
 // room name is drawn. Enter or blur commits (one undo step), Escape cancels.
 import { useEffect, useRef, useState } from 'react'
-import { centroid } from '../../model/geometry'
+import { labelPoint } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { Room } from '../../model/types'
 import type { Vp } from './interaction'
@@ -31,7 +31,7 @@ export function RoomNameEditor({ room, vp, onClose }: { room: Room; vp: Vp; onCl
     onClose()
   }
 
-  const c = centroid(room.vertices)
+  const c = labelPoint([room.vertices, ...room.holes])
   const w = vp.px(Math.min(280, Math.max(90, room.name.length * 7 + 24)))
   const h = vp.px(26)
 

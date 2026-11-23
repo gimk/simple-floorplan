@@ -1,7 +1,7 @@
 // Builds a CLEAN standalone SVG of the plan (no editor chrome). Units in the viewBox are cm.
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { centroid, fmtCm, roomAreaM2, roomWalls, wallByStart } from '../../model/geometry'
+import { fmtCm, labelPoint, roomAreaM2, roomWalls, wallByStart } from '../../model/geometry'
 import type { PlanDoc, Room, Vec, WallType } from '../../model/types'
 import { elementFrame, wallThickness } from '../elements/geometry'
 import { COLORS, ElementSymbol } from '../elements/Symbol'
@@ -167,7 +167,7 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
 
   // ----- room labels -----
   for (const r of doc.rooms) {
-    const c = centroid(r.vertices)
+    const c = labelPoint([r.vertices, ...(r.holes ?? [])])
     parts.push(`<text x="${num(c.x)}" y="${num(c.y)}" text-anchor="middle" fill="#0f172a" font-size="${num(fs)}"><tspan x="${num(c.x)}" font-weight="700">${esc(r.name)}</tspan><tspan x="${num(c.x)}" dy="${num(fs * 1.15)}" font-size="${num(fs * 0.85)}" fill="#475569">${roomAreaM2(r).toFixed(2).replace('.', ',')} m²</tspan></text>`)
   }
 

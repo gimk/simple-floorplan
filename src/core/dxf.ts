@@ -8,7 +8,7 @@
 // R12 has no LWPOLYLINE: room outlines are POLYLINE (closed, flag 70=1) + VERTEX
 // + SEQEND; walls are pairs of LINE entities (both faces); door swings are ARC + leaf
 // LINE; room labels and wall dimensions are TEXT.
-import { centroid, roomAreaM2, roomWalls, type Wall } from '../model/geometry'
+import { labelPoint, roomAreaM2, roomWalls, type Wall } from '../model/geometry'
 import type { ElementKind, PlanDoc, Room, Vec, WallElement } from '../model/types'
 import { elementFrame, wallThickness } from '../features/elements/geometry'
 
@@ -259,8 +259,8 @@ export function planToDxf(doc: PlanDoc, opts: DxfOptions = {}): string {
     for (const wall of walls) emitWall(e, room, wall)
     if (withDims) walls.forEach((wall, i) => emitDimension(e, room, wall, i))
 
-    // Room label at centroid.
-    const c = centroid(room.vertices)
+    // Room label inside the room, at its widest place.
+    const c = labelPoint([room.vertices, ...(room.holes ?? [])])
     text(e, 'TEXT', c, 15, `${room.code} ${room.name} ${String(Math.round(roomAreaM2(room) * 100) / 100)} m2`)
   }
 

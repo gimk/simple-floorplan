@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
-import { centroid, fmtCm, roomWalls } from '../../model/geometry'
+import { fmtCm, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { Room, Vec } from '../../model/types'
@@ -52,6 +52,16 @@ export function RoomsLayer() {
   const gapPath = useMemo(() => multiPath(gapAreas(rooms)), [rooms])
   const vp = useViewport()
   const { px, zoom } = vp
+  // Room name positions: where the whole text box fits inside the room (not the centroid, which
+  // can be outside an L shape or next to a corridor wall); turned in narrow corridors.
+  // Zoom is rounded to steps of ~19 % so a wheel zoom does not recompute every frame.
+  const labelZoom = 2 ** (Math.round(Math.log2(zoom) * 4) / 4)
+  const labelAt = useMemo(() => new Map(display.map((d) => {
+    const nameW = d.name.length * 7.8, areaW = 8 * 6.8
+    // The margin keeps the text clear of the wall length labels along the inside of walls, when there is room.
+    const w = (Math.max(nameW, areaW) + 10) / labelZoom, h = 34 / labelZoom
+    return [d.id, labelPlacement(d.pieces[0], w, h, 12 / labelZoom)]
+  })), [display, labelZoom])
   const interactive = tool === 'select'
   // Outlined rooms: the room of the selected item, or every room of a room group.
   const selRoomIds = new Set(items.flatMap((s) => (s.kind === 'room' || (s.kind !== 'element' && s === selection) ? [s.roomId] : [])))
@@ -78,9 +88,12 @@ export function RoomsLayer() {
     const xs = ring.map((v) => v.x), ys = ring.map((v) => v.y)
     const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
     if (small) return null
-    const c = centroid(ring)
+    const place = labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
+    // Baseline of the name a bit above the point, so the two lines are centred on it.
+    const c = { x: place.p.x, y: place.p.y - px(4) }
     return (
-      <text key={d.id} x={c.x} y={c.y} textAnchor="middle" pointerEvents={interactive ? 'auto' : 'none'}
+      <text key={d.id} x={c.x} y={c.y} textAnchor="middle" data-label-vertical={place.vertical ? '' : undefined}
+        transform={place.vertical ? `rotate(-90 ${place.p.x} ${place.p.y})` : undefined} pointerEvents={interactive ? 'auto' : 'none'}
         className="fill-slate-800 dark:fill-slate-100" fontSize={px(14)}>
         <tspan x={c.x} fontWeight={600} style={interactive ? { cursor: 'text' } : undefined}
           onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : undefined}
