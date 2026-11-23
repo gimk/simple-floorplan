@@ -13,9 +13,10 @@
 //
 // Pure: no store, no side effect. The panel writes the value the user types.
 import type { PlanDoc } from '../../model/types'
+import { sourceSigmaCm } from '../../model/measureSource'
 import { thicknessIds } from '../../model/survey'
 import {
-  covarianceTimes, solveGlobalWithModel,
+  covarianceTimes, GLOBAL_SOLVE_DEFAULTS, solveGlobalWithModel,
   type CandidateQuantity, type GlobalOptions, type Grad, type SolveModel,
 } from './globalSolve'
 
@@ -182,9 +183,12 @@ export function suggestMeasurements(
   const model = solveGlobalWithModel(doc, opts)
 
   // Measured values that the fit cannot explain: the outlier rows of the solve (more than 3 times
-  // the accuracy of their source).
+  // the accuracy of their SOURCE). A locked wall has a very small row sigma (it holds the plan), so
+  // the row sigma is not used here: a 0.3 cm difference on a locked wall is not an error.
+  const scale = opts.measureSigmaCm ?? GLOBAL_SOLVE_DEFAULTS.measureSigmaCm
+  const sourceSigma = (label: string) => sourceSigmaCm(doc.measurements[label]?.source) * scale
   const remeasure: Remeasure[] = model.solved.residuals
-    .filter((r) => (r.kind === 'wall' || r.kind === 'diagonal') && Math.abs(r.diffCm) > 3 * r.sigmaCm)
+    .filter((r) => (r.kind === 'wall' || r.kind === 'diagonal') && Math.abs(r.diffCm) > 3 * sourceSigma(r.label))
     .map((r) => ({ label: r.label, measuredCm: r.measuredCm, solvedCm: r.solvedCm, diffCm: r.diffCm }))
     .sort((a, b) => Math.abs(b.diffCm) - Math.abs(a.diffCm) || a.label.localeCompare(b.label))
 

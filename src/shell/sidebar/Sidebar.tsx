@@ -69,9 +69,10 @@ export function Sidebar() {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Sticky bar: negative margins and matching background cover the aside padding,
+      {/* Sticky bar: negative margins and matching background cover the aside padding, and
+          -top-3 makes it stick at the top edge of the panel (top-0 sticks under the 12 px padding),
           so the scrolling sections pass behind it instead of showing through. */}
-      <div className="sticky top-0 z-10 -mx-3 -mt-3 border-b border-black/10 bg-white px-3 pb-2 pt-3 dark:border-white/10 dark:bg-[#1b2128]">
+      <div className="sticky -top-3 z-10 -mx-3 -mt-3 border-b border-black/10 bg-white px-3 pb-2 pt-3 dark:border-white/10 dark:bg-[#1b2128]">
         <div
           role="tablist"
           aria-label="Sidebar view"

@@ -172,3 +172,18 @@ describe('suggestMeasurements options', () => {
   })
 })
 
+
+describe('suggestMeasurements remeasure on locked walls', () => {
+  it('does not flag a small difference on a locked wall (the lock sigma is not the source sigma)', () => {
+    const r: Room = {
+      id: 'K', code: 'K', name: 'K', holes: [], walkOrder: 1,
+      vertices: [[0, 0], [310, 0], [310, 210], [0, 210]].map(([x, y], i) => ({ id: `Kv${i}`, x, y })),
+      walls: {},
+    }
+    r.walls = Object.fromEntries(r.vertices.map((v) => [v.id, { type: 'partition' as const, thicknessCm: 10, locked: true }]))
+    const m = (label: string, actualCm: number) => [label, { label, actualCm, updatedAt: '' }] as const
+    // Inside lengths are 300 x 200; the values differ by 0.3 cm.
+    const measurements = Object.fromEntries([m('K-1', 300.3), m('K-2', 200), m('K-3', 300), m('K-4', 200)])
+    expect(suggestMeasurements({ rooms: [r], measurements }).remeasure).toEqual([])
+  })
+})

@@ -13,7 +13,7 @@ import { sourceSigmaCm } from '../../model/measureSource'
 import { parseCm } from '../measure/logic'
 import type { SurfaceMode } from '../rooms/globalSolve'
 import { scheduleAutoApply } from '../rooms/measureRules'
-import { suggestMeasurements, type Suggestion } from '../rooms/suggest'
+import { suggestMeasurements, type Remeasure, type Suggestion } from '../rooms/suggest'
 
 /** Select the wall (or the room, for a diagonal) on the plan. */
 function showOnPlan(s: Suggestion) {
@@ -84,12 +84,18 @@ function ValueField({ label, onSave }: { label: string; onSave: (cm: number) => 
   )
 }
 
+/**
+ * One line, on two rows so it fits the narrow sidebar: button, label, uncertainty and field on
+ * the first row; the reason under the label.
+ */
 function SuggestionRow({ s }: { s: Suggestion }) {
   return (
-    <li data-measure-suggestion={s.label} className="flex min-h-9 items-center gap-2 py-0.5 pointer-coarse:min-h-11">
+    <li data-measure-suggestion={s.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11">
       <IconButton label="Show on plan" icon={<Crosshair size={16} />} onClick={() => showOnPlan(s)} />
-      <span className="w-16 shrink-0 font-mono text-xs">{s.label}</span>
-      <span className={`min-w-0 flex-1 truncate ${MUTED}`} data-measure-reason={s.label}>{s.reason}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="font-mono text-xs">{s.label}</span>
+        <span className={`text-[11px] leading-tight ${MUTED}`} data-measure-reason={s.label}>{s.reason}</span>
+      </span>
       <span
         data-measure-sd={s.label}
         title={`Uncertainty of this value now: ±${fmtCm(s.nowSdCm)} cm. Plan says ${fmtCm(s.plannedCm)} cm.`}
@@ -98,6 +104,22 @@ function SuggestionRow({ s }: { s: Suggestion }) {
         ±{fmtCm(s.nowSdCm)}<span className={`ml-0.5 text-[11px] ${MUTED}`}>cm</span>
       </span>
       <ValueField label={s.label} onSave={(cm) => saveValue(s, cm)} />
+    </li>
+  )
+}
+
+/** A measured value that does not fit the plan: the old value, the plan value and a field for the new one. */
+function RemeasureRow({ r }: { r: Remeasure }) {
+  return (
+    <li data-measure-again={r.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11">
+      <span className="flex min-w-0 flex-1 flex-col text-xs text-amber-700 dark:text-amber-300">
+        <span>Measure again: <span className="font-mono">{r.label}</span></span>
+        <span className="text-[11px] leading-tight">measured {fmtCm(r.measuredCm)}, plan says {fmtCm(r.solvedCm)}</span>
+      </span>
+      <ValueField
+        label={r.label}
+        onSave={(cm) => setMeasurement(r.label, cm, useUi.getState().measureSource)}
+      />
     </li>
   )
 }
@@ -125,12 +147,8 @@ export function MeasureNext({ doc, surfaceMode, keepLocked }: {
   return (
     <PanelSection id="solve-measure-next" title="Measure next" icon={<Crosshair size={16} />} collapsible>
       {remeasure.length > 0 && (
-        <ul data-measure-remeasure className="flex flex-col gap-1">
-          {remeasure.map((r) => (
-            <li key={r.label} className="text-xs text-amber-700 dark:text-amber-300">
-              Measure again: <span className="font-mono">{r.label}</span> measured {fmtCm(r.measuredCm)}, plan says {fmtCm(r.solvedCm)}
-            </li>
-          ))}
+        <ul data-measure-remeasure className="flex flex-col">
+          {remeasure.map((r) => <RemeasureRow key={r.label} r={r} />)}
         </ul>
       )}
       {suggestions.length > 0 && (
