@@ -135,9 +135,11 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
    the graph; phase 3 keeps the rows.
 2b. **Suggested measurements** on the current solver (section above), after phase 2 because it uses
    the same file. Phase 4 keeps it and adds centre and outside face candidates.
-3. **Measurement targets and sources**: optional `target` and `source` on `Measurement` (types,
-   schema, server). Resolver from old labels to targets using the derived graph. Source in the
-   measuring UI. Solver weights from the source.
+3. **Measurement sources and targets**. 3a: optional `source` on `Measurement` (types, schema, D1
+   column, API, MCP, CLI, sync), a source picker in Measuring Mode, and `sourceSigmaCm(source)`.
+   3b (after 2b): solver weights from the source. The TARGET is not stored yet: the derived wall ids
+   change when a room joins a wall, so `measurementTarget(graph, rooms, label)` resolves it from the
+   label at each call. Stored targets come with stable ids in phase 5.
 4. **Solver on the graph**: `globalSolve` reads `buildWallGraph`; remove the pairing guess; add centre
    and outside face rows; outliers; snap thicknesses; preview.
 5. **Stored graph (schema v2)**: `doc.nodes`, `doc.walls`, rooms as face cycles. Migration from v1 with
