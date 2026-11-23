@@ -139,12 +139,23 @@ The solver tells you which values to measure next, most useful first, and you ty
   as the walk-through.
 - Calculated in a pure function `suggestMeasurements(doc, options)` next to the solver, tested.
 
-## Drawing
-- **Wall tool**: trace centre lines on the background. Snap to nodes and walls; a new wall that
-  ends on a wall splits it (T-junction). Thickness and type from the last used values.
-- **Make room**: click inside a closed area; the room gets the faces of that area and asks for a code.
-- **Room tool stays**: a rectangle or polygon makes walls, shared with the walls it touches.
-- **Cleanup** (old plans): merge walls that overlap or almost touch, with a report.
+## Drawing (phase 6, started 2026-11-23)
+Rooms stay the editing source. Traced walls are a drawing aid that becomes rooms.
+- **Traces**: `doc.traces?: TraceWall[]` = `{ id, a, b, thicknessCm, type }`, centre lines in cm,
+  stored in the snapshot (synced like rooms), shown dashed on the plan, selectable and deletable.
+- **Wall tool** (key `w`): click to start, click to add the next point (a chain), double-click or
+  Enter ends the chain, Esc cancels the current segment. Snaps: trace end points, room corners, a
+  point on a trace or a room wall (T junction), 0/45/90 degree directions (Alt = no snap), the
+  existing grid snap. Thickness and type from the last used values (UI store), edited in the
+  Inspect tab while the tool is active (default 10 cm, partition).
+- **Make room tool** (key `m`): click inside a closed area formed by traces and room walls (centre
+  lines). `findEnclosingCycle` (src/model/faces.ts, pure) splits all segments at their crossings
+  and returns the smallest cycle around the point. The new room gets that polygon (centre lines),
+  the thickness and type of each trace for its walls, the next free code, and its name editor
+  opens. Traces covered by a room wall are removed (a trace partly covered is cut), so a wall is
+  never drawn twice. A click outside any closed area shows a toast "No closed area here".
+- **Room tool stays** (rectangle, polygon).
+- **Cleanup** (old plans): merge walls that overlap or almost touch, with a report (later).
 
 ## Phases
 Each phase is one or more agent rounds. Commit after each round (tsc, tests, build pass).
