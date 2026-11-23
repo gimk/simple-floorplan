@@ -10,6 +10,7 @@ import type { PlanDoc } from '../../model/types'
 import { BTN, CheckboxRow, EmptyHint, FieldRow, MUTED, PanelSection, Segmented } from '../../shell/panel'
 import { applyMeasuredAll, describeReport, verifiedWalls } from '../rooms/apply'
 import { applyGlobal, describeGlobal } from '../rooms/applyGlobal'
+import type { SurfaceMode } from '../rooms/globalSolve'
 import { progressRows, progressTotals, type ProgressRow } from './logic'
 
 const update = (fn: (d: PlanDoc) => PlanDoc) => useDoc.getState().update(fn)
@@ -44,6 +45,42 @@ function KeepLockedToggle() {
       checked={on}
       onChange={(checked) => useUi.getState().set({ solveKeepLocked: checked })}
     />
+  )
+}
+
+const SURFACE_MODES = [
+  { value: 'off', label: 'Off', title: 'Do not use the surface references' },
+  { value: 'guide', label: 'Guide', title: 'Never move a surface away from its reference: only block the wrong direction' },
+  { value: 'match', label: 'Match', title: 'Pull the surface toward its reference (weak: a measured wall always wins)' },
+] as const
+
+/** "Solve whole plan" option: how the surface references act. Only enabled with references. */
+function SurfaceModeRow({ mode, hasReferences, onChange }: {
+  mode: SurfaceMode
+  hasReferences: boolean
+  onChange: (m: SurfaceMode) => void
+}) {
+  return (
+    <>
+      <FieldRow label="Surface references" stacked>
+        <Segmented
+          ariaLabel="Surface references: Off, Guide or Match"
+          options={SURFACE_MODES}
+          value={mode}
+          onChange={(v) => onChange(v as SurfaceMode)}
+          disabled={!hasReferences}
+        />
+      </FieldRow>
+      {hasReferences ? (
+        <EmptyHint>
+          Guide blocks only the wrong direction: below its reference a surface cannot get smaller,
+          above it cannot get bigger. Match pulls the surface toward its reference. A measured wall
+          always wins.
+        </EmptyHint>
+      ) : (
+        <EmptyHint>Add surface references in the Apartment card.</EmptyHint>
+      )}
+    </>
   )
 }
 
@@ -117,7 +154,10 @@ function Actions({ doc }: { doc: PlanDoc }) {
 
   const runGlobal = () => {
     const current = useDoc.getState().doc
-    const r = applyGlobal(current, { keepLocked: useUi.getState().solveKeepLocked })
+    const r = applyGlobal(current, {
+      keepLocked: useUi.getState().solveKeepLocked,
+      surfaceMode: useUi.getState().solveSurfaceMode,
+    })
     if (r.doc !== current) update(() => r.doc)
     setReport(describeGlobal(r.report))
   }
@@ -141,8 +181,16 @@ function Actions({ doc }: { doc: PlanDoc }) {
 }
 
 /** The whole tab from plain data, so it can be rendered without the stores (tests, SSR). */
-export function SolvePanelView({ doc, report }: { doc: PlanDoc; report: string | null }) {
+export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode }: {
+  doc: PlanDoc
+  report: string | null
+  /** Current surface reference mode (default: the value of the UI store). */
+  surfaceMode?: SurfaceMode
+  onSurfaceMode?: (m: SurfaceMode) => void
+}) {
   const rows = progressRows(doc)
+  const mode = surfaceMode ?? useUi.getState().solveSurfaceMode
+  const setMode = onSurfaceMode ?? ((m: SurfaceMode) => useUi.getState().set({ solveSurfaceMode: m }))
   return (
     <>
       <PanelSection id="solve-progress" title="Progress" icon={<Ruler size={16} />} collapsible>
@@ -163,6 +211,11 @@ export function SolvePanelView({ doc, report }: { doc: PlanDoc; report: string |
           Default 0,5 cm. Off keeps the exact result.
         </EmptyHint>
         <KeepLockedToggle />
+        <SurfaceModeRow
+          mode={mode}
+          hasReferences={(doc.apartment?.references ?? []).length > 0}
+          onChange={setMode}
+        />
       </PanelSection>
 
       <PanelSection id="solve-actions" title="Actions" icon={<Crosshair size={16} />}>
@@ -171,7 +224,7 @@ export function SolvePanelView({ doc, report }: { doc: PlanDoc; report: string |
 
       {report !== null && (
         <PanelSection title="Last result">
-          <p data-solve-report className="text-xs text-slate-700 dark:text-slate-200">{report}</p>
+          <p data-solve-report className="whitespace-pre-line text-xs text-slate-700 dark:text-slate-200">{report}</p>
         </PanelSection>
       )}
     </>
@@ -182,5 +235,6 @@ export function SolvePanelView({ doc, report }: { doc: PlanDoc; report: string |
 export function SolvePanel() {
   const doc = useDoc((s) => s.doc)
   const report = useUi((s) => s.solveReport)
-  return <SolvePanelView doc={doc} report={report} />
+  const surfaceMode = useUi((s) => s.solveSurfaceMode)
+  return <SolvePanelView doc={doc} report={report} surfaceMode={surfaceMode} />
 }

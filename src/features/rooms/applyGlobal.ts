@@ -1,7 +1,7 @@
 // "Solve whole plan": all rooms in one fit (globalSolve.ts), then the plan takes the result. Pure, cm.
 import { planPrecision, roundTo } from '../../model/precision'
 import type { PlanDoc } from '../../model/types'
-import { solveGlobal, type GlobalSolved } from './globalSolve'
+import { solveGlobal, type GlobalSolved, type GlobalSurface, type SurfaceMode } from './globalSolve'
 import { wallProps } from './walls'
 
 export type GlobalReport = {
@@ -13,16 +13,34 @@ export type GlobalReport = {
   foundThicknesses: { walls: string[]; cm: number }[]
   /** Largest measured-minus-solved difference, if > 1 cm. */
   worst?: { label: string; diffCm: number }
+  /** Before / after area of each surface reference (empty when the mode is 'off'). */
+  surfaces: GlobalSurface[]
+}
+
+export type GlobalApplyOptions = {
+  keepLocked?: boolean
+  /** How to use doc.apartment.references: 'off' (default), 'guide' or 'match'. */
+  surfaceMode?: SurfaceMode
+  /** Accuracy of a surface reference, in % of its surface. Default 1.5. */
+  surfaceSigmaPct?: number
 }
 
 const round1 = (v: number) => roundTo(v, 0.1)
+
+/** One decimal with a comma: 12.44 -> "12,4". */
+const fmt1 = (v: number) => v.toFixed(1).replace('.', ',')
 
 /**
  * Solve every room together and move all corners to the result. Thicknesses that the values
  * found are written to the walls (both sides). Returns the same doc when nothing can be solved.
  */
-export function applyGlobal(doc: PlanDoc, opts: { keepLocked?: boolean } = {}): { doc: PlanDoc; report: GlobalReport; solved: GlobalSolved } {
-  const solved = solveGlobal(doc, { keepLocked: opts.keepLocked ?? true })
+export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc: PlanDoc; report: GlobalReport; solved: GlobalSolved } {
+  const solved = solveGlobal(doc, {
+    keepLocked: opts.keepLocked ?? true,
+    surfaceMode: opts.surfaceMode ?? 'off',
+    ...(opts.surfaceSigmaPct !== undefined ? { surfaceSigmaPct: opts.surfaceSigmaPct } : {}),
+    references: doc.apartment?.references ?? [],
+  })
   // Corners and thicknesses take the precision of the plan; 0.1 cm when the user turned it off.
   const step = planPrecision(doc) || 0.1
   const snap = (v: number) => roundTo(v, step)
@@ -35,6 +53,7 @@ export function applyGlobal(doc: PlanDoc, opts: { keepLocked?: boolean } = {}): 
     lockedKept: solved.residuals.filter((x) => x.kind === 'locked').length,
     foundThicknesses: found.map((g) => ({ walls: g.walls, cm: round1(g.thicknessCm) })),
     ...(worst && Math.abs(worst.diffCm) > 1 ? { worst: { label: worst.label, diffCm: worst.diffCm } } : {}),
+    surfaces: solved.surfaces,
   }
   const ok = doc.rooms.every((r) => solved.rooms[r.id]?.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)))
   if (!ok || !fit.length) return { doc, report, solved }
@@ -54,14 +73,27 @@ export function applyGlobal(doc: PlanDoc, opts: { keepLocked?: boolean } = {}): 
   return { doc: { ...doc, rooms }, report, solved }
 }
 
-/** One-line summary for the panel. */
+/**
+ * One line per surface reference, e.g.
+ * "DPE 2023 (SE): 12,4 -> 12,9 m2, ref 13,0 m2 (-0,8 %)".
+ * The difference is after − reference, in % of the reference.
+ */
+export function describeSurface(s: GlobalSurface): string {
+  const pct = s.diffPct > 0 ? `+${fmt1(s.diffPct)}` : fmt1(s.diffPct)
+  return `${s.label}${s.roomCode ? ` (${s.roomCode})` : ''}: ${fmt1(s.beforeM2)} -> ${fmt1(s.afterM2)} m2, `
+    + `ref ${fmt1(s.referenceM2)} m2 (${pct} %)`
+}
+
+/** One-line summary for the panel: the fit, then one line per surface reference. */
 export function describeGlobal(r: GlobalReport): string {
-  const f = (n: number) => n.toFixed(1).replace('.', ',')
+  const f = fmt1
   const parts = [`Solved ${r.rooms} rooms together: fit error ${f(r.rmsCm)} cm rms`]
   if (r.lockedKept) parts.push(`${r.lockedKept} locked wall${r.lockedKept === 1 ? '' : 's'} kept`)
   if (r.worst) parts.push(`largest: ${r.worst.label} ${r.worst.diffCm >= 0 ? '+' : ''}${f(r.worst.diffCm)} cm`)
   parts.push(r.foundThicknesses.length
     ? `thickness found for ${r.foundThicknesses.map((t) => `${t.walls.join('/')} (${f(t.cm)} cm)`).join(', ')}`
     : 'no thickness found from the values (measure CODE-n-T at a door frame)')
-  return parts.join('; ') + '.'
+  const lines = [parts.join('; ') + '.']
+  for (const s of r.surfaces ?? []) lines.push(describeSurface(s))
+  return lines.join('\n')
 }

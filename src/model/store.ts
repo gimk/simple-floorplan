@@ -144,6 +144,8 @@ type UiState = {
   snap: { grid: boolean; gridCm: number; angles: boolean; vertices: boolean }
   /** "Solve whole plan" keeps locked walls. */
   solveKeepLocked: boolean
+  /** "Solve whole plan" and doc.apartment.references: off, guide (one-sided) or match. */
+  solveSurfaceMode: 'off' | 'guide' | 'match'
   /** Report of the last run of the Solve tab (whole plan, not per room). */
   solveReport: string | null
   layers: Layers
@@ -170,6 +172,7 @@ export const useUi = create<UiState>()((set) => ({
   placeKind: 'door',
   snap: { grid: true, gridCm: 5, angles: true, vertices: true },
   solveKeepLocked: true,
+  solveSurfaceMode: 'off',
   solveReport: null,
   layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true },
   renovationView: 'both',

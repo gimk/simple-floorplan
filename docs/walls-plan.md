@@ -94,6 +94,30 @@ type Measurement = { label: string; actualCm: number; updatedAt: string
   (5, 7, 10, 15, 20, 30 cm).
 - **Preview before apply**: list walls that move more than X cm; Apply or Cancel.
 
+### Suggested measurements (next best measurement)
+The solver tells you which values to measure next, most useful first, and you type them in place.
+
+- **Candidates**: every target with no value: room wall faces, diagonals (one per room, the longest),
+  thicknesses, centre lengths (phase 4). Each candidate is a row the solver could add, with its
+  gradient `g` and the sigma of the default source.
+- **Score**: with `C` = covariance of the unknowns after the fit (inverse of the normal matrix), the
+  candidate reduces the summed variance by `gain = g^T C W C g / (s^2 + g^T C g)`. `W` weights what
+  matters: wall positions (1) and thicknesses (1); room areas through the area rows (option).
+  Shown as "SE-3: uncertainty of room SE 14 cm -> 2 cm".
+- **Order**: greedy. After the best candidate, `C` is updated as if it was measured (rank-1 update,
+  Sherman-Morrison), then the next one is scored. So the list says "measure these 5, in this order",
+  not "5 values that all give the same information".
+- **Why it is needed**: each row has a short reason: "thickness not found by the data", "room
+  position only from the drawing", "no check value (no redundancy)", "large residual: measure again".
+- **Redundancy**: when all unknowns are found, it suggests CHECK values (diagonals first), because
+  outliers can be found only when there is redundancy.
+- **Interface** (Solve tab, section "Measure next", above Actions): top 10 rows. Each row: label,
+  reason, gain, a number input (Enter saves into `doc.measurements`, like Measuring Mode, then the
+  list is calculated again), and a button that selects the wall on the plan. The selected wall
+  shows the suggestion on the canvas. "Measure in this order" opens Measuring Mode with this list
+  as the walk-through.
+- Calculated in a pure function `suggestMeasurements(doc, options)` next to the solver, tested.
+
 ## Drawing
 - **Wall tool**: trace centre lines on the background. Snap to nodes and walls; a new wall that
   ends on a wall splits it (T-junction). Thickness and type from the last used values.
@@ -109,6 +133,8 @@ Each phase is one or more agent rounds. Commit after each round (tsc, tests, bui
    `globalSolve.ts` today, plus T-junction splits. No doc change.
 2. **Surface references in the current solver** (Off / Guide / Match), with the report. Independent of
    the graph; phase 3 keeps the rows.
+2b. **Suggested measurements** on the current solver (section above), after phase 2 because it uses
+   the same file. Phase 4 keeps it and adds centre and outside face candidates.
 3. **Measurement targets and sources**: optional `target` and `source` on `Measurement` (types,
    schema, server). Resolver from old labels to targets using the derived graph. Source in the
    measuring UI. Solver weights from the source.

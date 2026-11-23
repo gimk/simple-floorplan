@@ -137,3 +137,41 @@ describe('SolvePanel (wired to the stores)', () => {
     expect(html).toContain('No verified wall length in any room.')
   })
 })
+
+describe('SolvePanel surface references', () => {
+  const withRef = () => doc({ apartment: { references: [{ id: 'r1', source: 'dpe', surfaceM2: 12, roomCode: 'SE' }] } })
+
+  it('offers Off, Guide and Match when the plan has surface references', () => {
+    const html = render(withRef())
+    expect(html).toContain('Surface references')
+    expect(html).toContain('aria-label="Surface references: Off, Guide or Match"')
+    expect(html).toContain('title="Do not use the surface references"')
+    expect(html).toContain('title="Never move a surface away from its reference: only block the wrong direction"')
+    expect(html).toContain('title="Pull the surface toward its reference (weak: a measured wall always wins)"')
+    // Off is the default, and the control is usable.
+    expect(html).toContain('aria-pressed="true" title="Do not use the surface references" class')
+    expect(html).not.toContain('title="Do not use the surface references" disabled=""')
+    expect(html).not.toContain('Add surface references in the Apartment card.')
+  })
+
+  it('disables the control and says where to add references when there is none', () => {
+    const html = render(verifiedDoc())
+    expect(html).toContain('Add surface references in the Apartment card.')
+    expect(html).toContain('aria-pressed="true" title="Do not use the surface references" disabled=""')
+    expect(html).toContain('title="Pull the surface toward its reference (weak: a measured wall always wins)" disabled=""')
+  })
+
+  it('marks the mode passed by the panel as pressed', () => {
+    const view = (mode: 'off' | 'guide' | 'match') =>
+      renderToString(<SolvePanelView doc={withRef()} report={null} surfaceMode={mode} />)
+    expect(view('guide')).toContain('aria-pressed="true" title="Never move a surface away from its reference')
+    expect(view('match')).toContain('aria-pressed="true" title="Pull the surface toward its reference')
+  })
+
+  it('keeps the new lines of the surface report visible', () => {
+    const html = render(withRef(), 'Solved 1 rooms together: fit error 0,3 cm rms.\nDPE (SE): 11,3 -> 12,0 m2, ref 12,0 m2 (+0,0 %)')
+    expect(html).toContain('data-solve-report')
+    expect(html).toContain('whitespace-pre-line')
+    expect(html).toContain('DPE (SE): 11,3 -&gt; 12,0 m2')
+  })
+})

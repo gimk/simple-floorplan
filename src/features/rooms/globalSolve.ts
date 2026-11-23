@@ -7,10 +7,18 @@
 // the prior of its wall type, and the report says that the data does not find it.
 //
 // Scope of the prototype: axis-aligned walls (x or y constant). Other walls keep their drawn place.
+//
+// Surface references (docs/walls-plan.md phase 2): a reference of `doc.apartment.references` is a
+// surface written on a document (DPE, Carrez...). It adds one row on the area of the inside face
+// polygon: 'match' pulls the area to the reference, 'guide' only blocks the wrong direction.
 import { innerWallLengths } from '../../model/geometry'
-import type { PlanDoc, Room, Vec, WallAlign } from '../../model/types'
+import type { PlanDoc, Room, SurfaceReference, Vec, WallAlign } from '../../model/types'
 import { thicknessLabel } from '../../model/survey'
+import { SOURCE_LABELS } from '../apartment/logic'
 import { wallProps } from './walls'
+
+/** How the solver uses the surface references. */
+export type SurfaceMode = 'off' | 'guide' | 'match'
 
 export type GlobalOptions = {
   /** Two opposite walls of two rooms closer than this (cm) are the same wall. */
@@ -26,6 +34,12 @@ export type GlobalOptions = {
   /** Keep locked walls: their measured value or their current inside length, with lockedSigmaCm. */
   keepLocked?: boolean
   lockedSigmaCm?: number
+  /** 'off' = no surface row, 'guide' = one-sided hinge, 'match' = normal weak row. */
+  surfaceMode?: SurfaceMode
+  /** Accuracy of a surface reference, in % of its surface (1.5 % makes a measured wall win). */
+  surfaceSigmaPct?: number
+  /** The references to use (normally doc.apartment.references). */
+  references?: SurfaceReference[]
 }
 
 const DEFAULTS: Required<GlobalOptions> = {
@@ -38,6 +52,9 @@ const DEFAULTS: Required<GlobalOptions> = {
   positionSigmaCm: 100,
   keepLocked: true,
   lockedSigmaCm: 0.05,
+  surfaceMode: 'off',
+  surfaceSigmaPct: 1.5,
+  references: [],
 }
 
 type Orient = 'h' | 'v' | 'o'
@@ -79,7 +96,21 @@ export type WallGroup = {
   rooms: number
 }
 
-export type GlobalResidual = { label: string; kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align'; measuredCm: number; solvedCm: number; diffCm: number }
+export type GlobalResidual = { label: string; kind: 'wall' | 'diagonal' | 'thickness' | 'locked' | 'align' | 'surface'; measuredCm: number; solvedCm: number; diffCm: number }
+
+/** One surface reference, before and after the fit (m²). */
+export type GlobalSurface = {
+  label: string
+  /** Code of the room of the reference, when the reference is about one room. */
+  roomCode?: string
+  referenceM2: number
+  /** Inside area of the drawn plan, m². */
+  beforeM2: number
+  /** Inside area after the fit, m². */
+  afterM2: number
+  /** (after − reference) in % of the reference. */
+  diffPct: number
+}
 
 export type GlobalSolved = {
   groups: WallGroup[]
@@ -90,6 +121,8 @@ export type GlobalSolved = {
   rooms: Record<string, Vec[]>
   /** Inside face corners, per room id. */
   inner: Record<string, Vec[]>
+  /** One line of report per surface reference (empty when the mode is 'off'). */
+  surfaces: GlobalSurface[]
   skipped: { label: string; reason: string }[]
   iterations: number
 }
@@ -101,14 +134,57 @@ const evalLin = (l: Lin, x: number[]) => l.t.reduce((s, [v, k]) => s + k * x[v],
 const subLin = (a: Lin, b: Lin): Lin => ({ c: a.c - b.c, t: [...a.t, ...b.t.map(([v, k]) => [v, -k] as [number, number])] })
 const scaleLin = (a: Lin, s: number): Lin => ({ c: a.c * s, t: a.t.map(([v, k]) => [v, k * s] as [number, number]) })
 
+/** One closed polygon of inside face corners, as linear expressions. */
+type AreaPoly = { fx: Lin[]; fy: Lin[] }
+
 type Row =
   | { kind: 'lin'; l: Lin; target: number; sigma: number }
   | { kind: 'dist'; ax: Lin; ay: Lin; bx: Lin; by: Lin; target: number; sigma: number }
+  /**
+   * Surface row: the area of one or more inside face polygons, in cm².
+   * With `hinge` it is one-sided: active only when the area passes `t0` on the given side,
+   * and it then pulls back to `t0` (Guide mode). Inactive rows give a zero residual.
+   */
+  | { kind: 'area'; polys: AreaPoly[]; target: number; sigma: number; hinge?: { t0: number; above: boolean } }
 
 const shoelace = (p: Vec[]) => p.reduce((s, a, i) => {
   const b = p[(i + 1) % p.length]
   return s + a.x * b.y - b.x * a.y
 }, 0)
+
+/**
+ * Area of the inside polygons (cm²) and the gradient of that area (d area / d x_k), at xs.
+ * Each polygon keeps the sign of its own shoelace sum, so a sum of rooms stays correct when the
+ * rooms are drawn in different directions.
+ */
+function evalArea(polys: AreaPoly[], xs: number[]): { area: number; grad: [number, number][] } {
+  let area = 0
+  const total = new Map<number, number>()
+  const addTo = (m: Map<number, number>, v: number, k: number) => m.set(v, (m.get(v) ?? 0) + k)
+  for (const poly of polys) {
+    const n = poly.fx.length
+    let s = 0
+    const ds = new Map<number, number>()
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n
+      const fxi = evalLin(poly.fx[i], xs), fyi = evalLin(poly.fy[i], xs)
+      const fxj = evalLin(poly.fx[j], xs), fyj = evalLin(poly.fy[j], xs)
+      s += fxi * fyj - fxj * fyi
+      // Product rule on fxi * fyj - fxj * fyi.
+      for (const [v, c] of poly.fx[i].t) addTo(ds, v, c * fyj)
+      for (const [v, c] of poly.fy[j].t) addTo(ds, v, fxi * c)
+      for (const [v, c] of poly.fx[j].t) addTo(ds, v, -c * fyi)
+      for (const [v, c] of poly.fy[i].t) addTo(ds, v, -fxj * c)
+    }
+    const sign = s >= 0 ? 1 : -1
+    area += (sign * s) / 2
+    for (const [v, c] of ds) addTo(total, v, (sign * c) / 2)
+  }
+  return { area, grad: [...total].map(([v, c]) => [v, c] as [number, number]) }
+}
+
+/** Area of the inside polygons at xs, in cm². */
+const areaValue = (polys: AreaPoly[], xs: number[]) => evalArea(polys, xs).area
 
 /** Cholesky solve of the SPD system N x = b. Null when N is not positive definite. */
 function cholesky(N: number[][]): number[][] | null {
@@ -144,8 +220,9 @@ function cholSolve(L: number[][], b: number[]): number[] {
   return x
 }
 
-export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, options: GlobalOptions = {}): GlobalSolved {
-  const o = { ...DEFAULTS, ...options }
+export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements' | 'apartment'>, options: GlobalOptions = {}): GlobalSolved {
+  // The references come from the options, or from the document (doc.apartment.references).
+  const o = { ...DEFAULTS, ...options, references: options.references ?? doc.apartment?.references ?? [] }
   const rooms = doc.rooms
 
   // ---- edges ----
@@ -337,6 +414,65 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, option
     }
   })
 
+  // ---- surface references (docs/walls-plan.md phase 2) ----
+  // One row per reference: the area of the inside face polygon of its room, or the sum of the
+  // inside areas of every indoor room. Sigma is a small % of the surface, so a measured wall
+  // (1 cm) always wins over the reference.
+  type SurfaceEntry = { label: string; roomCode?: string; referenceM2: number; polys: AreaPoly[] }
+  const surfaceEntries: SurfaceEntry[] = []
+  if (o.surfaceMode !== 'off') {
+    const insidePoly = (ri: number): AreaPoly => ({ fx: corners[ri].map((c) => c.fx), fy: corners[ri].map((c) => c.fy) })
+    // Walls that are not horizontal or vertical keep their drawn place, so their area is fixed.
+    const axisAligned = (ri: number) => edgeOf[ri].every((e) => e.orient !== 'o')
+    const indoor = rooms.map((_, ri) => ri).filter((ri) => !rooms[ri].outdoor && axisAligned(ri))
+    for (const ref of o.references) {
+      const label = ref.label?.trim() || SOURCE_LABELS[ref.source]
+      const sigma = (ref.surfaceM2 * 10000 * o.surfaceSigmaPct) / 100
+      if (!(ref.surfaceM2 > 0) || !Number.isFinite(sigma) || !(sigma > 0)) {
+        skipped.push({ label, reason: 'the reference surface is not a positive number' })
+        continue
+      }
+      let polys: AreaPoly[]
+      let roomCode: string | undefined
+      if (ref.roomCode) {
+        const code = ref.roomCode.trim().toLowerCase()
+        const ri = rooms.findIndex((r) => r.code.trim().toLowerCase() === code)
+        if (ri < 0) {
+          skipped.push({ label, reason: `the plan has no room ${ref.roomCode}` })
+          continue
+        }
+        if (!axisAligned(ri)) {
+          skipped.push({ label, reason: `room ${rooms[ri].code} has a wall that is not horizontal or vertical` })
+          continue
+        }
+        roomCode = rooms[ri].code
+        polys = [insidePoly(ri)]
+      } else {
+        if (!indoor.length) {
+          skipped.push({ label, reason: 'the plan has no indoor room with only horizontal and vertical walls' })
+          continue
+        }
+        const leftOut = rooms.filter((_, ri) => !rooms[ri].outdoor && !axisAligned(ri)).map((r) => r.code)
+        if (leftOut.length) {
+          skipped.push({ label, reason: `${leftOut.join(', ')} left out of the sum: a wall is not horizontal or vertical` })
+        }
+        polys = indoor.map(insidePoly)
+      }
+      const targetCm2 = ref.surfaceM2 * 10000
+      const a0 = areaValue(polys, x0)
+      surfaceEntries.push({ label, roomCode, referenceM2: ref.surfaceM2, polys })
+      if (o.surfaceMode === 'match') {
+        rows.push({ kind: 'area', polys, target: targetCm2, sigma })
+        meta.push({ label, kind: 'surface' })
+      } else if (Math.abs(a0 - targetCm2) > 1e-6) {
+        // Guide: hinge on the drawn area. Below the reference the plan must not go smaller,
+        // above it the plan must not go bigger.
+        rows.push({ kind: 'area', polys, target: a0, sigma, hinge: { t0: a0, above: a0 > targetCm2 } })
+        meta.push({ label, kind: 'surface' })
+      }
+    }
+  }
+
   // ---- walls in line (soft) ----
   // Two walls that continue each other (end to end, drawn on one line) keep their REFERENCE lines
   // in line: by default the face in the room, so a 30 cm wall and a 10 cm wall are flush inside.
@@ -358,6 +494,15 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, option
   let x = [...x0]
   const residualAndGrad = (row: Row, xs: number[]): { r: number; g: [number, number][] } => {
     if (row.kind === 'lin') return { r: (evalLin(row.l, xs) - row.target) / row.sigma, g: row.l.t.map(([v, k]) => [v, k / row.sigma]) }
+    if (row.kind === 'area') {
+      const { area, grad } = evalArea(row.polys, xs)
+      // The Guide hinge is active only when the area went past t0 on the given side, so it lets
+      // the area move the right way and blocks the wrong way only. Activity is tested again at
+      // each iteration, with the current area.
+      const target = row.hinge ? (row.hinge.above ? (area > row.hinge.t0 ? row.hinge.t0 : null) : (area < row.hinge.t0 ? row.hinge.t0 : null)) : row.target
+      if (target === null) return { r: 0, g: [] }
+      return { r: (area - target) / row.sigma, g: grad.map(([v, k]) => [v, k / row.sigma]) }
+    }
     const dx = evalLin(row.bx, xs) - evalLin(row.ax, xs), dy = evalLin(row.by, xs) - evalLin(row.ay, xs)
     const L = Math.hypot(dx, dy) || 1e-9
     const g: [number, number][] = [
@@ -413,9 +558,12 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, option
   const residuals: GlobalResidual[] = rows.map((row, k) => {
     const solved = row.kind === 'lin'
       ? evalLin(row.l, x)
-      : Math.hypot(evalLin(row.bx, x) - evalLin(row.ax, x), evalLin(row.by, x) - evalLin(row.ay, x))
+      : row.kind === 'area'
+        ? areaValue(row.polys, x)
+        : Math.hypot(evalLin(row.bx, x) - evalLin(row.ax, x), evalLin(row.by, x) - evalLin(row.ay, x))
     return { label: meta[k].label, kind: meta[k].kind, measuredCm: row.target, solvedCm: solved, diffCm: row.target - solved }
   })
+  // Surface rows are in cm² and they are weak: they stay out of rmsCm.
   const fit = residuals.filter((r) => r.kind === 'wall' || r.kind === 'diagonal')
   const rmsCm = fit.length ? Math.sqrt(fit.reduce((s, r) => s + r.diffCm ** 2, 0) / fit.length) : 0
   const out: Record<string, Vec[]> = {}
@@ -424,5 +572,17 @@ export function solveGlobal(doc: Pick<PlanDoc, 'rooms' | 'measurements'>, option
     out[r.id] = corners[ri].map((c) => ({ x: evalLin(c.cx, x), y: evalLin(c.cy, x) }))
     inner[r.id] = corners[ri].map((c) => ({ x: evalLin(c.fx, x), y: evalLin(c.fy, x) }))
   })
-  return { groups, residuals, rmsCm, rooms: out, inner, skipped, iterations }
+  const surfaces: GlobalSurface[] = surfaceEntries.map((e) => {
+    const beforeM2 = areaValue(e.polys, x0) / 10000
+    const afterM2 = areaValue(e.polys, x) / 10000
+    return {
+      label: e.label,
+      ...(e.roomCode ? { roomCode: e.roomCode } : {}),
+      referenceM2: e.referenceM2,
+      beforeM2,
+      afterM2,
+      diffPct: ((afterM2 - e.referenceM2) / e.referenceM2) * 100,
+    }
+  })
+  return { groups, residuals, rmsCm, rooms: out, inner, surfaces, skipped, iterations }
 }
