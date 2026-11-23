@@ -12,7 +12,8 @@ export type UiSnapshot = {
   selection: Selection
   placeKind: string
   snap: { grid: boolean; gridCm: number; angles: boolean; vertices: boolean }
-  layers: Record<string, boolean>
+  /** Plain layers are booleans; the room codes and the wall labels are 'auto' | 'on' | 'off'. */
+  layers: Record<string, boolean | string>
   view: View
 }
 

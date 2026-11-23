@@ -1,38 +1,25 @@
 // Layers visibility toggles, moved out of App.tsx so the sidebar owns its sections.
 // The `name="layer-*"` inputs are kept: other code and the browser tests use them.
+// The room codes and the wall labels have three states: their controls are shared with the
+// canvas View menu (shell/view/LayerControls.tsx).
 import { Layers as LayersIcon } from 'lucide-react'
-import { useUi, type Layers } from '../../model/store'
+import { useUi } from '../../model/store'
 import { RENOVATION_VIEWS, RENOVATION_VIEW_LABELS, type RenovationView } from '../../features/renovation/logic'
-import { CheckboxRow, FieldRow, PanelSection, Segmented } from '../panel'
+import { FieldRow, PanelSection, Segmented } from '../panel'
+import { LayerCheckboxes, LayerModeRows } from '../view/LayerControls'
+import { LAYER_LABELS } from './layerLabels'
 
-export const LAYER_LABELS: Record<keyof Layers, string> = {
-  background: 'Background image',
-  dimensions: 'Dimensions',
-  bearingHighlight: 'Bearing walls highlight',
-  openings: 'Openings',
-  notes: 'Notes',
-  clashes: 'Clearance clashes',
-}
+export { LAYER_LABELS }
 
 const RENOVATION_OPTIONS = RENOVATION_VIEWS.map((v) => ({ value: v, label: RENOVATION_VIEW_LABELS[v] }))
 
 export function LayersSection() {
-  const layers = useUi((s) => s.layers)
   const renovationView = useUi((s) => s.renovationView)
   const set = useUi((s) => s.set)
   return (
     <PanelSection id="layers" title="Layers" icon={<LayersIcon size={16} />} collapsible>
-      <div className="flex flex-col gap-1">
-        {(Object.keys(LAYER_LABELS) as (keyof Layers)[]).map((k) => (
-          <CheckboxRow
-            key={k}
-            name={`layer-${k}`}
-            label={LAYER_LABELS[k]}
-            checked={layers[k]}
-            onChange={(checked) => set({ layers: { ...layers, [k]: checked } })}
-          />
-        ))}
-      </div>
+      <LayerCheckboxes />
+      <LayerModeRows />
       <FieldRow label="Renovation" stacked>
         <Segmented
           ariaLabel="Renovation view"

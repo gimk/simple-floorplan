@@ -122,6 +122,12 @@ export async function hydrate(): Promise<void> {
 
 // ---------- UI store (not undoable) ----------
 
+/**
+ * Three states of a layer that is useful in the survey only: 'auto' shows it in the
+ * Solve tab and in Measuring Mode (see shell/view/layers.ts).
+ */
+export type LayerMode = 'auto' | 'on' | 'off'
+
 export type Layers = {
   background: boolean
   dimensions: boolean
@@ -130,6 +136,10 @@ export type Layers = {
   notes: boolean
   /** Red highlight of door swings and fixtures that clash (features/clearance). */
   clashes: boolean
+  /** Room code before the room name ('CU  Cuisine'), to find the survey IDs on the plan. */
+  roomCodes: LayerMode
+  /** Small wall number badges ('6' = wall CU-6), to find the survey IDs on the plan. */
+  wallLabels: LayerMode
 }
 
 type UiState = {
@@ -188,7 +198,10 @@ export const useUi = create<UiState>()((set) => ({
   solveSnapThickness: false,
   solveSurfaceMode: 'off',
   solveReport: null,
-  layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true },
+  layers: {
+    background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
+    roomCodes: 'auto', wallLabels: 'auto',
+  },
   renovationView: 'both',
   measureSource: 'tape',
   view: { x: -100, y: -100, zoom: 1 },

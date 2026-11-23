@@ -21,6 +21,7 @@ import { ToastHost } from './features/toast'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { EmptyState } from './shell/EmptyState'
 import { ZoomControls } from './shell/ZoomControls'
+import { ViewMenu } from './shell/view/ViewMenu'
 import { ToolHints } from './shell/ToolHints'
 import { SnapPopover } from './shell/SnapPopover'
 import { ShortcutsDialog } from './shell/ShortcutsDialog'
@@ -345,6 +346,7 @@ export default function App() {
             <EmptyState />
             <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-wrap-reverse items-end gap-2 max-md:inset-x-2">
               <ZoomControls />
+              <ViewMenu />
               <ToolHints />
             </div>
           </main>

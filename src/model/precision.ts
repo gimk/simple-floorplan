@@ -1,4 +1,5 @@
 // Precision of the plan: the smallest step (cm) that the solvers write for corners and thicknesses.
+import { fmtCm } from './geometry'
 import type { PlanDoc, Vec } from './types'
 
 /** Step when the plan has no setting. */
@@ -18,3 +19,12 @@ export const roundVec = (p: Vec, step: number): Vec => ({ x: roundTo(p.x, step),
 
 /** Length as shown to the user: rounded to the plan step (0.1 cm when rounding is off). */
 export const shownLength = (v: number, step: number): number => roundTo(v, step > 0 ? step : 0.1)
+
+/**
+ * Dimension text of a measured wall. The measured value is kept as it was typed; when the plan
+ * (after the solve) differs by more than its precision, the solved length follows: "✓ 412 · 410,7".
+ */
+export function measuredText(measuredCm: number, solvedCm: number, stepCm: number): string {
+  const tol = Math.max(stepCm || 0.1, 0.1)
+  return Math.abs(measuredCm - solvedCm) > tol + 1e-9 ? `✓ ${fmtCm(measuredCm)} · ${fmtCm(solvedCm)}` : `✓ ${fmtCm(measuredCm)}`
+}

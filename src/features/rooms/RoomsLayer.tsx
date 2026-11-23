@@ -3,7 +3,7 @@ import { useViewport } from '../../canvas/Viewport'
 import { fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
-import { planPrecision, shownLength } from '../../model/precision'
+import { measuredText, planPrecision, shownLength } from '../../model/precision'
 import type { Room, Vec } from '../../model/types'
 import { selfIntersects } from './crossing'
 import { forcedWallStarts, useDragInfo } from './draginfo'
@@ -15,6 +15,8 @@ import { gapAreas, multiPath } from './gaps'
 import { RoomNameEditor } from './RoomNameEditor'
 import { wallProps } from './walls'
 import { piecesPath, renovationRooms, wallAppearance, type DisplayRoom } from '../renovation/logic'
+import { useSidebar } from '../../shell/sidebar/store'
+import { modeLayerVisible } from '../../shell/view/layers'
 
 const pathOf = (rings: Vec[][]) =>
   rings.map((r) => 'M' + r.map((p) => `${p.x} ${p.y}`).join('L') + 'Z').join('')
@@ -40,6 +42,13 @@ export function RoomsLayer() {
   const layers = useUi((s) => s.layers)
   const renovationView = useUi((s) => s.renovationView)
   const tool = useUi((s) => s.tool)
+  // Survey helpers on the plan: the room codes and the wall numbers. 'auto' shows them while the
+  // user works on the survey values (Solve tab, Measuring Mode).
+  const tab = useSidebar((s) => s.tab)
+  const uiMode = useUi((s) => s.mode)
+  const ctx = { tab, mode: uiMode }
+  const showCodes = modeLayerVisible(layers, 'roomCodes', ctx)
+  const showWallNumbers = modeLayerVisible(layers, 'wallLabels', ctx)
   const measurements = useDoc((s) => s.doc.measurements)
   const step = useDoc((s) => planPrecision(s.doc))
   const activeHole = useActiveHole()
@@ -59,11 +68,13 @@ export function RoomsLayer() {
   // Zoom is rounded to steps of ~19 % so a wheel zoom does not recompute every frame.
   const labelZoom = 2 ** (Math.round(Math.log2(zoom) * 4) / 4)
   const labelAt = useMemo(() => new Map(display.map((d) => {
-    const nameW = d.name.length * 7.8, areaW = 8 * 6.8
+    // The code goes in front of the name, so the name line is wider when it is shown.
+    const codeW = showCodes ? (d.codes.join(' ').length + 2) * 7.8 : 0
+    const nameW = d.name.length * 7.8 + codeW, areaW = 8 * 6.8
     // The margin keeps the text clear of the wall length labels along the inside of walls, when there is room.
     const w = (Math.max(nameW, areaW) + 10) / labelZoom, h = 34 / labelZoom
     return [d.id, labelPlacement(d.pieces[0], w, h, 12 / labelZoom)]
-  })), [display, labelZoom])
+  })), [display, labelZoom, showCodes])
   const interactive = tool === 'select'
   // Outlined rooms: the room of the selected item, or every room of a room group.
   const selRoomIds = new Set(items.flatMap((s) => (s.kind === 'room' || (s.kind !== 'element' && s === selection) ? [s.roomId] : [])))
@@ -87,9 +98,22 @@ export function RoomsLayer() {
     if (!d.merged && editing === d.id) return null
     const ring = d.pieces[0]?.[0] ?? []
     if (ring.length < 3) return null
+    // Room code in front of the name, so the survey IDs of the Solve tab are found on the plan.
+    const code = showCodes ? d.codes.join(' ') : ''
     const xs = ring.map((v) => v.x), ys = ring.map((v) => v.y)
     const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
-    if (small) return null
+    if (small) {
+      // No room for the name: the code alone, small, is better than nothing.
+      if (!code) return null
+      const p = labelAt.get(d.id)?.p ?? labelPoint(d.pieces[0])
+      return (
+        <text key={d.id} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize={px(10)}
+          fontWeight={700} pointerEvents="none" data-room-code-only={d.id}
+          className="fill-slate-500 font-mono dark:fill-slate-400">
+          {code}
+        </text>
+      )
+    }
     const place = labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
     // Baseline of the name a bit above the point, so the two lines are centred on it.
     const c = { x: place.p.x, y: place.p.y - px(4) }
@@ -100,6 +124,9 @@ export function RoomsLayer() {
         <tspan x={c.x} fontWeight={600} style={interactive ? { cursor: 'text' } : undefined}
           onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : undefined}
           onDoubleClick={interactive && !d.merged ? (e) => { e.stopPropagation(); setEditing(d.id) } : undefined}>
+          {code !== '' && (
+            <tspan fontWeight={700} className="font-mono" data-room-code-text={d.codes[0]}>{`${code}  `}</tspan>
+          )}
           {d.name}
         </tspan>
         <tspan x={c.x} dy={px(16)} fontSize={px(12)} pointerEvents="none" className="fill-slate-500 dark:fill-slate-400">
@@ -290,11 +317,42 @@ export function RoomsLayer() {
               transform={`rotate(${ang} ${mx} ${my})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
               strokeWidth={px(3)} strokeLinejoin="round" fontWeight={verified ? 600 : undefined}
               className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${verified ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
-              {verified ? `✓ ${fmtCm(m.actualCm)}` : fmtCm(shownLength(inner[w.index], step))}
+              {verified ? measuredText(m.actualCm, shownLength(inner[w.index], step), step) : fmtCm(shownLength(inner[w.index], step))}
             </text>
           )
         })
       })}
+
+      {/* wall numbers: a small badge with the number of the wall ("6" = wall CU-6 of room CU),
+          inside the room near the middle of the wall, just inside the dimension text */}
+      {showWallNumbers && rooms.map((r) => roomWalls(r).map((w) => {
+        // Too short on screen for separate badges: hide them all, or they touch each other.
+        if (w.length * zoom < 18) return null
+        const props = wallProps(r, w.start.id)
+        if (!wallAppearance(props.type, props.status, renovationView).visible) return null
+        // Same placement as the dimension text; the badge goes one step further inside the room.
+        const dimOff = props.thicknessCm / 2 + px(10)
+        const dimShown = layers.dimensions && (w.length * zoom >= 55 || forcedWalls.has(w.start.id))
+        const off = dimShown ? dimOff + px(13) : dimOff
+        const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off
+        const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
+        const n = String(w.index + 1)
+        const selected = selWalls.has(r.id + ':' + w.start.id)
+        const h = px(13), bw = px(5) + px(5.6) * n.length
+        return (
+          <g key={'wn' + r.id + w.start.id} transform={`translate(${mx} ${my})`} pointerEvents="none"
+            data-wall-number={n} data-wall-label={`${r.code}-${n}`} aria-hidden="true">
+            <rect x={-bw / 2} y={-h / 2} width={bw} height={h} rx={px(3)} strokeWidth={px(1)}
+              className={selected
+                ? 'fill-orange-500 stroke-orange-700 dark:stroke-orange-300'
+                : 'fill-white/90 stroke-slate-400 dark:fill-slate-800/95 dark:stroke-slate-500'} />
+            <text textAnchor="middle" dominantBaseline="middle" fontSize={px(9)}
+              className={`font-mono ${selected ? 'fill-white' : 'fill-slate-600 dark:fill-slate-300'}`}>
+              {n}
+            </text>
+          </g>
+        )
+      }))}
 
       {/* wall hit areas (select tool only) */}
       {interactive && rooms.map((r) => roomWalls(r).map((w) => {
