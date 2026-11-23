@@ -67,7 +67,7 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 // ---------- row types ----------
 
-type MeasurementRow = { label: string; actual_cm: number; updated_at: string }
+type MeasurementRow = { label: string; actual_cm: number; updated_at: string; source: string | null }
 type ItemRow = { id: string; data_json: string; updated_at: string; deleted: number }
 type NoteRow = { room_code: string; text: string; updated_at: string }
 
