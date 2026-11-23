@@ -75,11 +75,10 @@ type Measurement = { label: string; actualCm: number; updatedAt: string
 - Measurements stay keyed by label (server tables and old docs keep working). `target` is added.
 - **Source sets the weight** in the solver. Defaults: laser 0.3 cm, tape 1 cm, plan 3 cm, other 2 cm.
   Missing source = tape.
-- **Measured values are never lost.** The solver never writes `doc.measurements` (the plan follows
-  the values). A new value for a label keeps the old one in `history` ({actualCm, source,
-  updatedAt}[]); the value of a removed or split wall goes to an "Old values" list of its room, not
-  to the bin. Measuring Mode shows "Measured 412 · Solved 410,7 (−1,3)" and "Before: 409 (tape,
-  23/11)". The canvas shows "✓ 412 · 410,7" when the two differ by more than the plan precision.
+- **The measured value is always kept.** The solver never writes `doc.measurements` (the plan
+  follows the values). One value per target is enough: no history (decided 2026-11-23). A new
+  value replaces the old one. Measuring Mode shows "Measured 412 · Solved 410,7 (−1,3)"; the canvas
+  shows "✓ 412 · 410,7" when the two differ by more than the plan precision (done).
 - When a wall is split, each face value stays on the segment that holds it. A centre value on a
   split wall is marked "to check".
 
