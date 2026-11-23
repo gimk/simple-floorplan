@@ -173,7 +173,7 @@ export function queryUnmeasured(doc: PlanDoc, args?: z.infer<typeof UnmeasuredAr
   if ((args?.roomId || args?.roomCode) && !targetRoom) {
     throw new QueryError('ROOM_NOT_FOUND', `Room not found: ${args.roomCode ?? args.roomId}`)
   }
-  const ids = targetRoom ? surveyIds(targetRoom, doc.apartment?.defaultCeilingCm) : allSurveyIds(doc)
+  const ids = (targetRoom ? surveyIds(targetRoom, doc.apartment?.defaultCeilingCm) : allSurveyIds(doc)).filter((s) => !s.optional)
   const roomMap = new Map(doc.rooms.map((r) => [r.id, r]))
   const remaining = ids
     .filter((s) => doc.measurements?.[s.label] == null)
@@ -268,7 +268,7 @@ export function queryValidate(doc: PlanDoc, args?: z.infer<typeof ValidateArgsSc
     // Measurement discrepancies
     for (const s of surveyIds(r, doc.apartment?.defaultCeilingCm)) {
       const m = doc.measurements?.[s.label]
-      if (!m) continue
+      if (!m || s.optional) continue
       const d = discrepancy(s.plannedCm, m.actualCm)
       if (d && d.flagged) {
         warnings.push({

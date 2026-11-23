@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Check } from 'lucide-react'
 import { fmtCm } from '../../model/geometry'
 import { useDoc } from '../../model/store'
-import { surveyIds } from '../../model/survey'
+import { parseThicknessLabel, surveyIds, thicknessIds, type SurveyId } from '../../model/survey'
 import type { PlanDoc, Room } from '../../model/types'
 import { ItemsEditor } from './ItemsEditor'
 import { discrepancy, fmtDiff, nextLabel, oppositeWallNotes, roomProgress, squarenessCheck } from './logic'
@@ -24,6 +24,8 @@ const setNote = (code: string, text: string) =>
 export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; allLabels: string[] }) {
   const [focused, setFocused] = useState<string | null>(null)
   const ids = surveyIds(room, doc.apartment?.defaultCeilingCm)
+  const thick = thicknessIds(doc, room)
+  const thickDone = thick.filter((s) => doc.measurements[s.label] != null).length
   const { done, total } = roomProgress(doc, room)
   const square = squarenessCheck(doc, room)
   const opposite = oppositeWallNotes(doc, room)
@@ -32,6 +34,43 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
     const nx = nextLabel(allLabels, label)
     const el = nx && document.getElementById(inputId(nx))
     if (el) el.focus(); else (document.activeElement as HTMLElement | null)?.blur()
+  }
+
+  const field = (sid: SurveyId) => {
+    const m = doc.measurements[sid.label]
+    const verified = m != null
+    const dis = verified ? discrepancy(sid.plannedCm, m.actualCm) : null
+    // A thickness that differs from the plan is new data, not an error: never flagged.
+    const flagged = !!dis?.flagged && !sid.optional
+    const title = sid.kind === 'diagonal' ? `${sid.label} · diagonal`
+      : sid.kind === 'height' ? `${sid.label} · ${room.outdoor ? 'height' : 'ceiling height'}`
+      : sid.kind === 'thickness' ? `${sid.label} · thickness`
+      : sid.label
+    const applyRoom = wallLabelRoom(sid.label) ?? parseThicknessLabel(sid.label)?.code
+    return (
+      <div key={sid.label} className="flex min-w-0 flex-col gap-1">
+        <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-green-700 dark:text-green-400' : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
+          <span>{title}</span>
+          {verified
+            ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> verified</span>
+            : <span className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">{sid.plannedCm != null ? 'estimated' : 'to measure'}</span>}
+        </label>
+        <NumField
+          id={inputId(sid.label)}
+          value={m?.actualCm}
+          placeholder={sid.plannedCm != null ? `plan ${fmtCm(sid.plannedCm)}` : undefined}
+          onValue={(n) => setMeasurement(sid.label, n)}
+          onFocus={() => setFocused(sid.label)}
+          onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); if (applyRoom) flushAutoApply(applyRoom) }}
+          onEnter={() => goNext(sid.label)}
+        />
+        {verified && sid.plannedCm != null && dis && (
+          <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : 'text-slate-500 dark:text-slate-400'}`}>
+            Plan {fmtCm(sid.plannedCm)} · Real {fmtCm(m.actualCm)} ({fmtDiff(dis.diff)})
+          </p>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -48,37 +87,22 @@ export function RoomCard({ doc, room, allLabels }: { doc: PlanDoc; room: Room; a
       />
 
       <div className="grid grid-cols-2 gap-2.5">
-        {ids.map((sid) => {
-          const m = doc.measurements[sid.label]
-          const verified = m != null
-          const dis = verified ? discrepancy(sid.plannedCm, m.actualCm) : null
-          const title = sid.kind === 'diagonal' ? `${sid.label} · diagonal` : sid.kind === 'height' ? `${sid.label} · ${room.outdoor ? 'height' : 'ceiling height'}` : sid.label
-          return (
-            <div key={sid.label} className={`flex min-w-0 flex-col gap-1 ${sid.kind !== 'wall' ? 'col-span-1' : ''}`}>
-              <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-green-700 dark:text-green-400' : 'text-orange-700 dark:text-orange-400'}`}>
-                <span>{title}</span>
-                {verified
-                  ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> verified</span>
-                  : <span className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">{sid.plannedCm != null ? 'estimated' : 'to measure'}</span>}
-              </label>
-              <NumField
-                id={inputId(sid.label)}
-                value={m?.actualCm}
-                placeholder={sid.plannedCm != null ? `plan ${fmtCm(sid.plannedCm)}` : undefined}
-                onValue={(n) => setMeasurement(sid.label, n)}
-                onFocus={() => setFocused(sid.label)}
-                onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); const c = wallLabelRoom(sid.label); if (c) flushAutoApply(c) }}
-                onEnter={() => goNext(sid.label)}
-              />
-              {verified && sid.plannedCm != null && dis && (
-                <p className={`text-xs ${dis.flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : 'text-slate-500 dark:text-slate-400'}`}>
-                  Plan {fmtCm(sid.plannedCm)} · Real {fmtCm(m.actualCm)} ({fmtDiff(dis.diff)})
-                </p>
-              )}
-            </div>
-          )
-        })}
+        {ids.map(field)}
       </div>
+
+      {thick.length > 0 && (
+        <details className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+          <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">
+            Wall thickness (optional) · {thickDone}/{thick.length}
+          </summary>
+          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+            Measure at a door or window frame, from one face of the wall to the other. Each wall has one ID: a wall between two rooms is in the room you measure first.
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-2.5">
+            {thick.map(field)}
+          </div>
+        </details>
+      )}
 
       {square && (
         <p role="status" className={`rounded-lg px-3 py-2 text-sm ${square.ok ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300' : 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200'}`}>

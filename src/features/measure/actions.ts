@@ -1,6 +1,8 @@
 // Small side-effect helpers for Measuring Mode (store writes, DOM navigation).
 import { nowIso, useDoc } from '../../model/store'
+import { parseThicknessLabel } from '../../model/survey'
 import { scheduleAutoApply, wallLabelRoom } from '../rooms/measureRules'
+import { applyThicknessLabel } from '../rooms/thickness'
 
 export const inputId = (label: string) => `m-${label}`
 
@@ -14,9 +16,10 @@ export function setMeasurement(label: string, cm: number | null) {
     const measurements = { ...d.measurements }
     if (cm == null) delete measurements[label]
     else measurements[label] = { label, actualCm: cm, updatedAt: nowIso() }
-    return { ...d, measurements }
+    // A thickness (CODE-n-T) becomes the thickness of the wall, on both sides of it.
+    return cm == null ? { ...d, measurements } : applyThicknessLabel({ ...d, measurements }, label, cm)
   })
-  const code = wallLabelRoom(label)
+  const code = wallLabelRoom(label) ?? parseThicknessLabel(label)?.code
   if (cm != null && code && useDoc.getState().doc.rooms.some((r) => r.code === code)) scheduleAutoApply(code)
 }
 

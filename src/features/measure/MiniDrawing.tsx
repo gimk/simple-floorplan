@@ -125,7 +125,7 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
               style={{ cursor: 'pointer' }}
               onClick={() => focus(label)} onKeyDown={keyTap(() => focus(label))}
             />
-            {focused === label && <line x1={f(a.x)} y1={f(a.y)} x2={f(b.x)} y2={f(b.y)} className="stroke-orange-600 dark:stroke-orange-400" strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
+            {(focused === label || focused === `${label}-T`) && <line x1={f(a.x)} y1={f(a.y)} x2={f(b.x)} y2={f(b.y)} className="stroke-orange-600 dark:stroke-orange-400" strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
             <polygon points={tri.map(([x, y]) => `${f(x)},${f(y)}`).join(' ')} className="fill-slate-500 dark:fill-slate-400" pointerEvents="none" />
             <Label x={mx} y={my} angle={ang} text={labelText(label)} ok={val(label) != null} onTap={() => focus(label)} />
           </g>

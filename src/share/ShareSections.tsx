@@ -72,6 +72,7 @@ export function RoomsTable({ doc }: { doc: PlanDoc }) {
   const byRoom = useMemo(() => {
     const map = new Map<string, Verified>()
     for (const row of surveyRows(doc)) {
+      if (row.optional) continue // wall thickness: not part of the survey count
       const entry = map.get(row.roomCode) ?? { total: 0, verified: 0, ids: [] }
       entry.total += 1
       if (row.measuredCm !== null) {
@@ -154,6 +155,9 @@ export function RoomsTable({ doc }: { doc: PlanDoc }) {
 export function DimensionsTable({ doc }: { doc: PlanDoc }) {
   const rows = useMemo(() => surveyRows(doc), [doc])
   const verified = rows.filter((r) => r.measuredCm !== null)
+  // Optional values (wall thickness) are listed when measured, but are not in the count.
+  const required = rows.filter((r) => !r.optional)
+  const requiredDone = required.filter((r) => r.measuredCm !== null).length
   if (rows.length === 0) return null
 
   return (
@@ -190,8 +194,8 @@ export function DimensionsTable({ doc }: { doc: PlanDoc }) {
             </table>
           </div>
           <p className={`${MUTED} mt-1`}>
-            {verified.length} of {rows.length} dimensions measured on site. Walls are CODE-1..n, CODE-D is the
-            diagonal, CODE-H the ceiling height.
+            {requiredDone} of {required.length} dimensions measured on site. Walls are CODE-1..n, CODE-D is the
+            diagonal, CODE-H the ceiling height, CODE-n-T a wall thickness.
           </p>
         </>
       )}

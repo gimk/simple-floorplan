@@ -9,6 +9,8 @@ import { toCsv } from './csv'
 export type SurveyRow = {
   roomCode: string; roomName: string; id: string; kind: string
   plannedCm: number | null; measuredCm: number | null; diffCm: number | null; status: 'verified' | 'estimated'; notes: string
+  /** Not needed to finish the survey (wall thickness). */
+  optional?: boolean
 }
 export type ItemRow = {
   roomCode: string; roomName: string; wall: string; type: string
@@ -33,6 +35,7 @@ export function surveyRows(doc: PlanDoc): SurveyRow[] {
       plannedCm: planned, measuredCm: measured,
       diffCm: planned !== null && measured !== null ? r1(measured - planned) : null,
       status: m ? 'verified' : 'estimated', notes,
+      ...(s.optional ? { optional: true } : {}),
     }
   })
 }

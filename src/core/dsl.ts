@@ -243,7 +243,7 @@ export function planToDsl(doc: PlanDoc): string {
   const byRoom = new Map<string, [string, number][]>()
   const unmatched: [string, number][] = []
   for (const [label, m] of Object.entries(doc.measurements ?? {})) {
-    const dash = label.lastIndexOf('-')
+    const dash = label.indexOf('-')
     const code = dash > 0 ? label.slice(0, dash) : ''
     const entry: [string, number] = [label, m.actualCm]
     if (code && rooms.some((r) => r.code === code)) {
@@ -382,7 +382,7 @@ export function planToDsl(doc: PlanDoc): string {
 const CODE_RE = /^[A-Za-z0-9_]+$/
 const LABEL_RE = /^([A-Za-z0-9_]+)-([0-9]+)$/
 /** Survey label: wall "SE-2", diagonal "SE-D", ceiling "SE-H". */
-const MEAS_LABEL_RE = /^([A-Za-z0-9_]+)-([0-9]+|[DHdh])$/
+const MEAS_LABEL_RE = /^([A-Za-z0-9_]+)-([0-9]+(?:-T)?|[DHdh])$/
 const WALL_TYPES: WallType[] = ['bearing', 'partition', 'exterior']
 /** Renovation states written on a wall line (7.4). "existing" is the default, never written. */
 const WALL_STATES: WallStatus[] = ['demolish', 'new']
@@ -813,7 +813,7 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
         const labelTok = cur.next()
         if (labelTok.t !== 'word') throw cur.err(`expected a survey label but found ${tokDesc(labelTok)}`)
         const label = labelTok.v
-        if (!MEAS_LABEL_RE.test(label)) throw new DslParseError(lineNo, `invalid measurement label "${label}" (expected CODE-n, CODE-D or CODE-H)`)
+        if (!MEAS_LABEL_RE.test(label)) throw new DslParseError(lineNo, `invalid measurement label "${label}" (expected CODE-n, CODE-D, CODE-H or CODE-n-T)`)
         cur.expectPunct('=')
         const v = cur.num()
         if (!(v > 0)) throw new DslParseError(lineNo, `measurement ${label} must be positive`)

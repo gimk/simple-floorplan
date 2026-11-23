@@ -1,7 +1,7 @@
 // Pure logic for Measuring Mode. No React here, so it is easy to test.
 import { lerp, roomWalls } from '../../model/geometry'
 import type { Wall } from '../../model/geometry'
-import { allSurveyIds, surveyIds } from '../../model/survey'
+import { allRequiredSurveyIds, requiredSurveyIds } from '../../model/survey'
 import type { ElementKind, PlanDoc, Room, Vec, WallElement } from '../../model/types'
 
 /** Parse a length typed by the user. Comma or dot. null = empty, NaN = invalid. */
@@ -86,12 +86,12 @@ export function nextUnmeasuredLabel(doc: Pick<PlanDoc, 'measurements'>, labels: 
 
 /** True when at least one survey ID of the room has no measured value yet. */
 export function roomHasMissing(doc: Pick<PlanDoc, 'measurements'>, room: Room): boolean {
-  return surveyIds(room).some((s) => doc.measurements[s.label] == null)
+  return requiredSurveyIds(room).some((s) => doc.measurements[s.label] == null)
 }
 
 /** True when the room has a flagged discrepancy (> 2 cm vs plan) or a squareness warning. */
 export function roomIsFlagged(doc: Pick<PlanDoc, 'measurements'> & { apartment?: PlanDoc['apartment'] }, room: Room): boolean {
-  const flagged = surveyIds(room, doc.apartment?.defaultCeilingCm).some((s) => {
+  const flagged = requiredSurveyIds(room, doc.apartment?.defaultCeilingCm).some((s) => {
     const m = doc.measurements[s.label]
     if (m == null || s.plannedCm == null) return false
     return Math.abs(m.actualCm - s.plannedCm) > DISCREPANCY_CM
@@ -102,14 +102,14 @@ export function roomIsFlagged(doc: Pick<PlanDoc, 'measurements'> & { apartment?:
 }
 
 export function roomProgress(doc: PlanDoc, room: Room) {
-  const ids = surveyIds(room)
+  const ids = requiredSurveyIds(room)
   const done = ids.filter((s) => doc.measurements[s.label] != null).length
   const total = ids.length
   return { done, total, state: (done === 0 ? 'none' : done === total ? 'full' : 'part') as 'none' | 'part' | 'full' }
 }
 
 export function docProgress(doc: PlanDoc) {
-  const ids = allSurveyIds(doc)
+  const ids = allRequiredSurveyIds(doc)
   const done = ids.filter((s) => doc.measurements[s.label] != null).length
   return { done, total: ids.length }
 }

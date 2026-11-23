@@ -142,6 +142,8 @@ type UiState = {
   /** Element kind to place with the 'place-element' tool. */
   placeKind: ElementKind
   snap: { grid: boolean; gridCm: number; angles: boolean; vertices: boolean }
+  /** "Solve whole plan" keeps locked walls. */
+  solveKeepLocked: boolean
   layers: Layers
   /** Before / After / Both renovation display (see features/renovation, 7.4). */
   renovationView: RenovationView
@@ -163,6 +165,7 @@ export const useUi = create<UiState>()((set) => ({
   multi: [],
   placeKind: 'door',
   snap: { grid: true, gridCm: 5, angles: true, vertices: true },
+  solveKeepLocked: true,
   layers: { background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true },
   renovationView: 'both',
   view: { x: -100, y: -100, zoom: 1 },

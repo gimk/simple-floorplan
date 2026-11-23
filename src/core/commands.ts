@@ -32,6 +32,8 @@ import type {
 import { defaultElement, overflows } from '../features/elements/geometry'
 import { wallProps } from '../features/rooms/walls'
 import { hasVerifiedWalls, solveRoom, twinValues } from '../features/rooms/solve'
+import { applyThicknessLabel } from '../features/rooms/thickness'
+import { planPrecision, roundVec } from '../model/precision'
 import {
   ElementKindSchema,
   ElementVariantSchema,
@@ -316,6 +318,8 @@ const SetApartmentSchema = z
     type: z.literal('set_apartment'),
     /** Apartment default height in cm; null removes it. */
     defaultCeilingCm: z.number().finite().positive().nullable().optional(),
+    /** Smallest step (cm) the solvers write for corners and thicknesses; 0 = no rounding; null = default (0.5). */
+    precisionCm: z.union([z.literal(0), z.literal(0.5), z.literal(1)]).nullable().optional(),
     /** Full replacement of the reference list (ids are generated when missing). */
     references: z.array(SurfaceReferenceInputSchema).optional(),
     /** Append one reference. */
@@ -326,10 +330,11 @@ const SetApartmentSchema = z
   .refine(
     (v) =>
       v.defaultCeilingCm !== undefined ||
+      v.precisionCm !== undefined ||
       v.references !== undefined ||
       v.addReference !== undefined ||
       v.removeReferenceId !== undefined,
-    { message: 'set_apartment requires defaultCeilingCm, references, addReference or removeReferenceId' },
+    { message: 'set_apartment requires defaultCeilingCm, precisionCm, references, addReference or removeReferenceId' },
   )
 
 export const CommandSchema = z.discriminatedUnion('type', [
@@ -698,7 +703,10 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
   const centre: (number | null)[] = room.vertices.map(() => null)
   for (const t of twinValues(doc, room)) centre[t.index] = t.cm
   const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
-  const solved = solveRoom(room, measured, diagonalCm, centre)
+  const raw = solveRoom(room, measured, diagonalCm, centre)
+  // Corners take the precision of the plan (0.5 or 1 cm), if the user chose one.
+  const step = planPrecision(doc)
+  const solved = step ? { ...raw, points: raw.points.map((p) => roundVec(p, step)) } : raw
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })
   if (walls.some((x) => x.length < 1)) {
     return {
@@ -1443,10 +1451,11 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
 
     case 'set_measurement': {
       const m = { label: cmd.label, actualCm: cmd.actualCm, updatedAt: cmd.updatedAt ?? nowIso() }
-      const next: PlanDocV1 = {
+      // A thickness (CODE-n-T) also becomes the thickness of the wall, on both sides of it.
+      const next: PlanDocV1 = applyThicknessLabel({
         ...doc,
         measurements: { ...doc.measurements, [cmd.label]: m },
-      }
+      }, cmd.label, cmd.actualCm)
       return {
         doc: next,
         result: { measurement: m },
@@ -1604,11 +1613,14 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
       const apartment: Apartment = { ...existing, references }
       if (cmd.defaultCeilingCm === null) delete apartment.defaultCeilingCm
       else if (cmd.defaultCeilingCm !== undefined) apartment.defaultCeilingCm = cmd.defaultCeilingCm
+      if (cmd.precisionCm === null) delete apartment.precisionCm
+      else if (cmd.precisionCm !== undefined) apartment.precisionCm = cmd.precisionCm
 
       return {
         doc: { ...doc, apartment },
         result: {
           defaultCeilingCm: apartment.defaultCeilingCm ?? null,
+          precisionCm: planPrecision({ apartment }),
           references,
           referenceCount: references.length,
         },

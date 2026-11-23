@@ -179,7 +179,7 @@ describe('photo marks: values', () => {
       measurements: { 'SE-1': { label: 'SE-1', actualCm: 402, updatedAt: '' } },
     })
     const options = surveyOptionsForPin(pin(), d)
-    expect(options.map((o) => o.value)).toEqual(['SE-1', 'SE-2', 'SE-3', 'SE-4', 'SE-D', 'SE-H'])
+    expect(options.map((o) => o.value)).toEqual(['SE-1', 'SE-2', 'SE-3', 'SE-4', 'SE-D', 'SE-H', 'SE-1-T', 'SE-2-T', 'SE-3-T', 'SE-4-T'])
     expect(options[0].label).toBe('SE-1 · 402 cm') // measured wins
     expect(options[1].label).toBe('SE-2 · 290 cm')
     expect(surveyOptionsForPin(pin({ roomId: undefined }), d)).toEqual([])

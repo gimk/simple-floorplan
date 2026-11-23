@@ -24,6 +24,7 @@ export const WallPropsSchema = z.object({
   thicknessCm: z.number().finite().positive(),
   locked: z.boolean().optional(),
   status: WallStatusSchema.optional(),
+  align: z.enum(['room', 'center', 'other']).optional(),
 })
 
 export const RoomSchema = z.object({
@@ -146,6 +147,7 @@ export const SurfaceReferenceSchema = z.object({
 export const ApartmentSchema = z.object({
   defaultCeilingCm: z.number().finite().positive().optional(),
   references: z.array(SurfaceReferenceSchema).optional(),
+  precisionCm: z.union([z.literal(0), z.literal(0.5), z.literal(1)]).optional(),
 })
 
 export const PlanDocV1Schema = z.object({

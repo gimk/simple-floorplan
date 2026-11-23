@@ -1,5 +1,6 @@
 // "Apply measured lengths": re-solve a room polygon from verified wall lengths (plan 2.5.7 / 5.4). Pure, cm.
 import { dist, roomWalls } from '../../model/geometry'
+import { planPrecision, roundVec } from '../../model/precision'
 import type { PlanDoc, Room, WallProps } from '../../model/types'
 import { moveVertices, movableLinked, type VMove } from './ops'
 import { hasVerifiedWalls, measuredNeighbours, solveRoom, twinValues, verifiedWalls, type SolveMode, type SolveResidual } from './solve'
@@ -55,7 +56,10 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
   const centre: (number | null)[] = room.vertices.map(() => null)
   for (const t of twinValues(doc, room)) centre[t.index] = t.cm
   const diagonalCm = doc.measurements[`${room.code}-D`]?.actualCm ?? null
-  const solved = solveRoom(room, measured, diagonalCm, centre)
+  const raw = solveRoom(room, measured, diagonalCm, centre)
+  // Corners take the precision of the plan (0.5 or 1 cm), if the user chose one.
+  const step = planPrecision(doc)
+  const solved = step ? { ...raw, points: raw.points.map((p) => roundVec(p, step)) } : raw
 
   const walls = roomWalls({ ...room, vertices: room.vertices.map((v, i) => ({ ...v, ...solved.points[i] })) })
   if (walls.some((x) => x.length < 1)) return { doc, report: none(room, 'A wall would collapse') }

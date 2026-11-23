@@ -1,10 +1,10 @@
-// Snap settings popover in the header (plan 7.2 #10): grid on/off, 1/5/10 cm step,
+// Snap settings popover in the header (plan 7.2 #10): grid on/off, 0.5/1/5/10 cm step,
 // angle snapping, vertex snapping.
 import { useEffect, useRef, useState } from 'react'
 import { Magnet } from 'lucide-react'
 import { useUi } from '../model/store'
 
-const STEPS = [1, 5, 10]
+const STEPS = [0.5, 1, 5, 10]
 
 export function SnapPopover() {
   const snap = useUi((s) => s.snap)
@@ -64,7 +64,7 @@ export function SnapPopover() {
         <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-black/10 bg-white p-3 shadow-lg dark:border-white/15 dark:bg-[#1b2128]">
           <div className="mb-1 text-xs font-semibold uppercase opacity-60">Snap</div>
           {check('grid')}
-          <div className={`ml-6 flex items-center gap-2 ${snap.grid ? '' : 'opacity-40'}`}>
+          <div className={`ml-6 flex flex-wrap items-center gap-x-2 ${snap.grid ? '' : 'opacity-40'}`}>
             {STEPS.map((s) => (
               <label key={s} className="flex h-9 cursor-pointer items-center gap-1 text-sm">
                 <input
@@ -75,7 +75,7 @@ export function SnapPopover() {
                   checked={snap.gridCm === s}
                   onChange={() => set({ snap: { ...snap, gridCm: s } })}
                 />
-                {s} cm
+                {String(s).replace('.', ',')} cm
               </label>
             ))}
           </div>

@@ -4,8 +4,9 @@
 //   - a wall whose two corners are still next to each other (same order) keeps its value,
 //     under its new label (possibly in another room, after a slice or a merge);
 //   - a wall that was split or removed loses its value: it must be measured again.
-// Diagonals (CODE-D) follow their two corners; heights (CODE-H) follow the room, and rooms
+// Thicknesses (CODE-n-T) follow their wall like CODE-n. Diagonals (CODE-D) follow their two corners; heights (CODE-H) follow the room, and rooms
 // cut out of a measured room get its height too. Pure, no store imports.
+import { labelRoomCode } from './survey'
 import type { Measurement, PlanDoc, Room } from './types'
 
 type Doc = Pick<PlanDoc, 'rooms' | 'measurements'>
@@ -43,7 +44,7 @@ export function relabelMeasurements(before: Doc, after: Doc, now: string): Relab
   const afterById = new Map(after.rooms.map((r) => [r.id, r]))
   const beforeIds = new Set(before.rooms.map((r) => r.id))
   const beforeCodes = new Set(before.rooms.map((r) => r.code))
-  const codeOf = (label: string) => label.slice(0, label.lastIndexOf('-'))
+  const codeOf = labelRoomCode
 
   const out: PlanDoc['measurements'] = {}
   const put = (label: string, src: Measurement, moved: boolean) => {
@@ -64,14 +65,17 @@ export function relabelMeasurements(before: Doc, after: Doc, now: string): Relab
     const lost = (label: string) => { if (stillThere || heirs.length) dropped.push(label) }
 
     r.vertices.forEach((v, i) => {
-      const label = `${r.code}-${i + 1}`
-      const val = m[label]
-      if (!val) return
-      const hits = walls.get(v.id + '>' + r.vertices[(i + 1) % n].id)
-      const hit = hits?.find((h) => h.room.id === r.id) ?? hits?.[0]
-      if (!hit) { lost(label); return }
-      const nl = `${hit.room.code}-${hit.index + 1}`
-      put(nl, val, nl !== label)
+      // The wall length CODE-n and the wall thickness CODE-n-T follow the wall.
+      for (const suffix of ['', '-T']) {
+        const label = `${r.code}-${i + 1}${suffix}`
+        const val = m[label]
+        if (!val) continue
+        const hits = walls.get(v.id + '>' + r.vertices[(i + 1) % n].id)
+        const hit = hits?.find((h) => h.room.id === r.id) ?? hits?.[0]
+        if (!hit) { lost(label); continue }
+        const nl = `${hit.room.code}-${hit.index + 1}${suffix}`
+        put(nl, val, nl !== label)
+      }
     })
 
     const dLabel = `${r.code}-D`

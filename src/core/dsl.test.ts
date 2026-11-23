@@ -404,3 +404,11 @@ describe('dsl: pin photo sketches', () => {
     expect(line('[{"id":"m","a":[0,0],"b":[1,1],"p":0,"v":0}]')?.message).toMatch(/positive/)
   })
 })
+
+describe('DSL wall thickness IDs', () => {
+  it('reads and writes CODE-n-T in the room block', () => {
+    const doc = dslToPlan('plan "T" version=1 unit=cm\n\nroom SE "Living" rect(0,0 400x300) walk=1\n  measure SE-1=390 SE-2-T=14\n')
+    expect(doc.measurements['SE-2-T']?.actualCm).toBe(14)
+    expect(planToDsl(doc)).toContain('measure SE-1=390 SE-2-T=14')
+  })
+})

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowDownCircle, Cloud, CloudOff, Eye, KeyRound, Monitor, Sun } from 'lucide-react'
 import { normalizeDoorHosts } from '../../core/doorHost'
 import { useDoc, useUi } from '../../model/store'
-import { allSurveyIds, roomsInWalkOrder } from '../../model/survey'
+import { allRequiredSurveyIds, labelRoomCode, roomsInWalkOrder } from '../../model/survey'
 import { getSyncState, setPasscode, useSyncState, useSyncStatusText } from '../../sync/sync'
 import { loadDemoApartment } from './demo'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
@@ -33,7 +33,7 @@ export function MeasureMode() {
   const doc = useDoc((s) => s.doc)
   const { text: status, warn: statusWarn } = useSyncStatusText()
   const allRooms = roomsInWalkOrder(doc)
-  const labels = allSurveyIds(doc).map((s) => s.label)
+  const labels = allRequiredSurveyIds(doc).map((s) => s.label)
   const { done, total } = docProgress(doc)
   const hasRooms = allRooms.length > 0
 
@@ -85,7 +85,7 @@ export function MeasureMode() {
     const current = activeId ? activeId.slice(2) : null
     const nx = nextUnmeasuredLabel(doc, labels, current)
     if (!nx) return
-    const code = nx.slice(0, nx.lastIndexOf('-'))
+    const code = labelRoomCode(nx)
     const focusTarget = () => {
       document.getElementById(`room-${code}`)?.scrollIntoView({ block: 'start' })
       const el = document.getElementById(inputId(nx)) as HTMLInputElement | null

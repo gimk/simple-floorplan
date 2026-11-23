@@ -6,7 +6,7 @@ import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
 import { fmtCm, innerWallLengths, roomAreaM2, roomInnerRing, roomWalls } from '../../model/geometry'
 import { selectedItems, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
-import type { PlanDoc, Room, Selection, WallProps, WallStatus, WallType } from '../../model/types'
+import type { PlanDoc, Room, Selection, WallAlign, WallProps, WallStatus, WallType } from '../../model/types'
 import { effectiveCeilingCm } from '../export/calc'
 import {
   BTN,
@@ -25,6 +25,8 @@ import {
 } from '../../shell/panel'
 import { undoToast } from '../toast'
 import { applyMeasuredAll, applyMeasuredNear, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
+import { applyGlobal, describeGlobal } from './applyGlobal'
+import { setWallAlign } from './thickness'
 import { useActiveHole } from './holes'
 import { deleteRoom, moveHoleVertex, moveVertices, movableLinked, setRoomCode, vertexLocked } from './ops'
 import { elementRows, wallElementRows, wallRows, WALL_TYPE_CHIP, type ElementRow } from './roomLists'
@@ -65,6 +67,22 @@ function patchWalls(refs: WallRef[], patch: (cur: WallProps) => Partial<WallProp
       return { ...r, walls }
     }),
   }))
+}
+
+/** Line of a wall that lines up with the walls that continue it (7.5). */
+const WALL_ALIGNS = [
+  { value: 'room', label: 'This face' },
+  { value: 'center', label: 'Centre' },
+  { value: 'other', label: 'Other face' },
+] as const
+
+/** Set the alignment of walls in one undo step; the other side of each wall gets the mirrored value. */
+function setWallAligns(refs: WallRef[], align: WallAlign) {
+  update((d) => refs.reduce((cur, w) => {
+    const r = cur.rooms.find((x) => x.id === w.roomId)
+    const i = r ? r.vertices.findIndex((v) => v.id === w.wallStart) : -1
+    return r && i >= 0 ? setWallAlign(cur, r.id, i, align) : cur
+  }, d))
 }
 
 /** Change the type; each wall keeps its current thickness. */
@@ -157,6 +175,19 @@ function ElementList({ rows, onSelect, show = 'wall' }: { rows: ElementRow[]; on
 export type ActiveHole = { roomId: string; holeIndex: number } | null
 
 /** Sidebar panel: properties of the selected room / wall / vertex. */
+/** "Solve whole plan" option: keep locked walls (UI setting, on by default). */
+function KeepLockedToggle() {
+  const on = useUi((s) => s.solveKeepLocked)
+  return (
+    <CheckboxRow
+      name="solveKeepLocked"
+      label="Keep locked walls when solving the whole plan"
+      checked={on}
+      onChange={(checked) => useUi.getState().set({ solveKeepLocked: checked })}
+    />
+  )
+}
+
 export function RoomsPanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
@@ -230,6 +261,13 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
       : describeReport(r.reports[0]) })
   }
 
+  const runGlobal = () => {
+    const current = useDoc.getState().doc
+    const r = applyGlobal(current, { keepLocked: useUi.getState().solveKeepLocked })
+    if (r.doc !== current) update(() => r.doc)
+    setNote({ roomId: room.id, text: describeGlobal(r.report) })
+  }
+
   return (
     <>
       {(groupKind === 'room' || groupKind === 'vertex') && (
@@ -270,6 +308,14 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
               }}
             />
           </FieldRow>
+          <FieldRow label="In line on">
+            <Segmented
+              ariaLabel="Line of the wall that lines up with the next walls"
+              options={WALL_ALIGNS}
+              value={props.align ?? 'room'}
+              onChange={(a) => setWallAligns(targets, a as WallAlign)}
+            />
+          </FieldRow>
           {!group && <FieldRow label="Length" htmlFor="wall-length">
             <NumberField
               id="wall-length"
@@ -290,7 +336,11 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
             checked={!!props.locked}
             onChange={(checked) => patchWalls(targets, () => ({ locked: checked }))}
           />
-          <EmptyHint>Key B: bearing / partition. Length moves the end vertex.</EmptyHint>
+          <EmptyHint>
+            Key B: bearing / partition. Length moves the end vertex. "In line on" is the line of this wall that lines up with
+            the walls that continue it: the face in this room (as measured on site), the centre (as on an architect plan),
+            or the face on the other side. "Solve whole plan" uses it.
+          </EmptyHint>
         </PanelSection>
       )}
 
@@ -498,6 +548,15 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
         <button className={BTN} disabled={!doc.rooms.some((r) => verifiedWalls({ measurements: doc.measurements }, r).length)} onClick={() => runApply(true)}>
           Apply to all rooms
         </button>
+        <button
+          className={BTN}
+          disabled={!doc.rooms.some((r) => verifiedWalls({ measurements: doc.measurements }, r).length)}
+          onClick={runGlobal}
+          title="Solve all rooms together: shared walls, wall thicknesses and walls in line. Keeps all measured values; other walls move to fit."
+        >
+          Solve whole plan (beta)
+        </button>
+        <KeepLockedToggle />
         <CheckboxRow
           name="lockVerifiedWalls"
           label="Lock verified walls"

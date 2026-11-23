@@ -10,6 +10,12 @@ export type WallType = 'bearing' | 'partition' | 'exterior'
 /** Renovation state of a wall: kept as it is, demolished, or built (7.4). */
 export type WallStatus = 'existing' | 'demolish' | 'new'
 
+/**
+ * Which line of a wall lines up with the next walls on the same line (7.5):
+ * its face in this room, its centre line, or its face in the room on the other side.
+ */
+export type WallAlign = 'room' | 'center' | 'other'
+
 /** Properties of the wall that STARTS at a given vertex and goes to the next vertex. */
 export type WallProps = {
   type: WallType
@@ -17,6 +23,8 @@ export type WallProps = {
   locked?: boolean
   /** Renovation state. Missing = 'existing'. */
   status?: WallStatus
+  /** Line that lines up with the next walls. Missing = 'room'. */
+  align?: WallAlign
 }
 
 export type Room = {
@@ -163,6 +171,8 @@ export type Apartment = {
   /** Ceiling height used by rooms without their own `ceilingCm`. */
   defaultCeilingCm?: number
   references?: SurfaceReference[]
+  /** Smallest step (cm) that the solvers write for corners and thicknesses. 0 = no rounding. Missing = 0.5. */
+  precisionCm?: 0 | 0.5 | 1
 }
 
 export type PlanDoc = {
