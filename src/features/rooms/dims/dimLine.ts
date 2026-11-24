@@ -28,6 +28,16 @@ export const DIM_STYLE = {
   textPad: 8,
   /** Gap between the end of a line and the text that went outside it, px. */
   outsideGap: 2,
+  /** Wall number badge: height, horizontal padding and character width, px. */
+  badgeH: 13,
+  badgePad: 5,
+  badgeCharW: 5.6,
+  /** Smallest gap between the text of a dimension and the wall number badge, px. */
+  badgeGap: 4,
+  /** Distance of the badge from the start end of the line, px. */
+  badgeStart: 6,
+  /** Distance of the badge from the line when the wall shows no dimension text, px. */
+  badgeNear: 10,
 }
 
 export type DimTick = { x1: number; y1: number; x2: number; y2: number }
@@ -60,6 +70,15 @@ export type DimLineInput = {
   zoom: number
   /** The text of the value, e.g. "412" or "✓ 412 · 410,7". */
   text: string
+  /**
+   * 'outside' puts the text past the end of the line even when it would fit (the small-room rule
+   * of r1fix R1-8a, and the short outside segments); 'auto' (default) is the rule of the style.
+   */
+  textPlace?: 'auto' | 'outside'
+  /** End of the line the text goes past when it is outside: the end of the line (default), or its start. */
+  outsideEnd?: 'start' | 'end'
+  /** Distance from the line to the middle of the text, px (default DIM_STYLE.textGap). */
+  textGapPx?: number
 }
 
 /** The world size of `n` screen px at this zoom. */
@@ -91,10 +110,14 @@ export function dimLine(input: DimLineInput): DimLine | null {
 
   // The text, on the side away from the wall, rotated with the line and always up.
   const textWidthPx = text.length * DIM_STYLE.charWidth
-  const outside = textWidthPx > faceCm * zoom - DIM_STYLE.textPad
-  const gap = mul(n, px(DIM_STYLE.textGap))
+  const outside = input.textPlace === 'outside' || textWidthPx > faceCm * zoom - DIM_STYLE.textPad
+  const gap = mul(n, px(input.textGapPx ?? DIM_STYLE.textGap))
+  // Past the end of the line: the start end or the end of the line, plus the width of the text.
+  const atStart = input.outsideEnd === 'start'
+  const endPoint = atStart ? p1 : p2
+  const away = atStart ? mul(dir, -1) : dir
   const centre = outside
-    ? add(add(p2, mul(dir, px(DIM_STYLE.outsideGap + textWidthPx / 2))), gap)
+    ? add(add(endPoint, mul(away, px(DIM_STYLE.outsideGap + textWidthPx / 2))), gap)
     : add({ x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 }, gap)
   const raw = (Math.atan2(dir.y, dir.x) * 180) / Math.PI
   const angle = raw > 90 ? raw - 180 : raw < -90 ? raw + 180 : raw

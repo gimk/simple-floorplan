@@ -4,8 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { emptyDoc } from '../../../model/store'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../../model/types'
 import { convertToV2 } from '../../../model/v2/convert'
+import { ensureV2 } from '../../../model/v2/ensure'
 import { wallOutsidePlanCm } from '../../../model/wallValues'
-import { groupRuns, outsideDims, outsideSpans } from './outsideDims'
+import { demoRooms } from '../../measure/demo'
+import { groupRuns, outsideDims, outsideSpans, type OutsideDimRun } from './outsideDims'
+
+/** Length of the whole chain row of a run, cm. */
+const sumOf = (run: OutsideDimRun) => run.segments.reduce((s, seg) => s + seg.lengthCm, 0)
 
 const wall = (id: string, a: string, b: string, thicknessCm = 10): StoredWall =>
   ({ id, a, b, faces: [], type: 'partition', thicknessCm })
@@ -158,6 +163,43 @@ describe('outsideDims', () => {
 
   it('gives no run for a document with no walls', () => {
     expect(outsideDims(doc([], []))).toEqual([])
+  })
+
+  it('adds the chain up to the overall when the two end walls have different thicknesses', () => {
+    // The right wall of the rectangle is 30 cm thick: the top run goes to its outside corner, 15 cm
+    // past the node, and the chain must use that same point.
+    const base = rectangle()
+    const runs = outsideDims({ ...base, walls: (base.walls ?? []).map((w) => (w.id === 'W2' ? { ...w, thicknessCm: 30 } : w)) })
+    const top = runs.find((r) => r.key === 'W1:R')!
+    expect(top.segments).toHaveLength(1)
+    expect(top.a).toEqual({ x: -5, y: -5 })
+    expect(top.b).toEqual({ x: 615, y: -5 })
+    expect(sumOf(top)).toBeCloseTo(top.overallCm, 6)
+    // Every run of the plan, with its own thickness and its own corners.
+    for (const run of runs) expect(sumOf(run)).toBeCloseTo(run.overallCm, 6)
+  })
+
+  it('merges a sliver of the corner into its neighbour, so the chain still adds up (R1-6)', () => {
+    // The demo apartment: on the run W14:L a T junction sits 7 cm from the end of the wall. Before
+    // the fix the chain row showed 7 + 214 while the overall row showed 221, and the 7 cm text was
+    // too short to be drawn at 50 % zoom, so the two rows disagreed on screen.
+    const demo = ensureV2({ ...emptyDoc(), rooms: demoRooms() })
+    const runs = outsideDims({ rooms: demo.rooms, nodes: demo.nodes, walls: demo.walls, measurements: demo.measurements })
+    for (const run of runs) expect(sumOf(run)).toBeCloseTo(run.overallCm, 6)
+    const w14 = runs.find((r) => r.key === 'W14:L')!
+    expect(w14.segments).toHaveLength(1)
+    expect(Math.round(w14.overallCm)).toBe(221)
+    expect(Math.round(w14.segments[0].lengthCm)).toBe(221)
+    // The whole outside side of the wall: it carries the facade value, which the two shortened
+    // segments could not show.
+    expect(w14.segments[0].label).toBe('W14-E')
+  })
+
+  it('gives one segment for a run of one whole side of a wall', () => {
+    const top = outsideDims(rectangle()).find((r) => r.key === 'W1:R')!
+    expect(top.segments).toHaveLength(1)
+    expect(top.points).toHaveLength(2)
+    expect(sumOf(top)).toBeCloseTo(top.overallCm, 6)
   })
 })
 

@@ -9,17 +9,20 @@
 import { useMemo } from 'react'
 import { dist, fmtCm, innerWallLengths, labelPoint, roomInnerRing, roomWalls } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
-import { measuredText, shownLength } from '../../model/precision'
+import { measuredTextIn, shownLength } from '../../model/precision'
+import { fmtLen, unitSuffix } from '../../model/units'
 import { useDoc, useUi } from '../../model/store'
-import { outlinePerimeterCm, roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from './roomTag'
+import type { Vec } from '../../model/types'
+import { outlinePerimeterCm, roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress, type RoomTagLines } from './roomTag'
 import { onRoomDown } from './interaction'
 import { RoomNameEditor } from './RoomNameEditor'
 import { useRoomsFrame } from './RoomsLayer'
 import { wallProps } from './walls'
 import { wallAppearance } from '../renovation/logic'
 import { wallAlignOffsetCm, sideFaceKeys, storedWallView } from './wallSides'
-import { dimLine, dimLineOfSpan } from './dims/dimLine'
+import { DIM_STYLE, dimLine, dimLineOfSpan, type DimLine } from './dims/dimLine'
 import { DimLineView } from './dims/DimLineView'
+import { boxHit, dimTextBox, fittingRows, ringBox, tagBox, textBox, wallBadge, type Box } from './dims/dimBoxes'
 
 /** A wall number badge, in the colours of a selected wall, or of a normal one. */
 const badgeClass = {
@@ -44,6 +47,8 @@ export function RoomsOverlay() {
 
   /** Wall lengths: dimension lines (default) or the old text only (docs/measurements-plan.md). */
   const dimStyle = useUi((s) => s.dimStyle)
+  /** Units of the lengths written on the plan (docs/measurements-plan.md section 5). */
+  const units = useUi((s) => s.canvasUnits)
 
   /** Rows of the room tag chosen in the View menu (docs/measurements-plan.md section 2). */
   const tag = useUi((s) => s.roomTag)
@@ -62,20 +67,57 @@ export function RoomsOverlay() {
     }
   }
 
-  const label = (d: (typeof display)[number]) => {
-    // The room being renamed shows the inline editor instead (drawn last, above the hit areas).
-    if (!d.merged && editing === d.id) return null
+  /**
+   * The tag of each room on the plan (r1fix R1-8): where it goes, its lines, the rows that FIT in
+   * the room (rows are dropped from the end when the box does not fit), and its box, which the wall
+   * dimension texts keep out of.
+   */
+  type TagInfo = {
+    place: { p: Vec; vertical: boolean }
+    lines: RoomTagLines
+    rows: string[]
+    /** Box of the tag on the plan, cm; null for a room too small for a tag. */
+    box: Box | null
+    /** Too small on screen for the name: the code alone is drawn. */
+    small: boolean
+  }
+  const tags = new Map<string, TagInfo>()
+  /** Box of the tag of every room of a group, by room id: the wall dimensions of a room avoid it. */
+  const tagBoxInRoom = new Map<string, Box>()
+  for (const d of display) {
     const ring = d.pieces[0]?.[0] ?? []
-    if (ring.length < 3) return null
+    if (ring.length < 3) continue
+    const place = labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
     const lines = roomTagLines(tagInput(d), tag, { showCodes })
-    // Room code in front of the name, so the survey IDs of the Solve tab are found on the plan.
-    const code = lines.title.code ?? ''
     const xs = ring.map((v) => v.x), ys = ring.map((v) => v.y)
     const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
     if (small) {
+      tags.set(d.id, { place, lines, rows: [], box: null, small: true })
+      continue
+    }
+    // The inside box of the room: a tag may not stick out of it (a small room keeps fewer rows).
+    const members = rooms.filter((r) => d.roomIds.includes(r.id))
+    const inner = !d.merged && members[0] ? roomInnerRing(members[0]) : ring
+    const size = labelAt.get(d.id)?.size ?? ((count: number) => ({ w: 0, h: count }))
+    const rows = fittingRows(lines.rows, { p: place.p, vertical: place.vertical, size, room: ringBox(inner) })
+    const kept = size(rows.length)
+    const box = tagBox(place.p, kept.w, kept.h, place.vertical)
+    tags.set(d.id, { place, lines: { title: lines.title, rows }, rows, box, small: false })
+    for (const id of d.roomIds) tagBoxInRoom.set(id, box)
+  }
+
+  const label = (d: (typeof display)[number]) => {
+    // The room being renamed shows the inline editor instead (drawn last, above the hit areas).
+    if (!d.merged && editing === d.id) return null
+    const info = tags.get(d.id)
+    if (!info) return null
+    const lines = info.lines
+    // Room code in front of the name, so the survey IDs of the Solve tab are found on the plan.
+    const code = lines.title.code ?? ''
+    if (info.small) {
       // No room for the name: the code alone, small, is better than nothing.
       if (!code) return null
-      const p = labelAt.get(d.id)?.p ?? labelPoint(d.pieces[0])
+      const p = info.place.p
       return (
         <text key={d.id} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize={px(10)}
           fontWeight={700} pointerEvents="none" data-room-code-only={d.id}
@@ -84,7 +126,7 @@ export function RoomsOverlay() {
         </text>
       )
     }
-    const place = labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
+    const place = info.place
     // One line for the title and one per row, the whole block centred on the point: the baseline of
     // the title sits half the block above it, less the ascender of its 14 px line.
     const rowStep = px(15)
@@ -120,6 +162,19 @@ export function RoomsOverlay() {
     [selStoredWall, rooms, storedNodes, storedWalls, measurements],
   )
 
+  /**
+   * Room walls whose dimension line is hidden because the helper dimensions of the selected wall
+   * already show the same length (r1fix R1-4 note, suggestion 6): a face of that wall.
+   */
+  const hiddenDimFaces = new Set<string>()
+  if (selStoredWall && layers.dimensions) {
+    for (const s of selWallView?.sides ?? []) {
+      for (const face of s.faces) {
+        if (face.kind === 'room' && face.wallStart) hiddenDimFaces.add(`${face.roomId}:${face.wallStart}`)
+      }
+    }
+  }
+
   /** The side lines of the selected stored wall, and its A / B markers. */
   const selectedWallSide = (() => {
     if (!selStoredWall) return null
@@ -147,12 +202,15 @@ export function RoomsOverlay() {
       x1: a.x - uy * alignOff, y1: a.y + ux * alignOff, x2: b.x - uy * alignOff, y2: b.y + ux * alignOff,
     }
     // A and B markers: the letters of the two sides of the wall card, outside the band and at the
-    // same size at every zoom (px), so the user can match the card to the plan.
+    // same size at every zoom (px), so the user can match the card to the plan. They sit at 25 %
+    // (A) and 75 % (B) of the wall, away from the thickness box at the middle of the band (r1fix
+    // suggestion 5: the A badge touched that box).
     const markOff = thicknessCm / 2 + px(12)
     const marker = (k: 1 | -1, letter: 'A' | 'B') => {
       const onSide = letter === 'A' ? 'L' : 'R'
       const active = side === onSide
-      const x = (a.x + b.x) / 2 - uy * markOff * k, y = (a.y + b.y) / 2 + ux * markOff * k
+      const t = letter === 'A' ? 0.25 : 0.75
+      const x = a.x + (b.x - a.x) * t - uy * markOff * k, y = a.y + (b.y - a.y) * t + ux * markOff * k
       return (
         <g key={letter} transform={`translate(${x} ${y})`} data-wall-side-marker={letter}
           data-wall-side-marker-active={active ? '' : undefined} aria-hidden="true" pointerEvents="none">
@@ -181,8 +239,8 @@ export function RoomsOverlay() {
         return s.faces.map((f, i) => {
           const measuredFace = f.kind === 'room' && !!f.measuredCm
           const text = f.kind === 'room' && f.measuredCm
-            ? measuredText(f.measuredCm, shownLength(f.lengthCm, step), step)
-            : fmtCm(shownLength(f.lengthCm, step))
+            ? measuredTextIn(f.measuredCm, shownLength(f.lengthCm, step), step, units)
+            : fmtLen(shownLength(f.lengthCm, step), units)
           const line = dimLineOfSpan(a, b, normal, { from: f.from, to: f.to }, helperOff, zoom, text)
           if (!line) return null
           const dimKey = f.kind === 'room' && f.label ? f.label : keys[i] ?? s.side + i
@@ -242,6 +300,77 @@ export function RoomsOverlay() {
     return selection.side === undefined || selection.side === face.side ? 'strong' : 'weak'
   }
 
+  /**
+   * The wall lengths of the plan: one entry per room wall that shows a value, with its dimension
+   * line (in the "Lines" style) and its text. The boxes let the wall number badges stay off the
+   * texts (r1fix R1-2), and the text of a small room stay off its tag (r1fix R1-8a).
+   */
+  const wallValues: {
+    key: string
+    dimKey: string
+    /** Dimension line of the value; null in the "Text" style, or when the face is too short. */
+    line: DimLine | null
+    text: string
+    measured: boolean
+    /** Place and angle of the text when it is drawn without a line. */
+    p: Vec
+    angle: number
+    box: Box
+  }[] = []
+  if (layers.dimensions) {
+    for (const r of rooms) {
+      const labels = new Map(surveyIds(r).filter((x) => x.kind === 'wall').map((x) => [x.wallStart, x.label]))
+      // Lengths shown are inside faces, like the values measured on site.
+      const inner = innerWallLengths(r)
+      // Inside corners of the room: the face a wall length is measured on, corner to corner.
+      const ring = roomInnerRing(r)
+      // The box of the room tag: a dimension text that falls in it would cross the tag (r1fix
+      // R1-8a), so it goes past the end of its line, or is not drawn at all.
+      const roomTagBox = tagBoxInRoom.get(r.id) ?? null
+      for (const w of roomWalls(r)) {
+        // The selected wall shows its lengths as helper dimensions: no duplicate here (R1-4).
+        if (hiddenDimFaces.has(r.id + ':' + w.start.id)) continue
+        // Always show lengths of walls attached to the dragged vertex/wall (7.2 #22).
+        if (w.length * zoom < 55 && !forcedWalls.has(w.start.id)) continue
+        const m = measurements[labels.get(w.start.id) ?? '']
+        const measured = !!m && m.actualCm > 0
+        const props = wallProps(r, w.start.id)
+        if (!wallAppearance(props.type, props.status, renovationView).visible) continue
+        const off = props.thicknessCm / 2 + px(10)
+        const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off
+        const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
+        let angle = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
+        if (angle > 90 || angle < -90) angle += 180
+        const text = measured
+          ? measuredTextIn(m.actualCm, shownLength(inner[w.index], step), step, units)
+          : fmtLen(shownLength(inner[w.index], step), units)
+        const key = 'd' + r.id + w.start.id
+        const dimKey = `${r.code}-${w.index + 1}`
+        // "Wall lengths: Lines": a dimension line along the inside face of this wall (the span the
+        // value measures), px(10) into the room, with a tick at each end and the value above the
+        // line (docs/measurements-plan.md section 1).
+        const faceStart = dimStyle === 'lines' ? ring[w.index] : undefined
+        const faceEnd = dimStyle === 'lines' ? ring[(w.index + 1) % ring.length] : undefined
+        let line = faceStart && faceEnd
+          ? dimLine({ start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom, text })
+          : null
+        if (line && faceStart && faceEnd && roomTagBox && boxHit(dimTextBox(line, text, zoom), roomTagBox)) {
+          // In the tag: the text goes past the end of the line, when that clears the tag.
+          const outside = dimLine({
+            start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom, text, textPlace: 'outside',
+          })
+          if (!outside || boxHit(dimTextBox(outside, text, zoom), roomTagBox)) continue
+          line = outside
+        }
+        const p = line ? line.text : { x: mx, y: my }
+        wallValues.push({
+          key, dimKey, line, text, measured, p, angle: line ? line.angle : angle,
+          box: line ? dimTextBox(line, text, zoom) : textBox(p, angle, text, zoom),
+        })
+      }
+    }
+  }
+
   return (
     <g data-rooms-overlay="">
       {/* selection highlight of a room: drawn above the walls, so the dashes stay visible */}
@@ -275,7 +404,7 @@ export function RoomsOverlay() {
             textAnchor="middle" dominantBaseline="middle" fontSize={px(12)} fontWeight={600}
             strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round" data-hover-length={hover.label}
             className="fill-orange-700 stroke-white dark:fill-orange-200 dark:stroke-slate-900">
-            {hover.outside ? 'outside ' : ''}{fmtCm(dist(hover.a, hover.b))} cm
+            {hover.outside ? 'outside ' : ''}{fmtLen(dist(hover.a, hover.b), units)} {unitSuffix(units)}
           </text>
         </g>
       )}
@@ -289,7 +418,7 @@ export function RoomsOverlay() {
             textAnchor="middle" dominantBaseline="middle" fontSize={px(12)} fontWeight={600}
             strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round" data-hover-length={hover.label}
             className="fill-orange-700 stroke-white dark:fill-orange-200 dark:stroke-slate-900">
-            {fmtCm(dist(hover.a, hover.b))} cm
+            {fmtLen(dist(hover.a, hover.b), units)} {unitSuffix(units)}
           </text>
         </g>
       )}
@@ -312,83 +441,69 @@ export function RoomsOverlay() {
 
       {/* labels + dimensions */}
       {display.map(label)}
-      {layers.dimensions && rooms.map((r) => {
-        const labels = new Map(surveyIds(r).filter((x) => x.kind === 'wall').map((x) => [x.wallStart, x.label]))
-        // Lengths shown are inside faces, like the values measured on site.
-        const inner = innerWallLengths(r)
-        // Inside corners of the room: the face a wall length is measured on, corner to corner.
-        const ring = roomInnerRing(r)
-        return roomWalls(r).map((w) => {
-          // Always show lengths of walls attached to the dragged vertex/wall (7.2 #22).
-          if (w.length * zoom < 55 && !forcedWalls.has(w.start.id)) return null
-          const m = measurements[labels.get(w.start.id) ?? '']
-          const measured = !!m && m.actualCm > 0
-          const dimProps = wallProps(r, w.start.id)
-          if (!wallAppearance(dimProps.type, dimProps.status, renovationView).visible) return null
-          const thick = dimProps.thicknessCm
-          const off = thick / 2 + px(10)
-          const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off, my = (w.start.y + w.end.y) / 2 + w.inward.y * off
-          let ang = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
-          if (ang > 90 || ang < -90) ang += 180
-          const value = measured
-            ? measuredText(m.actualCm, shownLength(inner[w.index], step), step)
-            : fmtCm(shownLength(inner[w.index], step))
-          // "Wall lengths: Lines": a dimension line along the inside face of this wall (the span the
-          // value measures), px(10) into the room, with a tick at each end and the value above the
-          // line. The line sits at thickness / 2 + px(10) from the centre line, the place of the old
-          // text, so the plan keeps its look (docs/measurements-plan.md section 1).
-          const faceStart = dimStyle === 'lines' ? ring[w.index] : undefined
-          const faceEnd = dimStyle === 'lines' ? ring[(w.index + 1) % ring.length] : undefined
-          const line = faceStart && faceEnd
-            ? dimLine({ start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom, text: value })
-            : null
-          if (line) {
-            return <DimLineView key={'d' + r.id + w.start.id} line={line} text={value} measured={measured}
-              kind="wall" dimKey={`${r.code}-${w.index + 1}`} />
-          }
+      {wallValues.map((d) => (d.line
+        ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} kind="wall" dimKey={d.dimKey} />
+        : (
           // The dimensions layer set to "Text", or a wall shorter than px(12) on screen: the text
           // alone, as before (the lengths of the walls of a dragged vertex stay readable, 7.2 #22).
+          <text key={d.key} x={d.p.x} y={d.p.y} textAnchor="middle" dominantBaseline="middle"
+            transform={`rotate(${d.angle} ${d.p.x} ${d.p.y})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
+            strokeWidth={px(3)} strokeLinejoin="round" fontWeight={d.measured ? 600 : undefined}
+            className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${d.measured ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
+            {d.text}
+          </text>
+        )
+      ))}
+
+      {/* wall numbers: a small badge with the number of the wall ("6" = wall CU-6 of room CU),
+          near the START end of the wall and in the band of the dimension text, so it never sits on
+          that text (r1fix R1-2: the badge used to sit on the middle of the wall, one pixel from
+          the middle of the text). A badge whose box hits any dimension text of the plan is not
+          drawn at all. The badge of a selected stored wall is orange on the side the user clicked,
+          light orange on the other side, and a wall too short on screen shows no badge (it would
+          touch its neighbours). */}
+      {showWallNumbers && rooms.map((r) => {
+        const ring = roomInnerRing(r)
+        return roomWalls(r).map((w) => {
+          if (w.length * zoom < 32) return null
+          const props = wallProps(r, w.start.id)
+          if (!wallAppearance(props.type, props.status, renovationView).visible) return null
+          // The face the wall length is written on: the badge keeps out of its text band.
+          const faceStart = ring[w.index], faceEnd = ring[(w.index + 1) % ring.length]
+          const dimShown = layers.dimensions && (w.length * zoom >= 55 || forcedWalls.has(w.start.id))
+            && !hiddenDimFaces.has(r.id + ':' + w.start.id)
+          const n = String(w.index + 1)
+          // The line of the value: the dimension line when it is drawn, else the face itself (the
+          // text-only style writes the value px(10) into the room from the face).
+          const valueLine = dimShown && dimStyle === 'lines'
+            ? dimLine({ start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom, text: '' })
+            : null
+          // Distance from that line to the middle of the dimension text, px; null when no text.
+          const textOffPx = dimShown ? (valueLine ? DIM_STYLE.textGap : 10) : null
+          const badge = wallBadge({
+            lineA: valueLine ? { x: valueLine.x1, y: valueLine.y1 } : faceStart,
+            lineB: valueLine ? { x: valueLine.x2, y: valueLine.y2 } : faceEnd,
+            normal: w.inward, badge: n, textOffPx, zoom,
+          })
+          // Never on a dimension text of the plan: the number is a helper, the value is the point
+          // (r1fix R1-2, 19 overlaps of the round 1 test).
+          if (wallValues.some((d) => boxHit(badge.box, d.box))) return null
+          const { x: mx, y: my } = badge.centre
+          const kind = wallNumberHighlight(r.id, w.start.id) ?? (selWalls.has(r.id + ':' + w.start.id) ? 'strong' : 'none')
+          const h = px(13), bw = px(5) + px(5.6) * n.length
           return (
-            <text key={'d' + r.id + w.start.id} x={mx} y={my} textAnchor="middle" dominantBaseline="middle"
-              transform={`rotate(${ang} ${mx} ${my})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
-              strokeWidth={px(3)} strokeLinejoin="round" fontWeight={measured ? 600 : undefined}
-              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${measured ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
-              {value}
-            </text>
+            <g key={'wn' + r.id + w.start.id} transform={`translate(${mx} ${my})`} pointerEvents="none"
+              data-wall-number={n} data-wall-label={`${r.code}-${n}`} data-wall-number-state={kind} aria-hidden="true">
+              <rect x={-bw / 2} y={-h / 2} width={bw} height={h} rx={px(3)} strokeWidth={px(1)}
+                className={badgeClass[kind]} />
+              <text textAnchor="middle" dominantBaseline="middle" fontSize={px(9)}
+                className={`font-mono ${badgeTextClass[kind]}`}>
+                {n}
+              </text>
+            </g>
           )
         })
       })}
-
-      {/* wall numbers: a small badge with the number of the wall ("6" = wall CU-6 of room CU),
-          inside the room near the middle of the wall, just inside the dimension text. The badge of a
-          selected stored wall is orange on the side the user clicked, light orange on the other
-          side, and a wall too short on screen shows no badge (it would touch its neighbours). */}
-      {showWallNumbers && rooms.map((r) => roomWalls(r).map((w) => {
-        if (w.length * zoom < 32) return null
-        const props = wallProps(r, w.start.id)
-        if (!wallAppearance(props.type, props.status, renovationView).visible) return null
-        // Same placement as the dimension text; the badge goes one step further inside the room.
-        // A dimension LINE has the value above it (px(7)), so the badge keeps clear of it.
-        const dimOff = props.thicknessCm / 2 + px(10)
-        const dimShown = layers.dimensions && (w.length * zoom >= 55 || forcedWalls.has(w.start.id))
-        const off = dimShown ? dimOff + px(dimStyle === 'lines' ? 20 : 13) : dimOff
-        const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off
-        const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
-        const n = String(w.index + 1)
-        const kind = wallNumberHighlight(r.id, w.start.id) ?? (selWalls.has(r.id + ':' + w.start.id) ? 'strong' : 'none')
-        const h = px(13), bw = px(5) + px(5.6) * n.length
-        return (
-          <g key={'wn' + r.id + w.start.id} transform={`translate(${mx} ${my})`} pointerEvents="none"
-            data-wall-number={n} data-wall-label={`${r.code}-${n}`} data-wall-number-state={kind} aria-hidden="true">
-            <rect x={-bw / 2} y={-h / 2} width={bw} height={h} rx={px(3)} strokeWidth={px(1)}
-              className={badgeClass[kind]} />
-            <text textAnchor="middle" dominantBaseline="middle" fontSize={px(9)}
-              className={`font-mono ${badgeTextClass[kind]}`}>
-              {n}
-            </text>
-          </g>
-        )
-      }))}
 
       {/* inline room rename editor: topmost, so no hit area can steal its clicks */}
       {rooms.filter((r) => r.id === editing).map((r) => (

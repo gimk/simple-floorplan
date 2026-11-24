@@ -16,8 +16,8 @@ export type DimLineViewProps = {
   text: string
   /** Measured value: green and bold (the common dimension style). */
   measured: boolean
-  /** What the line belongs to: 'wall' for a wall length, 'helper' for the helper dimensions. */
-  kind: 'wall' | 'helper'
+  /** What the line belongs to: a wall length, the helper dimensions, or an outside chain row. */
+  kind: 'wall' | 'helper' | 'outside'
   /** The wall or the face the line measures, for a test. */
   dimKey: string
 }

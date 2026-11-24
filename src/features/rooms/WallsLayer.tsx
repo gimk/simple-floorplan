@@ -26,10 +26,13 @@ import { useViewport } from '../../canvas/Viewport'
 import { dist, fmtCm } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
+import { fmtLen } from '../../model/units'
 import type { StoredWall, Vec } from '../../model/types'
 import { wallAppearance } from '../renovation/logic'
 import { focusMeasureField } from '../measure/focusField'
 import { inputId } from '../measure/actions'
+import { dimLine } from './dims/dimLine'
+import { DimLineView } from './dims/DimLineView'
 import { onStoredNodeDown, onStoredWallDouble, onStoredWallDown } from './interaction'
 import { polygonPath, polylinePath } from './wallOutline'
 import { wallJoinGeometry } from './wallJoins'
@@ -60,6 +63,9 @@ export function WallsLayer() {
   const multi = useUi((s) => s.multi)
   const layers = useUi((s) => s.layers)
   const renovationView = useUi((s) => s.renovationView)
+  // How a length is written on the plan: dimension lines or text only, and the units of the plan.
+  const dimStyle = useUi((s) => s.dimStyle)
+  const units = useUi((s) => s.canvasUnits)
   // The walls can be selected and dragged with the select tool, in edit mode only.
   const interactive = useUi((s) => s.mode === 'edit' && s.tool === 'select')
   // Measuring Mode of the desktop layout: the walls are only picked and hovered.
@@ -192,7 +198,9 @@ export function WallsLayer() {
       })}
 
       {/* A single wall (no room face) reads like a room wall: its length on the centre line and its
-          lock badge, as soon as it is long enough on screen. */}
+          lock badge, as soon as it is long enough on screen. With the 'Lines' setting the length
+          gets the common dimension line (line + ticks) off side A of the band; with 'Text' it
+          stays a bare text. The units come from the View menu. */}
       {(walls ?? []).filter(isSingle).map((w) => {
         const { a, b } = endsOf(w)
         if (!a || !b) return null
@@ -200,25 +208,42 @@ export function WallsLayer() {
         const len = dist(a, b)
         if (len < 1) return null
         const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len
-        // Side A of the wall (left of a -> b), just outside the band.
-        const off = propsOf(w).thicknessCm / 2 + px(9)
-        const mx = (a.x + b.x) / 2 - uy * off, my = (a.y + b.y) / 2 + ux * off
-        const showLength = layers.dimensions && len * zoom >= LENGTH_PX
+        // The unit normal of side A of the wall (left of a -> b), pointing away from the band.
+        const nAx = -uy, nAy = ux
+        const thickness = propsOf(w).thicknessCm
+        const text = fmtLen(len, units)
+        // The dimension line of the wall, on side A, just outside the band.
+        const dim = dimStyle === 'lines' && layers.dimensions
+          ? dimLine({
+            start: a, end: b, normal: { x: nAx, y: nAy }, offsetCm: thickness / 2 + px(10), zoom, text,
+          })
+          : null
+        // The text mode keeps today's rule (a text only above 24 screen px of wall).
+        const showText = dim !== null || (dimStyle === 'text' && layers.dimensions && len * zoom >= LENGTH_PX)
+        // Text mode: the text itself, a little outside the band on side A.
+        const off = thickness / 2 + px(9)
+        const mx = (a.x + b.x) / 2 + nAx * off, my = (a.y + b.y) / 2 + nAy * off
         let ang = (Math.atan2(uy, ux) * 180) / Math.PI
         if (ang > 90 || ang < -90) ang += 180
         const s = px(5)
         // The lock goes after the length when both are shown, so the two do not overlap.
-        const lockX = showLength ? mx + ux * px(34) : mx, lockY = showLength ? my + uy * px(34) : my
+        const lockX = showText ? mx + ux * px(34) : mx, lockY = showText ? my + uy * px(34) : my
         return (
           <g key={'single' + w.id} pointerEvents="none" data-single-wall={w.id}>
-            {showLength && (
+            {showText && (dim ? (
+              /* The common dimension style (dims/DimLineView). The value is calculated, not
+                 measured, so it is grey. */
+              <g data-single-wall-length={w.id} data-single-wall-dim={w.id}>
+                <DimLineView line={dim} text={text} measured={false} kind="wall" dimKey={w.id} />
+              </g>
+            ) : (
               <text x={mx} y={my} textAnchor="middle" dominantBaseline="middle"
                 transform={`rotate(${ang} ${mx} ${my})`} fontSize={px(11)} paintOrder="stroke"
                 strokeWidth={px(3)} strokeLinejoin="round" data-single-wall-length={w.id}
                 className="fill-slate-600 stroke-[#f6f7f5] dark:fill-slate-300 dark:stroke-[#12161b]">
-                {fmtCm(len)}
+                {text}
               </text>
-            )}
+            ))}
             {w.locked && (
               <g transform={`translate(${lockX} ${lockY})`} data-single-wall-locked={w.id} aria-hidden="true">
                 <rect x={-s} y={-s * 0.2} width={2 * s} height={s * 1.7} rx={s * 0.4}

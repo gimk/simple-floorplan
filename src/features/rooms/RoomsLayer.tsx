@@ -124,7 +124,13 @@ export function useRoomsFrame() {
     // The margin (19 px) keeps the text clear of the wall dimension lines along the inside of walls, when there is room.
     // Height: the title line (about 18 px) and 15 px per row; the default tag (one row) stays 34 px.
     const w = (Math.max(nameW, rowW) + 10) / labelZoom, h = (19 + 15 * rows) / labelZoom
-    return [d.id, labelPlacement(d.pieces[0], w, h, 19 / labelZoom)]
+    // The size of the tag box for ANY number of rows: the room tag drops its last rows when the box
+    // does not fit the room, and the wall dimension texts keep out of the box (r1fix R1-8).
+    const size = (count: number) => ({
+      w: (Math.max(nameW, count > 0 ? 10 * 6.8 : 0) + 10) / labelZoom,
+      h: (19 + 15 * count) / labelZoom,
+    })
+    return [d.id, { ...labelPlacement(d.pieces[0], w, h, 19 / labelZoom), size }]
   })), [display, labelZoom, showCodes, roomTag])
   // Measuring Mode with the canvas (desktop): no geometry edit. A wall or a room is only picked,
   // and the wall under the pointer lights up its field in the measure panel.

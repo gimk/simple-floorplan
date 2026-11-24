@@ -1,5 +1,6 @@
 // Precision of the plan: the smallest step (cm) that the solvers write for corners and thicknesses.
 import { fmtCm } from './geometry'
+import { fmtLen, type LengthUnits } from './units'
 import type { PlanDoc, Vec } from './types'
 
 /** Step when the plan has no setting. */
@@ -27,4 +28,20 @@ export const shownLength = (v: number, step: number): number => roundTo(v, step 
 export function measuredText(measuredCm: number, solvedCm: number, stepCm: number): string {
   const tol = Math.max(stepCm || 0.1, 0.1)
   return Math.abs(measuredCm - solvedCm) > tol + 1e-9 ? `✓ ${fmtCm(measuredCm)} · ${fmtCm(solvedCm)}` : `✓ ${fmtCm(measuredCm)}`
+}
+
+/**
+ * `measuredText` in the units of the plan (docs/measurements-plan.md section 5): the same "✓ 412 ·
+ * 410,7" rule, written with `fmtLen`. The default units (cm, 1 decimal) give exactly `measuredText`.
+ */
+export function measuredTextIn(
+  measuredCm: number,
+  solvedCm: number,
+  stepCm: number,
+  units: LengthUnits,
+): string {
+  const tol = Math.max(stepCm || 0.1, 0.1)
+  return Math.abs(measuredCm - solvedCm) > tol + 1e-9
+    ? `✓ ${fmtLen(measuredCm, units)} · ${fmtLen(solvedCm, units)}`
+    : `✓ ${fmtLen(measuredCm, units)}`
 }

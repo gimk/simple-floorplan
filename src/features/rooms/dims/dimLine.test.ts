@@ -76,6 +76,27 @@ describe('dimLine', () => {
     expect(d.y1).toBe(20)
     expect(d.text.y).toBe(20 + 14)
   })
+
+  it('puts the text outside even when it fits, when the caller asks for it (R1-8a)', () => {
+    const d = dimLine(face({ textPlace: 'outside' }))!
+    expect(d.outside).toBe(true)
+    const width = 3 * DIM_STYLE.charWidth
+    expect(d.text.x).toBeCloseTo(400 + DIM_STYLE.outsideGap + width / 2, 6)
+  })
+
+  it('puts a text that does not fit past the start of the line when the caller asks for it', () => {
+    // The short outside segments of a chain: the text goes towards the outer end of the run.
+    const d = dimLine(face({ end: { x: 80, y: 0 }, text: '✓ 412 · 410,7', textPlace: 'outside', outsideEnd: 'start' }))!
+    const width = 13 * DIM_STYLE.charWidth
+    expect(d.text.x).toBeCloseTo(0 - DIM_STYLE.outsideGap - width / 2, 6)
+    // The text stays up: the angle follows the line, not the side the text is on.
+    expect(d.angle).toBe(0)
+  })
+
+  it('takes a larger text gap for a text that had to go outside (outside rows)', () => {
+    const d = dimLine(face({ textGapPx: DIM_STYLE.textGap + 6 }))!
+    expect(d.text.y).toBe(10 + DIM_STYLE.textGap + 6)
+  })
 })
 
 describe('alongWall', () => {

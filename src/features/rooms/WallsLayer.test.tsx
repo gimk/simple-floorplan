@@ -3,7 +3,9 @@
 import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Viewport } from '../../canvas/Viewport'
-import { emptyDoc, useDoc, useUi, type Layers } from '../../model/store'
+import { dist } from '../../model/geometry'
+import { fmtLen } from '../../model/units'
+import { emptyDoc, useDoc, useUi, type CanvasUnits, type Layers } from '../../model/store'
 import type { PlanDoc, Room, Selection, StoredWall } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { removeRoom } from '../../model/v2/write'
@@ -47,7 +49,14 @@ const v2 = (): PlanDoc => convertToV2({ ...emptyDoc(), rooms: rooms() }).doc
 /** Draw the walls layer at zoom 1 (1 cm per screen px). */
 const setup = (
   doc: PlanDoc,
-  over: { mode?: 'edit' | 'measure'; tool?: 'select' | 'pan'; selection?: Selection; zoom?: number } = {},
+  over: {
+    mode?: 'edit' | 'measure'
+    tool?: 'select' | 'pan'
+    selection?: Selection
+    zoom?: number
+    dimStyle?: 'lines' | 'text'
+    canvasUnits?: CanvasUnits
+  } = {},
 ) => {
   applyState(useUi, {
     layers: BASE_LAYERS,
@@ -56,6 +65,8 @@ const setup = (
     selection: over.selection ?? null,
     multi: [],
     view: { x: 0, y: 0, zoom: over.zoom ?? 1 },
+    ...(over.dimStyle ? { dimStyle: over.dimStyle } : {}),
+    ...(over.canvasUnits ? { canvasUnits: over.canvasUnits } : {}),
   })
   applyState(useDoc, { doc })
   return renderToString(<Viewport><WallsLayer /></Viewport>)
@@ -68,6 +79,7 @@ beforeEach(() => {
   applyState(useUi, {
     layers: BASE_LAYERS, mode: 'edit', tool: 'select', selection: null, multi: [],
     view: { x: 0, y: 0, zoom: 1 },
+    dimStyle: 'lines', canvasUnits: { unit: 'cm', decimals: 1 },
   })
   applyState(useDoc, { doc: emptyDoc() })
 })
@@ -158,6 +170,43 @@ describe('a single wall on the plan', () => {
     const lonely = kept.walls!.filter((w) => w.faces.every((f) => f.roomId === undefined))
     // 400 cm at zoom 0.02 = 8 screen px, below the 24 px rule.
     expect(setup(kept, { zoom: 0.02 })).not.toContain(`data-single-wall-length="${lonely[0].id}"`)
+  })
+
+  it('draws the length of a single wall as a dimension line by default (Lines)', () => {
+    const kept = removeRoom(v2(), 'B')
+    const lonely = kept.walls!.filter((w) => w.faces.every((f) => f.roomId === undefined))
+    const html = setup(kept)
+    // The common dimension style: a line with two ticks, from DimLineView.
+    expect(html).toContain('data-dim="wall"')
+    for (const w of lonely) expect(html).toContain(`data-single-wall-dim="${w.id}"`)
+  })
+
+  it('keeps the bare text of a single wall with the Text setting', () => {
+    const kept = removeRoom(v2(), 'B')
+    const lonely = kept.walls!.filter((w) => w.faces.every((f) => f.roomId === undefined))
+    const html = setup(kept, { dimStyle: 'text' })
+    expect(html).not.toContain('data-single-wall-dim=')
+    for (const w of lonely) expect(html).toContain(`data-single-wall-length="${w.id}"`)
+    // cm, 1 decimal: the same text as before.
+    expect(html).toContain('>400<')
+  })
+
+  it('writes the length of a single wall in the units of the plan', () => {
+    const kept = removeRoom(v2(), 'B')
+    const lonely = kept.walls!.find((w) => w.faces.every((f) => f.roomId === undefined))!
+    const posOf = (id: string) => kept.nodes!.find((n) => n.id === id)!
+    const len = dist(posOf(lonely.a), posOf(lonely.b))
+    // Text mode: the bare number of the length, no unit suffix.
+    const cm = setup(kept, { dimStyle: 'text' })
+    expect(cm).toContain(`>${fmtLen(len, { unit: 'cm', decimals: 1 })}<`)
+    const metres = setup(kept, { dimStyle: 'text', canvasUnits: { unit: 'm', decimals: 2 } })
+    expect(metres).toContain(`>${fmtLen(len, { unit: 'm', decimals: 2 })}<`)
+    const millimetres = setup(kept, { dimStyle: 'text', canvasUnits: { unit: 'mm', decimals: 0 } })
+    expect(millimetres).toContain(`>${fmtLen(len, { unit: 'mm', decimals: 0 })}<`)
+    expect(millimetres).toContain(`>${Math.round(len * 10)}<`)
+    // The dimension line (Lines) writes the same text, in the units of the plan.
+    const lines = setup(kept, { canvasUnits: { unit: 'm', decimals: 2 } })
+    expect(lines).toContain(`>${fmtLen(len, { unit: 'm', decimals: 2 })}<`)
   })
 
   it('shows two end handles only when a single wall is selected', () => {

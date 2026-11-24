@@ -130,3 +130,24 @@ describe('values taken from a room', () => {
     expect(tagCeilingCm([rect({ ceilingCm: 0 })])).toBeUndefined()
   })
 })
+
+describe('roomTag: the perimeter and the height stay in metres (units do not touch them)', () => {
+  // The length units of the View menu (docs/measurements-plan.md section 5) change the canvas
+  // lengths only. These rows are always metres with two decimals, as before, so nothing changes
+  // for a current user whatever units the plan uses.
+  const input = { name: 'Cuisine', codes: ['CU'], areaM2: 12, perimeterCm: 1420, ceilingCm: 250, measuredWalls: 0, walls: 4 }
+
+  it('writes P and H in metres with two decimals', () => {
+    expect(roomTagLines(input, { ...FIELDS, perimeter: true, ceiling: true }).rows)
+      .toEqual(['12,00 m²', 'P 14,20 m', 'H 2,50 m'])
+  })
+
+  it('keeps the two decimals of a round value', () => {
+    const rows = roomTagLines({ ...input, perimeterCm: 1000, ceilingCm: 240 }, { ...FIELDS, perimeter: true, ceiling: true }).rows
+    expect(rows).toEqual(['12,00 m²', 'P 10,00 m', 'H 2,40 m'])
+  })
+
+  it('keeps the defaults of the View menu: code, name and area only', () => {
+    expect(roomTagLines(input, FIELDS)).toEqual({ title: { code: 'CU', name: 'Cuisine' }, rows: ['12,00 m²'] })
+  })
+})

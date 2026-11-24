@@ -13,7 +13,8 @@
 //   row 2 = the OVERALL length of the run.
 // The ends of a run are moved to the outside corner (half the thickness of the wall that continues
 // the run there), so a chain segment measures from outside corner to outside corner, like the
-// facade value 'W12-E'.
+// facade value 'W12-E'. A chain point closer to the previous one than the thickness of the wall is
+// a sliver of that join, not a span: it is merged, so the chain always adds up to the overall.
 import { dist } from '../../../model/geometry'
 import type { PlanDoc, StoredNode, StoredWall, Vec } from '../../../model/types'
 import { deriveWallFaces, storedWallProps } from '../../../model/v2/materialize'
@@ -45,6 +46,8 @@ export type OutsideSpan = {
   /** Unit normal of the wall on the outside of this side (away from the wall). */
   normal: Vec
   lengthCm: number
+  /** Thickness of the wall of the span, cm (a chain point closer than this is a sliver). */
+  thicknessCm: number
   /** Facade value label of the span ('W12-E') when the WHOLE side of the wall is outside. */
   label: string | null
   /** Value measured on that facade, cm, or null. */
@@ -147,6 +150,7 @@ export function outsideSpans(doc: OutsideSpanDoc): OutsideSpan[] {
           dir: d,
           normal,
           lengthCm: to - from,
+          thicknessCm: half * 2,
           label,
           measuredCm,
           cuts: cuts.filter((c) => c > from + TOL_CM && c < to - TOL_CM).map(onFace),
@@ -266,16 +270,33 @@ function buildRun(spans: OutsideSpan[], walls: StoredWall[], nodes: Map<string, 
     const endNode = samePoint(lastSpan.a, points[lastAt]) ? lastSpan.fromNode : lastSpan.toNode
     const startShift = cornerShiftCm(startNode, runDir, points[0], walls, nodes)
     const endShift = cornerShiftCm(endNode, runDir, points[lastAt], walls, nodes)
-    points[0] = { x: points[0].x + runDir.x * startShift, y: points[0].y + runDir.y * startShift }
-    points[lastAt] = { x: points[lastAt].x + runDir.x * endShift, y: points[lastAt].y + runDir.y * endShift }
+    // A shift must not pass the next chain point: that would turn a segment around.
+    const next = points[1]
+    const before = points[lastAt - 1]
+    const startRoom = next ? dist(points[0], next) - TOL_CM : 0
+    const endRoom = before ? dist(points[lastAt], before) - TOL_CM : 0
+    const s0 = Math.abs(startShift) < startRoom ? startShift : 0
+    const s1 = Math.abs(endShift) < endRoom ? endShift : 0
+    points[0] = { x: points[0].x + runDir.x * s0, y: points[0].y + runDir.y * s0 }
+    points[lastAt] = { x: points[lastAt].x + runDir.x * s1, y: points[lastAt].y + runDir.y * s1 }
   }
+  // A chain point closer to the previous one than the thickness of the wall is not a span of the
+  // facade: it is a sliver of the corner join (two walls that meet a few cm from the corner, round
+  // 1 finding R1-6: W14:L showed 7 + 214 while the run is 221). The sliver is merged into its
+  // neighbour, so the chain always has the same two ends as the overall row.
+  const sliverCm = Math.max(...spans.map((s) => s.thicknessCm))
+  const chain: Vec[] = [points[0]]
+  for (let i = 1; i < lastAt; i++) {
+    if (dist(points[i], chain[chain.length - 1]) > sliverCm) chain.push(points[i])
+  }
+  chain.push(points[lastAt])
   // The span that holds the middle of each chain segment.
   const middleOf = (i: number): OutsideSpan | null =>
-    spanAt(spans, { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 })
-  const segmentSpans = points.slice(1).map((_, i) => middleOf(i))
+    spanAt(spans, { x: (chain[i].x + chain[i + 1].x) / 2, y: (chain[i].y + chain[i + 1].y) / 2 })
+  const segmentSpans = chain.slice(1).map((_, i) => middleOf(i))
   const segments: OutsideDimSegment[] = segmentSpans.map((span, i) => {
-    const a = points[i]
-    const b = points[i + 1]
+    const a = chain[i]
+    const b = chain[i + 1]
     // A facade value names the WHOLE outside side of a wall: a side that the chain cuts in two (a T
     // junction) or that the run covers with several segments must not show it on a shorter segment.
     const whole = span !== null && segmentSpans.indexOf(span) === segmentSpans.lastIndexOf(span)
@@ -289,13 +310,13 @@ function buildRun(spans: OutsideSpan[], walls: StoredWall[], nodes: Map<string, 
   })
   return {
     key: `${spans[0].wallId}:${spans[0].side}`,
-    a: points[0],
-    b: points[points.length - 1],
+    a: chain[0],
+    b: chain[chain.length - 1],
     dir: runDir,
     normal: spans[0].normal,
-    points,
+    points: chain,
     segments,
-    overallCm: dist(points[0], points[points.length - 1]),
+    overallCm: dist(chain[0], chain[chain.length - 1]),
   }
 }
 

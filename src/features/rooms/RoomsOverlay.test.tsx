@@ -10,6 +10,9 @@ import { convertToV2 } from '../../model/v2/convert'
 import { useSidebar, type SidebarTab } from '../../shell/sidebar/store'
 import { RoomsLayer } from './RoomsLayer'
 import { RoomsOverlay } from './RoomsOverlay'
+import { badgeSizePx, boxAt, boxHit, textBox } from './dims/dimBoxes'
+import { ensureV2 } from '../../model/v2/ensure'
+import { demoRooms } from '../measure/demo'
 
 const BASE_LAYERS: Layers = {
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
@@ -86,11 +89,12 @@ describe('A and B markers of the selected wall', () => {
     const id = wallId(v2())
     const html = setup({ selection: { kind: 'storedWall', wallId: id, side: 'L' } })
     // W1 runs from (0,0) to (400,0) and is 10 cm thick: the letters sit 17 cm (half of the band
-    // plus 12 px at zoom 1) on each side of its midpoint.
+    // plus 12 px at zoom 1) on each side of the wall, at 25 % (A) and 75 % (B) of its length, away
+    // from the thickness box at the middle of the band (r1fix suggestion 5).
     expect(html).toContain('data-wall-side-marker="A"')
     expect(html).toContain('data-wall-side-marker="B"')
-    expect(html).toContain('transform="translate(200 17)"')
-    expect(html).toContain('transform="translate(200 -17)"')
+    expect(html).toContain('transform="translate(100 17)"')
+    expect(html).toContain('transform="translate(300 -17)"')
     // The side the user clicked is the strong one.
     expect(html).toContain('data-wall-side-marker="A" data-wall-side-marker-active=""')
     expect(html).not.toContain('data-wall-side-marker="B" data-wall-side-marker-active=""')
@@ -335,5 +339,133 @@ describe('helper dimensions of the selected stored wall', () => {
     const html = setup({ selection: { kind: 'storedWall', wallId: wallId(v2()), side: 'L' }, walls: { dimensions: false } })
     expect(html).not.toContain('data-helper-dim')
     expect(html).not.toContain('data-helper-thickness')
+  })
+})
+
+describe('wall number badges and small rooms (r1fix R1-2, R1-8)', () => {
+  type Tag = {
+    code: boolean; name: boolean; area: boolean; perimeter: boolean; ceiling: boolean; progress: boolean
+    areaDecimals: 0 | 1 | 2
+  }
+  const TAG: Tag = { code: true, name: true, area: true, perimeter: false, ceiling: false, progress: false, areaDecimals: 2 }
+
+  /** Draw the plan of `doc` with the wall numbers on, and the tag fields of this test. */
+  const draw = (over: {
+    doc?: PlanDoc; selection?: Selection; walls?: Partial<Layers>; tab?: SidebarTab; roomTag?: Partial<Tag>
+  } = {}) => {
+    applyState(useUi, {
+      layers: { ...BASE_LAYERS, wallLabels: 'on', ...over.walls },
+      mode: 'edit',
+      tool: 'select',
+      selection: over.selection ?? null,
+      multi: [],
+      dimStyle: 'lines',
+      hoverLabel: null,
+      hoverDiagonal: null,
+      view: { x: 0, y: 0, zoom: 1 },
+      roomTag: { ...TAG, ...over.roomTag },
+    })
+    applyState(useSidebar, { tab: over.tab ?? 'solve' })
+    applyState(useDoc, { doc: over.doc ?? v2() })
+    return renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
+  }
+
+  /** The place of a badge on the plan, cm. */
+  const badgeAt = (html: string, number: string) => {
+    const m = new RegExp(`transform="translate\\(([-\\d.]+) ([-\\d.]+)\\)" pointer-events="none" data-wall-number="${number}"`).exec(html)
+    return m ? { x: Number(m[1]), y: Number(m[2]) } : null
+  }
+  /** The place of the text of one wall dimension line, cm. */
+  const dimTextAt = (html: string, key: string) => {
+    const m = new RegExp(`data-dim-key="${key}"[\\s\\S]*?<text x="([-\\d.]+)" y="([-\\d.]+)"`).exec(html)
+    return m ? { x: Number(m[1]), y: Number(m[2]) } : null
+  }
+
+  it('puts the badge clear of the dimension text of the same wall', () => {
+    const html = draw()
+    const badge = badgeAt(html, '1')!
+    const text = dimTextAt(html, 'A-1')!
+    expect(badge).not.toBeNull()
+    expect(text).not.toBeNull()
+    // Same boxes as the drawing code: chars * 6,2 px wide and 11 px high for the text, the badge
+    // padding for the number (round 1 finding R1-2: 19 badges sat on a text).
+    const textB = textBox(text, 0, '390', 1)
+    const badgeB = boxAt(badge, badgeSizePx('1').w, badgeSizePx('1').h)
+    expect(boxHit(textB, badgeB)).toBe(false)
+    // The badge sits near the start end of the wall, not on its middle.
+    expect(badge.x).toBeLessThan(50)
+  })
+
+  it('hides the room dimension lines of the walls of the selected wall (they are duplicates)', () => {
+    const doc = v2()
+    const html = draw({ selection: { kind: 'storedWall', wallId: wallId(doc), side: 'L' } })
+    // The helper dimensions of the selected wall show the same face lengths.
+    expect(html).not.toContain('data-dim="wall" data-dim-key="A-1"')
+    expect(html).toContain('data-dim="helper" data-dim-key="A-1"')
+    // The other walls of the room keep their lines.
+    expect(html).toContain('data-dim="wall" data-dim-key="A-2"')
+  })
+
+  it('keeps only the tag rows that fit in a small room, from the end', () => {
+    // A room 200 x 70 cm: its inside box is 190 x 60 cm, too low for the title and four rows.
+    const small = (): PlanDoc =>
+      convertToV2({ ...emptyDoc(), rooms: [mk('A', [[0, 0], [200, 0], [200, 70], [0, 70]], 1)] }).doc
+    const doc = small()
+    const html = draw({
+      doc: { ...doc, rooms: doc.rooms.map((r) => ({ ...r, ceilingCm: 250 })), measurements: { 'A-1': { label: 'A-1', actualCm: 190, updatedAt: '' } } },
+      roomTag: { perimeter: true, ceiling: true, progress: true },
+    })
+    const rows = [...html.matchAll(/data-room-tag-row="\d+"[^>]*>([^<]*)</g)].map((m) => m[1])
+    // Area and perimeter stay; the ceiling height and the progress are dropped first.
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toContain('m²')
+    expect(rows[1]).toMatch(/^P /)
+    expect(html).not.toContain('1/4 walls')
+  })
+
+  it('moves a wall dimension text out of the room tag, past the end of its line (R1-8a)', () => {
+    const small = (): PlanDoc =>
+      convertToV2({ ...emptyDoc(), rooms: [mk('A', [[0, 0], [200, 0], [200, 70], [0, 70]], 1)] }).doc
+    const html = draw({ doc: small() })
+    // The inside face of wall A-1 ends at x = 195 cm: the text went past it to keep out of the tag.
+    const text = dimTextAt(html, 'A-1')!
+    expect(text.x).toBeGreaterThan(195)
+    expect(html).toContain('data-dim-outside=""')
+  })
+
+  it('draws no wall number badge on a dimension text of the plan (demo apartment, R1-2)', () => {
+    // The round 1 test measured 19 of 56 badges on a value text. Every box here comes from the
+    // drawing itself: the badge size and the same text approximation as the code.
+    for (const zoom of [1, 0.5]) {
+      applyState(useUi, {
+        layers: { ...BASE_LAYERS, wallLabels: 'on' },
+        mode: 'edit',
+        tool: 'select',
+        selection: null,
+        multi: [],
+        dimStyle: 'lines',
+        hoverLabel: null,
+        hoverDiagonal: null,
+        view: { x: 0, y: 0, zoom },
+        roomTag: { ...TAG, perimeter: true, ceiling: true, progress: true },
+      })
+      applyState(useSidebar, { tab: 'solve' })
+      applyState(useDoc, { doc: ensureV2({ ...emptyDoc(), rooms: demoRooms() }) })
+      const html = renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
+      // The text of one dimension, read from its own group only.
+      const dims = [...html.matchAll(/<g pointer-events="none" data-dim="wall" data-dim-key="([^"]+)">((?:(?!data-dim-key)[\s\S])*?)<\/g>/g)]
+        .flatMap((m) => {
+          const t = /<text x="([-\d.]+)" y="([-\d.]+)"[^>]*?(?:transform="rotate\(([-\d.]+))?[^>]*>([^<]*)</.exec(m[2])
+          return t ? [{ p: { x: Number(t[1]), y: Number(t[2]) }, angle: Number(t[3] ?? 0), text: t[4] }] : []
+        })
+      const badges = [...html.matchAll(/transform="translate\(([-\d.]+) ([-\d.]+)\)" pointer-events="none" data-wall-number="([^"]+)"/g)]
+        .map((m) => ({ p: { x: Number(m[1]), y: Number(m[2]) }, n: m[3] }))
+      expect(dims.length).toBeGreaterThan(0)
+      expect(badges.length).toBeGreaterThan(0)
+      for (const b of badges) {
+        const box = boxAt(b.p, badgeSizePx(b.n).w / zoom, badgeSizePx(b.n).h / zoom)
+        for (const d of dims) expect(boxHit(box, textBox(d.p, d.angle, d.text, zoom))).toBe(false)
+      }
+    }
   })
 })
