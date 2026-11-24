@@ -8,7 +8,7 @@ import type { SelItem } from '../../model/selection'
 import { convertToV2 } from '../../model/v2/convert'
 import { removeRoom } from '../../model/v2/write'
 import { deleteGroup } from './interaction'
-import { patchStoredWalls } from './cards'
+import { patchStoredWall, patchStoredWalls } from './cards'
 import { RoomsPanelView } from './RoomsPanel'
 
 const mk = (id: string, pts: [number, number][], walkOrder: number): Room => ({
@@ -59,6 +59,20 @@ describe('group card of stored walls', () => {
     }
     useDoc.temporal.getState().undo()
     expect(useDoc.getState().doc.walls).toEqual(before.walls)
+  })
+
+  it('locks and unlocks a group or single wall in ONE undo step', () => {
+    const ids = useDoc.getState().doc.walls!.slice(0, 2).map((w) => w.id)
+    const before = useDoc.getState().doc.walls!
+    patchStoredWalls(ids, { locked: true })
+    expect(useDoc.getState().doc.walls!.filter((w) => ids.includes(w.id)).every((w) => w.locked === true)).toBe(true)
+    useDoc.temporal.getState().undo()
+    expect(useDoc.getState().doc.walls).toEqual(before)
+
+    patchStoredWall(ids[0], { locked: true })
+    expect(useDoc.getState().doc.walls!.find((w) => w.id === ids[0])!.locked).toBe(true)
+    useDoc.temporal.getState().undo()
+    expect(useDoc.getState().doc.walls).toEqual(before)
   })
 })
 

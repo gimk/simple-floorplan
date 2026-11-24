@@ -210,6 +210,8 @@ type UiState = {
   hoverDiagonal: { roomId: string; pair: [number, number] } | null
   /** Viewport: world point at screen origin + zoom (screen px per cm). */
   view: { x: number; y: number; zoom: number }
+  /** Incremented when a canvas tap selects an item, so phone layout opens the inspector. */
+  inspectorOpenTick: number
   setMode: (m: Mode) => void
   setTool: (t: ToolId) => void
   /** Select one item only (or nothing). Clears the group. */
@@ -220,9 +222,11 @@ type UiState = {
   setSolveReport: (text: string | null) => void
   /** Source saved with the next values typed in Measuring Mode. */
   setMeasureSource: (s: MeasureSource) => void
+  /** Request opening the inspector drawer on phone after a canvas tap selection. */
+  openInspector: () => void
   set: (
     p: Partial<
-      Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect' | 'setSolveReport' | 'setMeasureSource'>
+      Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect' | 'setSolveReport' | 'setMeasureSource' | 'openInspector'>
     >,
   ) => void
 }
@@ -251,12 +255,14 @@ export const useUi = create<UiState>()((set) => ({
   hoverLabel: null,
   hoverDiagonal: null,
   view: { x: -100, y: -100, zoom: 1 },
+  inspectorOpenTick: 0,
   setMode: (mode) => set({ mode, tool: 'select', selection: null, multi: [] }),
   setTool: (tool) => set({ tool }),
   select: (selection) => set({ selection, multi: [] }),
   toggleSelect: (item) => set((s) => toggleItem(s, item)),
   setSolveReport: (solveReport) => set({ solveReport }),
   setMeasureSource: (measureSource) => set({ measureSource }),
+  openInspector: () => set((s) => ({ inspectorOpenTick: s.inspectorOpenTick + 1 })),
   set: (p) => set(p),
 }))
 

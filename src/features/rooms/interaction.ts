@@ -247,7 +247,12 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
   // A v2 document: Shift + drag that starts on a room floor draws a box that ADDS to the selection
   // (SelectTool in ./tools.tsx), so here Shift only toggles the room on a click, and never moves it.
   if (shift && isV2Doc(useDoc.getState().doc)) {
-    track(e, { onMove: () => {}, onEnd: (moved) => { if (!moved) flip() } })
+    track(e, {
+      onMove: () => {},
+      onEnd: (moved) => {
+        if (!moved) { flip(); if (useUi.getState().selection) useUi.getState().openInspector() }
+      },
+    })
     return
   }
   const room0 = findRoom(roomId)
@@ -313,7 +318,11 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
       document.body.style.cursor = ''
       // A click (no drag): Shift toggles the room in the group; a plain click on a room
       // of a group selects that room only.
-      if (!start) { if (shift) flip(); else if (group) selectRoom(roomId); return }
+      if (!start) {
+        if (shift) flip(); else if (group) selectRoom(roomId)
+        if (useUi.getState().selection) useUi.getState().openInspector()
+        return
+      }
       if (newlyCrossing(start, useDoc.getState().doc, affected)) {
         useDoc.getState().updateSilent(() => start as PlanDoc)
         notify(CROSS_MSG, last)
@@ -662,7 +671,11 @@ function dragStoredWallOnGraph(e: ReactPointerEvent, vp: Vp, o: StoredWallDrag, 
     },
     onEnd: () => {
       setDragInfo(null)
-      if (!start) { if (shift) hooks.onShiftClick?.(); else hooks.onPlainClick?.(); return }
+      if (!start) {
+        if (shift) hooks.onShiftClick?.(); else hooks.onPlainClick?.()
+        if (useUi.getState().selection) useUi.getState().openInspector()
+        return
+      }
       if (newlyCrossing(start, useDoc.getState().doc, affected)) {
         useDoc.getState().updateSilent(() => start as PlanDoc)
         notify(CROSS_MSG, last)

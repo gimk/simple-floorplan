@@ -74,7 +74,8 @@ function useShortcuts(onHelp: () => void) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (t.closest('input, textarea, select, [contenteditable]')) return
+      // Text controls keep native Cmd/Ctrl+Z and keystrokes; checkboxes and switches do not.
+      if (t.closest('textarea, select, [contenteditable], input:not([type="checkbox"]):not([type="radio"])')) return
       if (e.key === '?') { e.preventDefault(); helpRef.current(); return }
       const ui = useUi.getState()
       if (ui.mode !== 'edit') return
@@ -230,6 +231,10 @@ export default function App() {
   const canRedo = useStore(useDoc.temporal, (s) => s.futureStates.length > 0)
   // #11: sidebar open by default on wide screens; an overlay drawer below 768 px.
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768)
+  const inspectorOpenTick = useUi((s) => s.inspectorOpenTick)
+  useEffect(() => {
+    if (inspectorOpenTick > 0 && !isDesktop && mode === 'edit') setSidebarOpen(true)
+  }, [inspectorOpenTick, isDesktop, mode])
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
     const mq = window.matchMedia('(min-width: 768px)')

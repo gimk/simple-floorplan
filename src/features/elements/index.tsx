@@ -130,6 +130,7 @@ export function ElementsLayer() {
     drag.current = null
     e.stopPropagation()
     if (d.start) endDrag(d.start)
+    else if (e.type === 'pointerup') useUi.getState().openInspector()
   }
 
   return (
