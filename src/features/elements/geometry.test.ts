@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Room } from '../../model/types'
 import { roomWalls } from '../../model/geometry'
-import { clampOffset, defaultElement, elementFrame, nearestWall, offsetFromEnd, offsetFromEndToStart, overflows, placeOffset, snapTo, wallThickness } from './geometry'
+import {
+  clampOffset, defaultElement, doorOpeningFor, elementFrame, flipHinge, nearestWall, offsetFromEnd, offsetFromEndToStart,
+  overflows, placeOffset, snapTo, swingForPointer, wallSide, wallThickness,
+} from './geometry'
 
 const room: Room = {
   id: 'r', code: 'SE', name: 'Room', holes: [], walkOrder: 0,
@@ -53,5 +56,49 @@ describe('elements geometry', () => {
     expect(defaultElement('window')).toMatchObject({ widthCm: 120, heightCm: 135, sillCm: 90, variant: 'standard' })
     expect(defaultElement('cupboard', 'bogus' as never).variant).toBe('wall-cabinet')
     expect(defaultElement('other').widthCm).toBe(50)
+  })
+})
+
+describe('opening side of a door (section 7)', () => {
+  // Room below the wall y = 0: wall 0 runs (0,0) -> (400,0) with inward (0,1) (y points down).
+  const wall = roomWalls(room)[0]
+
+  it('measures the side of the wall the pointer is on', () => {
+    expect(wallSide(wall, { x: 200, y: 40 })).toBeCloseTo(40, 6)
+    expect(wallSide(wall, { x: 200, y: -40 })).toBeCloseTo(-40, 6)
+    expect(wallSide(wall, { x: 200, y: 0 })).toBe(0)
+  })
+
+  it('opens toward the pointer: in for the room side, out for the other side', () => {
+    expect(swingForPointer(wall, { x: 200, y: 40 })).toBe('in')
+    expect(swingForPointer(wall, { x: 200, y: -40 })).toBe('out')
+    // On the line itself the door opens into the room that owns the wall.
+    expect(swingForPointer(wall, { x: 200, y: 0 })).toBe('in')
+  })
+
+  it('follows the inward normal of every wall of a room', () => {
+    const walls = roomWalls(room)
+    // Wall 1 runs (400,0) -> (400,300): its room is on the left, so the right side is "out".
+    expect(swingForPointer(walls[1], { x: 390, y: 150 })).toBe('in')
+    expect(swingForPointer(walls[1], { x: 410, y: 150 })).toBe('out')
+    // Wall 3 runs (0,300) -> (0,0): its room is on the right.
+    expect(swingForPointer(walls[3], { x: 20, y: 150 })).toBe('in')
+    expect(swingForPointer(walls[3], { x: -20, y: 150 })).toBe('out')
+  })
+
+  it('gives a new door its hinge choice and the pointer side', () => {
+    expect(doorOpeningFor('door', wall, { x: 200, y: 40 }, 'start')).toEqual({ hinge: 'start', swing: 'in' })
+    expect(doorOpeningFor('door', wall, { x: 200, y: -40 }, 'end')).toEqual({ hinge: 'end', swing: 'out' })
+  })
+
+  it('gives no hinge and no swing to a window or an opening', () => {
+    expect(doorOpeningFor('window', wall, { x: 200, y: 40 }, 'start')).toEqual({})
+    expect(doorOpeningFor('opening', wall, { x: 200, y: -40 }, 'end')).toEqual({})
+  })
+
+  it('flips the hinge', () => {
+    expect(flipHinge('start')).toBe('end')
+    expect(flipHinge('end')).toBe('start')
+    expect(flipHinge(undefined)).toBe('end')
   })
 })

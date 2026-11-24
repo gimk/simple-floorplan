@@ -1,6 +1,6 @@
 // Pure helpers for wall-attached elements. Units: cm.
 import type { ElementKind, ElementVariant, Room, Vec, WallElement } from '../../model/types'
-import { projectOnSegment, roomWalls, type Wall } from '../../model/geometry'
+import { dot, projectOnSegment, roomWalls, sub, type Wall } from '../../model/geometry'
 
 export const VARIANTS: Record<ElementKind, ElementVariant[]> = {
   door: ['single', 'double', 'sliding', 'pocket'],
@@ -85,6 +85,38 @@ export function nearestWall(rooms: Room[], p: Vec, maxDist: number): WallHit | n
   }
   return best
 }
+
+// ---------- Opening side of a door (Rayon style) ----------
+
+/**
+ * Signed distance of a point from the wall line, positive on the side the wall's `inward` normal
+ * points to (the room of that wall). Units: cm.
+ */
+export const wallSide = (wall: Wall, p: Vec) => dot(sub(p, wall.start), wall.inward)
+
+/**
+ * Swing of a door from the pointer side: the door opens toward the pointer.
+ * 'in' = the pointer is in the room of the wall, 'out' = it is on the other side (the neighbour room
+ * or the outside). A door with 'out' is moved to the room it opens into by normalizeDoorHosts
+ * (src/core/doorHost.ts), which also keeps the hinge on the same world end.
+ */
+export const swingForPointer = (wall: Wall, p: Vec): 'in' | 'out' => (wallSide(wall, p) >= 0 ? 'in' : 'out')
+
+/**
+ * Hinge and swing of a new opening: the hinge of the last choice (key F) and the opening side from
+ * the pointer. Other kinds have no swing and no hinge.
+ */
+export function doorOpeningFor(
+  kind: ElementKind,
+  wall: Wall,
+  p: Vec,
+  hinge: 'start' | 'end',
+): { hinge?: 'start' | 'end'; swing?: 'in' | 'out' } {
+  return kind === 'door' ? { hinge, swing: swingForPointer(wall, p) } : {}
+}
+
+/** The other hinge of a door: 'start' -> 'end' and 'end' -> 'start' (missing = 'start'). */
+export const flipHinge = (hinge: 'start' | 'end' | undefined): 'start' | 'end' => (hinge === 'end' ? 'start' : 'end')
 
 export type NewElementSpec = Pick<WallElement, 'kind' | 'variant' | 'widthCm' | 'heightCm' | 'sillCm' | 'depthCm' | 'hinge' | 'swing'>
 

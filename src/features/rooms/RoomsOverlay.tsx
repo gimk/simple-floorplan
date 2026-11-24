@@ -21,9 +21,13 @@ import { useRoomsFrame } from './RoomsLayer'
 import { wallProps } from './walls'
 import { wallAppearance } from '../renovation/logic'
 import { wallAlignOffsetCm, sideFaceKeys, storedWallView } from './wallSides'
-import { DIM_STYLE, dimLine, dimLineOfSpan, type DimLine } from './dims/dimLine'
+import { isV2Doc } from '../../model/v2/targets'
+import { useIsDesktop } from '../../shell/useDesktop'
+import { DIM_STYLE, dimLine, dimLineOfSpan, worldPx, type DimLine } from './dims/dimLine'
 import { DimLineView } from './dims/DimLineView'
-import { boxHit, dimTextBox, fittingRows, ringBox, tagBox, textBox, wallBadge, type Box } from './dims/dimBoxes'
+import { boxHit, dimTextBox, fittingRows, pickWallBadge, ringBox, tagBox, textBox, wallBadgePlaces, type Box } from './dims/dimBoxes'
+import { outsideDimTextBoxes } from './dims/outsideTextBoxes'
+import { outsideDims } from './outside/outsideDims'
 import { DimEditor } from './dims/DimEditor'
 import { dimEditAllowed, dimTextLabel, parseRoomWallLabel, stepRoomWallLabel, useDimEdit, type DimEditOpen, type DimEditorStep } from './dims/dimEdit'
 
@@ -62,6 +66,10 @@ export function RoomsOverlay() {
 
   /** Rows of the room tag chosen in the View menu (docs/measurements-plan.md section 2). */
   const tag = useUi((s) => s.roomTag)
+  /** A v2 document has the outside dimension chains, which the badges must also keep off (R2-2). */
+  const isV2 = useDoc((s) => isV2Doc(s.doc))
+  /** The outside chains are hidden in Measuring Mode on a phone (see outside/OutsideDimsLayer.tsx). */
+  const isDesktop = useIsDesktop()
   // Rooms without their own height use the apartment default height.
   const defaultCeilingCm = useDoc((s) => s.doc.apartment?.defaultCeilingCm)
   const tagInput = (d: (typeof display)[number]) => {
@@ -429,6 +437,32 @@ export function RoomsOverlay() {
     }
   }
 
+  /**
+   * Text boxes of the outside dimension chains (round 2 finding R2-2: the badges of the outside
+   * faces touched the texts '40' and '66' at 80 % and 64 %). The boxes come from the same pure
+   * functions as the rows of outside/OutsideDimsLayer.tsx, and only when that layer draws.
+   */
+  const outsideTextBoxes = useMemo(() => {
+    if (!showWallNumbers || !isV2 || !layers.dimensions || !layers.outsideDims) return []
+    if (mode === 'measure' && !isDesktop) return []
+    const runs = outsideDims({ rooms, nodes: storedNodes, walls: storedWalls, measurements })
+    return outsideDimTextBoxes(runs, {
+      zoom,
+      // The same text rule as the rows of outside/OutsideDimsLayer.tsx: a measured face shows its
+      // measured value, every other value its length in the units of the plan.
+      segmentText: (seg) => {
+        const measuredCm = seg.measuredCm ?? 0
+        return measuredCm > 0
+          ? measuredTextIn(measuredCm, seg.lengthCm, step, units)
+          : fmtLen(seg.lengthCm, units)
+      },
+      overallText: (run) => fmtLen(run.overallCm, units),
+    })
+  }, [
+    showWallNumbers, isV2, layers.dimensions, layers.outsideDims, mode, isDesktop,
+    rooms, storedNodes, storedWalls, measurements, zoom, step, units,
+  ])
+
   return (
     <g data-rooms-overlay="">
       {/* selection highlight of a room: drawn above the walls, so the dashes stay visible */}
@@ -531,10 +565,11 @@ export function RoomsOverlay() {
       {/* wall numbers: a small badge with the number of the wall ("6" = wall CU-6 of room CU),
           near the START end of the wall and in the band of the dimension text, so it never sits on
           that text (r1fix R1-2: the badge used to sit on the middle of the wall, one pixel from
-          the middle of the text). A badge whose box hits any dimension text of the plan is not
-          drawn at all. The badge of a selected stored wall is orange on the side the user clicked,
-          light orange on the other side, and a wall too short on screen shows no badge (it would
-          touch its neighbours). */}
+          the middle of the text). When the start end is taken by a value, the badge takes the END
+          of the line; a badge with no free place on a text of the plan (wall values AND outside
+          chains, round 2 finding R2-2) is not drawn at all. The badge of a selected stored wall is
+          orange on the side the user clicked, light orange on the other side, and a wall too short
+          on screen shows no badge (it would touch its neighbours). */}
       {showWallNumbers && rooms.map((r) => {
         const ring = roomInnerRing(r)
         return roomWalls(r).map((w) => {
@@ -553,15 +588,22 @@ export function RoomsOverlay() {
             : null
           // Distance from that line to the middle of the dimension text, px; null when no text.
           const textOffPx = dimShown ? (valueLine ? DIM_STYLE.textGap : 10) : null
-          const badge = wallBadge({
-            lineA: valueLine ? { x: valueLine.x1, y: valueLine.y1 } : faceStart,
-            lineB: valueLine ? { x: valueLine.x2, y: valueLine.y2 } : faceEnd,
-            normal: w.inward, badge: n, textOffPx, zoom,
-          })
-          // Never on a dimension text of the plan: the number is a helper, the value is the point
-          // (r1fix R1-2, 19 overlaps of the round 1 test).
-          if (wallValues.some((d) => boxHit(badge.box, d.box))) return null
-          const { x: mx, y: my } = badge.centre
+          // Near the start end of the line, or near its end when the start one is taken: never on a
+          // dimension text of the plan, with a small margin for the real text box of the browser
+          // (r1fix R1-2 and round 2 finding R2-2: 2 badges on the '86' of WC-2 / WC-4 at 100 %, and
+          // badges on the outside texts '40' and '66' at 80 % and 64 %). The number is a helper, the
+          // value is the point, so a badge with no free place is not drawn at all.
+          const picked = pickWallBadge(
+            wallBadgePlaces({
+              lineA: valueLine ? { x: valueLine.x1, y: valueLine.y1 } : faceStart,
+              lineB: valueLine ? { x: valueLine.x2, y: valueLine.y2 } : faceEnd,
+              normal: w.inward, badge: n, textOffPx, zoom,
+            }),
+            [...wallValues.map((d) => d.box), ...outsideTextBoxes],
+            worldPx(DIM_STYLE.badgeGap, zoom),
+          )
+          if (!picked) return null
+          const { x: mx, y: my } = picked.centre
           const kind = wallNumberHighlight(r.id, w.start.id) ?? (selWalls.has(r.id + ':' + w.start.id) ? 'strong' : 'none')
           const h = px(13), bw = px(5) + px(5.6) * n.length
           return (

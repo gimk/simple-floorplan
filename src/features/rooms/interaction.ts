@@ -25,6 +25,9 @@ import { isV2Doc } from '../../model/v2/targets'
 import { deleteStoredWalls } from './cards'
 import { storedWallLine } from './hoverTarget'
 import { sideOfPoint, wallFaceAcross, wallFaceAt, wallFaceAtPoint } from './wallSides'
+// Tab cycling of the select tool (Rayon "TAB: flick through overlapping entities", ./useTabCycle.ts):
+// the listener is installed by this import, so the select tool gets it without a change in tools.tsx.
+import './useTabCycle'
 
 export type Vp = { toWorld: (x: number, y: number) => Vec; px: (n: number) => number }
 

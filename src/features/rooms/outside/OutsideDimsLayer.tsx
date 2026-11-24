@@ -16,15 +16,12 @@ import { useIsDesktop } from '../../../shell/useDesktop'
 import { DIM_STYLE, dimLine } from '../dims/dimLine'
 import { DimLineView } from '../dims/DimLineView'
 import { dimEditAllowed, dimTextLabel, useDimEdit } from '../dims/dimEdit'
-import { outsideDims, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
+import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
 
-/** Distance of the chain row and the overall row from the outer face line, screen px. */
-const ROW_CHAIN_PX = 28
-const ROW_OVERALL_PX = 52
-/** Start of the extension lines off the face, screen px. */
-const GAP_PX = 4
-/** Extra distance from the row of a text that does not fit between its ticks, screen px. */
-const OUTSIDE_EXTRA_PX = 6
+/** Row distances from the outer face line, screen px (shared with the badge mask and the export). */
+const ROW_CHAIN_PX = OUTSIDE_ROWS_PX.chain
+const ROW_OVERALL_PX = OUTSIDE_ROWS_PX.overall
+const GAP_PX = OUTSIDE_EXT_GAP_PX
 
 const moved = (p: Vec, n: Vec, d: number): Vec => ({ x: p.x + n.x * d, y: p.y + n.y * d })
 

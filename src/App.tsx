@@ -2,13 +2,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import {
-  BrickWall, DoorOpen, Hand, Keyboard, MousePointer2, MapPin, MoreVertical, PanelRightClose, PanelRightOpen,
-  PenTool, Ruler, Scissors, Square, SquareDashed, SquareDashedMousePointer, Undo2, Redo2, Smartphone, Monitor, Crosshair, Cloud, CloudOff, KeyRound,
+  Keyboard, MoreVertical, PanelRightClose, PanelRightOpen, Search,
+  Undo2, Redo2, Smartphone, Monitor, Cloud, CloudOff, KeyRound,
 } from 'lucide-react'
 import { getSyncState, setPasscode, startSync, useSyncState, useSyncStatusText } from './sync/sync'
 import { Viewport } from './canvas/Viewport'
 import { useDoc, useUi } from './model/store'
-import type { ToolId } from './model/types'
 import { BackgroundLayer, CalibrateTool } from './features/background'
 import { MakeRoomTool, RoomsLayer, RoomTools, TracesLayer, WallTool } from './features/rooms'
 import { WallsLayer } from './features/rooms/WallsLayer'
@@ -29,6 +28,9 @@ import { ViewMenu } from './shell/view/ViewMenu'
 import { ToolHints } from './shell/ToolHints'
 import { SnapPopover } from './shell/SnapPopover'
 import { ShortcutsDialog } from './shell/ShortcutsDialog'
+import { CommandPalette } from './shell/CommandPalette'
+import { toggleAllSnap } from './shell/commands'
+import { TOOLS } from './shell/tools'
 import { Sidebar } from './shell/sidebar/Sidebar'
 import { parentSelection } from './shell/sidebar/trail'
 import { installBridge } from './shell/bridge'
@@ -37,21 +39,6 @@ import { initTheme } from './shell/theme'
 import { useIsDesktop } from './shell/useDesktop'
 
 initTheme()
-
-const TOOLS: { id: ToolId; label: string; key: string; icon: typeof Square }[] = [
-  { id: 'select', label: 'Select', key: 'v', icon: MousePointer2 },
-  { id: 'pan', label: 'Pan', key: 'h', icon: Hand },
-  { id: 'rect', label: 'Rectangle room', key: 'r', icon: Square },
-  { id: 'polygon', label: 'Polygon room', key: 'p', icon: PenTool },
-  { id: 'wall', label: 'Wall', key: 'w', icon: BrickWall },
-  { id: 'make-room', label: 'Make room', key: 'm', icon: SquareDashedMousePointer },
-  { id: 'slice', label: 'Slice room', key: 's', icon: Scissors },
-  { id: 'cutout', label: 'Cutout', key: 'x', icon: SquareDashed },
-  { id: 'place-element', label: 'Door / window / storage', key: 'd', icon: DoorOpen },
-  { id: 'calibrate', label: 'Calibrate scale', key: 'c', icon: Crosshair },
-  { id: 'tape', label: 'Tape measure', key: 't', icon: Ruler },
-  { id: 'pin', label: 'Note / photo pin', key: 'n', icon: MapPin },
-]
 
 function ToolOverlay() {
   const tool = useUi((s) => s.tool)
@@ -69,18 +56,22 @@ function ToolOverlay() {
   }
 }
 
-function useShortcuts(onHelp: () => void) {
+function useShortcuts(onHelp: () => void, onPalette: () => void) {
   const helpRef = useRef(onHelp)
-  useEffect(() => { helpRef.current = onHelp }, [onHelp])
+  const paletteRef = useRef(onPalette)
+  useEffect(() => { helpRef.current = onHelp; paletteRef.current = onPalette }, [onHelp, onPalette])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      // Cmd/Ctrl+K opens the command palette from anywhere, like in other editors (the field of
+      // the palette is a text field, so this check is before the one below).
+      if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); paletteRef.current(); return }
       const t = e.target as HTMLElement
       // Text controls keep native Cmd/Ctrl+Z and keystrokes; checkboxes and switches do not.
       if (t.closest('textarea, select, [contenteditable], input:not([type="checkbox"]):not([type="radio"])')) return
       if (e.key === '?') { e.preventDefault(); helpRef.current(); return }
       const ui = useUi.getState()
       if (ui.mode !== 'edit') return
-      const mod = e.metaKey || e.ctrlKey
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         const tmp = useDoc.temporal.getState()
@@ -101,6 +92,8 @@ function useShortcuts(onHelp: () => void) {
         ui.select(step.selection)
         return
       }
+      // Shift+P: every snapping off, or back to the set before (docs/measurements-plan.md 7).
+      if (!mod && !e.altKey && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); toggleAllSnap(); return }
       if (e.key === '0') { e.preventDefault(); fitToDoc(); return }
       if (mod || e.altKey) return
       const tool = TOOLS.find((x) => x.key === e.key.toLowerCase())
@@ -205,18 +198,23 @@ function SyncBadge() {
 
 export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
   const shortcutsBtnRef = useRef<HTMLButtonElement>(null)
   const moreBtnRef = useRef<HTMLButtonElement>(null)
   const shortcutsReturnFocusRef = useRef<HTMLElement | null>(null)
-  useShortcuts(() => {
-    const active = document.activeElement
-    const headerOpener = shortcutsBtnRef.current?.offsetParent ? shortcutsBtnRef.current : moreBtnRef.current
-    shortcutsReturnFocusRef.current =
-      active instanceof HTMLElement && active !== document.body ? active : headerOpener
-    setShortcutsOpen(true)
-  })
+  useShortcuts(
+    () => {
+      const active = document.activeElement
+      const headerOpener = shortcutsBtnRef.current?.offsetParent ? shortcutsBtnRef.current : moreBtnRef.current
+      shortcutsReturnFocusRef.current =
+        active instanceof HTMLElement && active !== document.body ? active : headerOpener
+      setShortcutsOpen(true)
+    },
+    // Cmd/Ctrl+K. The palette keeps the element to focus when it closes.
+    () => setPaletteOpen(true),
+  )
   useUrlModeSync()
   useEffect(() => startSync(), [])
   useEffect(() => { installBridge() }, [])
@@ -305,6 +303,13 @@ export default function App() {
                 <button
                   type="button"
                   className={btn}
+                  onClick={() => { setMoreOpen(false); setPaletteOpen(true) }}
+                >
+                  <Search size={16} /> <span>Commands</span>
+                </button>
+                <button
+                  type="button"
+                  className={btn}
                   onClick={() => { shortcutsReturnFocusRef.current = moreBtnRef.current; setMoreOpen(false); setShortcutsOpen(true) }}
                 >
                   <Keyboard size={16} /> <span>Shortcuts</span>
@@ -388,6 +393,11 @@ export default function App() {
         </div>
       )}
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} returnFocusTo={shortcutsReturnFocusRef} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+      />
       <ToastHost />
       {/* Conversion report toast in every mode (phones open in Measuring Mode). */}
       <ConversionNotice />

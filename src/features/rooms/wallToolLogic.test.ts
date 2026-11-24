@@ -5,8 +5,9 @@ import type { PlanDoc, Room, Vec } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { addWallSegment, removeWallSegment } from './traces'
 import {
-  addChainPoint, bearingDeg, chainSegments, fmtAngle, nextWallProps, previewLabel, removeChainPoint,
-  safeType, segmentsWith, snapTargets,
+  addChainPoint, alignBadge, angleFieldText, bearingDeg, centreLineOffsetCm, chainSegments, fmtAngle,
+  leftNormal, moveSegmentEnd, nextAlign, nextWallProps, offsetChain, offsetSegment, placePoint,
+  pointFromLengthAngle, previewLabel, removeChainPoint, safeType, segmentsWith, snapTargets, typedEnd,
 } from './wallToolLogic'
 
 const p = (x: number, y: number) => ({ x, y })
@@ -174,5 +175,219 @@ describe('wall properties of the next segment', () => {
     expect(safeType('wood')).toBe('partition')
     expect(safeType('bearing')).toBe('bearing')
     expect(safeType('exterior')).toBe('exterior')
+  })
+})
+
+describe('typed length and angle of the Wall tool (measurements plan, section 7)', () => {
+  it('places the end point of the segment from a length and a bearing', () => {
+    const o = p(0, 0)
+    // 0° = up on the screen, so -y.
+    const up = pointFromLengthAngle(o, 412, 0)
+    expect(up.x).toBeCloseTo(0, 9)
+    expect(up.y).toBeCloseTo(-412, 9)
+    // 90° = right.
+    const right = pointFromLengthAngle(o, 412, 90)
+    expect(right.x).toBeCloseTo(412, 9)
+    expect(right.y).toBeCloseTo(0, 9)
+    const d37 = pointFromLengthAngle(o, 412, 37)
+    expect(d37.x).toBeCloseTo(247.95, 1)
+    expect(d37.y).toBeCloseTo(-329.04, 1)
+    // The bearing of the segment comes back as the angle that was typed.
+    expect(bearingDeg(o, d37)).toBeCloseTo(37, 6)
+    expect(bearingDeg(o, pointFromLengthAngle(o, 300, 225))).toBeCloseTo(225, 6)
+  })
+
+  it('takes the typed angle, else the direction of the pointer preview', () => {
+    const from = p(100, 100)
+    // No angle: the pointer direction, with the typed length.
+    const a = typedEnd(from, p(200, 100), 50, null)!
+    expect(a.x).toBeCloseTo(150, 6)
+    expect(a.y).toBeCloseTo(100, 6)
+    // A typed angle wins over the pointer.
+    expect(typedEnd(from, p(200, 100), 50, 180)).toEqual(p(100, 150))
+    // Nothing to place: no length, a length of 0, or no angle and no pointer.
+    expect(typedEnd(from, p(200, 100), null, 45)).toBeNull()
+    expect(typedEnd(from, p(200, 100), 0, 45)).toBeNull()
+    expect(typedEnd(from, null, 300, null)).toBeNull()
+    expect(typedEnd(from, from, 300, null)).toBeNull()
+    expect(typedEnd(from, null, 300, 0)).toEqual(p(100, -200))
+  })
+
+  it('gives the angle field text of the preview, with a comma decimal', () => {
+    expect(angleFieldText(p(0, 0), p(100, 0))).toBe('90')
+    expect(angleFieldText(p(0, 0), p(100, -100))).toBe('45')
+    expect(angleFieldText(p(0, 0), null)).toBe('')
+    expect(angleFieldText(p(0, 0), p(10, 100))).toBe('174,3')
+    expect(angleFieldText(undefined, p(10, 100))).toBe('')
+  })
+})
+
+describe('drawing reference of the Wall tool: centre, side A, side B', () => {
+  it('cycles centre -> A -> B -> centre', () => {
+    expect(nextAlign('centre')).toBe('A')
+    expect(nextAlign('A')).toBe('B')
+    expect(nextAlign('B')).toBe('centre')
+    expect(alignBadge('centre')).toBe('C')
+    expect(alignBadge('A')).toBe('A')
+    expect(alignBadge('B')).toBe('B')
+  })
+
+  it('puts the centre line half a thickness away from a face, on the other side', () => {
+    // Side A is the left face: walking right (1, 0), the centre line is below the clicked points.
+    expect(centreLineOffsetCm('centre', 20)).toBe(0)
+    expect(centreLineOffsetCm('A', 20)).toBe(-10)
+    expect(centreLineOffsetCm('B', 20)).toBe(10)
+    expect(centreLineOffsetCm('A', Number.NaN)).toBe(-0)
+    // The left normal of a direction on the screen: right -> up, down -> right.
+    const nRight = leftNormal({ x: 1, y: 0 })
+    expect(nRight.x).toBeCloseTo(0, 9)
+    expect(nRight.y).toBeCloseTo(-1, 9)
+    const nDown = leftNormal({ x: 0, y: 1 })
+    expect(nDown.x).toBeCloseTo(1, 9)
+    expect(nDown.y).toBeCloseTo(0, 9)
+  })
+
+  it('moves the two ends of one segment across the drawing direction', () => {
+    // A chain traced on side A of a wall going right: the centre line is 5 cm below it.
+    const [a, b] = offsetSegment(p(0, 0), p(400, 0), -5)
+    expect(a).toEqual(p(0, 5))
+    expect(b).toEqual(p(400, 5))
+    expect(offsetSegment(p(0, 0), p(0, 300), 5)).toEqual([p(5, 0), p(5, 300)])
+  })
+
+  it('keeps the clicked points on the face and offsets the stored centre line', () => {
+    const chain = [p(0, 0), p(400, 0)]
+    const centre = offsetChain(chain, -5)
+    expect(centre).toEqual([p(0, 5), p(400, 5)])
+    // The centre reference does not move anything.
+    expect(offsetChain(chain, 0)).toEqual(chain)
+    expect(offsetChain([], 5)).toEqual([])
+    expect(offsetChain([p(10, 10)], 5)).toEqual([p(10, 10)])
+  })
+
+  it('joins consecutive segments at a mitre of the offset lines', () => {
+    // A chain traced on side A: two segments at a right angle (right, then down).
+    const chain = [p(0, 0), p(400, 0), p(400, 300)]
+    const centre = offsetChain(chain, -5)
+    // Side A of the first segment is its top side, so the centre line is below it (y = +5); side A
+    // of the second segment is its left side, so its centre line is at x = 395. The corner of the
+    // centre line is the crossing of the two lines: (395, 5), not the two simple offsets.
+    expect(centre[0]).toEqual(p(0, 5))
+    expect(centre[1]).toEqual(p(395, 5))
+    expect(centre[2]).toEqual(p(395, 300))
+    // The segments share the corner point, so the wall has no gap.
+    const segs = chainSegments(centre)
+    expect(segs[0][1]).toEqual(segs[1][0])
+    // Side B is the mirror image of it.
+    const other = offsetChain(chain, 5)
+    expect(other).toEqual([p(0, -5), p(405, -5), p(405, 300)])
+    expect(chainSegments(other)[0][1]).toEqual(chainSegments(other)[1][0])
+  })
+
+  it('has no mitre problem when the segments are in line, and turns to the left too', () => {
+    // In line: the offset is the plain one, with no crossing to find.
+    expect(offsetChain([p(0, 0), p(400, 0), p(800, 0)], 5)).toEqual([p(0, -5), p(400, -5), p(800, -5)])
+    // A chain that turns left: the mitre is inside the corner.
+    const left = offsetChain([p(0, 0), p(400, 0), p(400, -300)], 5)
+    expect(left[1]).toEqual(p(395, -5))
+    expect(chainSegments(left)[0][1]).toEqual(chainSegments(left)[1][0])
+  })
+})
+
+describe('the end of the last segment moves to the mitre of the next corner', () => {
+  it('moves the node of a standalone stored wall', () => {
+    const v2 = convertToV2(doc()).doc
+    const seg = addWallSegment(v2, p(1000, 0), p(1000, 400), { type: 'partition', thicknessCm: 10 })
+    const moved = moveSegmentEnd(seg.doc, seg.wallId!, p(1005, 405), p(1000, 400))
+    const wall = (moved.walls ?? []).find((w) => w.id === seg.wallId)!
+    const nodes = new Map((moved.nodes ?? []).map((n) => [n.id, n]))
+    expect({ x: nodes.get(wall.b)!.x, y: nodes.get(wall.b)!.y }).toEqual({ x: 1005, y: 405 })
+    // The other end stays where it was.
+    expect({ x: nodes.get(wall.a)!.x, y: nodes.get(wall.a)!.y }).toEqual({ x: 1000, y: 0 })
+  })
+
+  it('never moves a node that a room or another wall uses', () => {
+    const v2 = convertToV2(doc()).doc
+    // The segment starts on the corner of room SE: that corner is not this wall's own.
+    const seg = addWallSegment(v2, p(0.1, 0.1), p(400, 150), { type: 'partition', thicknessCm: 10 })
+    const moved = moveSegmentEnd(seg.doc, seg.wallId!, p(-3, -3), p(0, 0))
+    expect(moved).toBe(seg.doc)
+  })
+
+  it('moves the end of a v1 trace', () => {
+    const v1 = doc()
+    const seg = addWallSegment(v1, p(1000, 0), p(1000, 400), { type: 'partition', thicknessCm: 10 }, 'tr1')
+    const moved = moveSegmentEnd(seg.doc, 'tr1', p(1005, 405), p(1000, 400))
+    expect((moved.traces ?? [])[0].b).toEqual(p(1005, 405))
+    expect((moved.traces ?? [])[0].a).toEqual(p(1000, 0))
+    // An id that is not in the doc changes nothing.
+    expect(moveSegmentEnd(v1, 'nope', p(1, 1), p(0, 0))).toBe(v1)
+  })
+})
+
+describe('one click of the Wall tool on a face (alignment A)', () => {
+  it('stores the centre line half a thickness inside, and joins two segments at a node', () => {
+    const props = { type: 'partition' as const, thicknessCm: 10 }
+    const k = centreLineOffsetCm('A', props.thicknessCm) // -5 cm: the clicked points are on the top face
+    let d = convertToV2(doc()).doc
+    // The chain traced on the face: (1000, 0) -> (1400, 0) -> (1400, 400).
+    let chain: Vec[] = [p(1000, 0)]
+    let ids: string[] = []
+    for (const point of [p(1400, 0), p(1400, 400)]) {
+      const res = placePoint(d, chain, ids[ids.length - 1] ?? null, point, props, k)
+      expect(res.chain.length).toBe(chain.length + 1)
+      expect(res.doc).not.toBe(d)
+      d = res.doc
+      chain = res.chain
+      ids = [...ids, res.wallId!]
+    }
+    // Two stored walls, and the first one moved its end to the mitre of the corner.
+    expect(ids.every((id) => (d.walls ?? []).some((w) => w.id === id))).toBe(true)
+    const nodes = new Map((d.nodes ?? []).map((n) => [n.id, n]))
+    const w1 = (d.walls ?? []).find((w) => w.id === ids[0])!
+    const w2 = (d.walls ?? []).find((w) => w.id === ids[1])!
+    // The two segments share the corner node: the offset segments join, no gap.
+    expect(w1.b).toBe(w2.a)
+    const corner = nodes.get(w1.b)!
+    expect(corner.x).toBeCloseTo(1395, 6)
+    expect(corner.y).toBeCloseTo(5, 6)
+    // The clicked points stay on the face: the centre line is 5 cm away from them.
+    const a1 = nodes.get(w1.a)!
+    expect(a1.x).toBeCloseTo(1000, 6)
+    expect(a1.y).toBeCloseTo(5, 6)
+  })
+
+  it('does nothing for a click on the last point (a double-click adds no wall)', () => {
+    const props = { type: 'partition' as const, thicknessCm: 10 }
+    const d = convertToV2(doc()).doc
+    const res = placePoint(d, [p(1000, 0)], null, p(1000, 0), props, -5)
+    expect(res.doc).toBe(d)
+    expect(res.wallId).toBeNull()
+    expect(res.chain).toHaveLength(1)
+  })
+})
+
+describe('the previous segment keeps its start when both corners are close', () => {
+  it('moves the end that the last click created, not the start of a short segment', () => {
+    const props = { type: 'partition' as const, thicknessCm: 20 }
+    const k = centreLineOffsetCm('B', props.thicknessCm) // +10: the clicked points are on the right face
+    // A very short first segment: both of its nodes are close to the new corner.
+    let d = convertToV2(doc()).doc
+    let chain: Vec[] = [p(1000, 0)]
+    let ids: string[] = []
+    for (const point of [p(1003, 0), p(1003, 400)]) {
+      const res = placePoint(d, chain, ids[ids.length - 1] ?? null, point, props, k)
+      d = res.doc
+      chain = res.chain
+      ids = [...ids, res.wallId ?? '']
+    }
+    const nodes = new Map((d.nodes ?? []).map((n) => [n.id, n]))
+    const w1 = (d.walls ?? []).find((w) => w.id === ids[0])!
+    const w2 = (d.walls ?? []).find((w) => w.id === ids[1])!
+    expect(w1.b).toBe(w2.a)
+    // The start of the short segment stays on its own face line (y = -10 for side B).
+    const a1 = nodes.get(w1.a)!
+    expect(a1.x).toBeCloseTo(1000, 6)
+    expect(a1.y).toBeCloseTo(-10, 6)
   })
 })

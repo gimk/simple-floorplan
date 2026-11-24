@@ -21,7 +21,7 @@ import type { DimStyle, RoomTagFields } from '../../model/store'
 import { DIM_STYLE, worldPx, dimLine, type DimLine } from '../rooms/dims/dimLine'
 import { boxHit, dimTextBox, fittingRows, ringBox, tagBox, type Box } from '../rooms/dims/dimBoxes'
 import { roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from '../rooms/roomTag'
-import { outsideDims, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
+import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
 
 // ---- text of the paper ----
 export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -42,13 +42,10 @@ export const PAPER = {
 }
 
 // ---- sizes taken from the plan, in screen px ----
-/** Distance of the chain row and the overall row from the outer face line (OutsideDimsLayer.tsx). */
-const CHAIN_ROW_PX = 28
-const OVERALL_ROW_PX = 52
-/** Start of the extension lines off the face. */
-const EXT_GAP_PX = 4
-/** Extra distance from the row of a text that does not fit between its ticks. */
-const OUTSIDE_EXTRA_PX = 6
+/** Outside row sizes, shared with the plan (features/rooms/outside/outsideDims.ts). */
+const CHAIN_ROW_PX = OUTSIDE_ROWS_PX.chain
+const OVERALL_ROW_PX = OUTSIDE_ROWS_PX.overall
+const EXT_GAP_PX = OUTSIDE_EXT_GAP_PX
 /** A room smaller than this on the paper shows its code only (same rule as the plan). */
 const SMALL_ROOM_PX = 50
 

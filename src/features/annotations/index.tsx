@@ -11,6 +11,7 @@ import { SNAP_PX, isUnplaced, placePin, snapTapeAngle, snapToPlan, tapeLabel, tr
 import { PinPhotos } from './PinEditor'
 import { PIN_FIELD_NAMES, TAPE_FIELD_NAMES, notePatch, pinTextPatch, realLengthPatch, tapeStats } from './panel'
 import { selectAnnot, useAnnotSel, type AnnotSel } from './selection'
+import { TAPE_LABEL_GAP_PX, tapeLabelPlacement } from './tapeLabel'
 import { undoToast } from '../toast'
 
 const isTyping = (t: EventTarget | null) =>
@@ -24,11 +25,9 @@ function DimLine({ a, b, label, selected, onDown }: { a: Vec; b: Vec; label: str
   const { px } = useViewport()
   const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1
   const ux = dx / L, uy = dy / L, tick = px(6)
-  let ang = (Math.atan2(dy, dx) * 180) / Math.PI
-  if (ang > 90) ang -= 180
-  if (ang <= -90) ang += 180
-  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
   const nx = -uy, ny = ux
+  // The text above the line, with a halo like the texts of the dimension lines of the plan.
+  const at = tapeLabelPlacement(a, b, px(TAPE_LABEL_GAP_PX))
   return (
     <g onPointerDown={onDown} style={{ cursor: onDown ? 'pointer' : undefined }}>
       <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={px(16)} />
@@ -37,7 +36,7 @@ function DimLine({ a, b, label, selected, onDown }: { a: Vec; b: Vec; label: str
         <line key={i} x1={p.x + nx * tick} y1={p.y + ny * tick} x2={p.x - nx * tick} y2={p.y - ny * tick} stroke={TAPE} strokeWidth={px(selected ? 3 : 1.5)} />
       ))}
       <text
-        x={mx + nx * px(10)} y={my + ny * px(10)} transform={`rotate(${ang} ${mx + nx * px(10)} ${my + ny * px(10)})`}
+        x={at.p.x} y={at.p.y} transform={`rotate(${at.angle} ${at.p.x} ${at.p.y})`} data-tape-label=""
         textAnchor="middle" dominantBaseline="central" fontSize={px(12)} fill={TAPE} strokeWidth={px(3)} paintOrder="stroke"
         pointerEvents="none" className="font-mono font-semibold stroke-[#f6f7f5] dark:stroke-[#12161b]"
       >{label}</text>

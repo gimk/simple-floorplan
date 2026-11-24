@@ -328,3 +328,13 @@ export function outsideDims(doc: OutsideSpanDoc): OutsideDimRun[] {
   const nodes = nodeMap(doc.nodes)
   return groupRuns(spans).map((group) => buildRun(group, walls, nodes))
 }
+
+/**
+ * Screen sizes of the outside rows, in ONE place: the plan layer (OutsideDimsLayer.tsx), the badge
+ * mask (dims/outsideTextBoxes.ts) and the export (export/svgDims.ts) all read them.
+ */
+export const OUTSIDE_ROWS_PX = { chain: 28, overall: 52 }
+/** Start of the extension lines off the outer face, screen px. */
+export const OUTSIDE_EXT_GAP_PX = 4
+/** Extra distance from the row of a text that does not fit between its ticks, screen px. */
+export const OUTSIDE_EXTRA_PX = 6

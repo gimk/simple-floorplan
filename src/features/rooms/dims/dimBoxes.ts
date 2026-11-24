@@ -19,6 +19,15 @@ export const boxAt = (p: Vec, w: number, h: number): Box => ({
   x0: p.x - w / 2, y0: p.y - h / 2, x1: p.x + w / 2, y1: p.y + h / 2,
 })
 
+/**
+ * The same box, grown by `d` cm on every side. The text box above is an APPROXIMATION: the browser
+ * adds the ascent and the descent of the font to the height, and the halo of the text to its width
+ * (about 2 px), so a badge that the approximation calls clear can still touch the text on the plan
+ * (round 2 finding R2-2: badge '4' touched the '86' of WC-2 and WC-4 at 100 %). A margin keeps the
+ * two apart for real.
+ */
+export const growBox = (b: Box, d: number): Box => ({ x0: b.x0 - d, y0: b.y0 - d, x1: b.x1 + d, y1: b.y1 + d })
+
 /** Box of a text of `chars * charWidth` px wide and `font` px high, turned by `angleDeg`. */
 export function textBox(centre: Vec, angleDeg: number, text: string, zoom: number): Box {
   const halfW = worldPx((text.length * DIM_STYLE.charWidth) / 2, zoom)
@@ -57,13 +66,15 @@ export type WallBadgeInput = {
   zoom: number
 }
 
+/** The place of a wall number badge on the plan: its centre and its box, cm. */
+export type BadgePlace = { centre: Vec; box: Box }
+
 /**
- * Where the wall number badge goes (r1fix R1-2): near the START end of the dimension line, at the
- * same distance from the wall as the text. Before, the badge sat at the middle of the wall, one
- * pixel from the middle of the text, so it read as an overlap. A badge that still falls on a
- * dimension text is not drawn by the plan (RoomsOverlay), so the two never touch.
+ * One place of the wall number badge (r1fix R1-2): near one end of the dimension line, at the same
+ * distance from the wall as the text. `atEnd` picks the end of the line instead of its start. The
+ * badge never passes the middle of the line, where the text sits.
  */
-export function wallBadge(input: WallBadgeInput): { centre: Vec; box: Box } {
+function badgePlace(input: WallBadgeInput, atEnd: boolean): BadgePlace {
   const { lineA, lineB, normal, badge, textOffPx, zoom } = input
   const size = badgeSizePx(badge)
   const w = worldPx(size.w, zoom), h = worldPx(size.h, zoom)
@@ -72,11 +83,40 @@ export function wallBadge(input: WallBadgeInput): { centre: Vec; box: Box } {
   const n = norm(normal)
   // Across the line: the band of the text, so the badge stays close to the wall in a small room.
   const offPx = textOffPx ?? DIM_STYLE.badgeNear
-  // Along the line: just past the start tick, and never past the middle (where the text sits).
-  const along = Math.min(worldPx(DIM_STYLE.badgeStart, zoom) + w / 2, len / 2)
+  // Along the line: just past a tick, and never past the middle (where the text sits).
+  const gap = worldPx(DIM_STYLE.badgeStart, zoom) + w / 2
+  const along = atEnd ? Math.max(len - gap, len / 2) : Math.min(gap, len / 2)
   const o = worldPx(offPx, zoom)
   const centre = { x: lineA.x + dir.x * along + n.x * o, y: lineA.y + dir.y * along + n.y * o }
   return { centre, box: boxAt(centre, w, h) }
+}
+
+/**
+ * Where the wall number badge goes (r1fix R1-2): near the START end of the dimension line, at the
+ * same distance from the wall as the text. Before, the badge sat at the middle of the wall, one
+ * pixel from the middle of the text, so it read as an overlap.
+ */
+export const wallBadge = (input: WallBadgeInput): BadgePlace => badgePlace(input, false)
+
+/**
+ * The two places a badge can take, best first: near the start end of the line, then near its end
+ * (round 2 finding R2-2: on a short wall the start end is taken by the value, and the badge is kept
+ * at the other end instead of being lost).
+ */
+export const wallBadgePlaces = (input: WallBadgeInput): BadgePlace[] =>
+  [badgePlace(input, false), badgePlace(input, true)]
+
+/**
+ * The first place of `places` whose box touches none of the `blockers` boxes, each grown by
+ * `clearanceCm`; null when every place touches a text. The plan then draws no badge there (a number
+ * is a helper, the value is the point). The clearance covers the difference between the approximate
+ * text box of this file and the real one of the browser (round 2 finding R2-2).
+ */
+export function pickWallBadge(places: BadgePlace[], blockers: Box[], clearanceCm: number): BadgePlace | null {
+  for (const place of places) {
+    if (blockers.every((b) => !boxHit(place.box, growBox(b, clearanceCm)))) return place
+  }
+  return null
 }
 
 /** Box of the outline of a ring (its bounding box), cm. */

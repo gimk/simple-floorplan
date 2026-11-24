@@ -5,16 +5,17 @@ import { Trash2 } from 'lucide-react'
 import { create } from 'zustand'
 import { normalizeDoorHosts } from '../../core/doorHost'
 import { beginDrag, endDrag, nowIso, uid, useDoc, useUi } from '../../model/store'
-import { dot, sub, wallByStart } from '../../model/geometry'
-import type { ElementKind, ElementVariant, PlanDoc, Room, WallElement } from '../../model/types'
+import { dot, sub, wallByStart, type Wall } from '../../model/geometry'
+import type { ElementKind, ElementVariant, PlanDoc, Room, Vec, WallElement } from '../../model/types'
 import { undoToast } from '../toast'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { ERROR, FieldRow, IconButton, NumberField, PanelSection, Segmented, SelectField, TextField } from '../../shell/panel'
 import { ElementSymbol, symbolExtent } from './Symbol'
 import {
-  KIND_LABEL, VARIANT_LABEL, VARIANTS, clampOffset, defaultElement, defaultVariant, elementFrame, nearestWall, offsetFromEnd,
-  offsetFromEndToStart, overflows, placeOffset, snapTo, wallThickness,
+  KIND_LABEL, VARIANT_LABEL, VARIANTS, clampOffset, defaultElement, defaultVariant, doorOpeningFor, elementFrame, flipHinge,
+  nearestWall, offsetFromEnd, offsetFromEndToStart, overflows, placeOffset, snapTo, wallThickness,
 } from './geometry'
+import { placeKeyAction } from './keys'
 import { ELEMENT_FIELD_NAMES, depthDefault, elementPanelTitle, hasDepth, overflowWarning, showsHeight } from './panel'
 
 const isTyping = (t: EventTarget | null) =>
@@ -34,11 +35,32 @@ function withoutMovedHint(el: WallElement): WallElement {
   return rest
 }
 
-// Variant remembered per kind for the placement tool.
-const usePlaceOpts = create<{ variants: Partial<Record<ElementKind, ElementVariant>>; setVariant: (k: ElementKind, v: ElementVariant) => void }>((set) => ({
+type Hinge = 'start' | 'end'
+
+/**
+ * Memory of the place-element tool: variant and hinge per kind, plus the repeat mode
+ * (docs/measurements-plan.md section 7). The hinge choice is kept for the next placement of the
+ * same kind; repeat = the tool stays after a placement (today's behaviour, the default).
+ */
+const usePlaceOpts = create<{
+  variants: Partial<Record<ElementKind, ElementVariant>>
+  hinges: Partial<Record<ElementKind, Hinge>>
+  repeat: boolean
+  setVariant: (k: ElementKind, v: ElementVariant) => void
+  setHinge: (k: ElementKind, h: Hinge) => void
+  setRepeat: (r: boolean) => void
+}>((set) => ({
   variants: {},
+  hinges: {},
+  repeat: true,
   setVariant: (k, v) => set((s) => ({ variants: { ...s.variants, [k]: v } })),
+  setHinge: (k, h) => set((s) => ({ hinges: { ...s.hinges, [k]: h } })),
+  setRepeat: (repeat) => set({ repeat }),
 }))
+
+/** Hinge of a kind (missing = 'start'). */
+const hingeOf = (hinges: Partial<Record<ElementKind, Hinge>>, kind: ElementKind): Hinge =>
+  hinges[kind] ?? 'start'
 
 /** SVG transform that maps local wall coords (x along wall, y inward) to world. */
 function frameTransform(room: Room, el: Pick<WallElement, 'wallStart' | 'offsetCm' | 'widthCm'>) {
@@ -177,45 +199,84 @@ export function ElementsLayer() {
 
 const KINDS: ElementKind[] = ['door', 'window', 'opening', 'cupboard', 'radiator', 'other']
 
+/** One candidate placement under the pointer (the swing is read from `point` at render time). */
+type PlaceHover = { roomId: string; wallStart: string; offsetCm: number; widthCm: number; host: Wall; point: Vec }
+
 /** Tool overlay for ui.tool === 'place-element' (kind = ui.placeKind). */
 export function PlaceElementTool() {
   const kind = useUi((s) => s.placeKind)
   const variants = usePlaceOpts((s) => s.variants)
+  const hinges = usePlaceOpts((s) => s.hinges)
   const { px, toWorld } = useViewport()
-  const [hover, setHover] = useState<{ roomId: string; wallStart: string; offsetCm: number } | null>(null)
+  const [hover, setHover] = useState<PlaceHover | null>(null)
   const variant = variants[kind] ?? defaultVariant(kind)
+  const hinge = hingeOf(hinges, kind)
 
-  const compute = (clientX: number, clientY: number, alt: boolean) => {
+  const compute = (clientX: number, clientY: number, alt: boolean): PlaceHover | null => {
     const p = toWorld(clientX, clientY)
     const hit = nearestWall(useDoc.getState().doc.rooms, p, px(30))
     if (!hit) return null
     const spec = defaultElement(kind, variant)
     const snap = useUi.getState().snap
     const step = !alt && snap.grid ? snap.gridCm : 0
-    const w = Math.min(spec.widthCm, hit.wall.length)
-    return { spec: { ...spec, widthCm: w }, roomId: hit.room.id, wallStart: hit.wall.start.id, offsetCm: placeOffset(hit.along, w, hit.wall.length, step) }
+    return {
+      roomId: hit.room.id,
+      wallStart: hit.wall.start.id,
+      offsetCm: placeOffset(hit.along, spec.widthCm, hit.wall.length, step),
+      widthCm: Math.min(spec.widthCm, hit.wall.length),
+      host: hit.wall,
+      point: p,
+    }
   }
 
-  const onMove = (e: React.PointerEvent) => {
-    const h = compute(e.clientX, e.clientY, e.altKey)
-    setHover(h && { roomId: h.roomId, wallStart: h.wallStart, offsetCm: h.offsetCm })
-  }
+  const onMove = (e: React.PointerEvent) => setHover(compute(e.clientX, e.clientY, e.altKey))
+
   const onDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return
     const h = compute(e.clientX, e.clientY, e.altKey)
     if (!h) { setHover(null); return }
     e.stopPropagation()
     const now = nowIso()
-    const el: WallElement = { id: uid('el_'), roomId: h.roomId, wallStart: h.wallStart, offsetCm: h.offsetCm, ...h.spec, createdAt: now, updatedAt: now }
+    const el: WallElement = {
+      id: uid('el_'), roomId: h.roomId, wallStart: h.wallStart, offsetCm: h.offsetCm,
+      ...defaultElement(kind, variant), widthCm: h.widthCm, ...doorOpeningFor(kind, h.host, h.point, hinge),
+      createdAt: now, updatedAt: now,
+    }
     // A door that opens into a neighbouring room belongs to that room (its id does not change).
     useDoc.getState().update((d) => normalizeDoorHosts({ ...d, elements: [...d.elements, el] }).doc)
     useUi.getState().select({ kind: 'element', elementId: el.id })
+    // "Once" (key L): back to Select, with the new element selected. "Repeat" keeps the tool.
+    if (!usePlaceOpts.getState().repeat) useUi.getState().setTool('select')
   }
+
+  // F = flip the hinge, L = repeat / once. Ignored in a text control, with a modifier key and on
+  // auto-repeat; Esc still belongs to the shell (unchanged).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const action = placeKeyAction(e.key, {
+        typing: isTyping(e.target) || isTyping(document.activeElement),
+        mod: e.metaKey || e.ctrlKey || e.altKey,
+        repeat: e.repeat,
+      })
+      if (!action) return
+      e.preventDefault()
+      const opts = usePlaceOpts.getState()
+      if (action === 'flip') {
+        const k = useUi.getState().placeKind
+        opts.setHinge(k, flipHinge(opts.hinges[k]))
+      } else {
+        opts.setRepeat(!opts.repeat)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const doc = useDoc((s) => s.doc)
   const room = hover && doc.rooms.find((r) => r.id === hover.roomId)
-  const spec = defaultElement(kind, variant)
-  const ft = room && hover ? frameTransform(room, { wallStart: hover.wallStart, offsetCm: hover.offsetCm, widthCm: spec.widthCm }) : null
+  const ft = room && hover ? frameTransform(room, hover) : null
+  // Hinge and swing are read at render time, so key F moves the preview arc at once.
+  const opening = hover && ft ? doorOpeningFor(kind, ft.wall, hover.point, hinge) : {}
 
   return (
     <g>
@@ -223,8 +284,8 @@ export function PlaceElementTool() {
       {room && hover && ft && (
         <g transform={ft.transform} opacity={0.75} pointerEvents="none">
           <ElementSymbol
-            kind={kind} variant={spec.variant} w={Math.min(spec.widthCm, ft.wall.length)} t={wallThickness(room, hover.wallStart)}
-            depth={spec.depthCm} hinge={spec.hinge} swing={spec.swing} hair={px(1)}
+            kind={kind} variant={variant} w={hover.widthCm} t={wallThickness(room, hover.wallStart)}
+            depth={defaultElement(kind, variant).depthCm} hinge={opening.hinge} swing={opening.swing} hair={px(1)}
           />
         </g>
       )}
@@ -238,8 +299,12 @@ function KindPicker() {
   const set = useUi((s) => s.set)
   const variants = usePlaceOpts((s) => s.variants)
   const setVariant = usePlaceOpts((s) => s.setVariant)
+  const hinges = usePlaceOpts((s) => s.hinges)
+  const repeat = usePlaceOpts((s) => s.repeat)
+  const setRepeat = usePlaceOpts((s) => s.setRepeat)
   const opts = VARIANTS[kind]
   const current = variants[kind] ?? defaultVariant(kind)
+  const hinge = hingeOf(hinges, kind)
   const chip = (active: boolean) =>
     `min-h-9 rounded-md px-3 text-sm ${active ? 'bg-orange-700 text-white' : 'bg-slate-100 text-slate-800 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700'}`
   return createPortal(
@@ -259,6 +324,30 @@ function KindPicker() {
           ))}
         </div>
       )}
+      <div className="flex flex-wrap items-center justify-center gap-2 px-1 pb-0.5">
+        <span data-testid="place-hint" className="text-[11px] leading-tight text-slate-600 dark:text-slate-300">
+          F = flip hinge · pointer side = opening side
+        </span>
+        {kind === 'door' && (
+          <span data-testid="place-hinge" className="text-[11px] leading-tight text-slate-500 dark:text-slate-400">
+            hinge: {hinge}
+          </span>
+        )}
+        <button
+          type="button"
+          data-testid="place-repeat"
+          aria-pressed={repeat}
+          title={repeat
+            ? 'Repeat: the tool stays after a placement (L)'
+            : 'Once: back to Select after one placement (L)'}
+          className={`min-h-9 rounded-md px-2 text-xs font-medium ${repeat
+            ? 'bg-orange-700 text-white'
+            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'}`}
+          onClick={() => setRepeat(!repeat)}
+        >
+          Repeat
+        </button>
+      </div>
     </div>,
     document.body,
   )

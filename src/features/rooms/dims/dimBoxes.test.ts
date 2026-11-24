@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest'
 import { DIM_STYLE, dimLine, worldPx } from './dimLine'
 import {
-  badgeSizePx, boxAt, boxHit, boxInside, dimTextBox, fittingRows, ringBox, tagBox, textBox, wallBadge,
+  badgeSizePx, boxAt, boxHit, boxInside, dimTextBox, fittingRows, growBox, pickWallBadge, ringBox, tagBox,
+  textBox, wallBadge, wallBadgePlaces,
 } from './dimBoxes'
 
 /** A horizontal inside face from (5,5) to (395,5), the room below it (y points down). */
@@ -121,5 +122,65 @@ describe('room tag in a small room (R1-8)', () => {
     const room = { x0: 0, y0: 0, x1: 40, y1: 40 }
     expect(boxInside(room, { x: 20, y: 20 }, 40, 40)).toBe(true)
     expect(boxInside(room, { x: 21, y: 20 }, 40, 40)).toBe(false)
+  })
+})
+
+describe('badge places and the badge mask (R2-2: the badge must not touch any dimension text)', () => {
+  /** The two places of the badge of the line `d` at the given zoom, near its start then its end. */
+  const placesOf = (d: ReturnType<typeof line>, zoom = 1, label = '1') => wallBadgePlaces({
+    lineA: { x: d.x1, y: d.y1 }, lineB: { x: d.x2, y: d.y2 }, normal: inward, badge: label,
+    textOffPx: DIM_STYLE.textGap, zoom,
+  })
+
+  it('offers the start end of the line first, then its end', () => {
+    const [start, end] = placesOf(line())
+    const w = badgeSizePx('1').w
+    expect(start.centre.x).toBeCloseTo(5 + DIM_STYLE.badgeStart + w / 2, 6)
+    expect(end.centre.x).toBeCloseTo(395 - DIM_STYLE.badgeStart - w / 2, 6)
+    // Both sit in the band of the text, the same distance from the wall as the text.
+    expect(start.centre.y).toBeCloseTo(15 + DIM_STYLE.textGap, 6)
+    expect(end.centre.y).toBeCloseTo(15 + DIM_STYLE.textGap, 6)
+    // The two places are different boxes, so one can be free while the other is taken.
+    expect(boxHit(start.box, end.box)).toBe(false)
+  })
+
+  it('never passes the middle of the line, where the text is', () => {
+    // A line of 20 cm: half of it (10) is closer to the ends than the badge gap (6 + 5,3 px), so
+    // both places fall on the middle, close to the value, and the mask drops the badge there.
+    const short = dimLine({ start: faceStart, end: { x: 25, y: 5 }, normal: inward, offsetCm: 10, zoom: 1, text: '20' })!
+    const [start, end] = placesOf(short, 1, '1')
+    expect(start.centre.x).toBeCloseTo(5 + 10, 6)
+    expect(end.centre.x).toBeCloseTo(5 + 10, 6)
+  })
+
+  it('takes the end of the line when the start one is taken by a text', () => {
+    const d = line()
+    const [start, end] = placesOf(d)
+    const text = dimTextBox(d, '390', 1)
+    // The value sits at the middle of the line, far from both ends: the start place comes first.
+    expect(pickWallBadge([start, end], [text], 0)).toEqual(start)
+    // A text at the start end: the badge goes to the other end instead of being lost.
+    const atStart = textBox({ x: start.centre.x, y: 22 }, 0, '40', 1)
+    expect(pickWallBadge([start, end], [text, atStart], 0)).toEqual(end)
+  })
+
+  it('keeps the clear of a text it only nearly touches, with the clearance of the real text box', () => {
+    const d = line()
+    const [start, end] = placesOf(d)
+    // A text whose box stops 1 cm short of the badge: the approximation says clear, the browser
+    // does not (its box is about 2 px bigger on every side). The clearance sends the badge on.
+    const near = { x0: 0, y0: 0, x1: start.box.x0 - 1, y1: 22 }
+    expect(pickWallBadge([start], [near], 0)).toEqual(start)
+    expect(pickWallBadge([start, end], [near], 4)).toEqual(end)
+  })
+
+  it('gives no place at all when every place touches a text', () => {
+    const d = line()
+    const both = { x0: -1e6, y0: -1e6, x1: 1e6, y1: 1e6 }
+    expect(pickWallBadge(placesOf(d), [both], 0)).toBeNull()
+  })
+
+  it('grows a box on every side', () => {
+    expect(growBox({ x0: 0, y0: 0, x1: 10, y1: 4 }, 2)).toEqual({ x0: -2, y0: -2, x1: 12, y1: 6 })
   })
 })
