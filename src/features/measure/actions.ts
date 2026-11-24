@@ -15,9 +15,13 @@ export const inputId = (label: string) => `m-${label}`
  * target already stored for this label, so typing a new value never drops it.
  * A wall value also solves its room again shortly after the typing stops (the plan follows
  * the measurements; that shape change is one undo step).
+ * `opts.undo`: the write is one undo step (a value typed on the plan, docs/measurements-plan.md 4).
  */
-export function setMeasurement(label: string, cm: number | null, source?: MeasureSource, target?: MeasureTarget) {
-  useDoc.getState().updateSilent((d) => {
+export function setMeasurement(
+  label: string, cm: number | null, source?: MeasureSource, target?: MeasureTarget, opts: { undo?: boolean } = {},
+) {
+  const write = opts.undo ? useDoc.getState().update : useDoc.getState().updateSilent
+  write((d) => {
     const measurements = { ...d.measurements }
     if (cm == null) delete measurements[label]
     else {

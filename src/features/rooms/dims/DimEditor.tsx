@@ -55,11 +55,11 @@ function DimField({ edit, onStep }: { edit: DimEditOpen; onStep?: DimEditorStep 
     if ((current ?? null) === cm) return
     // Empty text removes the value, exactly as Measuring Mode does it.
     if (cm === null) {
-      setMeasurement(edit.label, null)
+      setMeasurement(edit.label, null, undefined, undefined, { undo: true })
       return
     }
     const doc = useDoc.getState().doc
-    setMeasurement(edit.label, cm, useUi.getState().measureSource, targetOfLabel(doc, edit.label))
+    setMeasurement(edit.label, cm, useUi.getState().measureSource, targetOfLabel(doc, edit.label), { undo: true })
   }
 
   /** Save the text. False when it does not read: the field stays open on its message. */
