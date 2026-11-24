@@ -231,6 +231,23 @@ value of the face that room SE sees. Measuring Mode still shows values room by r
    report shown once per project.
 5. Phase 7 (doors and windows on walls). Steps 1-5 done 2026-11-24.
 
+## Walls in the interface (decided 2026-11-24)
+The interface follows the model: a wall is one object with two sides.
+- **Click a wall = select the whole wall** (`Selection { kind: 'storedWall', wallId, side }`). The
+  wall card shows the wall once (type, thickness, status, line, lock, centre value), then
+  **Side A** and **Side B**: for each side, the rooms that see it and their faces, each face with
+  its own measure field ("Measured / Solved"). A side cut by T walls shows several faces; the other
+  side can show one (the Entree/Couloir case). A free side shows "Outside" with the facade value
+  `W12-E`. Then the doors and windows on the wall. The clicked side is highlighted.
+- Breadcrumb: `Apartment > Wall W12` with links to its rooms. Room card wall list: one line per
+  face, `EN-3 · W12 · shared with Couloir`; a click opens the wall card.
+- **Single walls are real walls.** The Wall tool creates stored walls (`standalone: true`), drawn
+  solid with their thickness and type, selectable, deletable. Make room uses them. `doc.traces`
+  are converted to standalone walls on load.
+- **Deleting a room keeps its walls** (they become standalone). A wall without the flag still goes
+  away when a room shape edit leaves it without faces. Deleting a wall that a room uses is refused
+  with a toast naming the rooms.
+
 ## Phases
 Each phase is one or more agent rounds. Commit after each round (tsc, tests, build pass).
 

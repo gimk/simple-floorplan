@@ -197,6 +197,11 @@ export type StoredWall = {
   status?: WallStatus
   align?: WallAlign
   locked?: boolean
+  /**
+   * A wall that stays when no room uses it (drawn with the Wall tool, or left by a deleted room).
+   * A wall without this flag goes away when its last room face goes away (a room shape edit).
+   */
+  standalone?: boolean
 }
 
 /** One wall that the v1 -> v2 conversion merged from copies that differ (docs/walls-plan.md 5c). */
@@ -360,6 +365,8 @@ export type Selection =
   | { kind: 'element'; elementId: string }
   /** A traced wall. Traces are not inside a room, so they have no roomId. */
   | { kind: 'trace'; id: string; roomId?: undefined }
+  /** A stored wall (walls are the source, docs/walls-plan.md 5c). `side` = the side the user clicked. */
+  | { kind: 'storedWall'; wallId: string; side?: 'L' | 'R'; roomId?: undefined }
   | null
 
 export type ToolId =

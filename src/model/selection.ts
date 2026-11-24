@@ -19,6 +19,7 @@ export function selKey(s: SelItem): string {
     case 'element': return `element:${s.elementId}`
     // A traced wall (docs/walls-plan.md phase 6): not inside a room, so no room in its key.
     case 'trace': return `trace:${s.id}`
+    case 'storedWall': return `storedWall:${s.wallId}`
   }
 }
 
