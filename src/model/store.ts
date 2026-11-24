@@ -173,6 +173,12 @@ export type RoomTagFields = {
 /** How wall lengths are drawn: dimension lines with ticks, or the old text only. */
 export type DimStyle = 'lines' | 'text'
 
+/**
+ * Units of the lengths written on the plan (dimensions, outside rows, single walls, room tag
+ * perimeter and height). Panel fields stay in cm. `decimals` = digits after the comma.
+ */
+export type CanvasUnits = { unit: 'cm' | 'm' | 'mm'; decimals: 0 | 1 | 2 | 3 }
+
 type UiState = {
   mode: Mode
   tool: ToolId
@@ -202,6 +208,8 @@ type UiState = {
   dimStyle: DimStyle
   /** Rows of the room tag (docs/measurements-plan.md section 2). */
   roomTag: RoomTagFields
+  /** Units of the lengths written on the plan (docs/measurements-plan.md section 5). */
+  canvasUnits: CanvasUnits
   /** Before / After / Both renovation display (see features/renovation, 7.4). */
   renovationView: RenovationView
   /**
@@ -271,6 +279,7 @@ export const useUi = create<UiState>()((set) => ({
     roomCodes: 'auto', wallLabels: 'auto', outsideDims: true,
   },
   dimStyle: 'lines',
+  canvasUnits: { unit: 'cm', decimals: 1 },
   roomTag: { code: true, name: true, area: true, perimeter: false, ceiling: false, progress: false, areaDecimals: 2 },
   renovationView: 'both',
   measureSource: 'tape',
