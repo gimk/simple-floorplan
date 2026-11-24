@@ -307,6 +307,90 @@ describe('wall lengths as dimension lines (docs/measurements-plan.md section 1)'
   })
 })
 
+describe('one declutter pass for the wall values (visual review V-1, V-2, V-3, V-6, V-7)', () => {
+  /** Draw one room of `pts` (cm, centre lines) at `zoom`, with the measurements of the test. */
+  const drawRoom = (pts: [number, number][], zoom: number, over: Over = {}) => {
+    applyState(useUi, {
+      layers: { ...BASE_LAYERS, ...over.walls },
+      mode: 'edit',
+      tool: 'select',
+      selection: over.selection ?? null,
+      multi: [],
+      dimStyle: over.dimStyle ?? 'lines',
+      hoverLabel: null,
+      hoverDiagonal: null,
+      view: { x: 0, y: 0, zoom },
+      canvasUnits: { unit: 'cm', decimals: 1 },
+    })
+    applyState(useSidebar, { tab: over.tab ?? 'inspect' })
+    const base = convertToV2({ ...emptyDoc(), rooms: [mk('A', pts, 1)] }).doc
+    applyState(useDoc, { doc: { ...base, measurements: { ...base.measurements, ...over.measurements } } })
+    return renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
+  }
+  /** The markup of the group of one wall value: its line, its ticks, its text. */
+  const groupOf = (html: string, key: string) => {
+    const m = new RegExp(`data-dim="wall" data-dim-key="${key}">([\\s\\S]*?)</g>`).exec(html)
+    return m ? m[1] : null
+  }
+
+  it('writes no value past the end of its line: the line and the ticks stay alone (V-1)', () => {
+    // A 400 x 300 cm room at 30 %: the face of A-2 is 87 px long, and its measured text needs 88.
+    const html = drawRoom([[0, 0], [400, 0], [400, 300], [0, 300]], 0.3, {
+      measurements: { 'A-2': { label: 'A-2', actualCm: 412.5, updatedAt: '' } },
+    })
+    const group = groupOf(html, 'A-2')!
+    expect(group).toContain('<line')
+    expect(group).not.toContain('<text')
+    // Nothing of the plan went past the end of a line any more.
+    expect(html).not.toContain('data-dim-outside=')
+    // The other walls keep their value.
+    expect(groupOf(html, 'A-1')).toContain('<text')
+  })
+
+  it('draws no wall dimension at all in a room under px(60) in both directions (V-2)', () => {
+    // A shaft of 68 x 64 cm at 100 %: its inside box is 58 x 54 px, under px(60) both ways, and
+    // its walls are over the px(55) rule, so the values were written before this fix.
+    const html = drawRoom([[0, 0], [68, 0], [68, 64], [0, 64]], 1)
+    expect(html).not.toContain('data-dim="wall"')
+    // The room tag keeps its name, as the small-room rule of the tag says.
+    expect(html).toContain('data-room-label="A"')
+  })
+
+  it('keeps the texts of the demo apartment apart at a phone zoom (V-1, V-7)', () => {
+    for (const unit of ['cm', 'mm'] as const) {
+      applyState(useUi, {
+        layers: BASE_LAYERS,
+        mode: 'edit',
+        tool: 'select',
+        selection: null,
+        multi: [],
+        dimStyle: 'lines',
+        hoverLabel: null,
+        hoverDiagonal: null,
+        view: { x: 0, y: 0, zoom: 0.27 },
+        canvasUnits: { unit, decimals: 1 },
+        roomTag: { code: true, name: true, area: true, perimeter: false, ceiling: false, progress: false, areaDecimals: 2 },
+      })
+      applyState(useSidebar, { tab: 'inspect' })
+      applyState(useDoc, { doc: ensureV2({ ...emptyDoc(), rooms: demoRooms() }) })
+      const html = renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
+      const texts = [...html.matchAll(/data-dim="wall" data-dim-key="([^"]+)">([\s\S]*?)<\/g>/g)]
+        .flatMap((m) => {
+          const t = /<text x="([-\d.]+)" y="([-\d.]+)"[^>]*?(?:transform="rotate\(([-\d.]+))?[^>]*>([^<]*)</.exec(m[2])
+          return t ? [{ p: { x: Number(t[1]), y: Number(t[2]) }, angle: Number(t[3] ?? 0), text: t[4] }] : []
+        })
+      expect(texts.length).toBeGreaterThan(0)
+      for (let i = 0; i < texts.length; i++) {
+        for (let j = i + 1; j < texts.length; j++) {
+          const a = textBox(texts[i].p, texts[i].angle, texts[i].text, 0.27)
+          const b = textBox(texts[j].p, texts[j].angle, texts[j].text, 0.27)
+          expect(boxHit(a, b), `${texts[i].text} / ${texts[j].text}`).toBe(false)
+        }
+      }
+    }
+  })
+})
+
 describe('helper dimensions of the selected stored wall', () => {
   it('measures each face of each side, outside the band', () => {
     const doc = v2()
@@ -427,14 +511,17 @@ describe('wall number badges and small rooms (r1fix R1-2, R1-8)', () => {
     expect(html).not.toContain('1/4 walls')
   })
 
-  it('moves a wall dimension text out of the room tag, past the end of its line (R1-8a)', () => {
+  it('drops the wall dimension text that hits the room tag, and keeps its line (V-1; R1-8a changed)', () => {
     const small = (): PlanDoc =>
       convertToV2({ ...emptyDoc(), rooms: [mk('A', [[0, 0], [200, 0], [200, 70], [0, 70]], 1)] }).doc
     const html = draw({ doc: small() })
-    // The inside face of wall A-1 ends at x = 195 cm: the text went past it to keep out of the tag.
-    const text = dimTextAt(html, 'A-1')!
-    expect(text.x).toBeGreaterThan(195)
-    expect(html).toContain('data-dim-outside=""')
+    // The inside face of wall A-1 ends at x = 195 cm and the tag sits in the middle of this small
+    // room: the value is no longer written past the end of the line (it crossed the tag); the line
+    // and its ticks stay, the text goes.
+    const group = /data-dim-key="A-1">([\s\S]*?)<\/g>/.exec(html)![1]
+    expect(group).toContain('<line')
+    expect(group).not.toContain('<text')
+    expect(html).not.toContain('data-dim-outside=')
   })
 
   it('draws no wall number badge on a dimension text of the plan (demo apartment, R1-2)', () => {

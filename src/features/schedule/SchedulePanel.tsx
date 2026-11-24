@@ -128,12 +128,23 @@ export function SchedulePanelView({ doc, areaDecimals = 2, selection = null, sel
             <p className={MUTED}>{`${totals.missingCeiling} room(s) without ceiling height: no volume.`}</p>
           )}
           <p className={MUTED}>Perimeter, ceiling and volume are in the CSV.</p>
-          <div className="flex gap-2">
-            <button type="button" className={`${BTN} flex-1`} onClick={copy}>
-              <Copy size={14} /> {copied ? 'Copied' : 'Copy CSV'}
+          {/* Two equal buttons, each label on ONE line (visual review V-8: "Download CSV" wrapped
+              onto two lines while "Copy CSV" stayed on one). The text goes to `text-xs` and the
+              padding to `px-1.5`, so the longer label fits the half width of the panel. */}
+          <div className="flex items-stretch gap-2" data-schedule-buttons>
+            <button
+              type="button"
+              className={`${BTN} min-w-0 flex-1 gap-1 whitespace-nowrap px-1.5 text-xs`}
+              onClick={copy}
+            >
+              <Copy size={14} className="shrink-0" /> {copied ? 'Copied' : 'Copy CSV'}
             </button>
-            <button type="button" className={`${BTN} flex-1`} onClick={save}>
-              <Download size={14} /> Download CSV
+            <button
+              type="button"
+              className={`${BTN} min-w-0 flex-1 gap-1 whitespace-nowrap px-1.5 text-xs`}
+              onClick={save}
+            >
+              <Download size={14} className="shrink-0" /> Download CSV
             </button>
           </div>
           {copyErr && (

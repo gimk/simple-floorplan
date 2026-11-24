@@ -5,7 +5,7 @@ import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useUi } from '../../model/store'
 import { AUTO_HINT, toggleLayer } from './layers'
-import { ViewMenu } from './ViewMenu'
+import { ViewMenu, moreBelow } from './ViewMenu'
 
 /**
  * Put the UI store in the wanted state. renderToString reads the INITIAL state of a zustand
@@ -71,12 +71,44 @@ describe('ViewMenu popover', () => {
     expect(open()).toContain('>Auto</button>')
   })
 
-  it('fits a phone width: capped wide, and a bottom sheet on small screens', () => {
+  it('fits a phone width: a full-width bottom sheet with no narrow right-floating box', () => {
     const html = open()
-    expect(html).toContain('max-w-[calc(100vw-2rem)]')
-    // Below 768 px the popover sits above the pills at full width, so it never runs off screen.
+    // Below 768 px the popover is a bottom sheet pinned to both sides of the screen.
     expect(html).toContain('max-md:fixed')
     expect(html).toContain('max-md:inset-x-2')
+    expect(html).toContain('max-md:bottom-2')
+    expect(html).toContain('max-md:w-auto')
+    // `left-auto` (or a fixed `w-64`) would shrink the sheet to ~240 px at the right edge (V-4).
+    expect(html).not.toContain('left-auto')
+    expect(html).not.toContain('w-64')
+  })
+
+  it('opens a two-column popover on a wide screen, with a scroll box per column', () => {
+    const html = open()
+    // 520 px wide, two columns, capped height, and each column scrolls on its own.
+    expect(html).toContain('md:w-[520px]')
+    expect(html).toContain('md:max-h-[min(80vh,640px)]')
+    expect(html).toContain('data-view-column="layers"')
+    expect(html).toContain('data-view-column="measurements"')
+    expect(html.match(/md:overflow-y-auto/g)).toHaveLength(2)
+    // The two headings of the columns, then the measurement settings under the right one.
+    expect(html).toContain('>Layers</h2>')
+    expect(html).toContain('>Measurements</h2>')
+    // The phone sheet is one column that scrolls as a whole.
+    expect(html).toContain('max-h-[75vh]')
+  })
+
+  it('shows the fade hint only for a scroll box that holds more content below', () => {
+    // No scroll (a box that fits): no hint.
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 400, clientHeight: 400 })).toBe(false)
+    // The bottom is reached: no hint.
+    expect(moreBelow({ scrollTop: 200, scrollHeight: 400, clientHeight: 200 })).toBe(false)
+    // More content below: the hint is shown.
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 1076, clientHeight: 628 })).toBe(true)
+    expect(moreBelow({ scrollTop: 448, scrollHeight: 1076, clientHeight: 628 })).toBe(false)
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 1076, clientHeight: 628 - 1 })).toBe(true)
+    // Rounding differences of less than 2 px do not flash the hint on a box that fits.
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 401, clientHeight: 400 })).toBe(false)
   })
 
   it('toggles a layer with the same helper as the checkbox does', () => {

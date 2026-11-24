@@ -44,6 +44,8 @@ type Over = {
   /** Survey label under the pointer in the Solve tab list, e.g. 'CU-2'. */
   hoverLabel?: string | null
   hoverDiagonal?: { roomId: string; pair: [number, number] } | null
+  /** Note pins of the plan (doc.pins), cm: they move the room tag off their place (V-11). */
+  pins?: { x: number; y: number }[]
 }
 
 /** Set the stores as the app would, then draw the plan (zoom 1 = 1 cm per screen px). */
@@ -59,7 +61,10 @@ const setup = (over: Over = {}) => {
     view: { x: 0, y: 0, zoom: over.zoom ?? 1 },
   })
   applyState(useSidebar, { tab: over.tab ?? 'inspect' })
-  applyState(useDoc, { doc: doc(over.rooms ?? [cuisine()]) })
+  const pins = (over.pins ?? []).map((at, i) => ({
+    id: 'p' + i, at, photoKeys: [], createdAt: '', updatedAt: '',
+  }))
+  applyState(useDoc, { doc: { ...doc(over.rooms ?? [cuisine()]), pins } })
   // Inside a Viewport, exactly like the app: the zoom and `px()` come from its context. The app
   // draws the overlay AFTER the walls (UI review F1), so the labels, the dimensions, the badges and
   // the hover highlights are in RoomsOverlay: the two layers of the rooms are rendered together.
@@ -233,5 +238,29 @@ describe('Measuring Mode on the canvas', () => {
     // The room floors and their labels are still there.
     expect(html).toContain('data-room-id="r-cu"')
     expect(html).toContain('Cuisine')
+  })
+})
+
+describe('room tag and note pins (visual review V-11)', () => {
+  /** The place of the room label on the plan, cm: the text of the block, not its centre. */
+  const labelAt = (html: string) => {
+    const m = /<text x="([-\d.]+)" y="([-\d.]+)" text-anchor="middle"[^>]*class="fill-slate-800[\s\S]*?data-room-label="r-cu"/.exec(html)
+    return m ? { x: Number(m[1]), y: Number(m[2]) } : null
+  }
+
+  it('moves the tag down when a note pin sits on it', () => {
+    const plain = labelAt(setup())!
+    expect(plain).not.toBeNull()
+    // The tag of this 400 x 300 cm room is at its middle; a pin there hides the name.
+    const pinned = labelAt(setup({ pins: [{ x: 200, y: 150 }] }))!
+    // One pin (px(22) of diameter) and px(8) of gap: 30 cm at zoom 1.
+    expect(pinned.y - plain.y).toBeCloseTo(30, 6)
+    expect(pinned.x).toBe(plain.x)
+  })
+
+  it('keeps the tag in place when the pin is far, or the notes layer is off', () => {
+    const plain = labelAt(setup())!
+    expect(labelAt(setup({ pins: [{ x: 380, y: 280 }] }))).toEqual(plain)
+    expect(labelAt(setup({ pins: [{ x: 200, y: 150 }], layers: { notes: false } }))).toEqual(plain)
   })
 })

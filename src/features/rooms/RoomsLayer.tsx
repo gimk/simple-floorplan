@@ -20,6 +20,7 @@ import { faceByKey, outsideFaceLabelAtPoint, storedWallView } from './wallSides'
 import { storedWallOfRoomWall } from '../../model/wallValues'
 import { focusMeasureField } from '../measure/focusField'
 import { inputId } from '../measure/actions'
+import { pushTagOffPins } from './dims/tagPin'
 import type { Wall } from '../../model/geometry'
 
 /**
@@ -114,6 +115,10 @@ export function useRoomsFrame() {
   // Zoom is rounded to steps of ~19 % so a wheel zoom does not recompute every frame.
   const roomTag = useUi((s) => s.roomTag)
   const labelZoom = 2 ** (Math.round(Math.log2(zoom) * 4) / 4)
+  // Note pins on the plan (features/annotations): a pin over the room name hides it, so the tag of
+  // that room moves off the pin (visual review V-11). A hidden pins layer pushes nothing.
+  const pinPoints = useDoc((s) => s.doc.pins)
+  const pinAt = useMemo(() => (layers.notes ? (pinPoints ?? []).map((p) => p.at) : []), [layers.notes, pinPoints])
   const labelAt = useMemo(() => new Map(display.map((d) => {
     // The code goes in front of the name, so the name line is wider when it is shown.
     const codeW = showCodes ? (d.codes.join(' ').length + 2) * 7.8 : 0
@@ -130,8 +135,11 @@ export function useRoomsFrame() {
       w: (Math.max(nameW, count > 0 ? 10 * 6.8 : 0) + 10) / labelZoom,
       h: (19 + 15 * count) / labelZoom,
     })
-    return [d.id, { ...labelPlacement(d.pieces[0], w, h, 19 / labelZoom), size }]
-  })), [display, labelZoom, showCodes, roomTag])
+    const place = labelPlacement(d.pieces[0], w, h, 19 / labelZoom)
+    // A note pin on the tag moves it down (or up) by one pin and px(8), when it still fits (V-11).
+    const p = pushTagOffPins({ place, w, h, pins: pinAt, zoom: labelZoom, rings: d.pieces[0] ?? [] })
+    return [d.id, { ...place, p, size }]
+  })), [display, labelZoom, showCodes, roomTag, pinAt])
   // Measuring Mode with the canvas (desktop): no geometry edit. A wall or a room is only picked,
   // and the wall under the pointer lights up its field in the measure panel.
   const measuring = uiMode === 'measure'

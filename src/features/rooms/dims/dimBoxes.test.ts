@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { DIM_STYLE, dimLine, worldPx } from './dimLine'
 import {
   badgeSizePx, boxAt, boxHit, boxInside, dimTextBox, fittingRows, growBox, pickWallBadge, ringBox, tagBox,
-  textBox, wallBadge, wallBadgePlaces,
+  textBox, textQuad, wallBadge, wallBadgePlaces,
 } from './dimBoxes'
 
 /** A horizontal inside face from (5,5) to (395,5), the room below it (y points down). */
@@ -32,6 +32,28 @@ describe('textBox', () => {
     // Half the zoom: the same text covers twice as many cm.
     const zoomed = textBox({ x: 0, y: 0 }, 0, '390', 0.5)
     expect(zoomed.x1 - zoomed.x0).toBeCloseTo(2 * (flat.x1 - flat.x0), 6)
+  })
+
+  it('gives the four corners of the turned text, which textBox holds', () => {
+    const quad = textQuad({ x: 100, y: 50 }, 0, '390', 1)
+    expect(quad).toHaveLength(4)
+    // Flat: the box of the text, corner by corner.
+    expect(quad[0]).toEqual({ x: 100 - (3 * DIM_STYLE.charWidth) / 2, y: 50 - DIM_STYLE.font / 2 })
+    expect(quad[2]).toEqual({ x: 100 + (3 * DIM_STYLE.charWidth) / 2, y: 50 + DIM_STYLE.font / 2 })
+    // The axis aligned box of textBox holds every corner, at any angle.
+    for (const angle of [0, 30, 90, -45]) {
+      const b = textBox({ x: 100, y: 50 }, angle, '390', 1)
+      for (const c of textQuad({ x: 100, y: 50 }, angle, '390', 1)) {
+        expect(c.x).toBeGreaterThanOrEqual(b.x0 - 1e-9)
+        expect(c.x).toBeLessThanOrEqual(b.x1 + 1e-9)
+        expect(c.y).toBeGreaterThanOrEqual(b.y0 - 1e-9)
+        expect(c.y).toBeLessThanOrEqual(b.y1 + 1e-9)
+      }
+    }
+    // A quarter turn: the width of the text becomes its height.
+    const turned = textQuad({ x: 0, y: 0 }, 90, '390', 1)
+    expect(turned[0].x).toBeCloseTo(DIM_STYLE.font / 2, 6)
+    expect(turned[0].y).toBeCloseTo(-(3 * DIM_STYLE.charWidth) / 2, 6)
   })
 
   it('hits only boxes that share an area', () => {

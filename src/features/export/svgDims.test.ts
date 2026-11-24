@@ -3,10 +3,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Room } from '../../model/types'
 import { DIM_STYLE, worldPx } from '../rooms/dims/dimLine'
-import { outsideDims } from '../rooms/outside/outsideDims'
+import { outsideDims, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, type OutsideDimRun } from '../rooms/outside/outsideDims'
 import { ensureV2 } from '../../model/v2/ensure'
 import { emptyDoc } from '../../model/store'
-import { faceText, paperZoom, roomTagLayout, segmentText, outsideExtentPoints, dimSvg } from './svgDims'
+import { faceText, paperZoom, roomTagLayout, segmentText, outsideExtentPoints, outsideRunSvg, dimSvg } from './svgDims'
 import { dimLine } from '../rooms/dims/dimLine'
 
 const room = (over: Partial<Room> = {}): Room => ({
@@ -124,5 +124,98 @@ describe('outsideExtentPoints', () => {
     // The top run goes UP (y points down): its rows are above the plan.
     expect(Math.min(...pts.map((p) => p.y))).toBeLessThan(-30)
     expect(Math.max(...pts.map((p) => p.x))).toBeGreaterThan(422)
+  })
+})
+
+// V-10: a short outside segment puts its text past the OUTER end of the run, one step (6 px) further
+// from the row, so the text never crosses an extension line. Same rule as the plan's outside layer
+// (features/rooms/outside/OutsideDimsLayer.tsx, `outsideEnd`); this is the export's copy of it.
+describe('outsideRunSvg: the text of a short chain segment', () => {
+  const zoom = paperZoom(10)
+  // With the survey labels on: the text is longer ("W1-E 20"), which is the case of the review.
+  const ctx = { zoom, fs: 10, step: 0.5, units: { unit: 'cm' as const, decimals: 1 as const }, surveyLabels: true }
+  /** Screen px as cm on the paper. */
+  const p = (n: number) => worldPx(n, zoom)
+
+  /** A top run (normal UP, y points down), cut in two at `cutCm`: one short segment, then a long one. */
+  const topRun = (cutCm: number): OutsideDimRun => {
+    const a = { x: 0, y: 0 }, mid = { x: cutCm, y: 0 }, b = { x: cutCm + 600, y: 0 }
+    return {
+      key: 'W1:R',
+      a,
+      b,
+      dir: { x: 1, y: 0 },
+      normal: { x: 0, y: -1 },
+      points: [a, mid, b],
+      overallCm: cutCm + 600,
+      segments: [
+        { a, b: mid, lengthCm: cutCm, label: 'W1-E', measuredCm: null },
+        { a: mid, b, lengthCm: 600, label: 'W1-E2', measuredCm: null },
+      ],
+    }
+  }
+
+  /** The `x` and `y` of the text of the segment with this label. */
+  const textAt = (svg: string, key: string) => {
+    const seg = new RegExp(`data-dim="${key}"[^>]*`).exec(svg)
+    expect(seg).not.toBeNull()
+    // The whole opening tag of the text element (the outside marker comes after `data-dim`).
+    const tag = svg.slice(svg.lastIndexOf('<text', seg!.index), svg.indexOf('>', seg!.index))
+    const xy = /<text x="([-\d.]+)" y="([-\d.]+)"/.exec(tag)!
+    return { x: Number(xy[1]), y: Number(xy[2]), outside: tag.includes('data-dim-outside') }
+  }
+
+  it('goes past the start end of the run, clear of the extension line, 13 px off the row', () => {
+    // 20 cm on the paper is shorter than its own text: the rule puts the text outside.
+    const run = topRun(20)
+    const svg = outsideRunSvg(run, ctx)
+    const t = textAt(svg, 'W1-E')
+    expect(t.outside).toBe(true)
+    // Past the start end of the run (x = 0) and the start extension line: the text ENDS before the
+    // corner, 2 px of gap (DIM_STYLE.outsideGap) at least.
+    const half = p((`W1-E 20`.length * DIM_STYLE.charWidth) / 2)
+    expect(t.x + half).toBeLessThanOrEqual(-p(DIM_STYLE.outsideGap) + 1e-9)
+    expect(t.x).toBeLessThan(0)
+    // 13 px off the chain row (7 px of the style + the 6 px of a text that went outside), which is
+    // one step further from the wall than the 7 px of a text that fits.
+    // 2 decimals: the SVG text keeps 2 decimals of a cm.
+    expect(t.y).toBeCloseTo(-p(OUTSIDE_ROWS_PX.chain) - p(DIM_STYLE.textGap + OUTSIDE_EXTRA_PX), 2)
+    // The extension lines stay where they are: the text does not move them.
+    expect(svg).toContain(`data-dim-ext="W1:R:0"`)
+    // A segment that holds its text keeps it centred between the ticks, 7 px off the row.
+    const second = textAt(svg, 'W1-E2')
+    expect(second.outside).toBe(false)
+    expect(second.y).toBeCloseTo(-p(OUTSIDE_ROWS_PX.chain) - p(DIM_STYLE.textGap), 2)
+  })
+
+  it('picks the end of the run like the plan: start for the first half, end for the second half', () => {
+    // Four segments: the text of 0 and 1 goes past their start, the text of 2 and 3 past their end
+    // (the outer end of the run), exactly as OutsideDimsLayer's `outsideEnd`.
+    const xs = [0, 20, 40, 660, 680]
+    const run: OutsideDimRun = {
+      key: 'W2:R',
+      a: { x: 0, y: 0 },
+      b: { x: 680, y: 0 },
+      dir: { x: 1, y: 0 },
+      normal: { x: 0, y: -1 },
+      points: xs.map((x) => ({ x, y: 0 })),
+      overallCm: 680,
+      segments: xs.slice(0, 4).map((x, i) => ({
+        a: { x, y: 0 }, b: { x: xs[i + 1], y: 0 }, lengthCm: xs[i + 1] - x, label: `S${i}`, measuredCm: null,
+      })),
+    }
+    const svg = outsideRunSvg(run, ctx)
+    // Segment 0 (0 -> 20 cm) is short: its text goes before x = 0.
+    expect(textAt(svg, 'S0').x).toBeLessThan(0)
+    // Segment 1 (20 -> 40 cm) is short too: its text goes before x = 20 (its start).
+    const s1 = textAt(svg, 'S1')
+    expect(s1.outside).toBe(true)
+    expect(s1.x).toBeLessThan(20)
+    // Segment 3 (660 -> 680 cm) is short: its text goes after x = 680 (the outer end of the run).
+    const s3 = textAt(svg, 'S3')
+    expect(s3.outside).toBe(true)
+    expect(s3.x).toBeGreaterThan(680)
+    // Segment 2 (40 -> 660 cm) is long: its text stays between its ticks.
+    expect(textAt(svg, 'S2').outside).toBe(false)
   })
 })

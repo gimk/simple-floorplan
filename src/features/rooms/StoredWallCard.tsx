@@ -208,8 +208,15 @@ export function StoredWallCard({ doc, wallId, side, face }: {
             />
           </FieldRow>
         )}
-        {/* Length of the wall, on its CENTRE line: the value 'W12-C' read on the architect plan. */}
-        <FieldRow label="Length (centre)" htmlFor={`stored-wall-${wall.id}-centre`} hint={`${centreLabel} · node to node`}>
+        {/* Length of the wall, on its CENTRE line: the value 'W12-C' read on the architect plan.
+            The label holds the value name and 'node to node' is a short muted subline, so the row
+            stays one line high (visual review V-9: three lines was too tall). */}
+        <FieldRow
+          label={`Length (${centreLabel})`}
+          htmlFor={`stored-wall-${wall.id}-centre`}
+          hint="node to node"
+          className="[&_label>span]:text-[11px]"
+        >
           <NumberField
             id={`stored-wall-${wall.id}-centre`}
             name="wallCentre"

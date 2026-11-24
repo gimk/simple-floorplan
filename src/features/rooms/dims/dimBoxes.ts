@@ -40,6 +40,24 @@ export function textBox(centre: Vec, angleDeg: number, text: string, zoom: numbe
   return { x0: centre.x - hx, y0: centre.y - hy, x1: centre.x + hx, y1: centre.y + hy }
 }
 
+/**
+ * The four corners of the TURNED text box, in order, cm: the text of `chars * charWidth` px wide
+ * and `font` px high, turned by `angleDeg` around its centre. `textBox` is the axis aligned box
+ * that holds these corners (it is larger than the text); this is the true outline, used for the
+ * wall band test of the declutter pass (dims/declutter.ts), so a value written along a slanted
+ * wall is not dropped because of the empty corners of its axis aligned box.
+ */
+export function textQuad(centre: Vec, angleDeg: number, text: string, zoom: number): Vec[] {
+  const halfW = worldPx((text.length * DIM_STYLE.charWidth) / 2, zoom)
+  const halfH = worldPx(DIM_STYLE.font / 2, zoom)
+  const a = (angleDeg * Math.PI) / 180
+  const c = Math.cos(a), s = Math.sin(a)
+  const corner = (dx: number, dy: number): Vec => ({
+    x: centre.x + dx * c - dy * s, y: centre.y + dx * s + dy * c,
+  })
+  return [corner(-halfW, -halfH), corner(halfW, -halfH), corner(halfW, halfH), corner(-halfW, halfH)]
+}
+
 /** Box of the text of a dimension line, cm. */
 export const dimTextBox = (line: DimLine, text: string, zoom: number): Box =>
   textBox(line.text, line.angle, text, zoom)

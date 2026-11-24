@@ -80,6 +80,19 @@ describe('SchedulePanelView', () => {
     expect(html).toContain('>0/4<')
   })
 
+  it('keeps both CSV buttons on one line, with equal widths', () => {
+    const html = renderToString(<SchedulePanelView doc={doc()} />)
+    const at = html.indexOf('data-schedule-buttons')
+    expect(at).toBeGreaterThan(-1)
+    const row = html.slice(at, html.indexOf('</div>', html.lastIndexOf('Download CSV')))
+    // No wrap inside a label, and the two buttons share the row.
+    expect(row.match(/whitespace-nowrap/g)).toHaveLength(2)
+    expect(row.match(/flex-1/g)).toHaveLength(2)
+    expect(row.match(/min-w-0/g)).toHaveLength(2)
+    expect(html).toContain('Copy CSV')
+    expect(html).toContain('Download CSV')
+  })
+
   it('warns when a room has no ceiling height (no volume in the CSV)', () => {
     const html = renderToString(<SchedulePanelView doc={doc()} />)
     expect(html).toContain('without ceiling height')

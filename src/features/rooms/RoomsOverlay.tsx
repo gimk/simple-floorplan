@@ -25,7 +25,8 @@ import { isV2Doc } from '../../model/v2/targets'
 import { useIsDesktop } from '../../shell/useDesktop'
 import { DIM_STYLE, dimLine, dimLineOfSpan, worldPx, type DimLine } from './dims/dimLine'
 import { DimLineView } from './dims/DimLineView'
-import { boxHit, dimTextBox, fittingRows, pickWallBadge, ringBox, tagBox, textBox, wallBadgePlaces, type Box } from './dims/dimBoxes'
+import { fittingRows, pickWallBadge, ringBox, tagBox, textBox, textQuad, wallBadgePlaces, type Box } from './dims/dimBoxes'
+import { DECLUTTER, keepDimTexts, smallRoomDims } from './dims/declutter'
 import { outsideDimTextBoxes } from './dims/outsideTextBoxes'
 import { outsideDims } from './outside/outsideDims'
 import { DimEditor } from './dims/DimEditor'
@@ -353,11 +354,39 @@ export function RoomsOverlay() {
   }
 
   /**
+   * Text boxes of the outside dimension chains (round 2 finding R2-2: the badges of the outside
+   * faces touched the texts '40' and '66' at 80 % and 64 %). The boxes come from the same pure
+   * functions as the rows of outside/OutsideDimsLayer.tsx, and only when that layer draws. The
+   * room wall dimension texts keep off them too (rule 2 of the declutter pass, visual review V-1).
+   */
+  const outsideTextBoxes = useMemo(() => {
+    if (!isV2 || !layers.dimensions || !layers.outsideDims) return []
+    if (mode === 'measure' && !isDesktop) return []
+    const runs = outsideDims({ rooms, nodes: storedNodes, walls: storedWalls, measurements })
+    return outsideDimTextBoxes(runs, {
+      zoom,
+      // The same text rule as the rows of outside/OutsideDimsLayer.tsx: a measured face shows its
+      // measured value, every other value its length in the units of the plan.
+      segmentText: (seg) => {
+        const measuredCm = seg.measuredCm ?? 0
+        return measuredCm > 0
+          ? measuredTextIn(measuredCm, seg.lengthCm, step, units)
+          : fmtLen(seg.lengthCm, units)
+      },
+      overallText: (run) => fmtLen(run.overallCm, units),
+    })
+  }, [
+    isV2, layers.dimensions, layers.outsideDims, mode, isDesktop,
+    rooms, storedNodes, storedWalls, measurements, zoom, step, units,
+  ])
+
+  /**
    * The wall lengths of the plan: one entry per room wall that shows a value, with its dimension
    * line (in the "Lines" style) and its text. The boxes let the wall number badges stay off the
-   * texts (r1fix R1-2), and the text of a small room stay off its tag (r1fix R1-8a).
+   * texts (r1fix R1-2), and one declutter pass (dims/declutter.ts) drops the texts that would
+   * collide or cross a wall (visual review V-1, V-3, V-6, V-7).
    */
-  const wallValues: {
+  type WallValue = {
     key: string
     dimKey: string
     /** Dimension line of the value; null in the "Text" style, or when the face is too short. */
@@ -367,14 +396,24 @@ export function RoomsOverlay() {
     /** Place and angle of the text when it is drawn without a line. */
     p: Vec
     angle: number
-    box: Box
+    /** Box of the text, cm; null when the pass dropped it (the line and its ticks stay). */
+    box: Box | null
+    /** Corners of the turned text box, cm: the wall band test of the pass. */
+    quad: Vec[] | null
     /** Room of the face: a press on its text selects or drags that room, as the plan does. */
     roomId: string
     /** Length of the face on the plan, cm: the placeholder of the typed length (section 4). */
     plannedCm: number
     /** Survey label of the face ('SE-2'); the value a typed length writes. */
     faceLabel: string | null
-  }[] = []
+    /** A wall being dragged: always shown (7.2 #22). */
+    forced: boolean
+    /** Length of the wall, cm: a longer wall keeps its text first. */
+    wallCm: number
+    /** Inner ring of the room of the face, cm: the text must stay inside it. */
+    ring: Vec[]
+  }
+  const wallValues: WallValue[] = []
   if (layers.dimensions) {
     for (const r of rooms) {
       const labels = new Map(surveyIds(r).filter((x) => x.kind === 'wall').map((x) => [x.wallStart, x.label]))
@@ -382,15 +421,15 @@ export function RoomsOverlay() {
       const inner = innerWallLengths(r)
       // Inside corners of the room: the face a wall length is measured on, corner to corner.
       const ring = roomInnerRing(r)
-      // The box of the room tag: a dimension text that falls in it would cross the tag (r1fix
-      // R1-8a), so it goes past the end of its line, or is not drawn at all.
-      const roomTagBox = tagBoxInRoom.get(r.id) ?? null
-      const walls = roomWalls(r)
-      for (const w of walls) {
+      // V-2: a room whose inside box is under px(60) in both directions shows no wall dimensions
+      // at all: the tag keeps its code and its name, and the numbers leave the walls clean.
+      if (smallRoomDims(ringBox(ring), zoom)) continue
+      for (const w of roomWalls(r)) {
         // The selected wall shows its lengths as helper dimensions: no duplicate here (R1-4).
         if (hiddenDimFaces.has(r.id + ':' + w.start.id)) continue
-        // Always show lengths of walls attached to the dragged vertex/wall (7.2 #22).
-        if (w.length * zoom < 55 && !forcedWalls.has(w.start.id)) continue
+        // A wall being dragged always shows its length (7.2 #22).
+        const forced = forcedWalls.has(w.start.id)
+        if (w.length * zoom < 55 && !forced) continue
         const m = measurements[labels.get(w.start.id) ?? '']
         const measured = !!m && m.actualCm > 0
         const props = wallProps(r, w.start.id)
@@ -407,61 +446,68 @@ export function RoomsOverlay() {
         const dimKey = `${r.code}-${w.index + 1}`
         // "Wall lengths: Lines": a dimension line along the inside face of this wall (the span the
         // value measures), px(10) into the room, with a tick at each end and the value above the
-        // line (docs/measurements-plan.md section 1).
+        // line (docs/measurements-plan.md section 1). The line of a face that is too short for a
+        // value (under px(24), or px(12) for a dragged wall) is not drawn at all (V-1).
         const faceStart = dimStyle === 'lines' ? ring[w.index] : undefined
         const faceEnd = dimStyle === 'lines' ? ring[(w.index + 1) % ring.length] : undefined
-        let line = faceStart && faceEnd
-          ? dimLine({ start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom, text })
+        const base = faceStart && faceEnd
+          ? {
+              start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom,
+              minLinePx: forced ? DIM_STYLE.minLine : DECLUTTER.minLinePx,
+            }
           : null
-        if (line && faceStart && faceEnd && roomTagBox && boxHit(dimTextBox(line, text, zoom), roomTagBox)) {
-          // In the tag: the text goes past the end of the line, when that clears the tag.
-          const outside = dimLine({
-            start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom, text, textPlace: 'outside',
-          })
-          if (!outside || boxHit(dimTextBox(outside, text, zoom), roomTagBox)) continue
-          line = outside
+        let line = base ? dimLine({ ...base, text }) : null
+        // V-1, V-3, V-6: a value that does not fit between the ticks is not written past the end of
+        // its line any more (that put numbers across walls and into other rooms): the line and the
+        // ticks stay, the text goes. A dragged wall keeps the old rule (7.2 #22).
+        let showText = true
+        if (line && line.outside && !forced) {
+          line = dimLine({ ...base!, text: '' })
+          showText = false
         }
         const p = line ? line.text : { x: mx, y: my }
-        const plannedCm = shownLength(inner[w.index], step)
-        const faceLabel = dimTextLabel('wall', dimKey)
+        const textAngle = line ? line.angle : angle
         wallValues.push({
-          key, dimKey, line, text, measured, p, angle: line ? line.angle : angle,
-          box: line ? dimTextBox(line, text, zoom) : textBox(p, angle, text, zoom),
-          roomId: r.id, plannedCm, faceLabel,
+          key, dimKey, line, text, measured, p, angle: textAngle,
+          box: showText ? textBox(p, textAngle, text, zoom) : null,
+          quad: showText ? textQuad(p, textAngle, text, zoom) : null,
+          roomId: r.id, plannedCm: shownLength(inner[w.index], step), faceLabel: dimTextLabel('wall', dimKey),
+          forced, wallCm: w.length, ring,
         })
-        // Tab / Shift+Tab of the field goes to the next wall of the room: remember where this one is.
-        if (canEditDims && faceLabel && parseRoomWallLabel(faceLabel)) {
-          dimPlaces.set(faceLabel, { label: faceLabel, at: p, plannedCm, roomCode: r.code, faces: walls.length })
-        }
       }
     }
   }
 
   /**
-   * Text boxes of the outside dimension chains (round 2 finding R2-2: the badges of the outside
-   * faces touched the texts '40' and '66' at 80 % and 64 %). The boxes come from the same pure
-   * functions as the rows of outside/OutsideDimsLayer.tsx, and only when that layer draws.
+   * The declutter pass of the wall dimension texts (dims/declutter.ts): measured values first, then
+   * the longer walls; a text that hits a kept text, a room tag or an outside row text, or that
+   * crosses the wall band of its room, is dropped, while its line and its ticks stay.
    */
-  const outsideTextBoxes = useMemo(() => {
-    if (!showWallNumbers || !isV2 || !layers.dimensions || !layers.outsideDims) return []
-    if (mode === 'measure' && !isDesktop) return []
-    const runs = outsideDims({ rooms, nodes: storedNodes, walls: storedWalls, measurements })
-    return outsideDimTextBoxes(runs, {
-      zoom,
-      // The same text rule as the rows of outside/OutsideDimsLayer.tsx: a measured face shows its
-      // measured value, every other value its length in the units of the plan.
-      segmentText: (seg) => {
-        const measuredCm = seg.measuredCm ?? 0
-        return measuredCm > 0
-          ? measuredTextIn(measuredCm, seg.lengthCm, step, units)
-          : fmtLen(seg.lengthCm, units)
-      },
-      overallText: (run) => fmtLen(run.overallCm, units),
-    })
-  }, [
-    showWallNumbers, isV2, layers.dimensions, layers.outsideDims, mode, isDesktop,
-    rooms, storedNodes, storedWalls, measurements, zoom, step, units,
-  ])
+  const keptTexts = keepDimTexts({
+    candidates: wallValues.flatMap((d) => (d.box && d.quad
+      ? [{ key: d.key, box: d.box, quad: d.quad, measured: d.measured, wallCm: d.wallCm, ring: d.ring, forced: d.forced }]
+      : [])),
+    blockers: [...tagBoxInRoom.values(), ...outsideTextBoxes],
+    zoom,
+  })
+  for (const d of wallValues) {
+    if (d.box && !keptTexts.kept.has(d.key)) {
+      d.box = null
+      d.quad = null
+    }
+  }
+
+  // Tab / Shift+Tab of the field of a typed length: the next wall of the room whose text is drawn.
+  if (canEditDims) {
+    for (const d of wallValues) {
+      if (!d.box || !d.faceLabel || !parseRoomWallLabel(d.faceLabel)) continue
+      const room = rooms.find((r) => r.id === d.roomId)
+      if (!room) continue
+      dimPlaces.set(d.faceLabel, {
+        label: d.faceLabel, at: d.p, plannedCm: d.plannedCm, roomCode: room.code, faces: roomWalls(room).length,
+      })
+    }
+  }
 
   return (
     <g data-rooms-overlay="">
@@ -536,11 +582,19 @@ export function RoomsOverlay() {
       {wallValues.map((d) => {
         // A double-click on the text types the measured value of the face; a click still selects or
         // drags the room under it (docs/measurements-plan.md section 4).
-        const editLabel = canEditDims ? d.faceLabel : null
+        const editLabel = canEditDims && d.box ? d.faceLabel : null
         // The field of this text is open: it replaces the text (it is drawn above this layer).
         const editing = !!editLabel && editLabel === dimEditing
         const onTextDoubleClick = editLabel ? () => openDim(editLabel, d.p, d.plannedCm, rooms.find((r) => r.id === d.roomId)) : undefined
         const onTextPointerDown = editLabel ? (e: ReactPointerEvent) => onRoomDown(e, d.roomId, vp) : undefined
+        // The declutter pass dropped this text (V-1, V-3, V-6, V-7): the line and its ticks stay,
+        // and a value written without a line ("Text" style) draws nothing at all.
+        if (!d.box) {
+          return d.line
+            ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} kind="wall" dimKey={d.dimKey}
+                hideText />
+            : null
+        }
         if (editing && !d.line) return null
         return d.line
           ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} kind="wall" dimKey={d.dimKey}
@@ -599,7 +653,9 @@ export function RoomsOverlay() {
               lineB: valueLine ? { x: valueLine.x2, y: valueLine.y2 } : faceEnd,
               normal: w.inward, badge: n, textOffPx, zoom,
             }),
-            [...wallValues.map((d) => d.box), ...outsideTextBoxes],
+            // The FINAL texts of the plan: the values the declutter pass kept (V-1) and the texts of
+            // the outside rows. A badge never sits on one of them.
+            [...keptTexts.boxes, ...outsideTextBoxes],
             worldPx(DIM_STYLE.badgeGap, zoom),
           )
           if (!picked) return null

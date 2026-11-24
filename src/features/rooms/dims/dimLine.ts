@@ -79,6 +79,12 @@ export type DimLineInput = {
   outsideEnd?: 'start' | 'end'
   /** Distance from the line to the middle of the text, px (default DIM_STYLE.textGap). */
   textGapPx?: number
+  /**
+   * Shortest line on screen that is drawn, px (default DIM_STYLE.minLine). The room wall values
+   * ask for `DECLUTTER.minLinePx` (dims/declutter.ts), so a face that is too short for a value gets
+   * no line and no text at all (visual review V-1).
+   */
+  minLinePx?: number
 }
 
 /** The world size of `n` screen px at this zoom. */
@@ -91,7 +97,8 @@ export const worldPx = (n: number, zoom: number) => n / (zoom > 0 ? zoom : 1)
 export function dimLine(input: DimLineInput): DimLine | null {
   const { start, end, normal, offsetCm, zoom, text } = input
   const faceCm = dist(start, end)
-  if (!(faceCm > 0) || !(faceCm * zoom >= DIM_STYLE.minLine)) return null
+  const minLine = input.minLinePx ?? DIM_STYLE.minLine
+  if (!(faceCm > 0) || !(faceCm * zoom >= minLine)) return null
   const dir = norm(sub(end, start))
   const n = norm(normal)
   const px = (v: number) => worldPx(v, zoom)

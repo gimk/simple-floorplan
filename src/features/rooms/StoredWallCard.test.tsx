@@ -64,7 +64,10 @@ describe('StoredWallCard', () => {
     expect(html).toMatch(/data-wall-face="A-\d"/)
     expect(html).toMatch(/data-wall-face="B-\d"/)
     // The length of the wall on its centre line, and the centre value 'W12-C'.
-    expect(html).toContain('Length (centre)')
+    // The label names the value and 'node to node' is its own short subline (V-9).
+    expect(html).toContain(`Length (${id}-C)`)
+    expect(html).toContain('node to node')
+    expect(html).toContain(`stored-wall-${id}-centre`)
     expect(html).toContain(`${id}-C`)
     // The rooms of the two sides, as links.
     expect(html).toContain(`data-wall-rooms="${id}"`)
