@@ -23,7 +23,7 @@ export type PanelSectionProps = {
   description?: string
   children?: ReactNode
   className?: string
-  /** Classes of the body wrapper (default: `mt-2 flex flex-col gap-2`). */
+  /** Classes of the body wrapper (default: `mt-3 flex flex-col gap-3`). */
   contentClassName?: string
 }
 
@@ -67,7 +67,7 @@ export function PanelSection({
         {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
       </div>
       {description && open && <p className={`mt-1 ${MUTED}`}>{description}</p>}
-      <div id={bodyId} className={open ? (contentClassName ?? 'mt-2 flex flex-col gap-2') : 'hidden'}>
+      <div id={bodyId} className={open ? (contentClassName ?? 'mt-3 flex flex-col gap-3') : 'hidden'}>
         {children}
       </div>
     </section>

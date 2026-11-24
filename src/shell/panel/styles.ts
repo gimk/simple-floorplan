@@ -8,8 +8,25 @@
 /** Bordered block used by every panel section. */
 export const PANEL_CARD = 'rounded-lg border border-black/10 text-sm dark:border-white/10'
 
-/** The single padding step inside a panel section. */
-export const SECTION_PAD = 'p-2'
+/**
+ * Spacing scale of the panel: card padding p-3, gap between blocks gap-3, gap between rows gap-2,
+ * gap between a label and its field gap-1. Row padding is p-2.
+ */
+export const SECTION_PAD = 'p-3'
+
+/** Gap between the rows inside a card body. */
+export const ROW_GAP = 'gap-2'
+
+/** Gap between a label and its field, or a field and its hint. */
+export const FIELD_GAP = 'gap-1'
+
+/**
+ * One selectable row inside a card. The padding and the border are the same when the row is
+ * selected, so a selection does not move anything (unselected = transparent border).
+ */
+export const ROW = 'rounded-md border p-2'
+export const ROW_OFF = 'border-transparent'
+export const ROW_ON = 'border-orange-500/60 bg-orange-500/15'
 
 /** One heading style. */
 export const HEADING = 'text-sm font-semibold text-slate-900 dark:text-slate-100'

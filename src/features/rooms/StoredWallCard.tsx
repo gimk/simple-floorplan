@@ -27,7 +27,7 @@ import { wallValueLabel } from '../../model/wallValues'
 import { setMeasurement } from '../measure/actions'
 import { NumField } from '../measure/NumField'
 import {
-  ERROR, EmptyHint, FieldRow, HEADING, IconButton, MUTED, NumberField, PANEL_CARD, PanelSection, SECTION_PAD,
+  ERROR, EmptyHint, FIELD_GAP, FieldRow, HEADING, IconButton, MUTED, NumberField, PANEL_CARD, PanelSection, ROW, ROW_GAP, ROW_OFF, ROW_ON, SECTION_PAD,
   Segmented, SwitchRow,
 } from '../../shell/panel'
 import { toast } from '../toast'
@@ -282,7 +282,7 @@ function SideSection({ wallId, doc, view, active, activeFace, measureSource, sol
       className={`${PANEL_CARD} ${SECTION_PAD} flex flex-col ${active || hasFace ? 'ring-2 ring-orange-500/60' : ''}`}
       aria-label={`Side ${view.letter}`}
     >
-      <div className="flex min-h-9 items-center gap-1">
+      <div className="flex min-h-9 items-center gap-1 pointer-coarse:min-h-11">
         <button
           type="button"
           aria-pressed={active}
@@ -298,13 +298,13 @@ function SideSection({ wallId, doc, view, active, activeFace, measureSource, sol
           )}
         </button>
       </div>
-      <ul className="mt-2 flex flex-col gap-2" data-wall-side={view.side} data-wall-side-active={active ? 'true' : 'false'}>
+      <ul className={`mt-3 flex flex-col ${ROW_GAP}`} data-wall-side={view.side} data-wall-side-active={active ? 'true' : 'false'}>
         {view.faces.length === 0 && (
           // A side that no room covers and that has no face at all: a single wall (the Wall tool,
           // or a wall left by a deleted room), or the free side of a facade.
-          <li className="flex min-w-0 items-baseline gap-2" data-wall-outside="none">
+          <li className={`flex min-h-9 min-w-0 items-center gap-2 ${ROW} ${ROW_OFF} pointer-coarse:min-h-11`} data-wall-outside="none">
             <span className="min-w-0 flex-1 truncate text-xs">Outside</span>
-            {view.facadeLabel && <span className={`shrink-0 font-mono text-[11px] ${MUTED}`}>{view.facadeLabel}</span>}
+            {view.facadeLabel && <span className={`shrink-0 font-mono ${MUTED}`}>{view.facadeLabel}</span>}
           </li>
         )}
         {view.faces.map((face, i) => (
@@ -315,7 +315,7 @@ function SideSection({ wallId, doc, view, active, activeFace, measureSource, sol
               if (e.target instanceof Element && e.target.closest('input, button, a, textarea, select')) return
               setStoredWallFace(wallId, view.side, keys[i])
             }}
-            className={`rounded-md ${activeFace === keys[i] ? 'bg-orange-500/15 ring-1 ring-orange-500/60' : ''}`}>
+            className={`${ROW} ${activeFace === keys[i] ? ROW_ON : ROW_OFF}`}>
             {face.kind === 'room'
               ? (
                 <RoomFaceRow
@@ -356,16 +356,18 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
 }) {
   const verified = face.measuredCm != null
   return (
-    <div className="flex min-w-0 flex-col gap-1" data-wall-face={face.label}>
-      <div className="flex min-w-0 items-baseline gap-2">
+    <div className={`flex min-w-0 flex-col ${FIELD_GAP}`} data-wall-face={face.label}>
+      <div className="flex min-w-0 items-center gap-2">
         <button
           type="button"
           onClick={onSelectRoom}
           title={`Room ${face.name}`}
           aria-label={`Select room ${face.name} (${face.code})`}
-          className="inline-flex min-h-9 min-w-0 flex-1 items-center truncate rounded text-left text-xs hover:underline pointer-coarse:min-h-11"
+          className="inline-flex min-h-9 min-w-0 flex-1 items-center gap-1 rounded text-left text-xs hover:underline pointer-coarse:min-h-11"
         >
-          <span className="font-mono font-semibold">{face.code}</span> · {face.name}
+          <span className="shrink-0 font-mono font-semibold">{face.code}</span>
+          <span aria-hidden="true">·</span>
+          <span className="min-w-0 truncate">{face.name}</span>
         </button>
         <FaceButton selected={selected} onSelect={onSelectFace} title={`Show face ${face.label} on the plan`}
           className={verified ? 'text-emerald-700 dark:text-emerald-400' : MUTED}>
@@ -402,9 +404,9 @@ function OutsideRow({ doc, face, view, measureSource, solvedLine, selected, onSe
   const label = view.facadeLabel
   const value = label ? doc.measurements[label]?.actualCm ?? null : null
   return (
-    <div className="flex min-w-0 flex-col gap-1" data-wall-outside={fmtCm(face.lengthCm)}>
-      <div className="flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs">{label ? 'Outside (facade)' : 'Outside'}</span>
+    <div className={`flex min-w-0 flex-col ${FIELD_GAP}`} data-wall-outside={fmtCm(face.lengthCm)}>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex min-h-9 min-w-0 flex-1 items-center truncate text-xs pointer-coarse:min-h-11">{label ? 'Outside (facade)' : 'Outside'}</span>
         <FaceButton selected={selected} onSelect={onSelectFace} title="Show this outside span on the plan" className={MUTED}>
           {label ?? 'no value'}
         </FaceButton>
@@ -443,7 +445,7 @@ function FaceButton({ selected, onSelect, title, className, children }: {
       aria-pressed={selected}
       title={title}
       onClick={onSelect}
-      className={`inline-flex min-h-9 shrink-0 items-center gap-1 rounded px-1 font-mono text-[11px] hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11 ${className}`}
+      className={`inline-flex min-h-9 shrink-0 items-center gap-1 rounded px-1 font-mono text-xs hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11 ${className}`}
     >
       {children}
       {selected && <span className="rounded bg-orange-700 px-1.5 py-0.5 font-sans text-[10px] font-medium text-white">Selected</span>}

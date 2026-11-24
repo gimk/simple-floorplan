@@ -6,14 +6,14 @@ import type { ElementRow } from './roomLists'
 
 export function ElementList({ rows, onSelect, show = 'wall' }: { rows: ElementRow[]; onSelect: (id: string) => void; show?: 'wall' | 'offset' }) {
   return (
-    <ul className="flex flex-col gap-0.5">
+    <ul className="flex flex-col gap-1">
       {rows.map((row) => (
         <li key={row.id}>
           <button
             type="button"
             onClick={() => onSelect(row.id)}
             aria-label={`Select element ${row.kindLabel} ${row.wallLabel ?? ''}`.trim()}
-            className="flex min-h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11"
+            className="flex min-h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11"
           >
             <span className="min-w-0 flex-1 truncate">
               {row.kindLabel}
