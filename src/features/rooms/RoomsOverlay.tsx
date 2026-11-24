@@ -83,7 +83,7 @@ export function RoomsOverlay() {
   /** The side lines of the selected stored wall, and its A / B markers. */
   const selectedWallSide = (() => {
     if (!selStoredWall) return null
-    const { a, b, thicknessCm, side } = selStoredWall
+    const { a, b, thicknessCm, side, face: picked } = selStoredWall
     const len = dist(a, b)
     const ux = len > 0 ? (b.x - a.x) / len : 0, uy = len > 0 ? (b.y - a.y) / len : 0
     // Left of a -> b is (-uy, ux): that is side L, the side the wall card calls side A.
@@ -91,7 +91,14 @@ export function RoomsOverlay() {
     const face = (k: 1 | -1) => ({
       x1: a.x - uy * off * k, y1: a.y + ux * off * k, x2: b.x - uy * off * k, y2: b.y + ux * off * k,
     })
-    const weight = (s: 'L' | 'R') => (side === undefined || side === s ? px(3) : px(1.5))
+    // A selected face: both sides stay weak, and only the span of the face gets the strong line.
+    const weight = (s: 'L' | 'R') => (!picked && (side === undefined || side === s) ? px(3) : px(1.5))
+    const strongSide = (s: 'L' | 'R') => !picked && side === s
+    const faceLine = picked && (() => {
+      const k = picked.side === 'L' ? 1 : -1
+      const x = (t: number) => a.x + ux * t - uy * off * k, y = (t: number) => a.y + uy * t + ux * off * k
+      return { x1: x(picked.from), y1: y(picked.from), x2: x(picked.to), y2: y(picked.to) }
+    })()
     const wall = (storedWalls ?? []).find((w) => w.id === selStoredWall.wallId)
     // "In line on": the dotted line of the side (A, centre or B) that lines up with the walls that
     // continue this one, so the choice of the wall card is visible on the plan.
@@ -122,9 +129,13 @@ export function RoomsOverlay() {
       <g data-selected-wall-side={side ?? ''} data-wall-side-of={selStoredWall.wallId}>
         <g pointerEvents="none">
           <line {...face(1)} strokeLinecap="round" strokeWidth={weight('L')}
-            className={side === 'L' ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
+            className={strongSide('L') ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
           <line {...face(-1)} strokeLinecap="round" strokeWidth={weight('R')}
-            className={side === 'R' ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
+            className={strongSide('R') ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
+          {faceLine && (
+            <line {...faceLine} strokeLinecap="round" strokeWidth={px(3)} data-selected-wall-face={picked!.key}
+              className="stroke-orange-600 dark:stroke-orange-300" />
+          )}
         </g>
         <line {...align} pointerEvents="none" strokeWidth={px(2)} strokeLinecap="round"
           strokeDasharray={`${px(2)} ${px(4)}`} data-wall-align-line={selStoredWall.wallId}
@@ -141,6 +152,8 @@ export function RoomsOverlay() {
     const wall = (storedWalls ?? []).find((w) => w.id === selection.wallId)
     const face = wall?.faces.find((x) => x.roomId === roomId && x.wallStart === wallStart)
     if (!face) return null
+    // A selected face: only that room face is strong, the other faces of the wall are weak.
+    if (selection.face !== undefined) return selection.face === `room:${roomId}:${wallStart}` ? 'strong' : 'weak'
     return selection.side === undefined || selection.side === face.side ? 'strong' : 'weak'
   }
 

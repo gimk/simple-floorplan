@@ -365,8 +365,9 @@ export type Selection =
   | { kind: 'element'; elementId: string }
   /** A traced wall. Traces are not inside a room, so they have no roomId. */
   | { kind: 'trace'; id: string; roomId?: undefined }
-  /** A stored wall (walls are the source, docs/walls-plan.md 5c). `side` = the side the user clicked. */
-  | { kind: 'storedWall'; wallId: string; side?: 'L' | 'R'; roomId?: undefined }
+  /** A stored wall (walls are the source, docs/walls-plan.md 5c). `side` = the side the user clicked, `face` = the face
+   * of that side (a key of `faceKeyOf`, features/rooms/wallSides.ts): none = the whole wall or side. */
+  | { kind: 'storedWall'; wallId: string; side?: 'L' | 'R'; face?: string; roomId?: undefined }
   | null
 
 export type ToolId =

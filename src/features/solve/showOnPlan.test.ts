@@ -40,7 +40,10 @@ describe('showLabelOnPlan', () => {
     const face = doc.rooms[0].cycle![0]
     expect(face).toBeDefined()
     showLabelOnPlan(doc, 'SE-1')
-    expect(selection()).toEqual({ kind: 'storedWall', wallId: face.wallId, side: face.side })
+    // The face of the label is selected too: the plan draws the strong line along it only.
+    expect(selection()).toEqual({
+      kind: 'storedWall', wallId: face.wallId, side: face.side, face: `room:r1:${face.cornerId}`,
+    })
   })
 
   it('selects the stored wall of a centre value, with no side', () => {

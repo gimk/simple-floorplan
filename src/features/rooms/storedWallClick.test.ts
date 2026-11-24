@@ -12,7 +12,7 @@ import type { PlanDoc, Room, Vec } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { removeRoom } from '../../model/v2/write'
 import { onStoredNodeDown, onStoredWallDouble, onStoredWallDown, storedWallDownAction } from './interaction'
-import { sideOfPoint } from './wallSides'
+import { sideOfPoint, wallFaceAtPoint } from './wallSides'
 
 type Handler = (ev: Record<string, unknown>) => void
 
@@ -80,6 +80,14 @@ const sideAt = (doc: PlanDoc, wallId: string, x: number, y: number): 'L' | 'R' =
   return sideOfPoint(a, b, { x, y })!
 }
 
+/** What a click at (x, y) must select: the face under the point, with its side (side alone: no face). */
+const selAt = (doc: PlanDoc, wallId: string, x: number, y: number) => {
+  const pick = wallFaceAtPoint(doc, wallId, { x, y })
+  return pick
+    ? { kind: 'storedWall', wallId, side: pick.side, face: pick.key }
+    : { kind: 'storedWall', wallId, side: sideAt(doc, wallId, x, y) }
+}
+
 /** The room face of one side of the shared wall (the room that the side belongs to). */
 const faceOn = (doc: PlanDoc, wallId: string, side: 'L' | 'R') =>
   doc.walls!.find((w) => w.id === wallId)!.faces.find((f) => f.side === side && f.roomId !== undefined)!
@@ -117,11 +125,11 @@ describe('a click on a stored wall', () => {
     // 20 cm below the wall: the half of room B. 20 cm above: the half of room A.
     const below = { x: 200, y: 320 }
     onStoredWallDown(down(below.x, below.y), vp, wall.id)
-    expect(useUi.getState().selection).toEqual({ kind: 'storedWall', wallId: wall.id, side: sideAt(doc, wall.id, 200, 320) })
+    expect(useUi.getState().selection).toEqual(selAt(doc, wall.id, 200, 320))
 
     useUi.setState({ selection: null })
     onStoredWallDown(down(200, 280), vp, wall.id)
-    expect(useUi.getState().selection).toEqual({ kind: 'storedWall', wallId: wall.id, side: sideAt(doc, wall.id, 200, 280) })
+    expect(useUi.getState().selection).toEqual(selAt(doc, wall.id, 200, 280))
     // The two halves of the wall give the two sides.
     expect(sideAt(doc, wall.id, 200, 320)).not.toBe(sideAt(doc, wall.id, 200, 280))
   })
@@ -153,7 +161,7 @@ describe('a click on a stored wall', () => {
     useDoc.setState({ doc: kept })
     const wall = lonelyWall(kept)
     onStoredWallDown(down(200, 450), vp, wall.id)
-    expect(useUi.getState().selection).toEqual({ kind: 'storedWall', wallId: wall.id, side: sideAt(kept, wall.id, 200, 450) })
+    expect(useUi.getState().selection).toEqual(selAt(kept, wall.id, 200, 450))
   })
 
   it('keeps the room wall group behaviour on Shift + click (room of the clicked side)', () => {
@@ -250,7 +258,7 @@ describe('storedWallDownAction', () => {
     const at = { x: 200, y: 320 }
     const side = sideAt(d, wall.id, at.x, at.y)
     expect(storedWallDownAction({ doc: d, wallId: wall.id, side, prev: null, shift: false, at }))
-      .toEqual({ select: { kind: 'storedWall', wallId: wall.id, side }, group: null, flip: false })
+      .toEqual({ select: selAt(d, wall.id, at.x, at.y), group: null, flip: false })
   })
 
   it('asks for the other side when the clicked side is already selected', () => {
@@ -258,7 +266,8 @@ describe('storedWallDownAction', () => {
     const wall = sharedWall(d)
     const at = { x: 200, y: 320 }
     const side = sideAt(d, wall.id, at.x, at.y)
-    const prev = { kind: 'storedWall', wallId: wall.id, side } as const
+    // The face under the click is the selected one: a second click on it flips.
+    const prev = selAt(d, wall.id, at.x, at.y) as Parameters<typeof storedWallDownAction>[0]['prev']
     // No selection change at the pointer down: the side switches at the end of the click.
     expect(storedWallDownAction({ doc: d, wallId: wall.id, side, prev, shift: false, at }))
       .toEqual({ select: null, group: null, flip: true })
@@ -270,8 +279,8 @@ describe('storedWallDownAction', () => {
     const prevSide = sideAt(d, wall.id, 200, 320)
     const clicked = prevSide === 'L' ? 'R' : 'L'
     const at = { x: 200, y: prevSide === 'L' ? 280 : 320 }
-    expect(storedWallDownAction({ doc: d, wallId: wall.id, side: clicked, prev: { kind: 'storedWall', wallId: wall.id, side: prevSide }, shift: false, at }))
-      .toEqual({ select: { kind: 'storedWall', wallId: wall.id, side: clicked }, group: null, flip: false })
+    expect(storedWallDownAction({ doc: d, wallId: wall.id, side: clicked, prev: selAt(d, wall.id, 200, prevSide === 'L' ? 320 : 280) as Parameters<typeof storedWallDownAction>[0]['prev'], shift: false, at }))
+      .toEqual({ select: selAt(d, wall.id, at.x, at.y), group: null, flip: false })
   })
 
   it('gives no group item for a side with no room (outside)', () => {

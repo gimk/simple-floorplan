@@ -87,7 +87,7 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
   if (selection.kind === 'element') return null
   // A stored wall of a v2 document: the wall is ONE object with two sides (Walls in the interface).
   if (selection.kind === 'storedWall') {
-    return <StoredWallCard doc={doc} wallId={selection.wallId} side={selection.side} />
+    return <StoredWallCard doc={doc} wallId={selection.wallId} side={selection.side} face={selection.face} />
   }
   const room = doc.rooms.find((r) => r.id === selection.roomId)
   if (!room) return null

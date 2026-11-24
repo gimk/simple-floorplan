@@ -174,7 +174,7 @@ export function RoomCard({ doc, room, selection, activeHole }: {
                       onClick={() =>
                         link
                           // A click opens the wall card, with the side this room is on.
-                          ? select({ kind: 'storedWall', wallId: link.wallId, side: link.side })
+                          ? select({ kind: 'storedWall', wallId: link.wallId, side: link.side, face: `room:${room.id}:${link.wallStart}` })
                           : select({ kind: 'wall', roomId: room.id, wallStart: row.wallStart })}
                       className={`flex min-h-9 w-full flex-col justify-center gap-0.5 rounded-md px-1 py-1 text-left text-sm pointer-coarse:min-h-11 ${
                         current ? 'bg-orange-700/10' : 'hover:bg-black/5 dark:hover:bg-white/10'

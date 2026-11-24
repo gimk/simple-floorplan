@@ -7,18 +7,29 @@
 //
 // The ends of a band follow the junction at its node:
 //   - a free end (no other wall there) = a square end at the node;
-//   - two walls at a node, not in line = a MITRED join: both bands are cut on the two bisector
-//     lines, so they share the two corner points exactly at any angle and with any thicknesses.
-//     A very sharp angle would send the corner far away: the miter is limited to MITER_LIMIT
-//     thicknesses, which reads as a small bevel;
-//   - two walls in line at a node (the same direction) = square ends at the node: the bands meet;
+//   - two walls at a RIGHT angle (about 90 degrees) = a BUTT join with square ends. One wall
+//     continues through the corner: its square end moves PAST the node by the half thickness of
+//     the other wall, so the outside corner is a full square. The other wall stops square on the
+//     near face of the first one, at its half thickness from the node. No diagonal line, and the
+//     two bands touch with no gap and no overlap. The wall that continues is the thicker one; on a
+//     tie it is the wall whose id sorts first;
+//   - two walls at another angle (not in line) = a MITRED join: both bands are cut on the two
+//     bisector lines, so they share the two corner points exactly at any angle and with any
+//     thicknesses. A very sharp angle would send the corner far away: the miter is limited to
+//     MITER_LIMIT thicknesses, which reads as a small bevel;
+//   - two walls in line at a node (opposite directions) = square ends at the node: the bands meet;
 //   - a wall end that lies on the MIDDLE of another wall (a T junction: the node is on the centre
 //     line of the other wall, not at one of its two nodes) = a square end cut against the NEAR
 //     FACE of the host wall, so the band stops at the host's face and does not run into it;
-//   - three or more walls at one node = square ends at the node, plus a small patch (the convex
-//     hull of the band corners at the node) that closes the junction.
+//   - three or more walls at one node, with a pair in line (a through pair) = that pair keeps
+//     square ends at the node and meets, and every other wall stops on the near face of the
+//     thicker wall of the pair (the host). At 90 degrees that cut is square. For a cross (two
+//     pairs in line) the thicker pair goes through and the other pair stops at its faces. A small
+//     patch closes the node only when a gap stays;
+//   - three or more walls at one node with no pair in line = square ends at the node, plus a small
+//     patch (the convex hull of the band corners at the node) that closes the junction.
 
-import { add, cross, dist, dot, mul, sub } from '../../model/geometry'
+import { add, cross, dist, dot, mul, pointInPolygon, projectOnSegment, sub } from '../../model/geometry'
 import type { StoredNode, StoredWall, Vec } from '../../model/types'
 
 /** A length below this is zero (cm). */
@@ -27,6 +38,8 @@ const EPS = 1e-6
 export const ON_WALL_TOL_CM = 1
 /** Two directions with a sine below this are in line (or parallel). */
 const PARALLEL_SIN = 0.02
+/** Two directions with a cosine below this (in absolute value) are at a right angle. */
+const RIGHT_COS = 0.02
 /** Longest miter, in thicknesses: a sharper angle gets a bevel instead of a long spike. */
 export const MITER_LIMIT = 3
 
@@ -69,6 +82,18 @@ const perp = (d: Vec): Vec => ({ x: -d.y, y: d.x })
 const squareCorners = (at: Vec, out: Vec, half: number): [Vec, Vec] => {
   const m = mul(perp(out), half)
   return [add(at, m), sub(at, m)]
+}
+
+/** True when two ends point in opposite directions: a pair in line (a through pair). */
+const inLine = (e: End, o: End): boolean => Math.abs(cross(e.out, o.out)) < PARALLEL_SIN && dot(e.out, o.out) < 0
+
+/**
+ * True when the first end continues through the corner of a right-angle join: the thicker wall,
+ * and on a tie the wall whose id sorts first (a stable result for a plan).
+ */
+const continuesThrough = (e: End, o: End): boolean => {
+  const d = e.half - o.half
+  return Math.abs(d) > EPS ? d > 0 : e.wallId.localeCompare(o.wallId) <= 0
 }
 
 /**
@@ -127,6 +152,39 @@ function hostCorners(e: End, host: Line): [Vec, Vec] {
   return [points[0], points[1]]
 }
 
+/**
+ * The two corners of a butt join at a right angle between the ends `e` and `o` of two walls.
+ * The wall that continues through the corner keeps a SQUARE end, moved past the node by the half
+ * thickness of the other wall, so the outside corner is a full square. The other wall stops square
+ * on the NEAR FACE of the continuing wall, at its half thickness from the node. At a right angle
+ * that cut is square, and nothing is left empty.
+ */
+function buttCorners(e: End, o: End, eLine: Line, oLine: Line): [[Vec, Vec], [Vec, Vec]] {
+  const eGoes = continuesThrough(e, o)
+  const goes = eGoes ? e : o
+  const stops = eGoes ? o : e
+  const hostLine = eGoes ? eLine : oLine
+  const goCorners = squareCorners(add(goes.at, mul(goes.out, -stops.half)), goes.out, goes.half)
+  const stopCorners = hostCorners(stops, hostLine)
+  return eGoes ? [goCorners, stopCorners] : [stopCorners, goCorners]
+}
+
+/**
+ * The pair in line of a node with three or more walls: the thicker pair goes through. On a tie the
+ * pair whose ids sort first goes through. A cross has two pairs, and only one of them goes through.
+ */
+function throughPair(list: End[]): [End, End] | undefined {
+  const key = (p: [End, End]) => [p[0].wallId, p[1].wallId].sort((a, b) => a.localeCompare(b)).join(' ')
+  const pairs: [End, End][] = []
+  for (let i = 0; i < list.length; i++)
+    for (let j = i + 1; j < list.length; j++) if (inLine(list[i], list[j])) pairs.push([list[i], list[j]])
+  pairs.sort((a, b) => {
+    const dh = Math.max(b[0].half, b[1].half) - Math.max(a[0].half, a[1].half)
+    return Math.abs(dh) > EPS ? dh : key(a).localeCompare(key(b))
+  })
+  return pairs[0]
+}
+
 /** Convex hull of a set of points (monotone chain). Fewer than 3 points give no polygon. */
 export function convexHull(points: Vec[]): Vec[] {
   const pts = [...points].sort((a, b) => a.x - b.x || a.y - b.y)
@@ -151,6 +209,38 @@ const onMiddle = (p: Vec, line: Line): boolean => {
   const t = dot(sub(p, line.a), line.d)
   return t > ON_WALL_TOL_CM && t < line.length - ON_WALL_TOL_CM
 }
+
+/** True when `p` is inside the polygon or on one of its edges (the faces of the bands are edges). */
+const insideOrOn = (p: Vec, poly: Vec[]): boolean =>
+  pointInPolygon(p, poly) || poly.some((q, i) => projectOnSegment(p, q, poly[(i + 1) % poly.length]).distance < EPS)
+
+/** The band of one end, drawn far enough along the wall to cover the junction of its node. */
+const endStrip = (e: End, far: number): Vec[] => {
+  const [c0, c1] = e.corners
+  return [c0, c1, add(c1, mul(e.out, far)), add(c0, mul(e.out, far))]
+}
+
+/**
+ * True when a sample of points of the hull is covered by one of these bands. It tells whether the
+ * junction of the node is closed (then no patch is necessary) or keeps a small gap.
+ */
+function hullCovered(hull: Vec[], strips: Vec[][]): boolean {
+  const centre = mul(hull.reduce(add, { x: 0, y: 0 }), 1 / hull.length)
+  const samples: Vec[] = [centre]
+  hull.forEach((v, i) => {
+    for (const t of [0.25, 0.6, 0.9]) samples.push(add(centre, mul(sub(v, centre), t)))
+    const mid = mul(add(v, hull[(i + 1) % hull.length]), 0.5)
+    samples.push(add(centre, mul(sub(mid, centre), 0.7)))
+  })
+  return samples.every((p) => strips.some((s) => insideOrOn(p, s)))
+}
+
+/** A patch of one node: the outline that closes it and the walls of that node, thickest first. */
+const patchOf = (nodeId: string, points: Vec[], list: End[]): WallPatch => ({
+  nodeId,
+  points,
+  wallIds: [...list].sort((a, b) => b.half - a.half).map((e) => e.wallId),
+})
 
 /**
  * The bands of every wall of the graph and the patches of the junctions of three or more walls.
@@ -184,38 +274,58 @@ export function wallJoinGeometry(doc: JoinInput): WallsGeometry {
   const patches: WallPatch[] = []
   for (const [nodeId, list] of byNode) {
     const at = list[0].at
-    // The hosts of a T junction: the walls whose middle the node lies on.
-    const hosts = [...lines.entries()].filter(([, line]) => onMiddle(at, line))
-    for (const e of list) {
-      const others = list.filter((x) => x.wallId !== e.wallId)
-      if (others.length >= 2) {
-        // Three or more walls: square ends, closed by the patch of this node (made below).
-        e.corners = squareCorners(e.at, e.out, e.half)
-        continue
-      }
-      if (others.length === 1) {
-        const o = others[0]
-        const pair = miterCorners(e, o)
-        e.corners = pair[0]
-        o.corners = pair[1]
-        continue
-      }
+
+    if (list.length === 1) {
       // A lone end: on the middle of another wall it stops at that wall's face, else it is square.
+      const hosts = [...lines.entries()].filter(([, line]) => onMiddle(at, line))
+      const e = list[0]
       const host = hosts.filter(([id]) => id !== e.wallId).sort((a, b) => {
         const da = Math.abs(dot(sub(at, a[1].a), perp(a[1].d)))
         const db = Math.abs(dot(sub(at, b[1].a), perp(b[1].d)))
         return da - db || b[1].half - a[1].half
       })[0]
       e.corners = host ? hostCorners(e, host[1]) : squareCorners(e.at, e.out, e.half)
+      continue
     }
-    if (list.length >= 3) {
-      const corners = list.flatMap((e) => e.corners)
-      const hull = convexHull(corners)
-      if (hull.length >= 3) {
-        const wallIds = [...list].sort((a, b) => b.half - a.half).map((e) => e.wallId)
-        patches.push({ nodeId, points: hull, wallIds })
+
+    if (list.length === 2) {
+      const [e, o] = list
+      if (inLine(e, o)) {
+        // In line: the two bands meet on the line through the node.
+        e.corners = squareCorners(e.at, e.out, e.half)
+        o.corners = squareCorners(o.at, o.out, o.half)
+      } else if (Math.abs(dot(e.out, o.out)) < RIGHT_COS) {
+        // A right angle: a butt join with square ends (no diagonal line at the corner).
+        const pair = buttCorners(e, o, lines.get(e.wallId)!, lines.get(o.wallId)!)
+        e.corners = pair[0]
+        o.corners = pair[1]
+      } else {
+        // Any other angle: the mitre keeps both outside corners full.
+        const pair = miterCorners(e, o)
+        e.corners = pair[0]
+        o.corners = pair[1]
       }
+      continue
     }
+
+    // Three or more walls. A pair in line goes through; the other walls stop on its face.
+    const through = throughPair(list)
+    if (!through) {
+      // No pair in line: square ends, closed by the patch of the hull.
+      for (const e of list) e.corners = squareCorners(e.at, e.out, e.half)
+      const hull = convexHull(list.flatMap((e) => e.corners))
+      if (hull.length >= 3) patches.push(patchOf(nodeId, hull, list))
+      continue
+    }
+    for (const e of through) e.corners = squareCorners(e.at, e.out, e.half)
+    // The host is the thicker wall of the pair: the other walls stop on its near face.
+    const hostEnd = continuesThrough(through[0], through[1]) ? through[0] : through[1]
+    const hostLine = lines.get(hostEnd.wallId)!
+    for (const e of list) if (!through.includes(e)) e.corners = hostCorners(e, hostLine)
+    // A patch only when a gap stays between the bands.
+    const hull = convexHull(list.flatMap((e) => e.corners))
+    const far = 10 * Math.max(...list.map((e) => e.half), 1)
+    if (hull.length >= 3 && !hullCovered(hull, list.map((e) => endStrip(e, far)))) patches.push(patchOf(nodeId, hull, list))
   }
 
   // One band per wall: the corner of each end, in the order of `WallQuad.points`.

@@ -35,12 +35,12 @@ import { solveGlobal } from './globalSolve'
 import type { AlignSideChoice } from './cards'
 import {
   alignOfSideChoice, alignSideChoice, deleteStoredWall, patchStoredWall, refusedDeleteText, setStoredWallSide,
-  setStoredWallLength, structuralWarning, update, wallOwnerSide, WALL_ALIGN_SIDES, WALL_STATUSES, WALL_TYPES,
+  setStoredWallFace, setStoredWallLength, structuralWarning, update, wallOwnerSide, WALL_ALIGN_SIDES, WALL_STATUSES, WALL_TYPES,
 } from './cards'
 import { ElementList } from './ElementList'
 import { KIND_LABEL, VARIANT_LABEL } from '../elements/geometry'
 import type { ElementRow } from './roomLists'
-import { storedWallView, type WallSideFace, type WallSideView } from './wallSides'
+import { sideFaceKeys, storedWallView, type WallSideFace, type WallSideView } from './wallSides'
 
 /** The title of the card: 'Wall W12'. */
 const wallTitle = (wallId: string) => `Wall ${wallId}`
@@ -61,8 +61,8 @@ function wallElements(doc: Pick<PlanDoc, 'elements'>, wallId: string): ElementRo
     }))
 }
 
-export function StoredWallCard({ doc, wallId, side }: {
-  doc: PlanDoc; wallId: string; side?: 'L' | 'R'
+export function StoredWallCard({ doc, wallId, side, face }: {
+  doc: PlanDoc; wallId: string; side?: 'L' | 'R'; face?: string
 }) {
   const view = useMemo(() => storedWallView(doc, wallId), [doc, wallId])
   const measureSource = useUi((s) => s.measureSource)
@@ -239,7 +239,8 @@ export function StoredWallCard({ doc, wallId, side }: {
           wallId={wall.id}
           doc={doc}
           view={s}
-          active={side === s.side}
+          active={side === s.side && face === undefined}
+          activeFace={face}
           measureSource={measureSource}
           solvedLine={solvedLine}
         />
@@ -263,18 +264,22 @@ export function StoredWallCard({ doc, wallId, side }: {
  * wall (docs/walls-plan.md "Walls in the interface"). The other side keeps its faces one click
  * away, so the user reads and measures either side at will.
  */
-function SideSection({ wallId, doc, view, active, measureSource, solvedLine }: {
+function SideSection({ wallId, doc, view, active, activeFace, measureSource, solvedLine }: {
   wallId: string
   doc: PlanDoc
   view: WallSideView
   active: boolean
+  /** Key of the selected face (`Selection.face`), when the user picked one face. */
+  activeFace?: string
   measureSource: Parameters<typeof setMeasurement>[2]
   solvedLine: (label: string, measuredCm: number) => ReactNode
 }) {
   const select = useUi.getState().select
+  const keys = sideFaceKeys(view)
+  const hasFace = activeFace !== undefined && keys.includes(activeFace)
   return (
     <section
-      className={`${PANEL_CARD} ${SECTION_PAD} flex flex-col ${active ? 'ring-2 ring-orange-500/60' : ''}`}
+      className={`${PANEL_CARD} ${SECTION_PAD} flex flex-col ${active || hasFace ? 'ring-2 ring-orange-500/60' : ''}`}
       aria-label={`Side ${view.letter}`}
     >
       <div className="flex min-h-9 items-center gap-1">
@@ -302,8 +307,15 @@ function SideSection({ wallId, doc, view, active, measureSource, solvedLine }: {
             {view.facadeLabel && <span className={`shrink-0 font-mono text-[11px] ${MUTED}`}>{view.facadeLabel}</span>}
           </li>
         )}
-        {view.faces.map((face) => (
-          <li key={`${face.from}-${face.to}-${face.kind === 'room' ? face.label : 'out'}`}>
+        {view.faces.map((face, i) => (
+          <li key={`${face.from}-${face.to}-${face.kind === 'room' ? face.label : 'out'}`}
+            data-wall-face-row={keys[i]}
+            // A click on the row (not on a field or a button) selects this face.
+            onClick={(e) => {
+              if (e.target instanceof Element && e.target.closest('input, button, a, textarea, select')) return
+              setStoredWallFace(wallId, view.side, keys[i])
+            }}
+            className={`rounded-md ${activeFace === keys[i] ? 'bg-orange-500/15 ring-1 ring-orange-500/60' : ''}`}>
             {face.kind === 'room'
               ? (
                 <RoomFaceRow
@@ -313,9 +325,17 @@ function SideSection({ wallId, doc, view, active, measureSource, solvedLine }: {
                   measureSource={measureSource}
                   solvedLine={solvedLine}
                   onSelectRoom={() => select({ kind: 'room', roomId: face.roomId })}
+                  selected={activeFace === keys[i]}
+                  onSelectFace={() => setStoredWallFace(wallId, view.side, keys[i])}
                 />
               )
-              : <OutsideRow doc={doc} face={face} view={view} measureSource={measureSource} solvedLine={solvedLine} />}
+              : (
+                <OutsideRow
+                  doc={doc} face={face} view={view} measureSource={measureSource} solvedLine={solvedLine}
+                  selected={activeFace === keys[i]}
+                  onSelectFace={() => setStoredWallFace(wallId, view.side, keys[i])}
+                />
+              )}
           </li>
         ))}
       </ul>
@@ -324,13 +344,15 @@ function SideSection({ wallId, doc, view, active, measureSource, solvedLine }: {
 }
 
 /** One face of one room on this side: code + name, label, value field, measured / solved. */
-function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoom }: {
+function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoom, selected, onSelectFace }: {
   doc: PlanDoc
   face: Extract<WallSideFace, { kind: 'room' }>
   active: string
   measureSource: Parameters<typeof setMeasurement>[2]
   solvedLine: (label: string, measuredCm: number) => ReactNode
   onSelectRoom: () => void
+  selected: boolean
+  onSelectFace: () => void
 }) {
   const verified = face.measuredCm != null
   return (
@@ -345,10 +367,11 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
         >
           <span className="font-mono font-semibold">{face.code}</span> · {face.name}
         </button>
-        <span className={`shrink-0 font-mono text-[11px] ${verified ? 'text-emerald-700 dark:text-emerald-400' : MUTED}`}>
+        <FaceButton selected={selected} onSelect={onSelectFace} title={`Show face ${face.label} on the plan`}
+          className={verified ? 'text-emerald-700 dark:text-emerald-400' : MUTED}>
           {verified && <Check size={11} role="img" aria-label="measured" className="mr-0.5 inline align-[-1px]" />}
           {face.label}
-        </span>
+        </FaceButton>
       </div>
       <NumField
         id={`stored-wall-${face.label}`}
@@ -367,12 +390,14 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
  * A span of this side that no room covers. When the whole side is outside (a facade), the span
  * carries the outside face value 'W12-E': outside corner to outside corner, measured from outside.
  */
-function OutsideRow({ doc, face, view, measureSource, solvedLine }: {
+function OutsideRow({ doc, face, view, measureSource, solvedLine, selected, onSelectFace }: {
   doc: PlanDoc
   face: Extract<WallSideFace, { kind: 'outside' }>
   view: WallSideView
   measureSource: Parameters<typeof setMeasurement>[2]
   solvedLine: (label: string, measuredCm: number) => ReactNode
+  selected: boolean
+  onSelectFace: () => void
 }) {
   const label = view.facadeLabel
   const value = label ? doc.measurements[label]?.actualCm ?? null : null
@@ -380,7 +405,9 @@ function OutsideRow({ doc, face, view, measureSource, solvedLine }: {
     <div className="flex min-w-0 flex-col gap-1" data-wall-outside={fmtCm(face.lengthCm)}>
       <div className="flex min-w-0 items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate text-xs">{label ? 'Outside (facade)' : 'Outside'}</span>
-        <span className={`shrink-0 font-mono text-[11px] ${MUTED}`}>{label ?? 'no value'}</span>
+        <FaceButton selected={selected} onSelect={onSelectFace} title="Show this outside span on the plan" className={MUTED}>
+          {label ?? 'no value'}
+        </FaceButton>
       </div>
       {label && (
         <>
@@ -396,5 +423,30 @@ function OutsideRow({ doc, face, view, measureSource, solvedLine }: {
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * The button of one face row: a click selects that face (`aria-pressed`), and the selected row
+ * carries a 'Selected' word, not colour only (same as the header of a side).
+ */
+function FaceButton({ selected, onSelect, title, className, children }: {
+  selected: boolean
+  onSelect: () => void
+  title: string
+  className: string
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      title={title}
+      onClick={onSelect}
+      className={`inline-flex min-h-9 shrink-0 items-center gap-1 rounded px-1 font-mono text-[11px] hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11 ${className}`}
+    >
+      {children}
+      {selected && <span className="rounded bg-orange-700 px-1.5 py-0.5 font-sans text-[10px] font-medium text-white">Selected</span>}
+    </button>
   )
 }

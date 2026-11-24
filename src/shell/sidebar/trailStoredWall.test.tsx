@@ -60,6 +60,13 @@ describe('Esc from a stored wall', () => {
   })
 })
 
+describe('buildTrail: a stored face', () => {
+  it('keeps the face in the crumb select', () => {
+    const crumbs = buildTrail(doc(), { kind: 'storedWall', wallId: 'W12', side: 'R', face: 'room:r1:v0' }, null)
+    expect(crumbs[1].select).toEqual({ kind: 'storedWall', wallId: 'W12', side: 'R', face: 'room:r1:v0' })
+  })
+})
+
 describe('Breadcrumb: a stored wall', () => {
   it('writes Apartment > Wall W12', () => {
     applyState(useDoc, { doc: doc() })

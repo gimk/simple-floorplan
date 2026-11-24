@@ -237,7 +237,10 @@ The interface follows the model: a wall is one object with two sides.
   wall card shows the wall once (type, thickness, status, line, lock, centre value), then
   **Side A** and **Side B**: for each side, the rooms that see it and their faces, each face with
   its own measure field ("Measured / Solved"). A side cut by T walls shows several faces; the other
-  side can show one (the Entree/Couloir case). A free side shows "Outside" with the facade value
+  side can show one (the Entree/Couloir case). **A click selects ONE face** (2026-11-24,
+  `Selection.face`): a room face or an outside span, so a wall with 2 faces on each side gives 4
+  selections; a second click on the same face selects the face across; each face row of the card
+  is selectable too. A free side shows "Outside" with the facade value
   `W12-E`. Then the doors and windows on the wall. The clicked side is highlighted.
 - Breadcrumb: `Apartment > Wall W12` with links to its rooms. Room card wall list: one line per
   face, `EN-3 · W12 · shared with Couloir`; a click opens the wall card.
@@ -248,7 +251,8 @@ The interface follows the model: a wall is one object with two sides.
   away when a room shape edit leaves it without faces. Deleting a wall that a room uses is refused
   with a toast naming the rooms.
 - **Walls are drawn once, from the graph** (v2): each stored wall is one band of its thickness;
-  joins at nodes: two walls = mitred corner; a wall that ends on the middle of another wall (T) =
+  joins at nodes (changed 2026-11-24): two walls at 90 degrees = square ends, the thicker wall
+  continues through the corner (butt join); two walls at another angle = mitred corner; a wall that ends on the middle of another wall (T) =
   square end against that wall's face; a free end = square; 3+ walls at a node = square ends plus a
   node patch. Rooms draw only their floor (inside polygon) and labels. Styles (type, status,
   renovation view, bearing highlight, selection) stay the same.

@@ -16,7 +16,7 @@ import { piecesPath, renovationRooms, wallAppearance } from '../renovation/logic
 import { useSidebar } from '../../shell/sidebar/store'
 import { modeLayerVisible } from '../../shell/view/layers'
 import { hoverTarget, storedWallLine } from './hoverTarget'
-import { outsideFaceLabelAtPoint } from './wallSides'
+import { faceByKey, outsideFaceLabelAtPoint, storedWallView } from './wallSides'
 import { storedWallOfRoomWall } from '../../model/wallValues'
 import { focusMeasureField } from '../measure/focusField'
 import { inputId } from '../measure/actions'
@@ -139,8 +139,14 @@ export function useRoomsFrame() {
     const line = storedWallLine({ walls: storedWalls, nodes: storedNodes }, selection.wallId)
     if (!line) return null
     const wall = (storedWalls ?? []).find((w) => w.id === selection.wallId)
-    return { ...line, thicknessCm: wall?.thicknessCm ?? DEFAULT_WALL_CM, side: selection.side }
-  }, [selection, storedWalls, storedNodes])
+    // A selected face: its key, its side and its span along the wall (from node a, cm).
+    const view = selection.face
+      ? storedWallView({ rooms, nodes: storedNodes, walls: storedWalls, measurements }, selection.wallId)
+      : null
+    const pick = view && selection.face ? faceByKey(view, selection.face) : null
+    const face = pick ? { key: pick.key, side: pick.side, from: pick.face.from, to: pick.face.to } : undefined
+    return { ...line, thicknessCm: wall?.thicknessCm ?? DEFAULT_WALL_CM, side: face?.side ?? selection.side, face }
+  }, [selection, storedWalls, storedNodes, rooms, measurements])
   // Room whose name is being renamed inline: a double-click on the name, or a tool that has just
   // made the room (Make room tool, docs/walls-plan.md phase 6). The editor is drawn by
   // RoomsOverlay, which is the only user of this state.

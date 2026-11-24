@@ -15,6 +15,7 @@ import { sourceSigmaCm } from '../../model/measureSource'
 import { parseCm } from '../measure/logic'
 import type { RoomAngles, SurfaceMode } from '../rooms/globalSolve'
 import { scheduleAutoApply } from '../rooms/measureRules'
+import { roomFaceKeyOnSide } from '../rooms/wallSides'
 import { suggestMeasurements, type Remeasure, type Suggestion } from '../rooms/suggest'
 
 /** UI state that shows one survey label on the plan (null clears the highlight). */
@@ -56,7 +57,16 @@ export function showLabelOnPlan(doc: PlanDoc, label: string, fallbackRoomId?: st
       return
     }
     // The side of a centre value says nothing: the wall card then shows both sides.
-    select({ kind: 'storedWall', wallId: target.wallId, side: kind === 'centre' ? undefined : target.side })
+    if (kind === 'centre') {
+      select({ kind: 'storedWall', wallId: target.wallId, side: undefined })
+      return
+    }
+    // A face value names ONE face of the wall: select that face (the room face of the label).
+    const face = kind === 'face' && target.roomId
+      ? roomFaceKeyOnSide(doc, target.wallId, target.side, target.roomId,
+        target.from !== undefined && target.to !== undefined ? { from: target.from, to: target.to } : undefined)
+      : undefined
+    select({ kind: 'storedWall', wallId: target.wallId, side: target.side, ...(face ? { face } : {}) })
     return
   }
   const code = labelRoomCode(label)

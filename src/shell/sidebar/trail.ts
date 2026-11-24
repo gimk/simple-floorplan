@@ -16,7 +16,7 @@ export type CrumbSelect =
   | { kind: 'room'; roomId: string }
   | { kind: 'wall'; roomId: string; wallStart: string }
   /** A stored wall of a v2 document: it belongs to no room, so it has no room crumb above it. */
-  | { kind: 'storedWall'; wallId: string; side?: 'L' | 'R' }
+  | { kind: 'storedWall'; wallId: string; side?: 'L' | 'R'; face?: string }
   | { kind: 'vertex'; roomId: string; vertexId: string }
   | { kind: 'element'; elementId: string }
   | { kind: 'tape'; id: string }
@@ -97,7 +97,7 @@ export function buildTrail(doc: TrailDoc, selection: Selection, annot: AnnotSele
     crumbs.push({
       level: 'storedWall',
       text: `Wall ${selection.wallId}`,
-      select: { kind: 'storedWall', wallId: selection.wallId, side: selection.side },
+      select: { kind: 'storedWall', wallId: selection.wallId, side: selection.side, face: selection.face },
     })
     return crumbs
   }

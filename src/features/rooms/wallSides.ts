@@ -171,6 +171,105 @@ export function wallFaceAt(
   return null
 }
 
+/**
+ * Key of one face of a stored wall, as `Selection.face` stores it. A room face is
+ * `room:<roomId>:<wallStart>`. An outside span is `out:<side>:<index>`, where the index counts the
+ * outside spans of that side in order from node a (`indexAmongOutside`, ignored for a room face).
+ */
+export function faceKeyOf(side: 'L' | 'R', face: WallSideFace, indexAmongOutside: number): string {
+  return face.kind === 'room' ? `room:${face.roomId}:${face.wallStart}` : `out:${side}:${indexAmongOutside}`
+}
+
+/** Keys of the faces of one side, in the order of `view.faces`. */
+export function sideFaceKeys(view: Pick<WallSideView, 'side' | 'faces'>): string[] {
+  let outside = 0
+  return view.faces.map((f) => faceKeyOf(view.side, f, f.kind === 'outside' ? outside++ : 0))
+}
+
+/** One face of a stored wall, with its side and its key. */
+export type WallFacePick = { side: 'L' | 'R'; key: string; face: WallSideFace }
+
+/** The face of a wall view with this key, or null when the key names no face of the wall. */
+export function faceByKey(view: Pick<StoredWallView, 'sides'>, key: string): WallFacePick | null {
+  for (const s of view.sides) {
+    const keys = sideFaceKeys(s)
+    const at = keys.indexOf(key)
+    if (at >= 0) return { side: s.side, key, face: s.faces[at] }
+  }
+  return null
+}
+
+/** Distance along the wall from node a of the point p, put on the centre line and clamped, cm. */
+function alongOf(view: StoredWallView, p: Vec): number {
+  const len = dist(view.a, view.b)
+  if (len < 1e-6) return 0
+  const t = ((p.x - view.a.x) * (view.b.x - view.a.x) + (p.y - view.a.y) * (view.b.y - view.a.y)) / len
+  return Math.min(Math.max(t, 0), view.centreCm)
+}
+
+/** The face of one side at a distance along the wall (1 cm tolerance), or null. */
+function faceAtAlong(view: StoredWallView, side: 'L' | 'R', along: number): WallFacePick | null {
+  const mine = view.sides.find((s) => s.side === side)
+  if (!mine) return null
+  const keys = sideFaceKeys(mine)
+  const at = mine.faces.findIndex((f) => along >= f.from - FACE_TOL_CM && along <= f.to + FACE_TOL_CM)
+  return at >= 0 ? { side, key: keys[at], face: mine.faces[at] } : null
+}
+
+/**
+ * The face of a stored wall under a point of the plan (cm): the side of the point, and the face
+ * of that side (a room face or an outside span) at the position of the point along the wall. The
+ * point is put on the centre line first and clamped to the wall. null when that side has no face
+ * there (a single wall has none).
+ */
+export function wallFaceAtPoint(
+  doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>,
+  wallId: string,
+  p: Vec,
+): WallFacePick | null {
+  const view = storedWallView(doc, wallId)
+  const side = view ? sideOfPoint(view.a, view.b, p) : undefined
+  return view && side ? faceAtAlong(view, side, alongOf(view, p)) : null
+}
+
+/**
+ * The face directly across the wall from the point p: the OTHER side, at the same position along
+ * the wall. The second click on a face selects it. null when the other side has no face there.
+ */
+export function wallFaceAcross(
+  doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>,
+  wallId: string,
+  p: Vec,
+): WallFacePick | null {
+  const view = storedWallView(doc, wallId)
+  const side = view ? sideOfPoint(view.a, view.b, p) : undefined
+  return view && side ? faceAtAlong(view, otherSide(side), alongOf(view, p)) : null
+}
+
+/**
+ * Key of the room face of `roomId` on one side of a wall. With a span [from, to] the face that
+ * overlaps it most wins, else the first face of that room on that side. undefined when none.
+ */
+export function roomFaceKeyOnSide(
+  doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>,
+  wallId: string,
+  side: 'L' | 'R',
+  roomId: string,
+  span?: { from: number; to: number },
+): string | undefined {
+  const view = storedWallView(doc, wallId)
+  const mine = view?.sides.find((s) => s.side === side)
+  if (!mine) return undefined
+  const keys = sideFaceKeys(mine)
+  let best: { key: string; overlap: number } | undefined
+  mine.faces.forEach((f, i) => {
+    if (f.kind !== 'room' || f.roomId !== roomId) return
+    const overlap = span ? Math.min(f.to, Math.max(span.from, span.to)) - Math.max(f.from, Math.min(span.from, span.to)) : 0
+    if (!best || overlap > best.overlap) best = { key: keys[i], overlap }
+  })
+  return best?.key
+}
+
 /** The other side of a wall: 'L' -> 'R', 'R' -> 'L'. */
 export const otherSide = (side: 'L' | 'R'): 'L' | 'R' => (side === 'L' ? 'R' : 'L')
 

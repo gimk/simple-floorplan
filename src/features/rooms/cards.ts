@@ -169,6 +169,14 @@ export function setStoredWallSide(wallId: string, side: 'L' | 'R') {
 }
 
 /**
+ * Show ONE face of a stored wall on the plan (a row of the wall card): the side of the face and
+ * its key (`faceKeyOf`). The plan draws the strong line along that face only.
+ */
+export function setStoredWallFace(wallId: string, side: 'L' | 'R', face: string) {
+  useUi.getState().select({ kind: 'storedWall', wallId, side, face })
+}
+
+/**
  * Remove a stored wall (docs/walls-plan.md phase 5c, `removeWall`). A wall that a room uses is
  * REFUSED: nothing is written and the room codes come back, so the caller can name them in a toast.
  */

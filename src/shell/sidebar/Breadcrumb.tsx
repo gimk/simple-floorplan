@@ -25,7 +25,7 @@ function applyCrumb(select: CrumbSelect) {
     case 'storedWall':
       // A stored wall of a v2 document: one object with two sides.
       selectAnnot(null)
-      useUi.getState().select({ kind: 'storedWall', wallId: select.wallId, side: select.side })
+      useUi.getState().select({ kind: 'storedWall', wallId: select.wallId, side: select.side, face: select.face })
       return
     case 'vertex':
       selectAnnot(null)

@@ -32,7 +32,7 @@ import { inputId } from '../measure/actions'
 import { onStoredNodeDown, onStoredWallDouble, onStoredWallDown } from './interaction'
 import { polygonPath, polylinePath } from './wallOutline'
 import { wallJoinGeometry } from './wallJoins'
-import { outsideFaceLabelAtPoint, sideOfPoint, wallFaceAt } from './wallSides'
+import { outsideFaceLabelAtPoint, sideOfPoint, wallFaceAt, wallFaceAtPoint } from './wallSides'
 
 /** Solid walls (exterior, and bearing walls when the highlight layer is off). */
 const solidClass = 'fill-slate-900 dark:fill-slate-100'
@@ -65,6 +65,8 @@ export function WallsLayer() {
   const vp = useViewport()
   const { px, zoom } = vp
   const [hovered, setHovered] = useState<string | null>(null)
+  // The face under the pointer on the hovered wall: the span a click would select.
+  const [hoverFace, setHoverFace] = useState<{ wallId: string; key: string; side: 'L' | 'R'; from: number; to: number } | null>(null)
   // Label of the measure field that the last pointer move over a wall lit up (Measuring Mode).
   const hoveredField = useRef<{ wallId: string; label: string } | null>(null)
   const geometry = useMemo(() => wallJoinGeometry({ nodes, walls }), [nodes, walls])
@@ -243,6 +245,26 @@ export function WallsLayer() {
           strokeWidth={px(1.5)} strokeOpacity={0.8} className="fill-orange-500/15 stroke-orange-500" />
       ))}
 
+      {/* The face under the pointer: a light line along its span, on its side, so the user sees which
+          face a click selects. */}
+      {interactive && hoverFace && (() => {
+        const wall = byId.get(hoverFace.wallId)
+        const { a, b } = wall ? endsOf(wall) : { a: null, b: null }
+        if (!wall || !a || !b) return null
+        const len = dist(a, b)
+        if (len < 1e-6) return null
+        const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len
+        const k = hoverFace.side === 'L' ? 1 : -1
+        const off = propsOf(wall).thicknessCm / 2 + px(2)
+        const at = (t: number) => ({ x: a.x + ux * t - uy * off * k, y: a.y + uy * t + ux * off * k })
+        const from = at(hoverFace.from), to = at(hoverFace.to)
+        return (
+          <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} pointerEvents="none" strokeLinecap="round"
+            strokeWidth={px(3)} data-hover-wall-face={hoverFace.key}
+            className="stroke-orange-500/60" />
+        )
+      })()}
+
       {/* ONE hit area per STORED wall (docs/walls-plan.md, Walls in the interface): the band, plus a
           transparent line of at least 18 px on the centre line, so a thin wall is easy to hit. It is
           drawn above the room floors and under the handles of the tool overlay. The side of the
@@ -261,7 +283,18 @@ export function WallsLayer() {
             onPointerDown={(ev) => onStoredWallDown(ev, vp, b.wallId)}
             onDoubleClick={(ev) => onStoredWallDouble(ev, vp, b.wallId)}
             onPointerEnter={() => setHovered(b.wallId)}
-            onPointerLeave={() => setHovered((h) => (h === b.wallId ? null : h))}>
+            onPointerMove={(ev) => {
+              const pick = wallFaceAtPoint(useDoc.getState().doc, b.wallId, vp.toWorld(ev.clientX, ev.clientY))
+              setHoverFace((h) => {
+                if (!pick) return h === null ? h : null
+                if (h && h.wallId === b.wallId && h.key === pick.key) return h
+                return { wallId: b.wallId, key: pick.key, side: pick.side, from: pick.face.from, to: pick.face.to }
+              })
+            }}
+            onPointerLeave={() => {
+              setHovered((h) => (h === b.wallId ? null : h))
+              setHoverFace((h) => (h && h.wallId === b.wallId ? null : h))
+            }}>
             <path d={polygonPath(b.points)} fill="transparent" stroke="none" />
             {a && end && (
               <line x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke="transparent" strokeLinecap="round"

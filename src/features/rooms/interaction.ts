@@ -23,7 +23,7 @@ import { undoToast } from '../toast'
 import { moveNode, moveRoom as roomMove, moveWall } from '../../model/v2/drag'
 import { isV2Doc } from '../../model/v2/targets'
 import { storedWallLine } from './hoverTarget'
-import { otherSide, sideOfPoint, wallFaceAt } from './wallSides'
+import { sideOfPoint, wallFaceAcross, wallFaceAt, wallFaceAtPoint } from './wallSides'
 
 export type Vp = { toWorld: (x: number, y: number) => Vec; px: (n: number) => number }
 
@@ -679,9 +679,11 @@ function roomsOnWall(doc: PlanDoc, wallId: string): Set<string> {
 /**
  * What a pointer down on a stored wall does, before the drag. Pure (no store, no pointer
  * tracking), so the rule is tested alone:
- *   - a plain click selects the WHOLE wall, with the side of the half that was clicked;
- *   - a plain click on the wall that is already selected with this side shows the OTHER side
- *     (`flip`): that is how the user picks either side at will;
+ *   - a plain click selects the FACE under the pointer (a room face, or an outside span) with its
+ *     side: a wall with 2 faces on each side gives 4 things to pick;
+ *   - a plain click on the face that is already selected shows the face directly ACROSS, on the
+ *     other side, at the same position along the wall (`flip`): that is how the user picks
+ *     either side at will. A side with no face there (a single wall) selects the side alone;
  *   - Shift + click gives the room wall group item of the room on the clicked side (the old
  *     behaviour of a room wall click, mapped through that room). `group` is null when the clicked
  *     side has no room there (outside): there is no room wall to group, so the caller selects the
@@ -701,8 +703,13 @@ export function storedWallDownAction(args: {
     const face = wallFaceAt(doc, wallId, side, at)
     return { select: null, group: face ? { kind: 'wall', roomId: face.roomId, wallStart: face.wallStart } : null, flip: false }
   }
-  const same = prev?.kind === 'storedWall' && prev.wallId === wallId && prev.side === side
-  return { select: same ? null : { kind: 'storedWall', wallId, side }, group: null, flip: same }
+  const pick = wallFaceAtPoint(doc, wallId, at)
+  const same = prev?.kind === 'storedWall' && prev.wallId === wallId
+    && (pick ? prev.face === pick.key : prev.face === undefined && prev.side === side)
+  const select: Selection = pick
+    ? { kind: 'storedWall', wallId, side: pick.side, face: pick.key }
+    : { kind: 'storedWall', wallId, side }
+  return { select: same ? null : select, group: null, flip: same }
 }
 
 /**
@@ -723,6 +730,13 @@ export function onStoredWallDown(e: ReactPointerEvent, vp: Vp, wallId: string) {
   const action = storedWallDownAction({ doc: doc0, wallId, side, prev: useUi.getState().selection, shift, at: down })
   if (action.select) useUi.getState().select(action.select)
   const selectMe = () => useUi.getState().select({ kind: 'storedWall', wallId, side })
+  // The face across the wall, at the position of the click: the second click on a face shows it.
+  const across = () => {
+    const pick = wallFaceAcross(doc0, wallId, down)
+    useUi.getState().select(pick
+      ? { kind: 'storedWall', wallId, side: pick.side, face: pick.key }
+      : { kind: 'storedWall', wallId, side: side === 'L' ? 'R' : 'L' })
+  }
   dragStoredWallOnGraph(
     e, vp,
     {
@@ -740,7 +754,7 @@ export function onStoredWallDown(e: ReactPointerEvent, vp: Vp, wallId: string) {
       // Shift + click: the room wall group of the room on the clicked side (no room there = the
       // whole wall, because there is no room wall to add to a group).
       onShiftClick: () => (action.group ? toggle(action.group) : selectMe()),
-      onPlainClick: () => { if (action.flip) useUi.getState().select({ kind: 'storedWall', wallId, side: otherSide(side) }) },
+      onPlainClick: () => { if (action.flip) across() },
     },
   )
 }
