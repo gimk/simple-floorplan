@@ -1,6 +1,7 @@
 // Sidebar "Solve" tab: everything that works on the whole plan from the measured values
-// (docs/sidebar-plan-3.md). In workflow order: Progress of each room, Settings (precision,
-// keep locked), Actions (apply to all rooms, solve whole plan), and the last report.
+// (docs/sidebar-plan-3.md). In workflow order: Progress of each room, Measure next, Actions
+// (apply to all rooms, solve whole plan), the last report, then Settings (precision, keep locked,
+// surfaces, angles) COLLAPSED at the end: it is rarely changed and pushed the work below the fold.
 // The report lives in the UI store, so it stays when the selection changes.
 import { useEffect, useRef, useState } from 'react'
 import { Crosshair, Lock, Ruler } from 'lucide-react'
@@ -121,6 +122,10 @@ function RoomAnglesRow({ angles, onChange }: { angles: RoomAngles; onChange: (a:
   )
 }
 
+/** The one action of a section: filled, so it stands apart from Cancel and the other buttons. */
+const PRIMARY_BTN =
+  'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-transparent bg-orange-700 px-2 text-sm font-medium text-white hover:bg-orange-800 disabled:opacity-50 dark:border-transparent pointer-coarse:min-h-11'
+
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 /** One progress line: "3 rooms, 7 of 18 walls measured, fit error 0,8 cm rms, 2 rooms locked." */
@@ -216,16 +221,19 @@ export function GlobalPreviewBlock({ preview, onApply, onCancel }: {
         </ul>
       )}
       <div className="flex gap-2">
-        <button type="button" data-solve-preview-apply className={BTN} onClick={onApply}>Apply</button>
+        <button type="button" data-solve-preview-apply className={PRIMARY_BTN} onClick={onApply}>Apply</button>
         <button type="button" data-solve-preview-cancel className={BTN} onClick={onCancel}>Cancel</button>
       </div>
     </div>
   )
 }
 
-/** Actions of the whole plan; disabled when no room has a verified wall length. */
+/** Actions of the whole plan; disabled when the plan has no measured value at all. */
 function Actions({ doc, initialPreview }: { doc: PlanDoc; initialPreview?: GlobalPreview | null }) {
+  // A centre ('W12-C'), a facade ('W12-E') or a diagonal is a value too: the whole-plan solve can
+  // use it, so one positive value is enough (review finding 11).
   const anyVerified = doc.rooms.some((r) => verifiedWalls(doc, r).length > 0)
+    || Object.values(doc.measurements ?? {}).some((m) => m.actualCm > 0)
   const [preview, setPreview] = useState<GlobalPreview | null>(initialPreview ?? null)
 
   // A change of the document makes the preview old: clear it (not at the first render).
@@ -245,7 +253,7 @@ function Actions({ doc, initialPreview }: { doc: PlanDoc; initialPreview?: Globa
     const done = r.reports.filter((x) => x.mode !== 'none')
     setReport(done.length
       ? `Applied to ${done.length} room${done.length === 1 ? '' : 's'}. ${done.map(describeReport).join(' ')}`
-      : 'No room has verified wall lengths.')
+      : 'The plan has no measured value yet.')
   }
 
   const globalOpts = () => ({
@@ -271,7 +279,7 @@ function Actions({ doc, initialPreview }: { doc: PlanDoc; initialPreview?: Globa
         Apply measured lengths to all rooms
       </button>
       <button
-        className={BTN}
+        className={PRIMARY_BTN}
         disabled={!anyVerified}
         onClick={showPreview}
         title="Solve all rooms together: shared walls, wall thicknesses and walls in line. Keeps all measured values; other walls move to fit. Shows a preview first."
@@ -279,7 +287,7 @@ function Actions({ doc, initialPreview }: { doc: PlanDoc; initialPreview?: Globa
         Solve whole plan
       </button>
       {preview && <GlobalPreviewBlock preview={preview} onApply={applyPreview} onCancel={() => setPreview(null)} />}
-      {!anyVerified && <EmptyHint>No verified wall length in any room. Measure a room in Measuring Mode first.</EmptyHint>}
+      {!anyVerified && <EmptyHint>No measured wall length in any room. Measure a room in Measuring Mode first.</EmptyHint>}
     </>
   )
 }
@@ -308,7 +316,21 @@ export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode, angles
         <ProgressRows rows={rows} />
       </PanelSection>
 
-      <PanelSection id="solve-settings" title="Settings">
+      <MeasureNext doc={doc} surfaceMode={mode} angles={roomAngles} />
+
+      <PanelSection id="solve-actions" title="Actions" icon={<Crosshair size={16} />}>
+        <Actions doc={doc} initialPreview={preview} />
+      </PanelSection>
+
+      {report !== null && (
+        <PanelSection title="Last result">
+          {/* A live region: a screen reader says the result when the solve writes it. */}
+          <p role="status" aria-live="polite" data-solve-report className="whitespace-pre-line text-xs text-slate-700 dark:text-slate-200">{report}</p>
+        </PanelSection>
+      )}
+
+      {/* The settings come last and stay closed: they are set once, and the work stays in view. */}
+      <PanelSection id="solve-settings" title="Settings" collapsible defaultOpen={false}>
         <FieldRow label="Precision (cm)" stacked>
           <Segmented
             ariaLabel="Precision of solved corners and thicknesses"
@@ -330,18 +352,6 @@ export function SolvePanelView({ doc, report, surfaceMode, onSurfaceMode, angles
         />
         <RoomAnglesRow angles={roomAngles} onChange={setAngles} />
       </PanelSection>
-
-      <MeasureNext doc={doc} surfaceMode={mode} angles={roomAngles} />
-
-      <PanelSection id="solve-actions" title="Actions" icon={<Crosshair size={16} />}>
-        <Actions doc={doc} initialPreview={preview} />
-      </PanelSection>
-
-      {report !== null && (
-        <PanelSection title="Last result">
-          <p data-solve-report className="whitespace-pre-line text-xs text-slate-700 dark:text-slate-200">{report}</p>
-        </PanelSection>
-      )}
     </>
   )
 }

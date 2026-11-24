@@ -12,7 +12,7 @@
 //     side L can hold one long face while side R holds three short ones.
 import { dist } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
-import type { PlanDoc, Room, StoredFace, StoredNode, StoredWall, Vec } from '../../model/types'
+import type { PlanDoc, Room, StoredFace, StoredNode, StoredWall, Vec, WallAlign } from '../../model/types'
 import { deriveWallFaces, storedWallProps } from '../../model/v2/materialize'
 import { outsideFaceSide, wallCentreCm, wallOutsidePlanCm, wallValueLabel } from '../../model/wallValues'
 
@@ -173,6 +173,45 @@ export function wallFaceAt(
 
 /** The other side of a wall: 'L' -> 'R', 'R' -> 'L'. */
 export const otherSide = (side: 'L' | 'R'): 'L' | 'R' => (side === 'L' ? 'R' : 'L')
+
+/**
+ * Side of a stored wall that the alignment line ("In line on") is drawn on, as the wall card names
+ * it: side A ('room'), the centre line ('center'), side B ('other'). Side A is side L, side B is
+ * side R, so the card and the plan use the same letters (decisions of the UI review).
+ */
+export type WallAlignSide = 'A' | 'center' | 'B'
+
+/** `align` of a stored wall in the names of the wall card: 'Side A' | 'Centre' | 'Side B'. */
+export const wallAlignSide = (align: WallAlign | undefined): WallAlignSide =>
+  align === 'center' ? 'center' : align === 'other' ? 'B' : 'A'
+
+/**
+ * Offset of the alignment line from the centre line of the wall, cm, along side L (side A). The
+ * line of side A is half a thickness on the L side of the centre line, the line of side B the
+ * other way, and the centre line is the centre.
+ */
+export function wallAlignOffsetCm(align: WallAlign | undefined, thicknessCm: number): number {
+  const side = wallAlignSide(align)
+  return side === 'A' ? thicknessCm / 2 : side === 'B' ? -thicknessCm / 2 : 0
+}
+
+/**
+ * The outside face value of a stored wall ('W12-E') when a point of the plan is on the OUTSIDE
+ * half of its facade side; null when the point is on the room side, or when no side of the wall
+ * is a facade. Measuring Mode uses it: a click on the outside half of a facade wall opens its
+ * outside face value, a click on the room half opens the field of the room face.
+ */
+export function outsideFaceLabelAtPoint(
+  doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>,
+  wallId: string,
+  p: Vec,
+): string | null {
+  const view = storedWallView(doc, wallId)
+  if (!view) return null
+  const outside = outsideFaceSide(view.wall, view.centreCm)
+  if (!outside) return null
+  return sideOfPoint(view.a, view.b, p) === outside ? wallValueLabel(wallId, 'outside') : null
+}
 
 /** Rooms of the document, sorted the way the walk-through shows them. */
 const walkOrdered = (rooms: Room[]) => [...rooms].sort((a, b) => a.walkOrder - b.walkOrder || a.code.localeCompare(b.code))

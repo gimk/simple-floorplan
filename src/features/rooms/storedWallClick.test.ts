@@ -11,7 +11,7 @@ import { emptyDoc, useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, Vec } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { removeRoom } from '../../model/v2/write'
-import { onStoredWallDouble, onStoredWallDown, storedWallDownAction } from './interaction'
+import { onStoredNodeDown, onStoredWallDouble, onStoredWallDown, storedWallDownAction } from './interaction'
 import { sideOfPoint } from './wallSides'
 
 type Handler = (ev: Record<string, unknown>) => void
@@ -197,6 +197,47 @@ describe('a click on a stored wall', () => {
     const back = useDoc.getState().doc
     expect(back.nodes!.find((n) => n.id === wall.a)!.y).toBe(a.y)
     expect(back.nodes!.find((n) => n.id === wall.b)!.y).toBe(b.y)
+  })
+})
+
+describe('an end handle of a single wall', () => {
+  it('moves the node of the handle, so the wall gets longer, in one undo step', () => {
+    const kept = removeRoom(v2(), 'B')
+    useDoc.setState({ doc: kept })
+    const wall = lonelyWall(kept)
+    const a = kept.nodes!.find((n) => n.id === wall.a)!
+    const b = kept.nodes!.find((n) => n.id === wall.b)!
+    const len = Math.hypot(b.x - a.x, b.y - a.y)
+    // The handle of end A is grabbed and moved 50 cm away from end B (Alt = no snapping).
+    onStoredNodeDown(down(a.x, a.y) as unknown as Parameters<typeof onStoredNodeDown>[0], vp, wall.a, wall.id)
+    win.fire('pointermove', {
+      pointerId: 1, clientX: a.x - ((b.x - a.x) / len) * 50, clientY: a.y - ((b.y - a.y) / len) * 50,
+      shiftKey: false, altKey: true,
+    })
+    win.fire('pointerup', { pointerId: 1 })
+    const moved = useDoc.getState().doc
+    const a2 = moved.nodes!.find((n) => n.id === wall.a)!
+    const b2 = moved.nodes!.find((n) => n.id === wall.b)!
+    // The other end did not move: the wall is 50 cm longer.
+    expect(Math.hypot(b2.x - a2.x, b2.y - a2.y) - len).toBeCloseTo(50, 1)
+    expect(b2.x).toBeCloseTo(b.x, 6)
+    expect(b2.y).toBeCloseTo(b.y, 6)
+    // One undo step for the whole drag.
+    useDoc.temporal.getState().undo()
+    expect(useDoc.getState().doc.nodes!.find((n) => n.id === wall.a)!.x).toBeCloseTo(a.x, 6)
+    expect(win.count('pointermove')).toBe(0)
+  })
+
+  it('keeps the node of a locked wall, and changes nothing', () => {
+    const kept = removeRoom(v2(), 'B')
+    const wall = lonelyWall(kept)
+    const locked = { ...kept, walls: kept.walls!.map((w) => (w.id === wall.id ? { ...w, locked: true } : w)) }
+    useDoc.setState({ doc: locked })
+    const a = locked.nodes!.find((n) => n.id === wall.a)!
+    onStoredNodeDown(down(a.x, a.y) as unknown as Parameters<typeof onStoredNodeDown>[0], vp, wall.a, wall.id)
+    win.fire('pointermove', { pointerId: 1, clientX: a.x + 60, clientY: a.y, shiftKey: false, altKey: true })
+    win.fire('pointerup', { pointerId: 1 })
+    expect(useDoc.getState().doc).toBe(locked)
   })
 })
 

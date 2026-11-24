@@ -12,6 +12,7 @@ import type { ToolId } from './model/types'
 import { BackgroundLayer, CalibrateTool } from './features/background'
 import { MakeRoomTool, RoomsLayer, RoomTools, TracesLayer, WallTool } from './features/rooms'
 import { WallsLayer } from './features/rooms/WallsLayer'
+import { RoomsOverlay } from './features/rooms/RoomsOverlay'
 import { ElementsLayer, PlaceElementTool } from './features/elements'
 import { MeasureMode, MeasurePanel } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
@@ -351,6 +352,10 @@ export default function App() {
               <RoomsLayer />
               {/* Walls drawn once from the wall graph (v2 documents), above the room floors. */}
               <WallsLayer />
+              {/* Room labels, dimensions, wall numbers, hover highlights, the side lines of the
+                  selected wall and the inline name editor: ABOVE the walls, so an opaque wall band
+                  never hides them (UI review F1). */}
+              <RoomsOverlay />
               {/* Traced walls of the Wall tool: always shown, above the rooms (phase 6). */}
               <TracesLayer />
               {layers.clashes && <ClashLayer />}
@@ -368,7 +373,7 @@ export default function App() {
             <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden="true" onClick={() => setSidebarOpen(false)} />
           )}
           <aside
-            className={`${sidebarOpen || measureDesktop ? 'flex' : 'hidden'} w-80 shrink-0 flex-col gap-3 overflow-y-auto border-l border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-40 max-md:shadow-2xl`}
+            className={`${sidebarOpen || measureDesktop ? 'flex' : 'hidden'} ${measureDesktop ? 'w-[400px]' : 'w-80'} shrink-0 flex-col gap-3 overflow-y-auto border-l border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-40 max-md:shadow-2xl`}
             aria-label="Side panel"
           >
             {measureDesktop ? <MeasurePanel /> : <Sidebar />}

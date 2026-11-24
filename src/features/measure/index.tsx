@@ -1,11 +1,11 @@
 // OWNER: measure agent. Contract: keep this export name.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowDownCircle, Eye, Monitor, Sun } from 'lucide-react'
 import { useDoc, useUi } from '../../model/store'
 import { allRequiredSurveyIds, labelRoomCode, roomsInWalkOrder } from '../../model/survey'
 import { loadDemoApartment } from './demo'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
-import { inputId } from './actions'
+import { jumpToMeasureField, startLabel, useLastFocusedLabel } from './focusField'
 import { Overview } from './Overview'
 import { FacadeSection } from './FacadeCard'
 import { DeletedRoomsOldValues, RemovedWallsOldValues } from './OldValues'
@@ -28,14 +28,9 @@ export function MeasureMode() {
   const [sunlight, setSunlight] = useStoredFlag('measure-sunlight', false)
   useWakeLock(keepOn)
 
-  const lastFocusedRef = useRef<string | null>(null)
-  useEffect(() => {
-    const onFocusIn = (e: FocusEvent) => {
-      if (e.target instanceof HTMLElement && e.target.id.startsWith('m-')) lastFocusedRef.current = e.target.id
-    }
-    document.addEventListener('focusin', onFocusIn)
-    return () => document.removeEventListener('focusin', onFocusIn)
-  }, [])
+  // Shared with the desktop panel: the jump continues after the field that had the focus last
+  // (review finding 16).
+  const lastFocused = useLastFocusedLabel()
 
   useNormalizeDoorHosts()
 
@@ -51,22 +46,12 @@ export function MeasureMode() {
   /** Focus the next empty survey input after the currently focused one (wraps around). */
   const jumpNextUnmeasured = () => {
     const active = document.activeElement
-    const activeId = active instanceof HTMLElement && active.id.startsWith('m-') ? active.id : lastFocusedRef.current
-    const current = activeId ? activeId.slice(2) : null
+    const current = startLabel(active instanceof HTMLElement ? active.id : undefined, lastFocused.current)
     const nx = nextUnmeasuredLabel(doc, labels, current)
     if (!nx) return
     const code = labelRoomCode(nx)
-    const focusTarget = () => {
-      document.getElementById(`room-${code}`)?.scrollIntoView({ block: 'start' })
-      const el = document.getElementById(inputId(nx)) as HTMLInputElement | null
-      if (el) { el.focus(); el.select(); el.scrollIntoView({ block: 'center' }) }
-    }
-    if (!document.getElementById(inputId(nx))) {
-      setFilter('all')
-      requestAnimationFrame(focusTarget)
-    } else {
-      focusTarget()
-    }
+    document.getElementById(`room-${code}`)?.scrollIntoView({ block: 'start' })
+    jumpToMeasureField(nx, () => setFilter('all'))
   }
 
   return (

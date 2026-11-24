@@ -5,7 +5,10 @@ import { demoRooms } from '../measure/demo'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { materializeRooms } from '../../model/v2/materialize'
-import { otherSide, roomWallLinks, sideOfPoint, sideOfRoomWall, storedWallView, wallFaceAt } from './wallSides'
+import {
+  otherSide, outsideFaceLabelAtPoint, roomWallLinks, sideOfPoint, sideOfRoomWall, storedWallView, wallAlignOffsetCm,
+  wallAlignSide, wallFaceAt,
+} from './wallSides'
 
 const face = (wallId: string, side: 'L' | 'R', from: number, to: number, cornerId: string): RoomFace =>
   ({ wallId, side, from, to, cornerId })
@@ -214,5 +217,50 @@ describe('roomWallLinks', () => {
     expect([...links.values()].map((l) => l.wallId)).toContain('W21')
     expect([...links.values()].find((l) => l.wallId === 'W21')!.text).toBe('facade')
     expect([...links.values()].find((l) => l.text === 'shared with Entrée')!.wallId).toBe('W6')
+  })
+})
+
+describe('"In line on" of a stored wall', () => {
+  it('names the three choices of the wall card: Side A, Centre, Side B', () => {
+    expect(wallAlignSide(undefined)).toBe('A')
+    expect(wallAlignSide('room')).toBe('A')
+    expect(wallAlignSide('center')).toBe('center')
+    expect(wallAlignSide('other')).toBe('B')
+  })
+
+  it('puts the guide half a thickness on the L side for side A, on the centre for Centre', () => {
+    expect(wallAlignOffsetCm(undefined, 12)).toBe(6)
+    expect(wallAlignOffsetCm('room', 12)).toBe(6)
+    expect(wallAlignOffsetCm('center', 12)).toBe(0)
+    expect(wallAlignOffsetCm('other', 12)).toBe(-6)
+  })
+})
+
+describe('outsideFaceLabelAtPoint', () => {
+  /** Wall W1 (0,0) -> N2 (400,0); room A on side L, the outside on side R (a facade). */
+  const facadeDoc = () =>
+    v2(nodes(), [{ ...wall('W1', 'N1', 'N2'), faces: [
+      { side: 'L', roomId: 'A', wallStart: 'a0', from: 0, to: 400 },
+      { side: 'R', from: 0, to: 400 },
+    ] }], [roomWithCycle('A', [face('W1', 'L', 0, 400, 'a0')])])
+
+  it('gives the outside value on the outside half of a facade wall', () => {
+    // y < 0 is side R: the outside of this wall.
+    expect(outsideFaceLabelAtPoint(facadeDoc(), 'W1', { x: 200, y: -5 })).toBe('W1-E')
+  })
+
+  it('gives nothing on the room half of the same wall', () => {
+    expect(outsideFaceLabelAtPoint(facadeDoc(), 'W1', { x: 200, y: 5 })).toBeNull()
+  })
+
+  it('gives nothing when both sides have a room', () => {
+    const doc = v2(nodes(), [{ ...wall('W1', 'N1', 'N2'), faces: [
+      { side: 'L', roomId: 'A', wallStart: 'a0', from: 0, to: 400 },
+      { side: 'R', roomId: 'B', wallStart: 'b0', from: 0, to: 400 },
+    ] }], [
+      roomWithCycle('A', [face('W1', 'L', 0, 400, 'a0')], 1),
+      roomWithCycle('B', [face('W1', 'R', 0, 400, 'b0')], 2),
+    ])
+    expect(outsideFaceLabelAtPoint(doc, 'W1', { x: 200, y: -5 })).toBeNull()
   })
 })

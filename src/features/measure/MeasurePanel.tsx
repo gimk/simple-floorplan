@@ -6,8 +6,8 @@ import { useDoc, useUi } from '../../model/store'
 import { allRequiredSurveyIds, labelRoomCode, roomsInWalkOrder } from '../../model/survey'
 import type { Room } from '../../model/types'
 import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged, roomProgress } from './logic'
-import { focusMeasureField, selectionRoomId } from './focusField'
-import { FilterGroup, SyncLine, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
+import { jumpToMeasureField, selectionRoomId, startLabel, useLastFocusedLabel } from './focusField'
+import { FilterGroup, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
 import { FacadeSection } from './FacadeCard'
 import { DeletedRoomsOldValues, RemovedWallsOldValues } from './OldValues'
 import { RoomCard } from './RoomCard'
@@ -31,6 +31,7 @@ export function MeasurePanel() {
   const labels = allRequiredSurveyIds(doc).map((s) => s.label)
   const { done, total } = docProgress(doc)
 
+  const lastFocused = useLastFocusedLabel()
   const [filter, setFilter] = useState<Filter>('all')
   const [keepOn, setKeepOn] = useStoredFlag('measure-keep-screen-on', true)
   useWakeLock(keepOn)
@@ -54,16 +55,20 @@ export function MeasurePanel() {
   const rooms = allRooms.filter((r) =>
     filter === 'all' ? true : filter === 'missing' ? roomHasMissing(doc, r) : roomIsFlagged(doc, r))
 
-  /** Open the room of the next empty field and focus it (wraps around). */
+  /**
+   * Open the room of the next empty field and focus it (wraps around). It continues after the
+   * field that had the focus last, and shows every room again when that field is hidden by the
+   * filter (review finding 16).
+   */
   const jumpNextUnmeasured = () => {
     const active = document.activeElement
-    const current = active instanceof HTMLElement && active.id.startsWith('m-') ? active.id.slice(2) : null
+    const current = startLabel(active instanceof HTMLElement ? active.id : undefined, lastFocused.current)
     const nx = nextUnmeasuredLabel(doc, labels, current)
     if (!nx) return
     const code = labelRoomCode(nx)
     const room = allRooms.find((r) => r.code === code)
     if (room) useUi.getState().select({ kind: 'room', roomId: room.id })
-    focusMeasureField(nx)
+    jumpToMeasureField(nx, () => setFilter('all'))
   }
 
   return (
@@ -75,13 +80,13 @@ export function MeasurePanel() {
           <button
             type="button" onMouseDown={(e) => e.preventDefault()} onClick={jumpNextUnmeasured}
             aria-label="Next unmeasured field" title="Next unmeasured"
-            className="flex min-h-9 min-w-9 flex-none items-center justify-center rounded-lg border border-slate-300 text-slate-600 dark:border-slate-600 dark:text-slate-300"
+            className="flex min-h-9 min-w-9 flex-none items-center justify-center rounded-lg border border-slate-300 text-slate-600 pointer-coarse:min-h-11 pointer-coarse:min-w-11 dark:border-slate-600 dark:text-slate-300"
           ><ArrowDownCircle size={17} /></button>
           {/* Keep screen on still helps on a laptop or tablet. The sunlight mode is for phones outdoors, so it is not here. */}
           <button
             type="button" onClick={() => setKeepOn(!keepOn)}
             aria-pressed={keepOn} aria-label="Keep screen on" title="Keep screen on"
-            className={`flex min-h-9 min-w-9 flex-none items-center justify-center rounded-lg border ${keepOn ? 'border-green-700 text-green-700 dark:border-green-400 dark:text-green-400' : 'border-slate-300 text-slate-400 dark:border-slate-600'}`}
+            className={`flex min-h-9 min-w-9 flex-none items-center justify-center rounded-lg border pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${keepOn ? 'border-emerald-700 text-emerald-700 dark:border-emerald-400 dark:text-emerald-400' : 'border-slate-300 text-slate-400 dark:border-slate-600'}`}
           ><Eye size={16} /></button>
         </div>
         <div
@@ -91,7 +96,7 @@ export function MeasurePanel() {
           <div className="h-full bg-green-600 transition-[width] motion-reduce:transition-none dark:bg-green-400" style={{ width: `${total ? (100 * done) / total : 0}%` }} />
         </div>
         <div className="flex flex-wrap items-center gap-1 sm:gap-2">
-          <SyncLine />
+          {/* No SyncLine here: the app header of the desktop already shows one (review finding 17). */}
           <FilterGroup filter={filter} onChange={setFilter} />
         </div>
       </div>

@@ -23,6 +23,7 @@ import {
 import { useAnnotSel } from '../annotations/selection'
 import { renovationSummary } from '../renovation/logic'
 import { undoToast } from '../toast'
+import { DeletedRoomsOldValues, RemovedWallsOldValues } from '../measure/OldValues'
 import { conversionToShow, useConversionNotice } from './conversion'
 import { apartmentTotals, compareReference, SOURCE_LABELS, SOURCE_VALUES, type ComparisonLevel } from './logic'
 import { WallConversionSection } from './WallConversionSection'
@@ -33,6 +34,14 @@ const LEVEL_CLASS: Record<ComparisonLevel, string> = {
   warn: 'text-amber-700 dark:text-amber-400',
   bad: 'text-red-600 dark:text-red-400',
   unknown: 'text-slate-500 dark:text-slate-400',
+}
+
+/** Word of each level: the colour alone says nothing to a colour-blind user (review finding 28). */
+const LEVEL_TAG: Record<ComparisonLevel, string | null> = {
+  ok: 'OK',
+  warn: 'Check',
+  bad: 'Large diff',
+  unknown: null,
 }
 
 const UPDATE = (fn: (d: PlanDoc) => PlanDoc) => useDoc.getState().update(fn)
@@ -101,7 +110,14 @@ function ReferenceRow({ doc, reference }: { doc: PlanDoc; reference: SurfaceRefe
           }}
         />
       </div>
-      <p className={`text-xs font-medium ${LEVEL_CLASS[cmp.level]}`}>{diff}</p>
+      <p className={`flex items-center gap-1.5 text-xs font-medium ${LEVEL_CLASS[cmp.level]}`}>
+        {LEVEL_TAG[cmp.level] && (
+          <span className="shrink-0 rounded bg-black/5 px-1 py-0.5 text-[10px] font-semibold uppercase dark:bg-white/10">
+            {LEVEL_TAG[cmp.level]}
+          </span>
+        )}
+        <span className="min-w-0">{diff}</span>
+      </p>
       {ref.note && <p className={MUTED}>{ref.note}</p>}
     </li>
   )
@@ -264,6 +280,11 @@ export function ApartmentCard({ doc, selection }: { doc: PlanDoc; selection: Sel
       )}
 
       {conversion && <WallConversionSection conversion={conversion} />}
+
+      {/* Values that left the plan: old values of deleted rooms and of removed walls, in Edit Mode
+          too (decision (e)). Nothing when there are none. */}
+      <RemovedWallsOldValues doc={doc} />
+      <DeletedRoomsOldValues doc={doc} />
 
       <FieldRow label="Default ceiling" htmlFor="apt-default-ceiling">
         <NumberField

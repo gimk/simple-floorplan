@@ -32,7 +32,7 @@ it('renders the demo apartment with values and items', () => {
   expect(rooms).toHaveLength(12)
   const html = renderToString(<><Overview doc={doc} rooms={rooms} />{rooms.map((r) => <RoomCard key={r.id} doc={doc} room={r} allLabels={labels} />)}</>)
   expect(html).toContain('SE-1 · 440')
-  expect(html).toContain('verified')
+  expect(html).toContain('measured')
   expect(html).toContain('Chambre 3')
   expect(html).toContain('plan ')
   expect(html).toContain('Pins &amp; photos')

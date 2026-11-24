@@ -186,13 +186,25 @@ describe('RoomsPanelView', () => {
     expect(html).toMatch(/id="wall-length"[^>]*disabled/)
   })
 
-  it('marks a verified length in green', () => {
+  it('marks a measured length in green', () => {
     const html = render({ kind: 'room', roomId: 'r1' }, doc({
       measurements: { 'SE-2': { label: 'SE-2', actualCm: 305, updatedAt: '' } },
     }))
     expect(html).toContain('305')
-    expect(html).toContain('aria-label="verified"')
+    expect(html).toContain('aria-label="measured"')
     expect(html).toContain('text-emerald-700')
+  })
+
+  it('shows the old values of the room in Edit Mode too', () => {
+    // A value that left the room when a wall changed (decision (e)).
+    const html = render({ kind: 'room', roomId: 'r1' }, doc({
+      oldMeasurements: [{
+        label: 'SE-2', actualCm: 302, updatedAt: '', roomCode: 'SE', reason: 'wall-split', droppedAt: '2026-11-24T10:00:00.000Z',
+      }],
+    }))
+    // react-dom/server separates the count from its text: check the opening words.
+    expect(html).toContain('Old values (')
+    expect(html).toContain('302')
   })
 
   it('keeps the vertex texts and the hole text', () => {

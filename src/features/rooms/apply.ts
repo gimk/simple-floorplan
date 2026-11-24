@@ -48,7 +48,7 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
   const room = doc.rooms.find((r) => r.id === roomId)
   if (!room) return { doc, report: { ...none({ id: roomId, code: '?' } as Room, 'Room not found') } }
   const ver = verifiedWalls(doc, room)
-  if (!ver.length) return { doc, report: none(room, 'No verified wall lengths') }
+  if (!ver.length) return { doc, report: none(room, 'No measured wall lengths') }
 
   const measured: (number | null)[] = room.vertices.map(() => null)
   for (const v of ver) measured[v.index] = v.cm

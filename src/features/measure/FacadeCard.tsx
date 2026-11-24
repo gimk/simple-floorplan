@@ -35,11 +35,11 @@ function FacadeField({ doc, sid }: { doc: PlanDoc; sid: WallSurveyId }) {
     >
       <label
         htmlFor={inputId(sid.label)}
-        className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-green-700 dark:text-green-400' : 'text-slate-600 dark:text-slate-300'}`}
+        className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}`}
       >
         <span className="truncate" title={`${sid.label} · outside face`}>{sid.label}</span>
         {verified
-          ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> verified</span>
+          ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> measured</span>
           : <span className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">outside face</span>}
       </label>
       <NumField
@@ -69,7 +69,7 @@ export function FacadeSection({ doc }: { doc: PlanDoc }) {
   if (!walls.length) return null
   return (
     <details open className="rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-[#1b2128]">
-      <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">
+      <summary className="flex min-h-9 cursor-pointer items-center text-[13px] font-semibold text-slate-600 pointer-coarse:min-h-11 dark:text-slate-300">
         Facade · {done}/{walls.length}
       </summary>
       <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">

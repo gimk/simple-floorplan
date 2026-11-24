@@ -7,6 +7,7 @@ import { emptyDoc, useDoc, useUi, type Layers } from '../../model/store'
 import type { PlanDoc, Room } from '../../model/types'
 import { useSidebar, type SidebarTab } from '../../shell/sidebar/store'
 import { RoomsLayer } from './RoomsLayer'
+import { RoomsOverlay } from './RoomsOverlay'
 import { measuredText } from '../../model/precision'
 import { convertToV2 } from '../../model/v2/convert'
 
@@ -59,8 +60,10 @@ const setup = (over: Over = {}) => {
   })
   applyState(useSidebar, { tab: over.tab ?? 'inspect' })
   applyState(useDoc, { doc: doc(over.rooms ?? [cuisine()]) })
-  // Inside a Viewport, exactly like the app: the zoom and `px()` come from its context.
-  return renderToString(<Viewport><RoomsLayer /></Viewport>)
+  // Inside a Viewport, exactly like the app: the zoom and `px()` come from its context. The app
+  // draws the overlay AFTER the walls (UI review F1), so the labels, the dimensions, the badges and
+  // the hover highlights are in RoomsOverlay: the two layers of the rooms are rendered together.
+  return renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
 }
 
 beforeEach(() => {
@@ -180,7 +183,7 @@ describe('wall numbers on the plan (layer auto)', () => {
     expect(none).not.toContain('fill-orange-500 stroke-orange-700')
     // Wall 2 starts at cu-v1: its badge is the only orange one.
     applyState(useUi, { selection: { kind: 'wall', roomId: 'r-cu', wallStart: 'cu-v1' } })
-    const html = renderToString(<Viewport><RoomsLayer /></Viewport>)
+    const html = renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
     expect(html).toContain('data-wall-number="2"')
     expect(html.match(/fill-orange-500 stroke-orange-700/g)).toHaveLength(1)
   })
@@ -224,7 +227,7 @@ describe('Measuring Mode on the canvas', () => {
     // features/rooms/WallsLayer.tsx and a wall must not be selected by two systems.
     setup({ mode: 'edit' })
     applyState(useDoc, { doc: convertToV2(doc([cuisine()])).doc })
-    const html = renderToString(<Viewport><RoomsLayer /></Viewport>)
+    const html = renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
     expect(html).not.toContain('data-wall-type')
     expect(html).not.toContain('stroke="transparent"')
     // The room floors and their labels are still there.

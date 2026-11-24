@@ -16,10 +16,15 @@ type Props = {
   onEnter?: () => void
   /** Show the number from the store instead of nothing when it is 0 (default: show 0). */
   hideZero?: boolean
+  /**
+   * Small field of a sidebar card (36 px high, small text), so the big fields of Measuring Mode
+   * and the small fields of the Inspect cards look the same (review finding 21).
+   */
+  compact?: boolean
 }
 
 /** Number input in cm: comma or dot, inline validation, keeps the typed text while focused. */
-export function NumField({ id, value, onValue, placeholder, ariaLabel, allowZero, enterKeyHint = 'next', onFocus, onBlur, onEnter, hideZero }: Props) {
+export function NumField({ id, value, onValue, placeholder, ariaLabel, allowZero, enterKeyHint = 'next', onFocus, onBlur, onEnter, hideZero, compact }: Props) {
   const [draft, setDraft] = useState<string | null>(null)
   const [bad, setBad] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
@@ -27,7 +32,7 @@ export function NumField({ id, value, onValue, placeholder, ariaLabel, allowZero
   const errId = id ? `${id}-err` : undefined
   return (
     <div className="min-w-0">
-      <div className={`flex items-center rounded-lg border bg-white focus-within:ring-2 dark:bg-[#12161b] ${bad ? 'border-red-500 ring-red-500/30' : 'border-slate-300 focus-within:border-orange-600 focus-within:ring-orange-600/25 dark:border-slate-600 dark:focus-within:border-orange-400'}`}>
+      <div className={`flex items-center border bg-white focus-within:ring-2 dark:bg-[#12161b] ${compact ? 'rounded-md' : 'rounded-lg'} ${bad ? 'border-red-500 ring-red-500/30' : 'border-slate-300 focus-within:border-orange-600 focus-within:ring-orange-600/25 dark:border-slate-600 dark:focus-within:border-orange-400'}`}>
         <input
           ref={ref}
           id={id}
@@ -40,7 +45,7 @@ export function NumField({ id, value, onValue, placeholder, ariaLabel, allowZero
           aria-describedby={bad ? errId : undefined}
           placeholder={placeholder}
           value={draft ?? shown}
-          className="min-h-11 min-w-0 flex-1 bg-transparent px-3 font-mono text-lg tabular-nums outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500"
+          className={`${compact ? 'min-h-9 px-2 text-sm' : 'min-h-11 px-2 text-lg'} min-w-0 flex-1 bg-transparent font-mono tabular-nums outline-none placeholder:text-slate-400 dark:placeholder:text-slate-500 pointer-coarse:min-h-11`}
           onFocus={() => { setDraft(shown); onFocus?.() }}
           onBlur={() => { setDraft(null); setBad(false); onBlur?.() }}
           onChange={(e) => {
@@ -59,7 +64,7 @@ export function NumField({ id, value, onValue, placeholder, ariaLabel, allowZero
             if (onEnter) onEnter(); else ref.current?.blur()
           }}
         />
-        <span className="pr-3 text-sm text-slate-500 dark:text-slate-400">cm</span>
+        <span className={`${compact ? 'pr-2 text-xs' : 'pr-2 text-sm'} text-slate-500 dark:text-slate-400`}>cm</span>
       </div>
       {bad && <p id={errId} role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">Type a number in cm, for example 412 or 412,5.</p>}
     </div>

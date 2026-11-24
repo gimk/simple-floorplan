@@ -44,14 +44,20 @@ const verifiedDoc = () => doc({
 
 
 describe('SolvePanel sections', () => {
-  it('renders Progress, Settings and Actions in workflow order', () => {
-    const html = render(verifiedDoc())
+  it('renders Progress, Measure next, Actions, Last result and Settings in workflow order', () => {
+    const html = render(verifiedDoc(), 'Solved 1 rooms together: fit error 0,4 cm rms.')
     const progress = html.indexOf('aria-label="Progress"')
-    const settings = html.indexOf('aria-label="Settings"')
+    const measureNext = html.indexOf('aria-label="Measure next"')
     const actions = html.indexOf('aria-label="Actions"')
+    const lastResult = html.indexOf('aria-label="Last result"')
+    const settings = html.indexOf('aria-label="Settings"')
     expect(progress).toBeGreaterThanOrEqual(0)
-    expect(settings).toBeGreaterThan(progress)
-    expect(actions).toBeGreaterThan(settings)
+    expect(measureNext).toBeGreaterThan(progress)
+    expect(actions).toBeGreaterThan(measureNext)
+    expect(lastResult).toBeGreaterThan(actions)
+    // The settings are set once: they come last, and they stay closed (review finding 10).
+    expect(settings).toBeGreaterThan(lastResult)
+    expect(html).toContain('aria-expanded="false"')
   })
 
   it('shows no Last result section before the first run', () => {
@@ -118,14 +124,14 @@ describe('SolvePanel actions', () => {
     const html = render(doc())
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Apply measured lengths to all rooms<\/button>/)
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Solve whole plan<\/button>/)
-    expect(html).toContain('No verified wall length in any room.')
+    expect(html).toContain('No measured wall length in any room.')
   })
 
   it('enables the actions once a wall is verified, and keeps the solve hint', () => {
     const html = render(verifiedDoc())
     expect(html).toContain('>Apply measured lengths to all rooms</button>')
     expect(html).toContain('>Solve whole plan</button>')
-    expect(html).not.toContain('No verified wall length in any room.')
+    expect(html).not.toContain('No measured wall length in any room.')
     expect(html).toContain('Solve all rooms together: shared walls, wall thicknesses and walls in line.')
   })
 })
@@ -135,7 +141,7 @@ describe('SolvePanel (wired to the stores)', () => {
     const html = renderToString(<SolvePanel />)
     expect(html).toContain('aria-label="Progress"')
     expect(html).toContain('No room in the plan yet.')
-    expect(html).toContain('No verified wall length in any room.')
+    expect(html).toContain('No measured wall length in any room.')
   })
 })
 
@@ -184,7 +190,8 @@ describe('SolvePanel measure next', () => {
     expect(section).toBeGreaterThan(0)
     expect(section).toBeLessThan(html.indexOf('aria-label="Actions"'))
     expect(html).toContain('data-measure-suggestion="SE-1"')
-    expect(html).toContain('aria-label="Show on plan"')
+    // Each button names its row (review finding 12).
+    expect(html).toContain('aria-label="Show SE-1 on plan"')
     expect(html).toContain('position only from the drawing')
     expect(html).toContain('data-measure-sd="SE-1"')
     expect(html).toContain('141,5')
@@ -203,6 +210,8 @@ describe('SolvePanel measure next', () => {
     const html = render(d)
     expect(html).toContain('data-measure-remeasure')
     expect(html).toContain('Measure again')
+    // A line to measure again also goes to the plan, with a name of its own (review finding 12).
+    expect(html).toMatch(/aria-label="Show SE-\d+ on plan"/)
     expect(html).toContain('text-amber-700')
     expect(html).toContain('plan says')
     // The remeasure lines come before the suggestions.

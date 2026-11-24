@@ -4,7 +4,7 @@ import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Viewport } from '../../canvas/Viewport'
 import { emptyDoc, useDoc, useUi, type Layers } from '../../model/store'
-import type { PlanDoc, Room, StoredWall } from '../../model/types'
+import type { PlanDoc, Room, Selection, StoredWall } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { removeRoom } from '../../model/v2/write'
 import { WallsLayer } from './WallsLayer'
@@ -45,14 +45,17 @@ const rooms = (): Room[] => [
 const v2 = (): PlanDoc => convertToV2({ ...emptyDoc(), rooms: rooms() }).doc
 
 /** Draw the walls layer at zoom 1 (1 cm per screen px). */
-const setup = (doc: PlanDoc, over: { mode?: 'edit' | 'measure'; tool?: 'select' | 'pan' } = {}) => {
+const setup = (
+  doc: PlanDoc,
+  over: { mode?: 'edit' | 'measure'; tool?: 'select' | 'pan'; selection?: Selection; zoom?: number } = {},
+) => {
   applyState(useUi, {
     layers: BASE_LAYERS,
     mode: over.mode ?? 'edit',
     tool: over.tool ?? 'select',
-    selection: null,
+    selection: over.selection ?? null,
     multi: [],
-    view: { x: 0, y: 0, zoom: 1 },
+    view: { x: 0, y: 0, zoom: over.zoom ?? 1 },
   })
   applyState(useDoc, { doc })
   return renderToString(<Viewport><WallsLayer /></Viewport>)
@@ -99,8 +102,79 @@ describe('WallsLayer hit areas', () => {
     expect(hitIds(setup(v1))).toHaveLength(0)
   })
 
-  it('draws no hit area in Measuring Mode, and none when the select tool is off', () => {
+  it('draws no EDIT hit area in Measuring Mode, and none when the select tool is off', () => {
     expect(hitIds(setup(v2(), { mode: 'measure' }))).toHaveLength(0)
     expect(hitIds(setup(v2(), { tool: 'pan' }))).toHaveLength(0)
+  })
+
+  it('has a hit area of at least 18 px on the centre line, and a spoken label', () => {
+    const doc = v2()
+    const html = setup(doc)
+    // The least width of the transparent centre line (18 px at zoom 1), also for a thin wall.
+    expect(html).toContain('stroke-width="18"')
+    for (const w of doc.walls!) expect(html).toContain(`aria-label="Wall ${w.id}, partition`)
+  })
+
+  it('shows a wall that does not move as locked', () => {
+    const doc = v2()
+    const wall = doc.walls![0]
+    const locked = { ...doc, walls: doc.walls!.map((w) => (w.id === wall.id ? { ...w, locked: true } : w)) }
+    const html = setup(locked)
+    expect(html).toContain('not-allowed')
+    expect(html).toContain(', locked"')
+  })
+})
+
+describe('Measuring Mode: one hit area per stored wall', () => {
+  it('picks a wall once, whatever the number of rooms that use it', () => {
+    const doc = v2()
+    const html = setup(doc, { mode: 'measure' })
+    const ids = [...html.matchAll(/data-measure-wall-hit="([^"]+)"/g)].map((m) => m[1])
+    expect(ids).toEqual(doc.walls!.map((w) => w.id))
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('draws no measure hit area when the document is a v1 one', () => {
+    expect(setup({ ...emptyDoc(), rooms: rooms() }, { mode: 'measure' })).not.toContain('data-measure-wall-hit')
+  })
+})
+
+describe('a single wall on the plan', () => {
+  it('shows its length and its lock, like a room wall', () => {
+    const kept = removeRoom(v2(), 'B')
+    const lonely = kept.walls!.filter((w) => w.faces.every((f) => f.roomId === undefined))
+    expect(lonely.length).toBeGreaterThan(0)
+    const html = setup(kept)
+    for (const w of lonely) {
+      expect(html).toContain(`data-single-wall-length="${w.id}"`)
+      // A wall that a room uses keeps the dimension text of its face instead.
+    }
+    const shared = kept.walls!.filter((w) => w.faces.some((f) => f.roomId !== undefined))
+    for (const w of shared) expect(html).not.toContain(`data-single-wall-length="${w.id}"`)
+  })
+
+  it('hides the length of a single wall that is too short on screen', () => {
+    const kept = removeRoom(v2(), 'B')
+    const lonely = kept.walls!.filter((w) => w.faces.every((f) => f.roomId === undefined))
+    // 400 cm at zoom 0.02 = 8 screen px, below the 24 px rule.
+    expect(setup(kept, { zoom: 0.02 })).not.toContain(`data-single-wall-length="${lonely[0].id}"`)
+  })
+
+  it('shows two end handles only when a single wall is selected', () => {
+    const kept = removeRoom(v2(), 'B')
+    const lonely = kept.walls!.filter((w) => w.faces.every((f) => f.roomId === undefined))
+    const none = setup(kept)
+    expect(none).not.toContain('data-wall-end-handle')
+    const selected = setup(kept, { selection: { kind: 'storedWall', wallId: lonely[0].id, side: 'L' } })
+    expect(selected).toContain(`data-wall-end-handle="${lonely[0].id}-a"`)
+    expect(selected).toContain(`data-wall-end-handle="${lonely[0].id}-b"`)
+    expect(selected).toContain(`aria-label="End A of wall ${lonely[0].id}"`)
+  })
+
+  it('shows no end handle for the wall of a room: it keeps its room faces', () => {
+    const doc = v2()
+    const wall = doc.walls!.find((w) => w.faces.some((f) => f.roomId !== undefined))!
+    const html = setup(doc, { selection: { kind: 'storedWall', wallId: wall.id, side: 'L' } })
+    expect(html).not.toContain('data-wall-end-handle')
   })
 })

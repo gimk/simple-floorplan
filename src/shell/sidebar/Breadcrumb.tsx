@@ -67,7 +67,7 @@ export function Breadcrumb() {
               onClick={() => applyCrumb(crumb.select)}
               aria-current={current ? 'page' : undefined}
               title={crumb.text}
-              className={`max-w-40 min-w-0 truncate rounded px-1 text-sm hover:bg-black/5 hover:underline dark:hover:bg-white/10 ${
+              className={`inline-flex min-h-9 max-w-40 min-w-0 items-center truncate rounded px-1 text-sm hover:bg-black/5 hover:underline pointer-coarse:min-h-11 dark:hover:bg-white/10 ${
                 current ? 'font-semibold text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300'
               }`}
             >

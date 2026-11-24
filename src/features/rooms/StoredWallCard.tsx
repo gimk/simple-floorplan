@@ -1,36 +1,41 @@
 // Inspect card for ONE stored wall of a v2 document (docs/walls-plan.md, "Walls in the
 // interface"): the wall is one object with two sides, so the card shows the wall once and then
 // what each side sees.
-//   Wall W12      : type, renovation, thickness, line, lock, length (centre) and its value W12-C
+//   Wall W12      : type, renovation, thickness, 'In line on' (Side A | Centre | Side B, the side
+//                   of the wall; the stored value is relative to a room face, see cards.ts),
+//                   lock, length (centre) and its value W12-C. A single wall (no room sees it)
+//                   also has its DRAWN length: the field moves node b along the wall, one undo step.
 //   Side A / B    : the faces of that side in order along the wall (room code + name, its label
 //                   'EN-3', the value field, 'Measured x · Solved y'), and 'Outside' for a span
 //                   that no room covers (with the facade value W12-E when the whole side is out).
 //                   The header of each side is a BUTTON (`aria-pressed`): it selects that side, so
-//                   the plan highlights it. A single wall (no room at all) shows 'Outside' on both
-//                   sides and can be deleted.
+//                   the plan highlights it, and the active side carries a 'Selected' tag (a word,
+//                   not colour only). A single wall (no room at all) shows 'Outside' on both sides.
 //   Doors and windows on this wall : the elements whose `wallId` is this wall.
-//   Delete wall   : refused while a room uses the wall (a toast names the rooms).
+//   Delete wall   : the trash button of the header (one delete per card). It is refused while a
+//                   room uses the wall (a toast names the rooms).
 // The side the user clicked on the canvas is highlighted. All lengths are cm, one undo step per
 // edit of the wall itself; a value is not an undo step (same as Measuring Mode).
 import { useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { Check, DoorOpen, Ruler, Trash2 } from 'lucide-react'
-import { fmtCm } from '../../model/geometry'
+import { dist, fmtCm } from '../../model/geometry'
 import { useUi } from '../../model/store'
-import type { PlanDoc, WallAlign, WallStatus, WallType } from '../../model/types'
+import type { PlanDoc, WallStatus, WallType } from '../../model/types'
 import { targetOfLabel } from '../../model/v2/targets'
 import { wallValueLabel } from '../../model/wallValues'
 import { setMeasurement } from '../measure/actions'
 import { NumField } from '../measure/NumField'
 import {
-  BTN, ERROR, EmptyHint, FieldRow, HEADING, IconButton, MUTED, NumberField, PANEL_CARD, PanelSection, SECTION_PAD,
+  ERROR, EmptyHint, FieldRow, HEADING, IconButton, MUTED, NumberField, PANEL_CARD, PanelSection, SECTION_PAD,
   Segmented, SwitchRow,
 } from '../../shell/panel'
 import { toast } from '../toast'
 import { solveGlobal } from './globalSolve'
+import type { AlignSideChoice } from './cards'
 import {
-  deleteStoredWall, patchStoredWall, refusedDeleteText, setStoredWallSide, structuralWarning, WALL_ALIGNS, WALL_STATUSES,
-  WALL_TYPES,
+  alignOfSideChoice, alignSideChoice, deleteStoredWall, patchStoredWall, refusedDeleteText, setStoredWallSide,
+  setStoredWallLength, structuralWarning, update, wallOwnerSide, WALL_ALIGN_SIDES, WALL_STATUSES, WALL_TYPES,
 } from './cards'
 import { ElementList } from './ElementList'
 import { KIND_LABEL, VARIANT_LABEL } from '../elements/geometry'
@@ -90,6 +95,12 @@ export function StoredWallCard({ doc, wallId, side }: {
   const { wall, props } = view
   const centreLabel = wallValueLabel(wall.id, 'centre')
   const centreValue = doc.measurements[centreLabel]?.actualCm ?? null
+  // "In line on" is relative to a ROOM face (the room the solver takes first), the card shows the
+  // side of the wall (Side A = side L, Side B = side R).
+  const owner = wallOwnerSide(doc, wall.id)
+  // A wall that no room sees (single wall, or left by a deleted room): its drawn length is editable.
+  const single = view.rooms.length === 0
+  const drawnCm = Math.round(dist(view.a, view.b) * 10) / 10
 
   /** 'Measured x · Solved y' under a field, when the value exists. */
   const solvedLine = (label: string, measuredCm: number) => {
@@ -125,7 +136,9 @@ export function StoredWallCard({ doc, wallId, side }: {
                 key={r.roomId}
                 type="button"
                 onClick={() => select({ kind: 'room', roomId: r.roomId })}
-                className="rounded px-1 font-mono text-xs underline hover:no-underline"
+                aria-label={`Select room ${r.name} (${r.code})`}
+                title={`${r.code} — ${r.name}`}
+                className="inline-flex min-h-9 items-center rounded px-2 font-mono text-xs underline hover:no-underline pointer-coarse:min-h-11"
               >
                 {r.code}
               </button>
@@ -169,12 +182,32 @@ export function StoredWallCard({ doc, wallId, side }: {
         </FieldRow>
         <FieldRow label="In line on" stacked>
           <Segmented
-            ariaLabel="Line of the wall that lines up with the next walls"
-            options={WALL_ALIGNS}
-            value={props.align ?? 'room'}
-            onChange={(a) => patchStoredWall(wall.id, { align: a as WallAlign })}
+            ariaLabel="Side of the wall that lines up with the walls that continue it"
+            options={WALL_ALIGN_SIDES}
+            value={alignSideChoice(props.align, owner)}
+            onChange={(choice) =>
+              patchStoredWall(wall.id, { align: alignOfSideChoice(choice as AlignSideChoice, owner) })
+            }
           />
         </FieldRow>
+        {single && (
+          // A single wall (no room sees it): the drawn length is the only length it has, so the
+          // card moves its far end (node b) along the wall, in one undo step.
+          <FieldRow label="Drawn length" htmlFor={`stored-wall-${wall.id}-drawn`} hint="moves the far end">
+            <NumberField
+              id={`stored-wall-${wall.id}-drawn`}
+              name="wallDrawnLength"
+              unit="cm"
+              value={drawnCm}
+              min={1}
+              onCommit={(v) => {
+                if (v === null || !(v > 0)) return false
+                update((d) => setStoredWallLength(d, wall.id, v))
+                return true
+              }}
+            />
+          </FieldRow>
+        )}
         {/* Length of the wall, on its CENTRE line: the value 'W12-C' read on the architect plan. */}
         <FieldRow label="Length (centre)" htmlFor={`stored-wall-${wall.id}-centre`} hint={`${centreLabel} · node to node`}>
           <NumberField
@@ -184,7 +217,6 @@ export function StoredWallCard({ doc, wallId, side }: {
             value={centreValue}
             placeholder={fmtCm(view.centreCm)}
             min={1}
-            disabled={!!props.locked}
             onCommit={(v) => {
               if (v !== null && !(v > 0)) return false
               setMeasurement(centreLabel, v, 'plan', targetOfLabel(doc, centreLabel))
@@ -221,16 +253,6 @@ export function StoredWallCard({ doc, wallId, side }: {
             : <EmptyHint>No door, window or fixture on this wall.</EmptyHint>
         })()}
       </PanelSection>
-
-      <div className="flex">
-        <button
-          type="button"
-          onClick={removeWallButton}
-          className={`${BTN} flex-1 border-red-600/40 text-red-700 hover:bg-red-500/10 dark:border-red-400/40 dark:text-red-300`}
-        >
-          <Trash2 size={14} /> Delete wall
-        </button>
-      </div>
     </>
   )
 }
@@ -265,9 +287,12 @@ function SideSection({ wallId, doc, view, active, measureSource, solvedLine }: {
           className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11"
         >
           <span className={`truncate ${HEADING}`}>Side {view.letter}</span>
+          {active && (
+            // A word, not colour only: the side the user clicked is named on the card.
+            <span className="shrink-0 rounded bg-orange-700 px-1.5 py-0.5 text-[10px] font-medium text-white">Selected</span>
+          )}
         </button>
       </div>
-      {view.outside && <p className={`mt-1 ${MUTED}`}>No room on this side.</p>}
       <ul className="mt-2 flex flex-col gap-2" data-wall-side={view.side} data-wall-side-active={active ? 'true' : 'false'}>
         {view.faces.length === 0 && (
           // A side that no room covers and that has no face at all: a single wall (the Wall tool,
@@ -315,17 +340,19 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
           type="button"
           onClick={onSelectRoom}
           title={`Room ${face.name}`}
-          className="min-w-0 flex-1 truncate rounded text-left text-xs hover:underline"
+          aria-label={`Select room ${face.name} (${face.code})`}
+          className="inline-flex min-h-9 min-w-0 flex-1 items-center truncate rounded text-left text-xs hover:underline pointer-coarse:min-h-11"
         >
           <span className="font-mono font-semibold">{face.code}</span> · {face.name}
         </button>
-        <span className={`shrink-0 font-mono text-[11px] ${verified ? 'text-green-700 dark:text-green-400' : MUTED}`}>
+        <span className={`shrink-0 font-mono text-[11px] ${verified ? 'text-emerald-700 dark:text-emerald-400' : MUTED}`}>
           {verified && <Check size={11} role="img" aria-label="measured" className="mr-0.5 inline align-[-1px]" />}
           {face.label}
         </span>
       </div>
       <NumField
         id={`stored-wall-${face.label}`}
+        compact
         value={face.measuredCm ?? undefined}
         placeholder={face.plannedCm != null ? fmtCm(face.plannedCm) : undefined}
         ariaLabel={`Measured ${face.label} (${face.code}, side ${active})`}
@@ -359,6 +386,7 @@ function OutsideRow({ doc, face, view, measureSource, solvedLine }: {
         <>
           <NumField
             id={`stored-wall-${label}`}
+            compact
             value={value ?? undefined}
             placeholder={view.facadePlannedCm != null ? fmtCm(view.facadePlannedCm) : undefined}
             ariaLabel={`Measured ${label} (outside face)`}

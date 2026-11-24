@@ -91,9 +91,11 @@ function scrollToSection(): void {
 
 /**
  * "Details" of the toast: clear the selection so the Apartment card is shown, open the Inspect
- * tab and expand the report.
+ * tab and expand the report. It also leaves Measuring Mode, where the card is not on the screen
+ * (review finding 8).
  */
 export function openConversionSection(): void {
+  useUi.getState().setMode('edit')
   useUi.getState().select(null)
   useSidebar.getState().setTab('inspect')
   useSidebar.getState().setSection(CONVERSION_SECTION_ID, true)

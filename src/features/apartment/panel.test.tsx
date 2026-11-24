@@ -49,6 +49,30 @@ describe('ApartmentCard', () => {
     expect(html).toContain('aria-label="Default ceiling height in centimeters"')
   })
 
+  it('shows the old values of deleted rooms and of removed walls in Edit Mode too', () => {
+    // Decision (e): the values that left the plan are visible without entering Measuring Mode.
+    const html = render({
+      ...baseDoc,
+      oldMeasurements: [
+        { label: 'BA-2', actualCm: 305, updatedAt: '', roomCode: 'BA', reason: 'room-deleted', droppedAt: '2026-11-24T10:00:00.000Z' },
+        { label: 'W12-C', actualCm: 424, updatedAt: '', roomCode: '', reason: 'wall-removed', droppedAt: '2026-11-24T10:00:00.000Z' },
+      ],
+      rooms: baseDoc.rooms.filter((r) => r.code !== 'BA'),
+    })
+    expect(html).toContain('Old values of deleted rooms (')
+    expect(html).toContain('Old values of removed walls (')
+    expect(html).toContain('W12-C')
+  })
+
+  it('names the level of a reference comparison in words, next to the colour', () => {
+    // Colour alone says nothing to a colour-blind user (review finding 28).
+    const html = render({
+      ...baseDoc,
+      apartment: { defaultCeilingCm: 250, references: [{ id: 'r1', source: 'carrez', surfaceM2: 16.82 }] },
+    })
+    expect(html).toContain('>OK<')
+  })
+
   it('compares each reference with the plan and colours the difference', () => {
     const html = render({
       ...baseDoc,

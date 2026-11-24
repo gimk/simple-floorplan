@@ -27,6 +27,7 @@ import { undoToast } from '../toast'
 import { applyMeasuredNear, describeReport, setVerifiedLocked, verifiedAllLocked, verifiedWalls } from './apply'
 import { fmtDiffCm, patchRoom, update, type ActiveHole } from './cards'
 import { ElementList } from './ElementList'
+import { RoomOldValues } from '../measure/OldValues'
 import { fitCheck } from './fit'
 import { deleteRoom, setRoomCode } from './ops'
 import { elementRows, wallRows, WALL_TYPE_CHIP } from './roomLists'
@@ -175,36 +176,40 @@ export function RoomCard({ doc, room, selection, activeHole }: {
                           // A click opens the wall card, with the side this room is on.
                           ? select({ kind: 'storedWall', wallId: link.wallId, side: link.side })
                           : select({ kind: 'wall', roomId: room.id, wallStart: row.wallStart })}
-                      className={`flex min-h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm pointer-coarse:min-h-11 ${
+                      className={`flex min-h-9 w-full flex-col justify-center gap-0.5 rounded-md px-1 py-1 text-left text-sm pointer-coarse:min-h-11 ${
                         current ? 'bg-orange-700/10' : 'hover:bg-black/5 dark:hover:bg-white/10'
                       }`}
                     >
-                      <span className="w-10 shrink-0 font-mono text-xs">{row.label}</span>
+                      {/* Two lines: the measures on the first one, the wall and its other side on the
+                          second one (in 320 px, one line cut 'W12 · shared with Couloir' to 'W...'). */}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="w-10 shrink-0 font-mono text-xs">{row.label}</span>
+                        <span className={`shrink-0 rounded px-1 text-[11px] ${WALL_TYPE_CHIP[row.type]}`}>{row.typeLabel}</span>
+                        <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
+                          {row.verifiedCm === null ? (
+                            <span className={MUTED}>{fmtCm(shownLength(row.lengthCm, planPrecision(doc)))}</span>
+                          ) : (
+                            <span className="text-emerald-700 dark:text-emerald-400">
+                              {fmtCm(row.verifiedCm)}
+                              <Check size={11} role="img" aria-label="measured" className="ml-0.5 inline align-[-1px]" />
+                            </span>
+                          )}
+                          {row.verifiedCm !== null && Math.abs(row.verifiedCm - row.lengthCm) >= 0.5 && (
+                            // Remaining error: measured minus plan (after a fit, the error that could not be removed).
+                            <span data-wall-residual={row.label} title={`Plan ${fmtCm(row.lengthCm)} cm`}
+                              className={`rounded px-1 text-[11px] ${Math.abs(row.verifiedCm - row.lengthCm) >= 2 ? 'bg-orange-500/15 text-orange-800 dark:text-orange-300' : MUTED}`}>
+                              {fmtDiffCm(row.verifiedCm - row.lengthCm)}
+                            </span>
+                          )}
+                          <span className={`text-[11px] ${MUTED}`}>cm</span>
+                        </span>
+                        {row.locked && <Lock size={12} role="img" aria-label="locked" className="shrink-0 text-slate-500 dark:text-slate-400" />}
+                      </span>
                       {link && (
-                        <span className={`min-w-0 flex-1 truncate text-[11px] ${MUTED}`} data-room-wall-link={link.wallId}>
+                        <span className={`min-w-0 truncate pl-12 text-[11px] ${MUTED}`} data-room-wall-link={link.wallId}>
                           {link.wallId} · {link.text}
                         </span>
                       )}
-                      <span className={`shrink-0 rounded px-1 text-[11px] ${WALL_TYPE_CHIP[row.type]}`}>{row.typeLabel}</span>
-                      <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
-                        {row.verifiedCm === null ? (
-                          <span className={MUTED}>{fmtCm(shownLength(row.lengthCm, planPrecision(doc)))}</span>
-                        ) : (
-                          <span className="text-emerald-700 dark:text-emerald-400">
-                            {fmtCm(row.verifiedCm)}
-                            <Check size={11} role="img" aria-label="verified" className="ml-0.5 inline align-[-1px]" />
-                          </span>
-                        )}
-                        {row.verifiedCm !== null && Math.abs(row.verifiedCm - row.lengthCm) >= 0.5 && (
-                          // Remaining error: measured minus plan (after a fit, the error that could not be removed).
-                          <span data-wall-residual={row.label} title={`Plan ${fmtCm(row.lengthCm)} cm`}
-                            className={`rounded px-1 text-[11px] ${Math.abs(row.verifiedCm - row.lengthCm) >= 2 ? 'bg-orange-500/15 text-orange-800 dark:text-orange-300' : MUTED}`}>
-                            {fmtDiffCm(row.verifiedCm - row.lengthCm)}
-                          </span>
-                        )}
-                        <span className={`text-[11px] ${MUTED}`}>cm</span>
-                      </span>
-                      {row.locked && <Lock size={12} role="img" aria-label="locked" className="shrink-0 text-slate-500 dark:text-slate-400" />}
                     </button>
                   </li>
                 )
@@ -238,13 +243,15 @@ export function RoomCard({ doc, room, selection, activeHole }: {
         <button className={BTN} disabled={!verified.length} onClick={runApply}>Apply measured lengths</button>
         <CheckboxRow
           name="lockVerifiedWalls"
-          label="Lock verified walls"
+          label="Lock measured walls"
           disabled={!verified.length}
           checked={allLocked}
           onChange={(checked) => update((d) => setVerifiedLocked(d, room.id, checked))}
         />
-        {!verified.length && <EmptyHint>No verified wall lengths yet. Measure this room in Measuring Mode.</EmptyHint>}
+        {!verified.length && <EmptyHint>No measured wall lengths yet. Measure this room in Measuring Mode.</EmptyHint>}
         {note && <p className="text-xs text-slate-700 dark:text-slate-200">{note}</p>}
+        {/* Values that left this room when a wall changed: shown in Edit Mode too (decision (e)). */}
+        <RoomOldValues doc={doc} room={room} />
         <EmptyHint>
           Whole plan: Solve tab.{' '}
           <button

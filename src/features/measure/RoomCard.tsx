@@ -72,10 +72,10 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
         onPointerEnter={() => setHover(sid.label)}
         onPointerLeave={() => { if (focused !== sid.label) clearHover(sid.label) }}
       >
-        <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-green-700 dark:text-green-400' : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
+        <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-emerald-700 dark:text-emerald-400' : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
           <span className="truncate">{title}</span>
           {verified
-            ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> verified</span>
+            ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> measured</span>
             : <span className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">{sid.plannedCm != null ? 'estimated' : 'to measure'}</span>}
         </label>
         <NumField
@@ -119,7 +119,7 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
 
       {thick.length > 0 && (
         <details className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
-          <summary className="cursor-pointer text-[13px] font-semibold text-slate-600 dark:text-slate-300">
+          <summary className="flex min-h-9 cursor-pointer items-center text-[13px] font-semibold text-slate-600 pointer-coarse:min-h-11 dark:text-slate-300">
             Wall thickness (optional) · {thickDone}/{thick.length}
           </summary>
           <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">

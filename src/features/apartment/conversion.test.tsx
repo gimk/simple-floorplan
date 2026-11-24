@@ -114,6 +114,13 @@ describe('Wall conversion section (render)', () => {
     expect(html).toContain('Apartment')
   })
 
+  it('makes each wall id a button that opens that wall on the plan', () => {
+    // Review finding 8: the report says which wall was adjusted, and a click must show it.
+    const html = renderToString(<ApartmentCard doc={docWith({ conversion })} selection={null} />)
+    expect(html).toContain('aria-label="Show wall W12 on the plan"')
+    expect(html).toContain('aria-label="Show wall W7 on the plan"')
+  })
+
   it('renders no section when the document has no report, or when it is seen', () => {
     expect(renderToString(<ApartmentCard doc={docWith()} selection={null} />)).not.toContain('Wall conversion')
     expect(

@@ -615,6 +615,7 @@ function dragStoredWallOnGraph(e: ReactPointerEvent, vp: Vp, o: StoredWallDrag, 
   const atEnd = (p: Vec) => o.excludePoints.some((q) => dist(p, q) <= END_TOL_CM)
   let start: PlanDoc | null = null
   let last: Vec = o.a0
+  let warned = false
   track(e, {
     onStart: () => {
       if (shift) hooks.onShiftDrag?.()
@@ -627,6 +628,8 @@ function dragStoredWallOnGraph(e: ReactPointerEvent, vp: Vp, o: StoredWallDrag, 
       if (wallLocked) {
         useGuides.getState().set([])
         useDoc.getState().updateSilent(() => base)
+        // Say it once per drag: a wall that does not move must not look broken.
+        if (!warned) { warned = true; notify(`Wall ${o.wallId} is locked.`, o.a0) }
         return
       }
       const w = vp.toWorld(ev.clientX, ev.clientY)
@@ -752,6 +755,70 @@ function normalOf(a: Vec, b: Vec): Vec {
 function axisAlignedOf(a: Vec, b: Vec): boolean {
   const n = normalOf(a, b)
   return Math.abs(n.x) > 0.999 || Math.abs(n.y) > 0.999
+}
+
+/**
+ * Pointer down on one END of a stored wall (the handle of a selected single wall): the NODE moves, so
+ * the wall that ends there gets longer or shorter on the plan and the walls at that node stretch.
+ * One undo step for the whole drag, with the snapping of a corner drag (docs/walls-plan.md, "Walls
+ * in the interface"). A locked wall at the node keeps it where it is, and says so.
+ */
+export function onStoredNodeDown(e: ReactPointerEvent, vp: Vp, nodeId: string, wallId?: string) {
+  if (e.button !== 0 || !e.isPrimary) return
+  e.stopPropagation()
+  const doc0 = useDoc.getState().doc
+  const node = (doc0.nodes ?? []).find((n) => n.id === nodeId)
+  if (!node) return
+  const orig: Vec = { x: node.x, y: node.y }
+  const wallsAtNode = (doc0.walls ?? []).filter((w) => w.a === nodeId || w.b === nodeId)
+  // A locked wall at this node cannot change its length by a handle drag.
+  const lockedWall = wallsAtNode.find((w) => w.locked)
+    ?? (doc0.walls ?? []).find((w) => w.id === wallId && w.locked)
+  const affected = roomsOfNodes(doc0, new Set([nodeId]))
+  const down = vp.toWorld(e.clientX, e.clientY)
+  // The other ends of the walls at this node: the directions that a drag can line up with.
+  const refs: Vec[] = wallsAtNode.flatMap((w) => {
+    const other = (doc0.nodes ?? []).find((n) => n.id === (w.a === nodeId ? w.b : w.a))
+    return other ? [{ x: other.x, y: other.y }] : []
+  })
+  let start: PlanDoc | null = null
+  let last: Vec = orig
+  let warned = false
+  track(e, {
+    onStart: () => { start = beginDrag() },
+    onMove: (ev) => {
+      if (!start) return
+      const base = start
+      const w = vp.toWorld(ev.clientX, ev.clientY)
+      const raw = { x: orig.x + (w.x - down.x), y: orig.y + (w.y - down.y) }
+      if (lockedWall) {
+        useGuides.getState().set([])
+        useDoc.getState().updateSilent(() => base)
+        if (!warned) { warned = true; notify(`Wall ${lockedWall.id} is locked.`, raw) }
+        return
+      }
+      // Snap to the other rooms. The point itself is out of the snap set (its copies in the rooms
+      // that share it are at the same place), and so are the walls of those rooms: they turn or
+      // stretch with the node.
+      const r = snapPoint(raw, {
+        opts: useUi.getState().snap, refs, tolCm: vp.px(10), disabled: ev.altKey,
+        vertices: otherVertices(base).filter((p) => dist(p, orig) > 1),
+        edges: otherEdges(base, (rid) => affected.includes(rid)),
+      })
+      useGuides.getState().set(r.guides)
+      last = r.point
+      useDoc.getState().updateSilent(() => moveCornerNode(base, nodeId, r.point))
+    },
+    onEnd: () => {
+      if (!start) return
+      if (newlyCrossing(start, useDoc.getState().doc, affected)) {
+        useDoc.getState().updateSilent(() => start as PlanDoc)
+        notify(CROSS_MSG, last)
+        return
+      }
+      endDrag(start)
+    },
+  })
 }
 
 /**

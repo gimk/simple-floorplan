@@ -1,6 +1,7 @@
 // "Wall conversion" section of the Apartment card (docs/walls-plan.md 5c, step 4).
 // Lists what the v1 -> v2 conversion did, in words, and lets the user hide the report once read.
 import { ArrowRightLeft } from 'lucide-react'
+import { useUi } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
 import { BTN, EmptyHint, MUTED, PanelSection } from '../../shell/panel'
 import {
@@ -47,7 +48,16 @@ export function WallConversionSection({ conversion }: { conversion: NonNullable<
           {entries.map((entry) => (
             <li key={entry.wallId} className="py-1.5 text-xs tabular-nums first:pt-0 last:pb-0">
               <span className="block break-words">{conversionEntryText(entry)}</span>
-              <span className={`block text-[11px] ${MUTED}`}>{entry.wallId}</span>
+              {/* A click opens the wall card on the plan (review finding 8). */}
+              <button
+                type="button"
+                onClick={() => useUi.getState().select({ kind: 'storedWall', wallId: entry.wallId })}
+                aria-label={`Show wall ${entry.wallId} on the plan`}
+                title={`Show wall ${entry.wallId} on the plan`}
+                className={`inline-flex min-h-9 items-center rounded px-1 font-mono text-[11px] underline hover:no-underline pointer-coarse:min-h-11 ${MUTED}`}
+              >
+                {entry.wallId}
+              </button>
             </li>
           ))}
         </ul>

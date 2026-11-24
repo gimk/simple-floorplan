@@ -11,6 +11,8 @@ export function SnapPopover() {
   const set = useUi((s) => s.set)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  // Escape closes the popover and puts the focus back on its button (review finding 28).
+  const btnRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -22,6 +24,7 @@ export function SnapPopover() {
         e.preventDefault()
         e.stopPropagation()
         setOpen(false)
+        btnRef.current?.focus()
       }
     }
     document.addEventListener('mousedown', onDown)
@@ -49,6 +52,7 @@ export function SnapPopover() {
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={btnRef}
         type="button"
         className={`relative flex h-9 items-center gap-1 rounded-md px-2 text-sm hover:bg-black/5 dark:hover:bg-white/10 ${anyOn ? '' : 'opacity-60'}`}
         aria-label="Snap settings"
@@ -61,7 +65,11 @@ export function SnapPopover() {
         {anyOn && <span className="h-1.5 w-1.5 rounded-full bg-orange-700 dark:bg-orange-400" aria-hidden="true" />}
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-black/10 bg-white p-3 shadow-lg dark:border-white/15 dark:bg-[#1b2128]">
+        <div
+          role="dialog"
+          aria-label="Snap settings"
+          className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-black/10 bg-white p-3 shadow-lg dark:border-white/15 dark:bg-[#1b2128]"
+        >
           <div className="mb-1 text-xs font-semibold uppercase opacity-60">Snap</div>
           {check('grid')}
           <div className={`ml-6 flex flex-wrap items-center gap-x-2 ${snap.grid ? '' : 'opacity-40'}`}>

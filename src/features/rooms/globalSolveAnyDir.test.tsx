@@ -166,7 +166,7 @@ describe('solveGlobal option angles', () => {
     const d = doc([drawn], measurements)
     const r = applyGlobal(d, { angles: 'free' })
     expect(r.report.outOfSquare?.[0].roomCode).toBe('P')
-    expect(describeGlobal(r.report)).toMatch(/Out of square: room P 1,\d deg/)
+    expect(describeGlobal(r.report)).toMatch(/Out of square: room P 1,\d°/)
     // The default mode says nothing about it.
     expect(describeGlobal(applyGlobal(d).report)).not.toContain('Out of square')
   })

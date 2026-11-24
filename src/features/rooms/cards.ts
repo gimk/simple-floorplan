@@ -5,6 +5,7 @@ import { fmtCm, innerWallLengths, roomWalls } from '../../model/geometry'
 import type { SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, StoredWall, WallAlign, WallProps, WallType } from '../../model/types'
+import { moveNode } from '../../model/v2/drag'
 import { removeWall } from '../../model/v2/write'
 import { undoToast } from '../toast'
 import { moveHoleVertex, moveVertices, movableLinked } from './ops'
@@ -35,12 +36,67 @@ export const WALL_STATUSES = [
 /** Structural warning message: same text as the set_wall_props command warning. */
 export const structuralWarning = (type: WallType) => `STRUCTURAL: ${type} wall marked for demolition`
 
-/** Line of a wall that lines up with the walls that continue it (7.5). */
+/** Line of a wall that lines up with the walls that continue it (7.5), seen from one room. */
 export const WALL_ALIGNS = [
   { value: 'room', label: 'This face' },
   { value: 'center', label: 'Centre' },
   { value: 'other', label: 'Other face' },
 ] as const
+
+/**
+ * "In line on" of a STORED wall (docs/walls-plan.md, "Walls in the interface"): the wall has two
+ * sides, so the three choices are 'Side A', 'Centre' and 'Side B'. Side A is side L of the wall
+ * (left of node a -> node b), side B is side R.
+ *
+ * The stored value (WallAlign) is relative to a ROOM face, not to the wall: 'room' means the
+ * inside face of the room that the solver takes first (the first room of the walk order), 'other'
+ * the face on the other side of the wall, and 'center' the centre line. The helpers below convert
+ * between the two, so the card always shows the side the solver really lines up.
+ */
+export const WALL_ALIGN_SIDES = [
+  { value: 'L', label: 'Side A' },
+  { value: 'center', label: 'Centre' },
+  { value: 'R', label: 'Side B' },
+] as const
+
+export type AlignSideChoice = (typeof WALL_ALIGN_SIDES)[number]['value']
+
+/** The other side of a wall: 'L' -> 'R', 'R' -> 'L'. */
+const otherSide = (side: 'L' | 'R'): 'L' | 'R' => (side === 'L' ? 'R' : 'L')
+
+/**
+ * Side of a stored wall that holds the face of the room the solver takes first for that wall
+ * (lowest walk order, then code — the same rule as the owner of a wall in globalSolve.ts).
+ * undefined when no room sees the wall (a single wall).
+ */
+export function wallOwnerSide(doc: Pick<PlanDoc, 'rooms'>, wallId: string): 'L' | 'R' | undefined {
+  const rooms = [...doc.rooms].sort((a, b) => a.walkOrder - b.walkOrder || a.code.localeCompare(b.code))
+  for (const r of rooms) {
+    const face = (r.cycle ?? []).find((f) => f.wallId === wallId)
+    if (face) return face.side
+  }
+  return undefined
+}
+
+/**
+ * The choice the card shows for a stored align value. A wall that no room sees has no room side,
+ * so side A (L) carries the 'room' value there, the way the wall was drawn.
+ */
+export function alignSideChoice(align: WallAlign | undefined, owner: 'L' | 'R' | undefined): AlignSideChoice {
+  const value = align ?? 'room'
+  if (value === 'center') return 'center'
+  const roomSide = value === 'room' ? owner ?? 'L' : otherSide(owner ?? 'L')
+  return roomSide
+}
+
+/**
+ * The stored align value of one choice. 'room' is the default value of a wall, so it is written as
+ * undefined and the document stays as small as before.
+ */
+export function alignOfSideChoice(choice: AlignSideChoice, owner: 'L' | 'R' | undefined): WallAlign | undefined {
+  if (choice === 'center') return 'center'
+  return choice === (owner ?? 'L') ? undefined : 'other'
+}
 
 /** A wall, addressed by its room and start vertex. */
 export type WallRef = { roomId: string; wallStart: string }
@@ -78,6 +134,25 @@ export function setWallTypes(refs: WallRef[], type: WallType) {
 /** Write the properties of one stored wall (one undo step). The sync rule rebuilds both rooms. */
 export function patchStoredWall(wallId: string, patch: Partial<StoredWall>) {
   update((d) => ({ ...d, walls: (d.walls ?? []).map((w) => (w.id === wallId ? { ...w, ...patch } : w)) }))
+}
+
+/**
+ * Give a stored wall a DRAWN length: its far end (node b) moves along the wall, the near end (node
+ * a) stays. A room that uses the wall follows (the sync rule rebuilds its polygon), and the whole
+ * move is one undo step. A single wall (drawn with the Wall tool, or left by a deleted room) has
+ * no other length, so its card edits this one (decision (f)).
+ */
+export function setStoredWallLength<D extends PlanDoc>(doc: D, wallId: string, cm: number): D {
+  if (!(cm > 0)) return doc
+  const wall = (doc.walls ?? []).find((w) => w.id === wallId)
+  const a = wall ? (doc.nodes ?? []).find((n) => n.id === wall.a) : undefined
+  const b = wall ? (doc.nodes ?? []).find((n) => n.id === wall.b) : undefined
+  if (!wall || !a || !b) return doc
+  const len = Math.hypot(b.x - a.x, b.y - a.y)
+  if (len < 1e-6) return doc
+  const ux = (b.x - a.x) / len
+  const uy = (b.y - a.y) / len
+  return moveNode(doc, wall.b, { x: a.x + ux * cm, y: a.y + uy * cm }) as D
 }
 
 /** Toast text of a refused removal: 'Wall W12 is part of rooms EN, CO.' */

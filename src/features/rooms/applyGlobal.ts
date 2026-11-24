@@ -151,8 +151,8 @@ export function previewGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): Glob
  */
 export function describeSurface(s: GlobalSurface): string {
   const pct = s.diffPct > 0 ? `+${fmt1(s.diffPct)}` : fmt1(s.diffPct)
-  return `${s.label}${s.roomCode ? ` (${s.roomCode})` : ''}: ${fmt1(s.beforeM2)} -> ${fmt1(s.afterM2)} m2, `
-    + `ref ${fmt1(s.referenceM2)} m2 (${pct} %)`
+  return `${s.label}${s.roomCode ? ` (${s.roomCode})` : ''}: ${fmt1(s.beforeM2)} → ${fmt1(s.afterM2)} m², `
+    + `ref ${fmt1(s.referenceM2)} m² (${pct} %)`
 }
 
 /** One-line summary for the panel: the fit, then one line per surface reference. */
@@ -166,7 +166,7 @@ export function describeGlobal(r: GlobalReport): string {
     : 'no thickness found from the values (measure CODE-n-T at a door frame)')
   const lines = [parts.join('; ') + '.']
   for (const s of r.surfaces ?? []) lines.push(describeSurface(s))
-  for (const q of r.outOfSquare ?? []) lines.push(`Out of square: room ${q.roomCode} ${f(q.deg)} deg`)
+  for (const q of r.outOfSquare ?? []) lines.push(`Out of square: room ${q.roomCode} ${f(q.deg)}°`)
   for (const c of r.conflicts ?? []) {
     const what = c.kind === 'same-side-overlap' ? 'overlap' : 'touch without sharing one wall'
     lines.push(`Check: rooms ${c.roomCodes.join(' and ')} ${what} (${c.detail})`)

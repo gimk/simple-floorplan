@@ -99,7 +99,8 @@ describe('StoredWallCard', () => {
     expect(html).toContain('Outside (facade)')
     expect(html).toContain(`${wall.id}-E`)
     // The planned outside length is the placeholder of the field: longer than the centre line.
-    expect(html).toContain('No room on this side.')
+    // The word 'No room on this side.' is gone: 'Outside (facade)' says it once (review finding 23).
+    expect(html).not.toContain('No room on this side.')
   })
 
   it('lists the doors and windows of the wall', () => {
@@ -137,16 +138,40 @@ describe('StoredWallCard', () => {
     useUi.setState({ selection: null, multi: [] })
   })
 
-  it('shows both sides of a single wall as Outside, and keeps its Delete wall button', () => {
+  it('shows both sides of a single wall as Outside, with its drawn length and one Delete wall button', () => {
     // A room deleted: its walls stay, and no room sees them any more.
     const doc = removeRoom(plan(), 'B')
     const lonely = doc.walls!.find((w) => w.faces.every((f) => f.roomId === undefined))!
     const html = render(doc, lonely.id)
     expect(html.match(/data-wall-outside=/g)).toHaveLength(2)
-    expect(html.match(/No room on this side\./g)).toHaveLength(2)
-    expect(html).toContain('Delete wall')
+    // The drawn length of a single wall is editable: it moves the far end (decision (f)).
+    expect(html).toContain('Drawn length')
+    // One delete only: the trash button of the header (review finding 20).
+    expect(html.match(/aria-label="Delete wall"/g)).toHaveLength(1)
+    expect(html).not.toContain('> Delete wall<')
     // The facets of a wall that a room uses are not on this card.
     expect(html).not.toContain('data-wall-face=')
+  })
+
+  it('names the three lines of "In line on" after the sides of the wall', () => {
+    const doc = plan()
+    const id = sharedWall(doc).id
+    const html = render(doc, id, 'L')
+    // Side A is side L, side B is side R: no room face is named here (review finding 2).
+    expect(html).toContain('aria-label="Side of the wall that lines up with the walls that continue it"')
+    expect(html).toContain('title="Side A"')
+    expect(html).toContain('title="Side B"')
+    expect(html).not.toContain('This face')
+    expect(html).not.toContain('Other face')
+  })
+
+  it('marks the active side with the word Selected', () => {
+    const doc = plan()
+    const id = sharedWall(doc).id
+    // One tag only: the side the user clicked (review finding 3).
+    expect(render(doc, id, 'L').match(/Selected/g)).toHaveLength(1)
+    expect(render(doc, id, 'R').match(/Selected/g)).toHaveLength(1)
+    expect(render(doc, id)).not.toContain('Selected')
   })
 })
 

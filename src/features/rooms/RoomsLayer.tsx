@@ -1,29 +1,26 @@
 import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
-import { DEFAULT_WALL_CM, dist, fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
+import { DEFAULT_WALL_CM, fmtCm, labelPlacement, roomWalls } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
-import { measuredText, planPrecision, shownLength } from '../../model/precision'
+import { planPrecision } from '../../model/precision'
 import type { Room, Vec } from '../../model/types'
 import { selfIntersects } from './crossing'
 import { forcedWallStarts, useDragInfo } from './draginfo'
 import { selectHole, useActiveHole } from './holes'
 import { locked, onRoomDown, onWallDouble, onWallDown } from './interaction'
-import { surveyIds } from '../../model/survey'
 import { polygonPath, polylinePath, wallFaces, wallQuads } from './wallOutline'
 import { gapAreas, multiPath } from './gaps'
-import { RoomNameEditor } from './RoomNameEditor'
 import { wallProps } from './walls'
-import { piecesPath, renovationRooms, wallAppearance, type DisplayRoom } from '../renovation/logic'
+import { piecesPath, renovationRooms, wallAppearance } from '../renovation/logic'
 import { useSidebar } from '../../shell/sidebar/store'
 import { modeLayerVisible } from '../../shell/view/layers'
 import { hoverTarget, storedWallLine } from './hoverTarget'
-import { sideOfPoint } from './wallSides'
+import { outsideFaceLabelAtPoint } from './wallSides'
+import { storedWallOfRoomWall } from '../../model/wallValues'
 import { focusMeasureField } from '../measure/focusField'
 import { inputId } from '../measure/actions'
-import { outsideFaceSide, storedWallOfRoomWall, wallCentreCm, wallValueLabel } from '../../model/wallValues'
 import type { Wall } from '../../model/geometry'
-import type { StoredNode, StoredWall } from '../../model/types'
 
 /**
  * 'W12-E' when a click in Measuring Mode lands on the OUTSIDE half of a facade wall; null when it
@@ -34,19 +31,11 @@ function outsideFaceLabelAt(
   vp: { toWorld: (x: number, y: number) => Vec },
   roomId: string,
   wall: Wall,
-  doc: { rooms: Room[]; walls?: StoredWall[]; nodes?: StoredNode[] },
 ): string | null {
+  const doc = useDoc.getState().doc
   const stored = storedWallOfRoomWall(doc, roomId, wall.start.id)
-  const line = stored ? storedWallLine(doc, stored.id) : null
-  if (!stored || !line) return null
-  const centreCm = wallCentreCm(doc.nodes ?? [], stored)
-  const outside = centreCm === null ? null : outsideFaceSide(stored, centreCm)
-  if (!outside) return null
-  // Same side rule as a click in edit mode: the side of the click on the centre line of the stored
-  // wall. The outside half of a facade wall opens its outside face value ('W12-E'); the room side
-  // opens the field of the room wall.
-  const p = vp.toWorld(e.clientX, e.clientY)
-  return sideOfPoint(line.a, line.b, p) === outside ? wallValueLabel(stored.id, 'outside') : null
+  if (!stored) return null
+  return outsideFaceLabelAtPoint(doc, stored.id, vp.toWorld(e.clientX, e.clientY))
 }
 
 const pathOf = (rings: Vec[][]) =>
@@ -64,8 +53,12 @@ const wallClass = {
 /** Bearing walls with the highlight layer on: light tone + thin dark diagonal stripes. */
 const bearingFaceClass = 'stroke-slate-500 dark:stroke-slate-400'
 
-/** Draws rooms, walls (bearing/partition/exterior styling), holes, labels, dimensions. */
-export function RoomsLayer() {
+/**
+ * What the plan reads from the stores for the rooms and their walls. Both canvas layers
+ * (`RoomsLayer`, below the walls of the wall graph, and `RoomsOverlay`, above them) use it, so
+ * they never disagree on a selection, a label position or a hover.
+ */
+export function useRoomsFrame() {
   const rooms = useDoc((s) => s.doc.rooms)
   const selection = useUi((s) => s.selection)
   const multi = useUi((s) => s.multi)
@@ -148,12 +141,9 @@ export function RoomsLayer() {
     const wall = (storedWalls ?? []).find((w) => w.id === selection.wallId)
     return { ...line, thicknessCm: wall?.thicknessCm ?? DEFAULT_WALL_CM, side: selection.side }
   }, [selection, storedWalls, storedNodes])
-  // Bearing wall stripes: ~6 px apart (perpendicular), ~1 px wide, at 45°, zoom independent.
-  // A 45° pattern tile of `tile` repeats its lines every tile / sqrt(2).
-  const stripeGap = px(6)
-  const stripeTile = stripeGap * Math.SQRT2
   // Room whose name is being renamed inline: a double-click on the name, or a tool that has just
-  // made the room (Make room tool, docs/walls-plan.md phase 6).
+  // made the room (Make room tool, docs/walls-plan.md phase 6). The editor is drawn by
+  // RoomsOverlay, which is the only user of this state.
   const [renaming, setEditing] = useState<string | null>(null)
   const nameEditRoom = useUi((s) => s.nameEditRoom)
   const editing = renaming ?? nameEditRoom
@@ -165,52 +155,33 @@ export function RoomsLayer() {
   const drag = useDragInfo((s) => s.drag)
   const dragRoom = drag ? rooms.find((r) => r.id === drag.roomId) : undefined
   const forcedWalls = useMemo(() => forcedWallStarts(drag, dragRoom), [drag, dragRoom])
+
+  return {
+    rooms, selection, layers, renovationView, showCodes, showWallNumbers, measurements, storedWalls, storedNodes,
+    wallsFromGraph, hover, hoverWall, hoverLabel, step, activeHole, crossing, display, gapPath, vp, px, zoom,
+    labelAt, measuring, interactive, selectRoomOnly, selRoomIds, selWalls, selStoredWall, editing, setEditing,
+    closeEditor, forcedWalls,
+  }
+}
+
+/**
+ * Draws, UNDER the walls of the wall graph, the parts of the plan that the walls stand on: the
+ * floors, the hole outlines and their hit areas, the walls of a v1 document, the renovation and
+ * crossing warnings, and the hit areas of a v1 document. The parts that must stay visible above an
+ * opaque wall band (labels, dimensions, hover highlights, the selected side, the name editor) are in
+ * features/rooms/RoomsOverlay.tsx, which the app draws AFTER WallsLayer.
+ */
+export function RoomsLayer() {
+  const f = useRoomsFrame()
+  const { rooms, layers, renovationView, interactive, measuring, selectRoomOnly, display, gapPath, vp, px, zoom,
+    activeHole, crossing, selWalls, forcedWalls, wallsFromGraph } = f
+  // Bearing wall stripes: ~6 px apart (perpendicular), ~1 px wide, at 45°, zoom independent.
+  // A 45° pattern tile of `tile` repeats its lines every tile / sqrt(2).
+  const stripeGap = px(6)
+  const stripeTile = stripeGap * Math.SQRT2
   /** Mitered wall outlines; wall faces sit half a thickness away, with a 1.5 px floor. */
   const quadsOf = (r: Room) =>
     wallQuads(r, (startId) => Math.max(wallProps(r, startId).thicknessCm, px(1.5)) / 2)
-
-  const label = (d: DisplayRoom) => {
-    // The room being renamed shows the inline editor instead (drawn last, above the hit areas).
-    if (!d.merged && editing === d.id) return null
-    const ring = d.pieces[0]?.[0] ?? []
-    if (ring.length < 3) return null
-    // Room code in front of the name, so the survey IDs of the Solve tab are found on the plan.
-    const code = showCodes ? d.codes.join(' ') : ''
-    const xs = ring.map((v) => v.x), ys = ring.map((v) => v.y)
-    const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
-    if (small) {
-      // No room for the name: the code alone, small, is better than nothing.
-      if (!code) return null
-      const p = labelAt.get(d.id)?.p ?? labelPoint(d.pieces[0])
-      return (
-        <text key={d.id} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize={px(10)}
-          fontWeight={700} pointerEvents="none" data-room-code-only={d.id}
-          className="fill-slate-500 font-mono dark:fill-slate-400">
-          {code}
-        </text>
-      )
-    }
-    const place = labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
-    // Baseline of the name a bit above the point, so the two lines are centred on it.
-    const c = { x: place.p.x, y: place.p.y - px(4) }
-    return (
-      <text key={d.id} x={c.x} y={c.y} textAnchor="middle" data-label-vertical={place.vertical ? '' : undefined}
-        transform={place.vertical ? `rotate(-90 ${place.p.x} ${place.p.y})` : undefined} pointerEvents={interactive ? 'auto' : 'none'}
-        className="fill-slate-800 dark:fill-slate-100" fontSize={px(14)}>
-        <tspan x={c.x} fontWeight={600} style={interactive ? { cursor: 'text' } : undefined}
-          onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : undefined}
-          onDoubleClick={interactive && !d.merged ? (e) => { e.stopPropagation(); setEditing(d.id) } : undefined}>
-          {code !== '' && (
-            <tspan fontWeight={700} className="font-mono" data-room-code-text={d.codes[0]}>{`${code}  `}</tspan>
-          )}
-          {d.name}
-        </tspan>
-        <tspan x={c.x} dy={px(16)} fontSize={px(12)} pointerEvents="none" className="fill-slate-500 dark:fill-slate-400">
-          {d.areaM2.toFixed(2).replace('.', ',')} m²
-        </tspan>
-      </text>
-    )
-  }
 
   return (
     <g data-renovation-view={renovationView}>
@@ -316,8 +287,8 @@ export function RoomsLayer() {
         )
       }))}
 
-      {/* lock badges on locked walls (7.2 #21) */}
-      {rooms.map((r) => roomWalls(r).map((w) => {
+      {/* lock badges on locked walls of a v1 document (7.2 #21) */}
+      {!wallsFromGraph && rooms.map((r) => roomWalls(r).map((w) => {
         const p = wallProps(r, w.start.id)
         if (!p.locked) return null
         if (!wallAppearance(p.type, p.status, renovationView).visible) return null
@@ -343,155 +314,13 @@ export function RoomsLayer() {
           strokeWidth={px(3)} className="stroke-red-500" />
       ))}
 
-      {/* selection highlight */}
-      {rooms.filter((r) => selRoomIds.has(r.id)).map((r) => (
-        <path key={'sel' + r.id} d={pathOf([r.vertices, ...r.holes])} fill="none" pointerEvents="none"
-          data-selected-room={r.id}
-          strokeWidth={px(2)} strokeDasharray={`${px(6)} ${px(4)}`} className="stroke-orange-500" />
-      ))}
+      {/* selection highlight of the walls of a v1 document */}
       {selWalls.size > 0 && rooms.map((r) =>
         quadsOf(r).filter((q) => selWalls.has(r.id + ':' + q.startId)).map((q) => (
           <path key={'selw' + r.id + q.startId} d={polygonPath(q.points)} pointerEvents="none" strokeOpacity={0.9}
             data-selected-wall={r.id + ':' + q.startId}
             strokeWidth={px(2)} className="fill-orange-500/35 stroke-orange-500" />
         )))}
-      {selStoredWall && (() => {
-        // The band of the selected wall is drawn once from the wall graph (WallsLayer); here, the
-        // two faces of the wall get a line a little outside that band, and the face of the side the
-        // user clicked is stronger (docs/walls-plan.md, Walls in the interface).
-        const { a, b, thicknessCm, side } = selStoredWall
-        const len = dist(a, b)
-        const ux = len > 0 ? (b.x - a.x) / len : 0, uy = len > 0 ? (b.y - a.y) / len : 0
-        // Left of a -> b is (-uy, ux): that is side L. Side R is the other way.
-        const off = thicknessCm / 2 + px(2)
-        const face = (k: 1 | -1) => ({
-          x1: a.x - uy * off * k, y1: a.y + ux * off * k, x2: b.x - uy * off * k, y2: b.y + ux * off * k,
-        })
-        const weight = (s: 'L' | 'R') => (side === undefined || side === s ? px(3) : px(1.5))
-        return (
-          <g pointerEvents="none" data-selected-wall-side={side ?? ''} data-wall-side-of={selStoredWall.wallId}>
-            <line {...face(1)} strokeLinecap="round" strokeWidth={weight('L')}
-              className={side === 'L' ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
-            <line {...face(-1)} strokeLinecap="round" strokeWidth={weight('R')}
-              className={side === 'R' ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
-          </g>
-        )
-      })()}
-
-      {/* hover highlight: the element of the survey label under the pointer in the Solve tab list
-          (and later in Measuring Mode). Drawn above the walls, and it takes no pointer event. */}
-      {hoverWall && (
-        <line x1={hoverWall.w.start.x} y1={hoverWall.w.start.y} x2={hoverWall.w.end.x} y2={hoverWall.w.end.y}
-          pointerEvents="none" strokeLinecap="round" data-hover-highlight="wall" data-hover-label={hoverLabel ?? ''}
-          strokeWidth={Math.max(hoverWall.thicknessCm, px(10)) + px(4)}
-          className="stroke-orange-500/40 dark:stroke-orange-400/45" />
-      )}
-      {hover?.kind === 'storedWall' && (
-        <g pointerEvents="none" data-hover-highlight="stored-wall" data-hover-label={hover.label}>
-          {/* Centre line of the stored wall: the line the two values of the wall are measured on. */}
-          <line x1={hover.a.x} y1={hover.a.y} x2={hover.b.x} y2={hover.b.y}
-            strokeWidth={px(12)} strokeLinecap="round"
-            className="stroke-orange-500/35 dark:stroke-orange-400/40" />
-          <line x1={hover.a.x} y1={hover.a.y} x2={hover.b.x} y2={hover.b.y}
-            strokeWidth={px(2)} strokeLinecap="round" strokeDasharray={hover.outside ? `${px(9)} ${px(5)}` : undefined}
-            className="stroke-orange-500/90 dark:stroke-orange-400/90" />
-          <text x={(hover.a.x + hover.b.x) / 2} y={(hover.a.y + hover.b.y) / 2}
-            textAnchor="middle" dominantBaseline="middle" fontSize={px(12)} fontWeight={600}
-            strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round" data-hover-length={hover.label}
-            className="fill-orange-700 stroke-white dark:fill-orange-200 dark:stroke-slate-900">
-            {hover.outside ? 'outside ' : ''}{fmtCm(dist(hover.a, hover.b))} cm
-          </text>
-        </g>
-      )}
-      {hover?.kind === 'diagonal' && (
-        <g pointerEvents="none" data-hover-highlight="diagonal" data-hover-label={hover.label}>
-          <line x1={hover.a.x} y1={hover.a.y} x2={hover.b.x} y2={hover.b.y}
-            strokeWidth={px(3)} strokeLinecap="round" strokeDasharray={`${px(8)} ${px(5)}`}
-            className="stroke-orange-500/90 dark:stroke-orange-400/90" />
-          {/* Planned length of the diagonal: what the tape should read on site. */}
-          <text x={(hover.a.x + hover.b.x) / 2} y={(hover.a.y + hover.b.y) / 2}
-            textAnchor="middle" dominantBaseline="middle" fontSize={px(12)} fontWeight={600}
-            strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round" data-hover-length={hover.label}
-            className="fill-orange-700 stroke-white dark:fill-orange-200 dark:stroke-slate-900">
-            {fmtCm(dist(hover.a, hover.b))} cm
-          </text>
-        </g>
-      )}
-
-      {/* "In line on": the line of each selected wall that lines up with the walls that continue it */}
-      {selWalls.size > 0 && rooms.map((r) => roomWalls(r).filter((w) => selWalls.has(r.id + ':' + w.start.id)).map((w) => {
-        const p = wallProps(r, w.start.id)
-        const k = (p.align ?? 'room') === 'room' ? 1 : p.align === 'other' ? -1 : 0
-        const o = (k * p.thicknessCm) / 2
-        const x1 = w.start.x + w.inward.x * o, y1 = w.start.y + w.inward.y * o
-        const x2 = w.end.x + w.inward.x * o, y2 = w.end.y + w.inward.y * o
-        return (
-          <line key={'align' + r.id + w.start.id} x1={x1} y1={y1} x2={x2} y2={y2} pointerEvents="none"
-            data-wall-align-line={r.id + ':' + w.start.id} data-align={p.align ?? 'room'}
-            strokeWidth={px(2)} strokeLinecap="round" strokeDasharray={`${px(2)} ${px(4)}`}
-            className="stroke-sky-600 dark:stroke-sky-400" />
-        )
-      }))}
-
-      {/* labels + dimensions */}
-      {display.map(label)}
-      {layers.dimensions && rooms.map((r) => {
-        const labels = new Map(surveyIds(r).filter((x) => x.kind === 'wall').map((x) => [x.wallStart, x.label]))
-        // Lengths shown are inside faces, like the values measured on site.
-        const inner = innerWallLengths(r)
-        return roomWalls(r).map((w) => {
-          // Always show lengths of walls attached to the dragged vertex/wall (7.2 #22).
-          if (w.length * zoom < 55 && !forcedWalls.has(w.start.id)) return null
-          const m = measurements[labels.get(w.start.id) ?? '']
-          const verified = !!m && m.actualCm > 0
-          const dimProps = wallProps(r, w.start.id)
-          if (!wallAppearance(dimProps.type, dimProps.status, renovationView).visible) return null
-          const thick = dimProps.thicknessCm
-          const off = thick / 2 + px(10)
-          const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off, my = (w.start.y + w.end.y) / 2 + w.inward.y * off
-          let ang = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
-          if (ang > 90 || ang < -90) ang += 180
-          return (
-            <text key={'d' + r.id + w.start.id} x={mx} y={my} textAnchor="middle" dominantBaseline="middle"
-              transform={`rotate(${ang} ${mx} ${my})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
-              strokeWidth={px(3)} strokeLinejoin="round" fontWeight={verified ? 600 : undefined}
-              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${verified ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
-              {verified ? measuredText(m.actualCm, shownLength(inner[w.index], step), step) : fmtCm(shownLength(inner[w.index], step))}
-            </text>
-          )
-        })
-      })}
-
-      {/* wall numbers: a small badge with the number of the wall ("6" = wall CU-6 of room CU),
-          inside the room near the middle of the wall, just inside the dimension text */}
-      {showWallNumbers && rooms.map((r) => roomWalls(r).map((w) => {
-        // Too short on screen for separate badges: hide them all, or they touch each other.
-        if (w.length * zoom < 18) return null
-        const props = wallProps(r, w.start.id)
-        if (!wallAppearance(props.type, props.status, renovationView).visible) return null
-        // Same placement as the dimension text; the badge goes one step further inside the room.
-        const dimOff = props.thicknessCm / 2 + px(10)
-        const dimShown = layers.dimensions && (w.length * zoom >= 55 || forcedWalls.has(w.start.id))
-        const off = dimShown ? dimOff + px(13) : dimOff
-        const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off
-        const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
-        const n = String(w.index + 1)
-        const selected = selWalls.has(r.id + ':' + w.start.id)
-        const h = px(13), bw = px(5) + px(5.6) * n.length
-        return (
-          <g key={'wn' + r.id + w.start.id} transform={`translate(${mx} ${my})`} pointerEvents="none"
-            data-wall-number={n} data-wall-label={`${r.code}-${n}`} aria-hidden="true">
-            <rect x={-bw / 2} y={-h / 2} width={bw} height={h} rx={px(3)} strokeWidth={px(1)}
-              className={selected
-                ? 'fill-orange-500 stroke-orange-700 dark:stroke-orange-300'
-                : 'fill-white/90 stroke-slate-400 dark:fill-slate-800/95 dark:stroke-slate-500'} />
-            <text textAnchor="middle" dominantBaseline="middle" fontSize={px(9)}
-              className={`font-mono ${selected ? 'fill-white' : 'fill-slate-600 dark:fill-slate-300'}`}>
-              {n}
-            </text>
-          </g>
-        )
-      }))}
 
       {/* wall hit areas (select tool only, v1 documents). A v2 document has ONE hit area per
           stored wall, in features/rooms/WallsLayer.tsx: a wall is never selected by two systems,
@@ -518,8 +347,10 @@ export function RoomsLayer() {
         )
       }))}
 
-      {/* Measuring Mode: wall hit areas that only hover and pick (no drag, no edit) */}
-      {measuring && rooms.map((r) => roomWalls(r).map((w) => {
+      {/* Measuring Mode of a v1 document: one hover + pick line per room wall. A v2 document has
+          ONE hit area per stored wall (features/rooms/WallsLayer.tsx), so a shared wall is not
+          covered by two lines and both of its sides can be picked. */}
+      {measuring && !wallsFromGraph && rooms.map((r) => roomWalls(r).map((w) => {
         const p = wallProps(r, w.start.id)
         if (!wallAppearance(p.type, p.status, renovationView).visible) return null
         const wallLabel = `${r.code}-${w.index + 1}`
@@ -542,16 +373,11 @@ export function RoomsLayer() {
               useUi.getState().select({ kind: 'room', roomId: r.id })
               // A facade wall: a click on its OUTSIDE half opens the outside face field (W12-E).
               // The room side, and every other wall, opens the room wall field.
-              const outside = outsideFaceLabelAt(e, vp, r.id, w, { rooms, walls: storedWalls, nodes: storedNodes })
+              const outside = outsideFaceLabelAt(e, vp, r.id, w)
               focusMeasureField(outside ?? wallLabel)
             }} />
         )
       }))}
-
-      {/* inline room rename editor: topmost, so no hit area can steal its clicks */}
-      {rooms.filter((r) => r.id === editing).map((r) => (
-        <RoomNameEditor key={'edit' + r.id} room={r} vp={vp} onClose={closeEditor} />
-      ))}
     </g>
   )
 }

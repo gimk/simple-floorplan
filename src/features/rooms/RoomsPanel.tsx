@@ -11,7 +11,7 @@ import { useEffect, useMemo } from 'react'
 import { selectedItems, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Selection, ToolId } from '../../model/types'
-import { wallGroup, setWallTypes, type ActiveHole, type WallRef } from './cards'
+import { patchStoredWall, wallGroup, setWallTypes, type ActiveHole, type WallRef } from './cards'
 import { useActiveHole } from './holes'
 import { wallProps } from './walls'
 import { GroupCard } from './GroupCard'
@@ -40,12 +40,21 @@ export function RoomsPanel() {
   const activeHole = useActiveHole()
 
   // 'b' toggles the selected wall(s) between bearing and partition (the primary wall decides).
+  // A v2 document selects a STORED wall: its type is one property of the wall, so it toggles too.
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() !== 'b' || e.metaKey || e.ctrlKey || e.altKey) return
       if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]')) return
       const ui = useUi.getState()
-      if (ui.mode !== 'edit' || ui.selection?.kind !== 'wall') return
+      if (ui.mode !== 'edit') return
+      if (ui.selection?.kind === 'storedWall') {
+        const wallId = ui.selection.wallId
+        const wall = (useDoc.getState().doc.walls ?? []).find((w) => w.id === wallId)
+        if (!wall) return
+        patchStoredWall(wall.id, { type: (wall.type ?? 'partition') === 'bearing' ? 'partition' : 'bearing' })
+        return
+      }
+      if (ui.selection?.kind !== 'wall') return
       const sel = ui.selection
       const r = useDoc.getState().doc.rooms.find((x) => x.id === sel.roomId)
       if (!r) return

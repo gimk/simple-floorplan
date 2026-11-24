@@ -35,7 +35,8 @@ export function ZoomControls() {
   const barPx = Math.max(8, stepCm * zoom)
   const pct = `${Math.round(zoom * 100)}%`
 
-  const btn = 'flex h-8 min-w-8 items-center justify-center rounded-md hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-40 max-md:h-11 max-md:min-w-11'
+  // 36 px targets on a fine pointer (review finding 24), 44 px on a phone or a tablet.
+  const btn = 'flex h-9 min-w-9 items-center justify-center rounded-md hover:bg-black/5 pointer-coarse:h-11 pointer-coarse:min-w-11 disabled:opacity-40 max-md:h-11 max-md:min-w-11'
   return (
     <div className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border border-black/10 bg-white/95 px-2 py-1 shadow-md dark:border-white/15 dark:bg-[#1b2128]/95 max-md:gap-0.5 max-md:px-1.5">
       <button type="button" className={btn} aria-label="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(1 / 1.25)}>
@@ -43,7 +44,7 @@ export function ZoomControls() {
       </button>
       <button
         type="button"
-        className="h-8 min-w-10 rounded-md px-1 text-center text-xs tabular-nums hover:bg-black/5 sm:min-w-12 max-md:h-11 dark:hover:bg-white/10"
+        className="h-9 min-w-10 rounded-md px-1 text-center text-xs tabular-nums hover:bg-black/5 pointer-coarse:h-11 pointer-coarse:min-w-12 sm:min-w-12 max-md:h-11 dark:hover:bg-white/10"
         aria-label="Reset zoom to 100%"
         title="Reset zoom to 100%"
         onClick={() => zoomTo(1)}

@@ -297,8 +297,8 @@ describe('applyGlobal surface references', () => {
     const lines = describeGlobal(report).split('\n')
     expect(lines).toHaveLength(3)
     expect(lines[0]).toContain('Solved 1 rooms together')
-    expect(lines[1]).toBe('DPE 2023 (SE): 12,4 -> 12,9 m2, ref 13,0 m2 (-0,8 %)')
-    expect(lines[2]).toBe('Loi Carrez: 39,0 -> 40,2 m2, ref 40,0 m2 (+0,5 %)')
+    expect(lines[1]).toBe('DPE 2023 (SE): 12,4 → 12,9 m², ref 13,0 m² (-0,8 %)')
+    expect(lines[2]).toBe('Loi Carrez: 39,0 → 40,2 m², ref 40,0 m² (+0,5 %)')
   })
 
   it('has no surface line when no surface reference is used', () => {

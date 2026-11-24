@@ -6,10 +6,11 @@ import { Crosshair } from 'lucide-react'
 import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { fmtCm } from '../../model/geometry'
 import { nowIso, useDoc, useUi } from '../../model/store'
+import { labelRoomCode } from '../../model/survey'
 import type { PlanDoc } from '../../model/types'
 import { EmptyHint, IconButton, INPUT_BARE, MUTED, PanelSection, inputGroup } from '../../shell/panel'
 import { setMeasurement } from '../measure/actions'
-import { targetOfLabel } from '../../model/v2/targets'
+import { isV2Doc, targetOfLabel } from '../../model/v2/targets'
 import { sourceSigmaCm } from '../../model/measureSource'
 import { parseCm } from '../measure/logic'
 import type { RoomAngles, SurfaceMode } from '../rooms/globalSolve'
@@ -38,11 +39,37 @@ function useRowHover(label: string, diagonal: { roomId: string; pair: [number, n
   return { onPointerEnter, onPointerLeave, onFieldEnter: enter, onFieldLeave: leave }
 }
 
-/** Select the wall (or the room, for a diagonal) on the plan. */
-function showOnPlan(s: Suggestion) {
+/**
+ * Select what one survey label measures on the plan. A v2 document selects the STORED wall, on the
+ * side the value is on: the breadcrumb, the wall card and the wall band on the plan then agree
+ * (review finding 4). A facade ('W12-E') and a centre ('W12-C') value name their wall directly.
+ * A v1 document keeps the per-room wall selection.
+ */
+export function showLabelOnPlan(doc: PlanDoc, label: string, fallbackRoomId?: string) {
   const { select } = useUi.getState()
-  if (s.kind !== 'diagonal' && s.wallStart) select({ kind: 'wall', roomId: s.roomId, wallStart: s.wallStart })
-  else select({ kind: 'room', roomId: s.roomId })
+  const target = isV2Doc(doc) ? targetOfLabel(doc, label) : undefined
+  if (target) {
+    const kind = target.kind ?? 'face'
+    if (kind === 'diagonal') {
+      const roomId = target.roomId ?? fallbackRoomId
+      if (roomId) select({ kind: 'room', roomId })
+      return
+    }
+    // The side of a centre value says nothing: the wall card then shows both sides.
+    select({ kind: 'storedWall', wallId: target.wallId, side: kind === 'centre' ? undefined : target.side })
+    return
+  }
+  const code = labelRoomCode(label)
+  const room = code ? doc.rooms.find((r) => r.code === code) : doc.rooms.find((r) => r.id === fallbackRoomId)
+  if (!room) return
+  const n = code ? /^(\d+)/.exec(label.slice(code.length + 1)) : null
+  const start = n ? room.vertices[Number(n[1]) - 1]?.id : undefined
+  select(start ? { kind: 'wall', roomId: room.id, wallStart: start } : { kind: 'room', roomId: room.id })
+}
+
+/** Select the wall (or the room, for a diagonal) of one suggestion on the plan. */
+function showOnPlan(doc: PlanDoc, s: Suggestion) {
+  showLabelOnPlan(doc, s.label, s.roomId)
 }
 
 /**
@@ -124,7 +151,7 @@ function ValueField({ label, onSave, onEnter, onLeave }: {
  * One line, on two rows so it fits the narrow sidebar: button, label, uncertainty and field on
  * the first row; the reason under the label.
  */
-function SuggestionRow({ s }: { s: Suggestion }) {
+function SuggestionRow({ doc, s }: { doc: PlanDoc; s: Suggestion }) {
   // A diagonal of a room that has no pair yet needs the pair: the label alone cannot give it.
   const hover = useRowHover(
     s.label,
@@ -133,7 +160,8 @@ function SuggestionRow({ s }: { s: Suggestion }) {
   return (
     <li data-measure-suggestion={s.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11"
       data-hover-row={s.label} onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave}>
-      <IconButton label="Show on plan" icon={<Crosshair size={16} />} onClick={() => showOnPlan(s)} />
+      {/* Names the row: ten buttons called "Show on plan" say nothing to a screen reader. */}
+      <IconButton label={`Show ${s.label} on plan`} icon={<Crosshair size={16} />} onClick={() => showOnPlan(doc, s)} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="font-mono text-xs">{s.label}</span>
         <span className={`text-[11px] leading-tight ${MUTED}`} data-measure-reason={s.label}>{s.reason}</span>
@@ -152,12 +180,13 @@ function SuggestionRow({ s }: { s: Suggestion }) {
 }
 
 /** A measured value that does not fit the plan: the old value, the plan value and a field for the new one. */
-function RemeasureRow({ r }: { r: Remeasure }) {
+function RemeasureRow({ doc, r }: { doc: PlanDoc; r: Remeasure }) {
   // The pair of a diagonal comes from the room itself: a remeasured value is on the plan already.
   const hover = useRowHover(r.label)
   return (
     <li data-measure-again={r.label} className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11"
       data-hover-row={r.label} onPointerEnter={hover.onPointerEnter} onPointerLeave={hover.onPointerLeave}>
+      <IconButton label={`Show ${r.label} on plan`} icon={<Crosshair size={16} />} onClick={() => showLabelOnPlan(doc, r.label)} />
       <span className="flex min-w-0 flex-1 flex-col text-xs text-amber-700 dark:text-amber-300">
         <span>Measure again: <span className="font-mono">{r.label}</span></span>
         <span className="text-[11px] leading-tight">measured {fmtCm(r.measuredCm)}, plan says {fmtCm(r.solvedCm)}</span>
@@ -200,13 +229,13 @@ export function MeasureNext({ doc, surfaceMode, keepLocked, angles }: {
     <PanelSection id="solve-measure-next" title="Measure next" icon={<Crosshair size={16} />} collapsible>
       {remeasure.length > 0 && (
         <ul data-measure-remeasure className="flex flex-col">
-          {remeasure.map((r) => <RemeasureRow key={r.label} r={r} />)}
+          {remeasure.map((r) => <RemeasureRow key={r.label} doc={doc} r={r} />)}
         </ul>
       )}
       {suggestions.length > 0 && (
         <>
           <ul data-measure-list className="flex flex-col">
-            {suggestions.map((s) => <SuggestionRow key={`${s.kind}-${s.label}`} s={s} />)}
+            {suggestions.map((s) => <SuggestionRow key={`${s.kind}-${s.label}`} doc={doc} s={s} />)}
           </ul>
           <EmptyHint>
             Type a value and press Enter: the plan takes it in and the list is calculated again.
