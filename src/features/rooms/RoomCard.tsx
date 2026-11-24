@@ -2,8 +2,8 @@
 // fit check, the elements list, and the measured values of this room
 // (docs/sidebar-plan-3.md step 4). Whole-plan tools live in the Solve tab.
 import { useState } from 'react'
-import { Check, DoorOpen, Lock, Ruler, Square, Trash2 } from 'lucide-react'
-import { fmtCm, innerWallLengths, roomAreaM2 } from '../../model/geometry'
+import { Check, DoorOpen, Lock, Plus, Repeat2, Ruler, Square, Trash2, X } from 'lucide-react'
+import { dist, fmtCm, innerWallLengths, roomAreaM2 } from '../../model/geometry'
 import { planPrecision, shownLength } from '../../model/precision'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, Selection } from '../../model/types'
@@ -34,6 +34,9 @@ import { elementRows, wallRows, WALL_TYPE_CHIP } from './roomLists'
 import { isV2Doc } from '../../model/v2/targets'
 import { roomWallLinks } from './wallSides'
 import { HoleCard } from './VertexCard'
+import { defaultDiagonal, nextDiagonal, setRoomDiagonal } from './diagonal'
+import { setMeasurement } from '../measure/actions'
+import { targetOfLabel } from '../../model/v2/targets'
 
 export function RoomCard({ doc, room, selection, activeHole }: {
   doc: PlanDoc; room: Room; selection: NonNullable<Selection>; activeHole: ActiveHole
@@ -134,6 +137,7 @@ export function RoomCard({ doc, room, selection, activeHole }: {
             }}
           />
         </FieldRow>
+        <DiagonalRow doc={doc} room={room} />
         <SwitchRow
           name="roomOutdoor"
           label="Outdoor (balcony, terrace)"
@@ -265,5 +269,62 @@ export function RoomCard({ doc, room, selection, activeHole }: {
         </EmptyHint>
       </PanelSection>
     </>
+  )
+}
+
+/**
+ * The survey diagonal of the room (CODE-D): add it, step it to the next pair of opposite corners,
+ * remove it, and type its measured value. Corners are shown 1-based, as the wall numbers.
+ */
+function DiagonalRow({ doc, room }: { doc: PlanDoc; room: Room }) {
+  const n = room.vertices.length
+  const pair = room.diagonal && room.diagonal.every((i) => i >= 0 && i < n) ? room.diagonal : undefined
+  const label = `${room.code}-D`
+  const measured = doc.measurements[label]?.actualCm
+  if (!pair) {
+    const first = defaultDiagonal(n)
+    return (
+      <FieldRow label="Diagonal" hint={n < 4 ? 'needs 4 corners or more' : undefined}>
+        <button
+          type="button"
+          className={BTN}
+          disabled={!first}
+          data-action="add-diagonal"
+          onClick={() => first && update((d) => setRoomDiagonal(d, room.id, first))}
+        >
+          <Plus size={14} /> Add diagonal{measured ? ` (${fmtCm(measured)} cm kept)` : ''}
+        </button>
+      </FieldRow>
+    )
+  }
+  const a = room.vertices[pair[0]], b = room.vertices[pair[1]]
+  const planned = Math.round(dist(a, b) * 10) / 10
+  return (
+    <FieldRow label="Diagonal" htmlFor="room-diagonal" hint={`${label} · corners ${pair[0] + 1} → ${pair[1] + 1}`}>
+      <div className="flex items-center gap-1" data-room-diagonal={`${pair[0]}-${pair[1]}`}>
+        <NumberField
+          id="room-diagonal"
+          name="room-diagonal"
+          unit="cm"
+          value={measured ?? null}
+          placeholder={fmtCm(planned)}
+          onCommit={(v) => {
+            if (v !== null && v <= 0) return false
+            const current = useDoc.getState().doc
+            setMeasurement(label, v, useUi.getState().measureSource, v === null ? undefined : targetOfLabel(current, label), { undo: true })
+          }}
+        />
+        <IconButton
+          label="Other corners"
+          icon={<Repeat2 size={14} />}
+          disabled={n < 4}
+          onClick={() => {
+            const next = nextDiagonal(n, pair)
+            if (next) update((d) => setRoomDiagonal(d, room.id, next))
+          }}
+        />
+        <IconButton label="Remove diagonal" icon={<X size={14} />} onClick={() => update((d) => setRoomDiagonal(d, room.id, null))} />
+      </div>
+    </FieldRow>
   )
 }
