@@ -112,15 +112,20 @@ export function useRoomsFrame() {
   // Room name positions: where the whole text box fits inside the room (not the centroid, which
   // can be outside an L shape or next to a corridor wall); turned in narrow corridors.
   // Zoom is rounded to steps of ~19 % so a wheel zoom does not recompute every frame.
+  const roomTag = useUi((s) => s.roomTag)
   const labelZoom = 2 ** (Math.round(Math.log2(zoom) * 4) / 4)
   const labelAt = useMemo(() => new Map(display.map((d) => {
     // The code goes in front of the name, so the name line is wider when it is shown.
     const codeW = showCodes ? (d.codes.join(' ').length + 2) * 7.8 : 0
-    const nameW = d.name.length * 7.8 + codeW, areaW = 8 * 6.8
-    // The margin keeps the text clear of the wall length labels along the inside of walls, when there is room.
-    const w = (Math.max(nameW, areaW) + 10) / labelZoom, h = 34 / labelZoom
-    return [d.id, labelPlacement(d.pieces[0], w, h, 12 / labelZoom)]
-  })), [display, labelZoom, showCodes])
+    const nameW = d.name.length * 7.8 + codeW
+    // Rows of the room tag (docs/measurements-plan.md section 2): area, perimeter, height, progress.
+    const rows = (roomTag.area ? 1 : 0) + (roomTag.perimeter ? 1 : 0) + (roomTag.ceiling ? 1 : 0) + (roomTag.progress ? 1 : 0)
+    const rowW = rows > 0 ? 10 * 6.8 : 0
+    // The margin (19 px) keeps the text clear of the wall dimension lines along the inside of walls, when there is room.
+    // Height: the title line (about 18 px) and 15 px per row; the default tag (one row) stays 34 px.
+    const w = (Math.max(nameW, rowW) + 10) / labelZoom, h = (19 + 15 * rows) / labelZoom
+    return [d.id, labelPlacement(d.pieces[0], w, h, 19 / labelZoom)]
+  })), [display, labelZoom, showCodes, roomTag])
   // Measuring Mode with the canvas (desktop): no geometry edit. A wall or a room is only picked,
   // and the wall under the pointer lights up its field in the measure panel.
   const measuring = uiMode === 'measure'

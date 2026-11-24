@@ -6,15 +6,20 @@
 // bands would be hidden (UI review F1). The app draws this layer after WallsLayer, so the bands
 // never cover them. Only the room floors, the hole hit areas and the walls of a v1 document stay
 // under the walls (features/rooms/RoomsLayer.tsx).
-import { dist, fmtCm, innerWallLengths, labelPoint, roomWalls } from '../../model/geometry'
+import { useMemo } from 'react'
+import { dist, fmtCm, innerWallLengths, labelPoint, roomInnerRing, roomWalls } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
 import { measuredText, shownLength } from '../../model/precision'
+import { useDoc, useUi } from '../../model/store'
+import { outlinePerimeterCm, roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from './roomTag'
 import { onRoomDown } from './interaction'
 import { RoomNameEditor } from './RoomNameEditor'
 import { useRoomsFrame } from './RoomsLayer'
 import { wallProps } from './walls'
 import { wallAppearance } from '../renovation/logic'
-import { wallAlignOffsetCm } from './wallSides'
+import { wallAlignOffsetCm, sideFaceKeys, storedWallView } from './wallSides'
+import { dimLine, dimLineOfSpan } from './dims/dimLine'
+import { DimLineView } from './dims/DimLineView'
 
 /** A wall number badge, in the colours of a selected wall, or of a normal one. */
 const badgeClass = {
@@ -32,18 +37,39 @@ const badgeTextClass = {
 export function RoomsOverlay() {
   const f = useRoomsFrame()
   const {
-    rooms, selection, layers, renovationView, showCodes, showWallNumbers, measurements, storedWalls, hover,
-    hoverWall, hoverLabel, step, display, vp, px, zoom, labelAt, interactive, selRoomIds, selWalls, selStoredWall,
-    editing, setEditing, closeEditor, forcedWalls,
+    rooms, selection, layers, renovationView, showCodes, showWallNumbers, measurements, storedWalls, storedNodes,
+    hover, hoverWall, hoverLabel, step, display, vp, px, zoom, labelAt, interactive, selRoomIds, selWalls,
+    selStoredWall, editing, setEditing, closeEditor, forcedWalls,
   } = f
+
+  /** Wall lengths: dimension lines (default) or the old text only (docs/measurements-plan.md). */
+  const dimStyle = useUi((s) => s.dimStyle)
+
+  /** Rows of the room tag chosen in the View menu (docs/measurements-plan.md section 2). */
+  const tag = useUi((s) => s.roomTag)
+  // Rooms without their own height use the apartment default height.
+  const defaultCeilingCm = useDoc((s) => s.doc.apartment?.defaultCeilingCm)
+  const tagInput = (d: (typeof display)[number]) => {
+    const members = rooms.filter((r) => d.roomIds.includes(r.id))
+    const progress = wallProgress(members, measurements)
+    return {
+      name: d.name, codes: d.codes, areaM2: d.areaM2,
+      // A single room is measured on its inside faces, like the wall lengths; a group merged in the
+      // After view has one outline, so its perimeter is the one of that outline.
+      perimeterCm: d.merged ? outlinePerimeterCm(d.pieces) : members[0] ? roomPerimeterCm(members[0]) : 0,
+      ceilingCm: tagCeilingCm(members.map((r) => (r.ceilingCm ? r : { ...r, ceilingCm: defaultCeilingCm }))),
+      measuredWalls: progress.measured, walls: progress.walls,
+    }
+  }
 
   const label = (d: (typeof display)[number]) => {
     // The room being renamed shows the inline editor instead (drawn last, above the hit areas).
     if (!d.merged && editing === d.id) return null
     const ring = d.pieces[0]?.[0] ?? []
     if (ring.length < 3) return null
+    const lines = roomTagLines(tagInput(d), tag, { showCodes })
     // Room code in front of the name, so the survey IDs of the Solve tab are found on the plan.
-    const code = showCodes ? d.codes.join(' ') : ''
+    const code = lines.title.code ?? ''
     const xs = ring.map((v) => v.x), ys = ring.map((v) => v.y)
     const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
     if (small) {
@@ -59,8 +85,11 @@ export function RoomsOverlay() {
       )
     }
     const place = labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
-    // Baseline of the name a bit above the point, so the two lines are centred on it.
-    const c = { x: place.p.x, y: place.p.y - px(4) }
+    // One line for the title and one per row, the whole block centred on the point: the baseline of
+    // the title sits half the block above it, less the ascender of its 14 px line.
+    const rowStep = px(15)
+    const blockH = px(14) + lines.rows.length * rowStep
+    const c = { x: place.p.x, y: place.p.y - blockH / 2 + px(11) }
     return (
       <text key={d.id} x={c.x} y={c.y} textAnchor="middle" data-label-vertical={place.vertical ? '' : undefined}
         transform={place.vertical ? `rotate(-90 ${place.p.x} ${place.p.y})` : undefined} pointerEvents={interactive ? 'auto' : 'none'}
@@ -71,14 +100,25 @@ export function RoomsOverlay() {
           {code !== '' && (
             <tspan fontWeight={700} className="font-mono" data-room-code-text={d.codes[0]}>{`${code}  `}</tspan>
           )}
-          {d.name}
+          {lines.title.name}
         </tspan>
-        <tspan x={c.x} dy={px(16)} fontSize={px(12)} pointerEvents="none" className="fill-slate-500 dark:fill-slate-400">
-          {d.areaM2.toFixed(2).replace('.', ',')} m²
-        </tspan>
+        {lines.rows.map((row, i) => (
+          <tspan key={`row${i}`} x={c.x} dy={rowStep} fontSize={px(12)} pointerEvents="none"
+            data-room-tag-row={i} className="fill-slate-500 dark:fill-slate-400">
+            {row}
+          </tspan>
+        ))}
       </text>
     )
   }
+
+  /** The faces of both sides of the selected stored wall, for its helper dimensions. */
+  const selWallView = useMemo(
+    () => (selStoredWall
+      ? storedWallView({ rooms, nodes: storedNodes, walls: storedWalls, measurements }, selStoredWall.wallId)
+      : null),
+    [selStoredWall, rooms, storedNodes, storedWalls, measurements],
+  )
 
   /** The side lines of the selected stored wall, and its A / B markers. */
   const selectedWallSide = (() => {
@@ -125,6 +165,50 @@ export function RoomsOverlay() {
         </g>
       )
     }
+    /**
+     * Helper dimensions of the wall (docs/measurements-plan.md section 1): one dimension line per
+     * face of each side, outside the band, with the length of that face, and the thickness of the
+     * wall in a small box at the middle of the band. A measured face shows its measured value.
+     */
+    const helperDims = () => {
+      if (!layers.dimensions) return null
+      const helperOff = thicknessCm / 2 + px(22)
+      const groups = (selWallView?.sides ?? []).map((s) => {
+        const k = s.side === 'L' ? 1 : -1
+        // Away from the band, on this side: (-uy, ux) is the left of a -> b, which is side L (A).
+        const normal = { x: -uy * k, y: ux * k }
+        const keys = sideFaceKeys(s)
+        return s.faces.map((f, i) => {
+          const measuredFace = f.kind === 'room' && !!f.measuredCm
+          const text = f.kind === 'room' && f.measuredCm
+            ? measuredText(f.measuredCm, shownLength(f.lengthCm, step), step)
+            : fmtCm(shownLength(f.lengthCm, step))
+          const line = dimLineOfSpan(a, b, normal, { from: f.from, to: f.to }, helperOff, zoom, text)
+          if (!line) return null
+          const dimKey = f.kind === 'room' && f.label ? f.label : keys[i] ?? s.side + i
+          return (
+            <g key={s.side + dimKey} data-helper-dim={dimKey} data-helper-side={s.letter}>
+              <DimLineView line={line} text={text} measured={measuredFace} kind="helper" dimKey={dimKey} />
+            </g>
+          )
+        })
+      })
+      // Thickness in a small box at the middle of the band, in the colours of a wall number badge.
+      const n = fmtCm(thicknessCm)
+      const h = px(13), bw = px(5) + px(5.6) * n.length
+      return (
+        <g pointerEvents="none" data-helper-dims={selStoredWall.wallId}>
+          {groups}
+          <g transform={`translate(${(a.x + b.x) / 2} ${(a.y + b.y) / 2})`} data-helper-thickness={n} aria-hidden="true">
+            <rect x={-bw / 2} y={-h / 2} width={bw} height={h} rx={px(3)} strokeWidth={px(1)}
+              className={badgeClass.none} />
+            <text textAnchor="middle" dominantBaseline="middle" fontSize={px(9)} className={`font-mono ${badgeTextClass.none}`}>
+              {n}
+            </text>
+          </g>
+        </g>
+      )
+    }
     return (
       <g data-selected-wall-side={side ?? ''} data-wall-side-of={selStoredWall.wallId}>
         <g pointerEvents="none">
@@ -140,6 +224,7 @@ export function RoomsOverlay() {
         <line {...align} pointerEvents="none" strokeWidth={px(2)} strokeLinecap="round"
           strokeDasharray={`${px(2)} ${px(4)}`} data-wall-align-line={selStoredWall.wallId}
           data-align={wall?.align ?? 'room'} className="stroke-sky-600 dark:stroke-sky-400" />
+        {helperDims()}
         {marker(1, 'A')}
         {marker(-1, 'B')}
       </g>
@@ -231,6 +316,8 @@ export function RoomsOverlay() {
         const labels = new Map(surveyIds(r).filter((x) => x.kind === 'wall').map((x) => [x.wallStart, x.label]))
         // Lengths shown are inside faces, like the values measured on site.
         const inner = innerWallLengths(r)
+        // Inside corners of the room: the face a wall length is measured on, corner to corner.
+        const ring = roomInnerRing(r)
         return roomWalls(r).map((w) => {
           // Always show lengths of walls attached to the dragged vertex/wall (7.2 #22).
           if (w.length * zoom < 55 && !forcedWalls.has(w.start.id)) return null
@@ -243,12 +330,30 @@ export function RoomsOverlay() {
           const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off, my = (w.start.y + w.end.y) / 2 + w.inward.y * off
           let ang = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
           if (ang > 90 || ang < -90) ang += 180
+          const value = measured
+            ? measuredText(m.actualCm, shownLength(inner[w.index], step), step)
+            : fmtCm(shownLength(inner[w.index], step))
+          // "Wall lengths: Lines": a dimension line along the inside face of this wall (the span the
+          // value measures), px(10) into the room, with a tick at each end and the value above the
+          // line. The line sits at thickness / 2 + px(10) from the centre line, the place of the old
+          // text, so the plan keeps its look (docs/measurements-plan.md section 1).
+          const faceStart = dimStyle === 'lines' ? ring[w.index] : undefined
+          const faceEnd = dimStyle === 'lines' ? ring[(w.index + 1) % ring.length] : undefined
+          const line = faceStart && faceEnd
+            ? dimLine({ start: faceStart, end: faceEnd, normal: w.inward, offsetCm: px(10), zoom, text: value })
+            : null
+          if (line) {
+            return <DimLineView key={'d' + r.id + w.start.id} line={line} text={value} measured={measured}
+              kind="wall" dimKey={`${r.code}-${w.index + 1}`} />
+          }
+          // The dimensions layer set to "Text", or a wall shorter than px(12) on screen: the text
+          // alone, as before (the lengths of the walls of a dragged vertex stay readable, 7.2 #22).
           return (
             <text key={'d' + r.id + w.start.id} x={mx} y={my} textAnchor="middle" dominantBaseline="middle"
               transform={`rotate(${ang} ${mx} ${my})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
               strokeWidth={px(3)} strokeLinejoin="round" fontWeight={measured ? 600 : undefined}
               className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${measured ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
-              {measured ? measuredText(m.actualCm, shownLength(inner[w.index], step), step) : fmtCm(shownLength(inner[w.index], step))}
+              {value}
             </text>
           )
         })
@@ -263,9 +368,10 @@ export function RoomsOverlay() {
         const props = wallProps(r, w.start.id)
         if (!wallAppearance(props.type, props.status, renovationView).visible) return null
         // Same placement as the dimension text; the badge goes one step further inside the room.
+        // A dimension LINE has the value above it (px(7)), so the badge keeps clear of it.
         const dimOff = props.thicknessCm / 2 + px(10)
         const dimShown = layers.dimensions && (w.length * zoom >= 55 || forcedWalls.has(w.start.id))
-        const off = dimShown ? dimOff + px(13) : dimOff
+        const off = dimShown ? dimOff + px(dimStyle === 'lines' ? 20 : 13) : dimOff
         const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off
         const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
         const n = String(w.index + 1)

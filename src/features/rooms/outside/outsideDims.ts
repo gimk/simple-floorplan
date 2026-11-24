@@ -1,0 +1,309 @@
+// Outside dimension chains around the plan (docs/measurements-plan.md section 3). Pure: no store,
+// no side effect. Units are cm, y points down.
+//
+// The outside of the plan is made of the OUTSIDE faces of the stored walls: the spans of a wall
+// side that no room covers (see wallSides.ts, `storedWallView`). Those spans are measured on the
+// OUTER FACE line of the wall: the centre line moved half a thickness towards the outside.
+//
+// Spans that are in line (same direction within 0.5 degree, same outer face line within 1 cm) and
+// that touch end to end make one straight RUN (a facade of the plan). A run gives two dimension
+// rows on the plan:
+//   row 1 = the CHAIN: one segment per span, cut at the wall ends and at the T junctions where
+//           another wall of the graph meets the wall (the same spans as in the drawing);
+//   row 2 = the OVERALL length of the run.
+// The ends of a run are moved to the outside corner (half the thickness of the wall that continues
+// the run there), so a chain segment measures from outside corner to outside corner, like the
+// facade value 'W12-E'.
+import { dist } from '../../../model/geometry'
+import type { PlanDoc, StoredNode, StoredWall, Vec } from '../../../model/types'
+import { deriveWallFaces, storedWallProps } from '../../../model/v2/materialize'
+import { outsideFaceSide, wallValueLabel } from '../../../model/wallValues'
+
+/** Two spans are in line when their directions differ by less than this (0.5 degree). */
+const PARALLEL_SIN = Math.sin((0.5 * Math.PI) / 180)
+/** Points this close (cm) are the same point; two lines this close are the same line. */
+const TOL_CM = 1
+/** Longest move of a run end to an outside corner (cm): keeps a bad join from stretching a row. */
+const MAX_EXTEND_CM = 30
+
+const SIDES: readonly ('L' | 'R')[] = ['L', 'R']
+
+export type OutsideSpanDoc = Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>
+
+/** One outside face span of one side of one stored wall, on its outer face line. */
+export type OutsideSpan = {
+  wallId: string
+  side: 'L' | 'R'
+  /** Node of the wall at the start of the span, and at its end. */
+  fromNode: string
+  toNode: string
+  /** Start and end of the span on the outer face line, cm. */
+  a: Vec
+  b: Vec
+  /** Unit direction a -> b of the span. */
+  dir: Vec
+  /** Unit normal of the wall on the outside of this side (away from the wall). */
+  normal: Vec
+  lengthCm: number
+  /** Facade value label of the span ('W12-E') when the WHOLE side of the wall is outside. */
+  label: string | null
+  /** Value measured on that facade, cm, or null. */
+  measuredCm: number | null
+  /** Points on the span where another wall of the graph meets the wall (T junction). */
+  cuts: Vec[]
+}
+
+/** One segment of a chain row: an outside span, or a part of it between two T junctions. */
+export type OutsideDimSegment = {
+  a: Vec
+  b: Vec
+  lengthCm: number
+  /** 'W12-E' when this segment is one whole outside side of a wall, else null. */
+  label: string | null
+  /** Value measured on that facade, cm, or null. */
+  measuredCm: number | null
+}
+
+/** A straight run of outside faces: one chain row (segments) and one overall row. */
+export type OutsideDimRun = {
+  /** Stable key of the run: '<wallId>:<side>' of its first span. */
+  key: string
+  /** First and last point of the run on the outer face line (outside corners when there is one). */
+  a: Vec
+  b: Vec
+  /** Unit direction a -> b. The dimension text turns with it. */
+  dir: Vec
+  /** Unit normal of the run, away from the building. The rows are drawn on that side. */
+  normal: Vec
+  /** Chain points, in order: the run ends and the points where the span changes. */
+  points: Vec[]
+  /** One segment between two chain points. */
+  segments: OutsideDimSegment[]
+  /** Length of the whole run, cm. */
+  overallCm: number
+}
+
+const unit = (v: Vec): Vec => {
+  const len = Math.hypot(v.x, v.y)
+  return len < 1e-9 ? { x: 0, y: 0 } : { x: v.x / len, y: v.y / len }
+}
+
+const nodeMap = (nodes: StoredNode[] | undefined) => new Map((nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
+
+/**
+ * Outside face spans of the document, on their outer face lines.
+ * A side that a room covers on its whole length has no span; a side covered only in part gives the
+ * spans that no room covers (a recess, the free side of a wall).
+ */
+export function outsideSpans(doc: OutsideSpanDoc): OutsideSpan[] {
+  const walls = deriveWallFaces(doc)
+  const nodes = doc.nodes ?? []
+  const at = nodeMap(nodes)
+  const out: OutsideSpan[] = []
+  for (const wall of walls) {
+    const pa = at.get(wall.a)
+    const pb = at.get(wall.b)
+    if (!pa || !pb) continue
+    const len = dist(pa, pb)
+    if (len < TOL_CM) continue
+    // A wall that no room uses (drawn with the Wall tool) has no inside: it is not a facade.
+    if (!wall.faces.some((f) => f.roomId !== undefined)) continue
+    const d = { x: (pb.x - pa.x) / len, y: (pb.y - pa.y) / len }
+    const left = { x: -d.y, y: d.x }
+    const half = storedWallProps(wall).thicknessCm / 2
+    // T junctions: nodes of the graph on the centre line, between the two ends of the wall.
+    const cuts = nodes
+      .filter((n) => n.id !== wall.a && n.id !== wall.b)
+      .map((n) => ({
+        along: (n.x - pa.x) * d.x + (n.y - pa.y) * d.y,
+        off: (n.x - pa.x) * left.x + (n.y - pa.y) * left.y,
+      }))
+      .filter((c) => Math.abs(c.off) <= TOL_CM && c.along > TOL_CM && c.along < len - TOL_CM)
+      .map((c) => c.along)
+    const facade = outsideFaceSide(wall, len)
+    for (const side of SIDES) {
+      const mine = wall.faces.filter((f) => f.side === side && f.roomId === undefined)
+      if (!mine.length) continue
+      const sign = side === 'L' ? 1 : -1
+      const normal = { x: left.x * sign, y: left.y * sign }
+      const label = facade === side ? wallValueLabel(wall.id, 'outside') : null
+      const measuredCm = label ? doc.measurements[label]?.actualCm ?? null : null
+      // A point of the outer face line, at a distance `along` from node a of the wall.
+      const onFace = (along: number): Vec => ({
+        x: pa.x + d.x * along + normal.x * half,
+        y: pa.y + d.y * along + normal.y * half,
+      })
+      for (const f of mine) {
+        const from = Math.min(f.from, f.to)
+        const to = Math.max(f.from, f.to)
+        if (to - from < TOL_CM) continue
+        out.push({
+          wallId: wall.id,
+          side,
+          fromNode: wall.a,
+          toNode: wall.b,
+          a: onFace(from),
+          b: onFace(to),
+          dir: d,
+          normal,
+          lengthCm: to - from,
+          label,
+          measuredCm,
+          cuts: cuts.filter((c) => c > from + TOL_CM && c < to - TOL_CM).map(onFace),
+        })
+      }
+    }
+  }
+  return out
+}
+
+/** Sides of `w` that are outside (no room) and that reach `node`. */
+function outsideSidesAtNode(w: StoredWall, node: string, len: number): ('L' | 'R')[] {
+  const atStart = w.a === node
+  return SIDES.filter((side) =>
+    w.faces.some((f) => {
+      if (f.side !== side || f.roomId !== undefined) return false
+      return atStart ? Math.min(f.from, f.to) <= TOL_CM : Math.max(f.from, f.to) >= len - TOL_CM
+    }),
+  )
+}
+
+/**
+ * Signed distance (cm) along the run direction to move a run end to reach the outside corner: the
+ * crossing of the outer face line of the run with the outer face line of a wall that continues the
+ * outside at that node. A wall in line with the run gives no corner (it is the same run), and a
+ * wall that is outside on both sides gives no clear side, so both give 0. 0 also when the crossing
+ * is further than MAX_EXTEND_CM (a shallow corner) or when no wall continues the outside there.
+ */
+function cornerShiftCm(node: string, runDir: Vec, p: Vec, walls: StoredWall[], nodes: Map<string, Vec>): number {
+  let best = 0
+  for (const w of walls) {
+    if (w.a !== node && w.b !== node) continue
+    const pa = nodes.get(w.a)
+    const pb = nodes.get(w.b)
+    if (!pa || !pb) continue
+    const len = dist(pa, pb)
+    if (len < TOL_CM) continue
+    const d = { x: (pb.x - pa.x) / len, y: (pb.y - pa.y) / len }
+    const den = runDir.x * d.y - runDir.y * d.x
+    if (Math.abs(den) <= PARALLEL_SIN) continue
+    const sides = outsideSidesAtNode(w, node, len)
+    if (sides.length !== 1) continue
+    // A point of the outer face of that wall, at the node: the corner is on this line.
+    const sign = sides[0] === 'L' ? 1 : -1
+    const half = storedWallProps(w).thicknessCm / 2
+    const q = { x: pa.x - d.y * half * sign, y: pa.y + d.x * half * sign }
+    const s = ((q.x - p.x) * d.y - (q.y - p.y) * d.x) / den
+    if (Math.abs(s) > MAX_EXTEND_CM || Math.abs(s) <= Math.abs(best)) continue
+    best = s
+  }
+  return best
+}
+
+/** Two spans that make one straight run: same direction, same outer face line, touching. */
+function sameRun(s: OutsideSpan, t: OutsideSpan): boolean {
+  if (Math.abs(s.dir.x * t.dir.y - s.dir.y * t.dir.x) > PARALLEL_SIN) return false
+  if (s.normal.x * t.normal.x + s.normal.y * t.normal.y < 1 - 1e-3) return false
+  const offLine = (p: Vec) => Math.abs((p.x - s.a.x) * s.normal.x + (p.y - s.a.y) * s.normal.y)
+  if (offLine(t.a) > TOL_CM || offLine(t.b) > TOL_CM) return false
+  return (
+    dist(s.a, t.a) <= TOL_CM || dist(s.a, t.b) <= TOL_CM || dist(s.b, t.a) <= TOL_CM || dist(s.b, t.b) <= TOL_CM
+  )
+}
+
+/** Groups of spans that make one straight run (each group in the order of `spans`). */
+export function groupRuns(spans: OutsideSpan[]): OutsideSpan[][] {
+  const parent = spans.map((_, i) => i)
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])))
+  for (let i = 0; i < spans.length; i++) {
+    for (let j = i + 1; j < spans.length; j++) {
+      if (!sameRun(spans[i], spans[j])) continue
+      const ri = find(i)
+      const rj = find(j)
+      if (ri !== rj) parent[rj] = ri
+    }
+  }
+  const groups = new Map<number, OutsideSpan[]>()
+  spans.forEach((s, i) => {
+    const r = find(i)
+    const g = groups.get(r)
+    if (g) g.push(s)
+    else groups.set(r, [s])
+  })
+  return [...groups.values()]
+}
+
+/** The span of a group that holds a point of the run (the middle of a segment). */
+function spanAt(spans: OutsideSpan[], p: Vec): OutsideSpan | null {
+  for (const s of spans) {
+    const along = (p.x - s.a.x) * s.dir.x + (p.y - s.a.y) * s.dir.y
+    const off = Math.abs((p.x - s.a.x) * s.normal.x + (p.y - s.a.y) * s.normal.y)
+    if (along >= -TOL_CM && along <= s.lengthCm + TOL_CM && off <= TOL_CM) return s
+  }
+  return null
+}
+
+const samePoint = (p: Vec, q: Vec) => dist(p, q) <= TOL_CM
+
+/** One straight run of spans: chain points, segments (with their facade value) and overall length. */
+function buildRun(spans: OutsideSpan[], walls: StoredWall[], nodes: Map<string, Vec>): OutsideDimRun {
+  const dir0 = spans[0].dir
+  const along = (p: Vec) => p.x * dir0.x + p.y * dir0.y
+  // Chain points: both ends of every span, and the T junctions that cut a span.
+  const found = spans.flatMap((s) => [s.a, s.b, ...s.cuts]).sort((p, q) => along(p) - along(q))
+  const points: Vec[] = []
+  for (const p of found) {
+    const last = points[points.length - 1]
+    if (!last || Math.abs(along(p) - along(last)) > TOL_CM) points.push(p)
+  }
+  // The ends of the run go to the outside corner, when a wall continues the outside there.
+  const lastAt = points.length - 1
+  const runDir = unit({ x: points[lastAt].x - points[0].x, y: points[lastAt].y - points[0].y })
+  const firstSpan = spans.find((s) => samePoint(s.a, points[0]) || samePoint(s.b, points[0]))
+  const lastSpan = spans.find((s) => samePoint(s.a, points[lastAt]) || samePoint(s.b, points[lastAt]))
+  if (firstSpan && lastSpan && runDir.x * runDir.x + runDir.y * runDir.y > 0) {
+    const startNode = samePoint(firstSpan.a, points[0]) ? firstSpan.fromNode : firstSpan.toNode
+    const endNode = samePoint(lastSpan.a, points[lastAt]) ? lastSpan.fromNode : lastSpan.toNode
+    const startShift = cornerShiftCm(startNode, runDir, points[0], walls, nodes)
+    const endShift = cornerShiftCm(endNode, runDir, points[lastAt], walls, nodes)
+    points[0] = { x: points[0].x + runDir.x * startShift, y: points[0].y + runDir.y * startShift }
+    points[lastAt] = { x: points[lastAt].x + runDir.x * endShift, y: points[lastAt].y + runDir.y * endShift }
+  }
+  // The span that holds the middle of each chain segment.
+  const middleOf = (i: number): OutsideSpan | null =>
+    spanAt(spans, { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 })
+  const segmentSpans = points.slice(1).map((_, i) => middleOf(i))
+  const segments: OutsideDimSegment[] = segmentSpans.map((span, i) => {
+    const a = points[i]
+    const b = points[i + 1]
+    // A facade value names the WHOLE outside side of a wall: a side that the chain cuts in two (a T
+    // junction) or that the run covers with several segments must not show it on a shorter segment.
+    const whole = span !== null && segmentSpans.indexOf(span) === segmentSpans.lastIndexOf(span)
+    return {
+      a,
+      b,
+      lengthCm: dist(a, b),
+      label: whole && span ? span.label : null,
+      measuredCm: whole && span ? span.measuredCm : null,
+    }
+  })
+  return {
+    key: `${spans[0].wallId}:${spans[0].side}`,
+    a: points[0],
+    b: points[points.length - 1],
+    dir: runDir,
+    normal: spans[0].normal,
+    points,
+    segments,
+    overallCm: dist(points[0], points[points.length - 1]),
+  }
+}
+
+/** The outside dimension runs of a document: one chain row and one overall row for each run. */
+export function outsideDims(doc: OutsideSpanDoc): OutsideDimRun[] {
+  const spans = outsideSpans(doc)
+  if (!spans.length) return []
+  const walls = deriveWallFaces(doc)
+  const nodes = nodeMap(doc.nodes)
+  return groupRuns(spans).map((group) => buildRun(group, walls, nodes))
+}

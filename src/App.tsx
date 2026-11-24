@@ -13,6 +13,7 @@ import { BackgroundLayer, CalibrateTool } from './features/background'
 import { MakeRoomTool, RoomsLayer, RoomTools, TracesLayer, WallTool } from './features/rooms'
 import { WallsLayer } from './features/rooms/WallsLayer'
 import { RoomsOverlay } from './features/rooms/RoomsOverlay'
+import { OutsideDimsLayer } from './features/rooms/outside/OutsideDimsLayer'
 import { ElementsLayer, PlaceElementTool } from './features/elements'
 import { MeasureMode, MeasurePanel } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
@@ -361,6 +362,7 @@ export default function App() {
                   selected wall and the inline name editor: ABOVE the walls, so an opaque wall band
                   never hides them (UI review F1). */}
               <RoomsOverlay />
+              {layers.outsideDims && <OutsideDimsLayer />}
               {/* Traced walls of the Wall tool: always shown, above the rooms (phase 6). */}
               <TracesLayer />
               {layers.clashes && <ClashLayer />}
