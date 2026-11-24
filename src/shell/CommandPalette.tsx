@@ -3,7 +3,7 @@
 // Same look as the shortcuts dialog: a dark backdrop and a light card (dark mode supported).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
-import { commandList, filterCommands, groupRows, moveIndex, type Command } from './commands'
+import { activeIndex, commandList, filterCommands, groupRows, nextEnabled, type Command } from './commands'
 import { toast } from '../features/toast'
 
 export type CommandPaletteProps = {
@@ -55,6 +55,8 @@ function PaletteDialog({
   const boxRef = useRef<HTMLDivElement>(null)
   const list = useMemo(() => commandList({ openShortcuts: onOpenShortcuts }), [onOpenShortcuts])
   const found = useMemo(() => filterCommands(list, query), [list, query])
+  // The active row stays inside the list, on an enabled command when there is one.
+  const current = activeIndex(found, index)
 
   // Focus the search field, and give the focus back on close.
   useEffect(() => {
@@ -75,26 +77,27 @@ function PaletteDialog({
       }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
-        setIndex((i) => moveIndex(i, e.key === 'ArrowDown' ? 1 : -1, found.length))
+        setIndex((i) => nextEnabled(found, Math.min(i, found.length - 1), e.key === 'ArrowDown' ? 1 : -1))
         return
       }
       if (e.key === 'Enter') {
-        const c = found[index]
-        if (!c || !c.enabled) return
+        // The active row, or the first enabled row when the active one cannot run.
+        const c = found[current]?.enabled ? found[current] : found.find((x) => x.enabled)
+        if (!c) return
         e.preventDefault()
         runCommand(c, onClose)
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [found, index, onClose])
+  }, [found, current, onClose])
 
   // Keep the active row in view.
   useEffect(() => {
     boxRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
-  }, [index, query])
+  }, [current, query])
 
-  const active = found[index]
+  const active = found[current]
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-[12vh]"
@@ -141,7 +144,7 @@ function PaletteDialog({
                 {group}
               </div>
               {rows.map(({ command: c, index: i }) => {
-                const isActive = i === index
+                const isActive = i === current
                 return (
                   <button
                     key={c.id}

@@ -285,3 +285,20 @@ describe('toggleAllSnap (Shift+P)', () => {
     expect(groupRows([])).toEqual([])
   })
 })
+
+describe('active row of the palette', () => {
+  const rows = [{ enabled: false }, { enabled: true }, { enabled: false }, { enabled: true }]
+  it('keeps the active row inside the list and on an enabled command', async () => {
+    const { activeIndex } = await import('./commands')
+    expect(activeIndex(rows, 0)).toBe(1)
+    expect(activeIndex(rows, 9)).toBe(3)
+    expect(activeIndex(rows, 2)).toBe(3)
+    expect(activeIndex([], 3)).toBe(0)
+  })
+  it('moves to the next / previous enabled row and wraps', async () => {
+    const { nextEnabled } = await import('./commands')
+    expect(nextEnabled(rows, 1, 1)).toBe(3)
+    expect(nextEnabled(rows, 3, 1)).toBe(1)
+    expect(nextEnabled(rows, 1, -1)).toBe(3)
+  })
+})

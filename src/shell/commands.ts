@@ -104,6 +104,28 @@ export function groupRows(list: Command[]): { group: CommandGroup; rows: Command
 }
 
 /** Next active row for the arrow keys: wraps around; an empty list stays at 0. */
+/** The row to show as active: `index` kept inside the list, moved to an enabled row if needed. */
+export function activeIndex(list: readonly { enabled: boolean }[], index: number): number {
+  if (list.length === 0) return 0
+  const i = Math.max(0, Math.min(index, list.length - 1))
+  if (list[i].enabled) return i
+  const after = list.findIndex((c, k) => k > i && c.enabled)
+  if (after >= 0) return after
+  const first = list.findIndex((c) => c.enabled)
+  return first >= 0 ? first : i
+}
+
+/** Next enabled row in the direction `delta` (wraps); the same row when no other is enabled. */
+export function nextEnabled(list: readonly { enabled: boolean }[], index: number, delta: number): number {
+  const n = list.length
+  if (n === 0) return 0
+  for (let k = 1; k <= n; k++) {
+    const j = moveIndex(index, delta * k, n)
+    if (list[j].enabled) return j
+  }
+  return Math.max(0, Math.min(index, n - 1))
+}
+
 export function moveIndex(index: number, delta: number, length: number): number {
   if (length <= 0) return 0
   return ((index + delta) % length + length) % length

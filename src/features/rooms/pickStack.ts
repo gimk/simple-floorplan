@@ -116,6 +116,19 @@ function vertexPicks(doc: PickDoc, point: Vec, tolCm: number): PickItem[] {
 }
 
 /** Floors that hold the point: the inside ring, minus the holes. Smallest room first (innermost). */
+/** Rooms that use the stored walls of the stack: the room of the picked side first. */
+function wallRoomPicks(doc: PickDoc, stack: PickItem[]): PickItem[] {
+  const out: PickItem[] = []
+  for (const item of stack) {
+    if (item.kind !== 'storedWall') continue
+    const wall = (doc.walls ?? []).find((w) => w.id === item.wallId)
+    if (!wall) continue
+    const faces = [...wall.faces].sort((a, b) => Number(b.side === item.side) - Number(a.side === item.side))
+    for (const f of faces) if (f.roomId && doc.rooms.some((r) => r.id === f.roomId)) out.push({ kind: 'room', roomId: f.roomId })
+  }
+  return out
+}
+
 function roomPicks(doc: PickDoc, point: Vec): PickItem[] {
   const hits: Hit<PickItem>[] = []
   for (const room of doc.rooms) {
@@ -152,6 +165,9 @@ export function pickStack(doc: PickDoc, point: Vec, tolCm: number): PickItem[] {
 
   out.push(...vertexPicks(doc, point, tol))
   out.push(...roomPicks(doc, point))
+  // A point on a wall band is inside no room floor: the rooms on the two sides of the wall come
+  // last, the room on the pointer side first, so Tab can still reach the room (Chrome test R3-5).
+  if (isV2Doc(doc)) out.push(...wallRoomPicks(doc, out))
 
   // One entry per thing, in the order above.
   const seen = new Set<string>()

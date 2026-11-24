@@ -47,14 +47,15 @@ export function ToolHintsView({ hint, compact, hiddenWhileToast = false }: ToolH
   const hide = hiddenWhileToast ? ' max-md:hidden' : ''
   if (compact) {
     return (
-      <div className={`min-w-0 max-w-full flex-1${hide}`}>
+      // Open: the bar takes its own full-width row, so the text does not wrap in a narrow column.
+      <div className={`min-w-0 max-w-full flex-1${open ? ' basis-full' : ''}${hide}`}>
         <button
           type="button"
           aria-expanded={open}
           aria-label="Tool hints"
           data-tool-hints-expanded={open || undefined}
           onClick={() => setOpen((v) => !v)}
-          className={`pointer-events-auto block max-w-full text-left ${BOX}`}
+          className={`pointer-events-auto block max-w-full text-left ${open ? 'w-full' : ''} ${BOX}`}
         >
           <span className={`block ${open ? '' : 'truncate'}`}>{hint}</span>
         </button>

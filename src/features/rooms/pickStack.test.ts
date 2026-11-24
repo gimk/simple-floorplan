@@ -110,11 +110,11 @@ beforeEach(() => {
 })
 
 describe('the pick stack under a point', () => {
-  it('gives [element, face, wall, room A] on a door of a wall that two rooms share', () => {
+  it('gives [element, face, wall, room A, room B] on a door of a wall that two rooms share', () => {
     const doc = v2()
     const wall = sharedWall(doc)
     const stack = pickStack(doc, AT_DOOR, TOL)
-    expect(shape(stack)).toEqual(['element', 'face', 'wall', 'room'])
+    expect(shape(stack)).toEqual(['element', 'face', 'wall', 'room', 'room'])
 
     // The element is the door.
     expect(stack[0]).toEqual({ kind: 'element', elementId: 'door-1' })
@@ -126,6 +126,8 @@ describe('the pick stack under a point', () => {
     expect(stack[2]).toEqual({ kind: 'storedWall', wallId: wall.id, side: face!.side })
     // The floor is room A: the side of the door.
     expect(stack[3]).toEqual({ kind: 'room', roomId: 'A' })
+    // Then the room on the other side of the wall (Chrome test R3-5: Tab must reach the rooms).
+    expect(stack[4]).toEqual({ kind: 'room', roomId: 'B' })
   })
 
   it('does not repeat an item, and gives one item per thing', () => {
@@ -133,13 +135,13 @@ describe('the pick stack under a point', () => {
     expect(new Set(stack.map(pickKey)).size).toBe(stack.length)
   })
 
-  it('keeps the wall but no floor when the point is inside the band only', () => {
+  it('gives the rooms of the wall (pointer side first) when the point is inside the band only', () => {
     const doc = v2()
     const wall = sharedWall(doc)
     // 2 cm from the centre line: the wall band (half of 10 cm), but not the floor of a room.
     const stack = pickStack(doc, { x: 200, y: 298 }, 2)
-    expect(shape(stack)).toEqual(['element', 'face', 'wall'])
-    expect(stack.every((s) => s.kind === 'element' || (s.kind === 'storedWall' && s.wallId === wall.id))).toBe(true)
+    expect(shape(stack)).toEqual(['element', 'face', 'wall', 'room', 'room'])
+    expect(stack.slice(0, 3).every((s) => s.kind === 'element' || (s.kind === 'storedWall' && s.wallId === wall.id))).toBe(true)
   })
 
   it('has no item when the point is far from everything', () => {
@@ -169,17 +171,18 @@ describe('the Tab order', () => {
   it('flicks through the stack and wraps around', () => {
     const doc = v2()
     const stack = pickStack(doc, AT_DOOR, TOL)
-    expect(stack.length).toBe(4)
+    expect(stack.length).toBe(5)
     // Nothing selected: the top of the stack.
     expect(nextInStack(stack, null)).toEqual(stack[0])
     // Then each item, and the last one comes back to the top.
     expect(nextInStack(stack, stack[0])).toEqual(stack[1])
     expect(nextInStack(stack, stack[1])).toEqual(stack[2])
     expect(nextInStack(stack, stack[2])).toEqual(stack[3])
-    expect(nextInStack(stack, stack[3])).toEqual(stack[0])
+    expect(nextInStack(stack, stack[3])).toEqual(stack[4])
+    expect(nextInStack(stack, stack[4])).toEqual(stack[0])
     // Shift + Tab goes the other way, with the same wrap around.
-    expect(nextInStack(stack, stack[0], true)).toEqual(stack[3])
-    expect(nextInStack(stack, stack[3], true)).toEqual(stack[2])
+    expect(nextInStack(stack, stack[0], true)).toEqual(stack[4])
+    expect(nextInStack(stack, stack[4], true)).toEqual(stack[3])
   })
 
   it('does nothing when the stack has one item (the browser keeps Tab)', () => {
@@ -204,10 +207,12 @@ describe('the Tab order', () => {
     expect(tabStep(false, AT_DOOR, view)).toBe(true)
     expect(ui().selection).toEqual({ kind: 'room', roomId: 'A' })
     expect(tabStep(false, AT_DOOR, view)).toBe(true)
+    expect(ui().selection).toEqual({ kind: 'room', roomId: 'B' })
+    expect(tabStep(false, AT_DOOR, view)).toBe(true)
     expect(ui().selection).toEqual({ kind: 'element', elementId: 'door-1' })
-    // Shift + Tab: back to the floor.
+    // Shift + Tab: back to the room across the wall.
     expect(tabStep(true, AT_DOOR, view)).toBe(true)
-    expect(ui().selection).toEqual({ kind: 'room', roomId: 'A' })
+    expect(ui().selection).toEqual({ kind: 'room', roomId: 'B' })
   })
 
   it('leaves the Tab key alone in Measuring mode, with another tool, and away from the plan', () => {
@@ -239,17 +244,18 @@ describe('the Tab key listener', () => {
       // The focus does not move: the browser must not act on the key.
       expect(first.defaultPrevented).toBe(true)
 
-      // A Shift + Tab goes back: the floor of room A (the bottom of the stack).
+      // A Shift + Tab goes back: room B, across the wall (the bottom of the stack).
       useUi.setState({ selection: { kind: 'element', elementId: 'door-1' } })
       win.fire('keydown', tabKey(true))
-      expect(useUi.getState().selection).toEqual({ kind: 'room', roomId: 'A' })
+      expect(useUi.getState().selection).toEqual({ kind: 'room', roomId: 'B' })
 
       // Over the middle of a room the stack has one item: Tab keeps its browser meaning.
       win.fire('pointermove', { clientX: 200, clientY: 100, target: null })
       const alone = tabKey()
       win.fire('keydown', alone)
       expect(alone.defaultPrevented).toBe(false)
-      expect(useUi.getState().selection).toEqual({ kind: 'room', roomId: 'A' })
+      // The selection does not change (still room B from the Shift + Tab above).
+      expect(useUi.getState().selection).toEqual({ kind: 'room', roomId: 'B' })
 
       // Ctrl / Alt / Cmd + Tab belong to the browser.
       win.fire('pointermove', { clientX: AT_DOOR.x, clientY: AT_DOOR.y, target: null })
