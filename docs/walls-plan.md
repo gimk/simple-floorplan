@@ -253,8 +253,9 @@ The interface follows the model: a wall is one object with two sides.
 - **Walls are drawn once, from the graph** (v2): each stored wall is one band of its thickness;
   joins at nodes (changed 2026-11-24): two walls at 90 degrees = square ends, the thicker wall
   continues through the corner (butt join); two walls at another angle = mitred corner; a wall that ends on the middle of another wall (T) =
-  square end against that wall's face; a free end = square; 3+ walls at a node = square ends plus a
-  node patch. Rooms draw only their floor (inside polygon) and labels. Styles (type, status,
+  square end against that wall's face; a free end = square; 3+ walls at a node = the in-line pair
+  goes through and the other walls stop square on its faces (no pair in line: square ends plus a
+  node patch). Rooms draw only their floor (inside polygon) and labels. Styles (type, status,
   renovation view, bearing highlight, selection) stay the same.
 
 ## Phases
