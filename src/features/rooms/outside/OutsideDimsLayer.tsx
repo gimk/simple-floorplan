@@ -15,6 +15,7 @@ import { isV2Doc } from '../../../model/v2/targets'
 import { useIsDesktop } from '../../../shell/useDesktop'
 import { DIM_STYLE, dimLine } from '../dims/dimLine'
 import { DimLineView } from '../dims/DimLineView'
+import { dimEditAllowed, dimTextLabel, useDimEdit } from '../dims/dimEdit'
 import { outsideDims, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
 
 /** Distance of the chain row and the overall row from the outer face line, screen px. */
@@ -43,6 +44,15 @@ type RowProps = {
   dimKey: string
   px: (n: number) => number
   zoom: number
+  /**
+   * Measurement label written by the text ('W12-E'), so a double-click types the value of that
+   * outside face (docs/measurements-plan.md section 4); null when the text writes no value.
+   */
+  editLabel?: string | null
+  /** Length of the span on the plan, cm: the placeholder of the typed length. */
+  plannedCm?: number
+  /** True while the field of that text is open: the field replaces the text. */
+  editing?: boolean
 }
 
 /**
@@ -51,14 +61,17 @@ type RowProps = {
  * text of the neighbouring segment stays readable, and never on a tick or an extension line
  * (round 1 suggestion 4).
  */
-function RowDim({ a, b, normal, offset, text, measured, outsideEnd, dimKey, zoom }: RowProps) {
+function RowDim({ a, b, normal, offset, text, measured, outsideEnd, dimKey, zoom, editLabel, plannedCm, editing }: RowProps) {
   const base = { start: a, end: b, normal, offsetCm: offset, zoom, text }
   const first = dimLine(base)
   if (!first) return null
   const line = first.outside
     ? dimLine({ ...base, textPlace: 'outside', outsideEnd, textGapPx: DIM_STYLE.textGap + OUTSIDE_EXTRA_PX }) ?? first
     : first
-  return <DimLineView line={line} text={text} measured={measured} kind="outside" dimKey={dimKey} />
+  return (
+    <DimLineView line={line} text={text} measured={measured} kind="outside" dimKey={dimKey} hideText={editing}
+      onTextDoubleClick={editLabel ? () => useDimEdit.getState().open({ label: editLabel, at: line.text, plannedCm: plannedCm ?? 0 }) : undefined} />
+  )
 }
 
 /** Text and measured state of one segment of a chain row. */
@@ -73,9 +86,10 @@ const segmentText = (seg: OutsideDimSegment, step: number, units: LengthUnits) =
 /**
  * Outside dimension chains of a v2 document: rows outside the wall band, one chain row and one
  * overall row per straight run of outside faces (one row only when the run has one segment).
- * Read only: no hit area, no pointer events. Not drawn when the dimensions layer or the outside
- * dimensions layer is off, and (on a phone) in Measuring Mode, where the plan is cleaned for the
- * survey.
+ * No hit area, and no pointer event except on the TEXT of a segment that measures a whole outside
+ * face: a double-click there types that value (docs/measurements-plan.md section 4). Not drawn when
+ * the dimensions layer or the outside dimensions layer is off, and (on a phone) in Measuring Mode,
+ * where the plan is cleaned for the survey.
  */
 export function OutsideDimsLayer() {
   const rooms = useDoc((s) => s.doc.rooms)
@@ -87,7 +101,10 @@ export function OutsideDimsLayer() {
   const dimensions = useUi((s) => s.layers.dimensions)
   const outside = useUi((s) => s.layers.outsideDims)
   const mode = useUi((s) => s.mode)
+  const tool = useUi((s) => s.tool)
   const units = useUi((s) => s.canvasUnits)
+  /** Label of the dimension text whose field is open: that text is replaced by the field. */
+  const dimEditing = useDimEdit((s) => s.edit?.label ?? null)
   const isDesktop = useIsDesktop()
   const { px, zoom } = useViewport()
   const runs = useMemo(
@@ -97,6 +114,8 @@ export function OutsideDimsLayer() {
   if (!v2 || !dimensions || !outside) return null
   if (mode === 'measure' && !isDesktop) return null
   if (!runs.length) return null
+  /** Edit mode with the Select tool: a double-click on a facade text types its length (section 4). */
+  const canEdit = dimEditAllowed(mode, tool)
 
   /** The rows of one run: the chain row (only with several segments) and the overall row. */
   const rowsOf = (run: OutsideDimRun) => {
@@ -120,10 +139,13 @@ export function OutsideDimsLayer() {
           // Past the end of the segment on the side of the outer end of the run: the start end for
           // the first half of the row, the end of the run for the second half.
           const outsideEnd = i * 2 < run.segments.length ? 'start' : 'end'
+          // A segment that measures one whole outside face of a wall ('W12-E') can be typed on.
+          const editLabel = canEdit ? dimTextLabel('outside', seg.label ?? String(i)) : null
           return (
             <g key={i} data-outside-seg={seg.label ?? String(i)}>
               <RowDim a={seg.a} b={seg.b} normal={run.normal} offset={px(ROW_CHAIN_PX)} text={text}
-                measured={measured} outsideEnd={outsideEnd} dimKey={seg.label ?? String(i)} px={px} zoom={zoom} />
+                measured={measured} outsideEnd={outsideEnd} dimKey={seg.label ?? String(i)} px={px} zoom={zoom}
+                editLabel={editLabel} plannedCm={seg.lengthCm} editing={!!editLabel && editLabel === dimEditing} />
             </g>
           )
         })}
@@ -135,7 +157,10 @@ export function OutsideDimsLayer() {
               <RowDim a={run.segments[0].a} b={run.segments[0].b} normal={run.normal}
                 offset={px(ROW_OVERALL_PX)} text={segmentText(run.segments[0], step, units).text}
                 measured={segmentText(run.segments[0], step, units).measured} outsideEnd="end"
-                dimKey={run.segments[0].label ?? '0'} px={px} zoom={zoom} />
+                dimKey={run.segments[0].label ?? '0'} px={px} zoom={zoom}
+                editLabel={canEdit ? dimTextLabel('outside', run.segments[0].label ?? '0') : null}
+                plannedCm={run.segments[0].lengthCm}
+                editing={!!run.segments[0].label && run.segments[0].label === dimEditing} />
             </g>
           ) : (
             <RowDim a={run.a} b={run.b} normal={run.normal} offset={px(ROW_OVERALL_PX)}

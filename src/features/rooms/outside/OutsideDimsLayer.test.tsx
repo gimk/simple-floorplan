@@ -5,7 +5,7 @@ import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Viewport } from '../../../canvas/Viewport'
 import { emptyDoc, useDoc, useUi, type Layers } from '../../../model/store'
-import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../../model/types'
+import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall, ToolId } from '../../../model/types'
 import { convertToV2 } from '../../../model/v2/convert'
 import { OutsideDimsLayer } from './OutsideDimsLayer'
 
@@ -62,14 +62,20 @@ const v2short = (): PlanDoc => ({
   ],
 })
 
-type Over = { layers?: Partial<Layers>; measurements?: Record<string, Measurement>; doc?: PlanDoc; mode?: 'edit' | 'measure' }
+type Over = {
+  layers?: Partial<Layers>
+  measurements?: Record<string, Measurement>
+  doc?: PlanDoc
+  mode?: 'edit' | 'measure'
+  tool?: ToolId
+}
 
 const setup = (over: Over = {}) => {
   const base = over.doc ?? v2()
   applyState(useUi, {
     layers: { ...BASE_LAYERS, ...over.layers },
     mode: over.mode ?? 'edit',
-    tool: 'select',
+    tool: over.tool ?? 'select',
     selection: null,
     multi: [],
     view: { x: 0, y: 0, zoom: 1 },
@@ -163,5 +169,39 @@ describe('OutsideDimsLayer', () => {
     // A segment that holds its text keeps it centred between the ticks.
     const second = /<g data-outside-seg="1">([\s\S]*?)<\/g>/.exec(html)![1]
     expect(Number(/<text x="[-\d.]+" y="([-\d.]+)"/.exec(second)![1])).toBeCloseTo(-33 - 7, 6)
+  })
+})
+
+describe('typing a length on an outside chain (docs/measurements-plan.md section 4)', () => {
+  /** The markup of the text of the dimension line of one key ('W1-E', 'overall'). */
+  const textOf = (html: string, key: string) => {
+    const m = new RegExp('data-dim-key="' + key + '">([\\s\\S]*?)</g>').exec(html)
+    return m ? /<text[\s\S]*?<\/text>/.exec(m[1])?.[0] ?? null : null
+  }
+
+  it('makes the text of a whole outside face a target in Edit mode with the Select tool', () => {
+    const html = setup()
+    // The square: every row is one whole outside face of a wall, so its value can be typed on.
+    expect(count(html, 'data-dim-text=')).toBe(4)
+    expect(html).toContain('data-dim-text="W1-E"')
+    // The line and its ticks stay read only.
+    expect(html).toContain('<g pointer-events="none" data-dim="outside" data-dim-key="W1-E">')
+  })
+
+  it('keeps the overall length of a run read only (it writes no value)', () => {
+    const html = setup({ doc: v2split() })
+    expect(html).toContain('data-outside-dims')
+    // Each facade is cut in two by the shared wall: both halves are whole outside faces of their
+    // wall, so they can be typed on.
+    expect(textOf(html, 'W1-E')).toContain('data-dim-text="W1-E"')
+    expect(textOf(html, 'W5-E')).toContain('data-dim-text="W5-E"')
+    // The overall row measures the whole run, which is no value of the plan: it stays read only.
+    expect(textOf(html, 'overall')).toMatch(/pointer-events="none"/)
+    expect(html).not.toContain('data-dim-text="overall"')
+  })
+
+  it('keeps the outside texts read only with another tool, and in Measuring Mode', () => {
+    expect(setup({ tool: 'wall' })).not.toContain('data-dim-text=')
+    expect(setup({ mode: 'measure', tool: 'select' })).not.toContain('data-dim-text=')
   })
 })

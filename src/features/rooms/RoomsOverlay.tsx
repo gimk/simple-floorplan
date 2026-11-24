@@ -7,6 +7,7 @@
 // never cover them. Only the room floors, the hole hit areas and the walls of a v1 document stay
 // under the walls (features/rooms/RoomsLayer.tsx).
 import { useMemo } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { dist, fmtCm, innerWallLengths, labelPoint, roomInnerRing, roomWalls } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
 import { measuredTextIn, shownLength } from '../../model/precision'
@@ -23,6 +24,8 @@ import { wallAlignOffsetCm, sideFaceKeys, storedWallView } from './wallSides'
 import { DIM_STYLE, dimLine, dimLineOfSpan, type DimLine } from './dims/dimLine'
 import { DimLineView } from './dims/DimLineView'
 import { boxHit, dimTextBox, fittingRows, ringBox, tagBox, textBox, wallBadge, type Box } from './dims/dimBoxes'
+import { DimEditor } from './dims/DimEditor'
+import { dimEditAllowed, dimTextLabel, parseRoomWallLabel, stepRoomWallLabel, useDimEdit, type DimEditOpen, type DimEditorStep } from './dims/dimEdit'
 
 /** A wall number badge, in the colours of a selected wall, or of a normal one. */
 const badgeClass = {
@@ -49,6 +52,13 @@ export function RoomsOverlay() {
   const dimStyle = useUi((s) => s.dimStyle)
   /** Units of the lengths written on the plan (docs/measurements-plan.md section 5). */
   const units = useUi((s) => s.canvasUnits)
+  /** Only Edit mode with the Select tool types a length on the plan (section 4). */
+  const mode = useUi((s) => s.mode)
+  const tool = useUi((s) => s.tool)
+  /** True when a double-click on a dimension text opens its field. */
+  const canEditDims = dimEditAllowed(mode, tool) && interactive
+  /** Label of the dimension text whose field is open: the field replaces that text. */
+  const dimEditing = useDimEdit((s) => s.edit?.label ?? null)
 
   /** Rows of the room tag chosen in the View menu (docs/measurements-plan.md section 2). */
   const tag = useUi((s) => s.roomTag)
@@ -175,6 +185,25 @@ export function RoomsOverlay() {
     }
   }
 
+  /**
+   * Where the field of a typed length opens, for each dimension text of the plan that writes a
+   * room face: Tab / Shift+Tab then goes to the next / previous wall of the same room.
+   */
+  const dimPlaces = new Map<string, DimEditOpen>()
+
+  /** Open the small field on one dimension text (docs/measurements-plan.md section 4). */
+  const openDim = (label: string, at: Vec, plannedCm: number, room?: (typeof rooms)[number]) => {
+    const faces = room ? roomWalls(room).length : undefined
+    useDimEdit.getState().open({ label, at, plannedCm, roomCode: room?.code, faces })
+  }
+
+  /** Tab / Shift+Tab of the field: the next / previous wall of the room, when it has a text. */
+  const stepDim: DimEditorStep = (from, delta) => {
+    if (from.roomCode === undefined || from.faces === undefined) return null
+    const next = stepRoomWallLabel(from.label, delta, from.faces)
+    return next ? dimPlaces.get(next) ?? null : null
+  }
+
   /** The side lines of the selected stored wall, and its A / B markers. */
   const selectedWallSide = (() => {
     if (!selStoredWall) return null
@@ -244,9 +273,24 @@ export function RoomsOverlay() {
           const line = dimLineOfSpan(a, b, normal, { from: f.from, to: f.to }, helperOff, zoom, text)
           if (!line) return null
           const dimKey = f.kind === 'room' && f.label ? f.label : keys[i] ?? s.side + i
+          // A double-click types the value of the face; a click still selects or drags the room of a
+          // room face (docs/measurements-plan.md section 4).
+          const editLabel = canEditDims ? dimTextLabel('helper', dimKey, s.facadeLabel) : null
+          // A room face of this wall is a wall of its room: Tab goes on to the next wall of the room.
+          const room = f.kind === 'room' ? rooms.find((x) => x.id === f.roomId) : undefined
+          if (editLabel && room) {
+            dimPlaces.set(editLabel, {
+              label: editLabel, at: line.text, plannedCm: f.lengthCm, roomCode: room.code, faces: roomWalls(room).length,
+            })
+          }
           return (
             <g key={s.side + dimKey} data-helper-dim={dimKey} data-helper-side={s.letter}>
-              <DimLineView line={line} text={text} measured={measuredFace} kind="helper" dimKey={dimKey} />
+              <DimLineView line={line} text={text} measured={measuredFace} kind="helper" dimKey={dimKey}
+                hideText={!!editLabel && editLabel === dimEditing}
+                onTextDoubleClick={editLabel ? () => openDim(editLabel, line.text, f.lengthCm, room) : undefined}
+                onTextPointerDown={editLabel && f.kind === 'room'
+                  ? (e) => onRoomDown(e, f.roomId, vp)
+                  : undefined} />
             </g>
           )
         })
@@ -316,6 +360,12 @@ export function RoomsOverlay() {
     p: Vec
     angle: number
     box: Box
+    /** Room of the face: a press on its text selects or drags that room, as the plan does. */
+    roomId: string
+    /** Length of the face on the plan, cm: the placeholder of the typed length (section 4). */
+    plannedCm: number
+    /** Survey label of the face ('SE-2'); the value a typed length writes. */
+    faceLabel: string | null
   }[] = []
   if (layers.dimensions) {
     for (const r of rooms) {
@@ -327,7 +377,8 @@ export function RoomsOverlay() {
       // The box of the room tag: a dimension text that falls in it would cross the tag (r1fix
       // R1-8a), so it goes past the end of its line, or is not drawn at all.
       const roomTagBox = tagBoxInRoom.get(r.id) ?? null
-      for (const w of roomWalls(r)) {
+      const walls = roomWalls(r)
+      for (const w of walls) {
         // The selected wall shows its lengths as helper dimensions: no duplicate here (R1-4).
         if (hiddenDimFaces.has(r.id + ':' + w.start.id)) continue
         // Always show lengths of walls attached to the dragged vertex/wall (7.2 #22).
@@ -363,10 +414,17 @@ export function RoomsOverlay() {
           line = outside
         }
         const p = line ? line.text : { x: mx, y: my }
+        const plannedCm = shownLength(inner[w.index], step)
+        const faceLabel = dimTextLabel('wall', dimKey)
         wallValues.push({
           key, dimKey, line, text, measured, p, angle: line ? line.angle : angle,
           box: line ? dimTextBox(line, text, zoom) : textBox(p, angle, text, zoom),
+          roomId: r.id, plannedCm, faceLabel,
         })
+        // Tab / Shift+Tab of the field goes to the next wall of the room: remember where this one is.
+        if (canEditDims && faceLabel && parseRoomWallLabel(faceLabel)) {
+          dimPlaces.set(faceLabel, { label: faceLabel, at: p, plannedCm, roomCode: r.code, faces: walls.length })
+        }
       }
     }
   }
@@ -441,19 +499,34 @@ export function RoomsOverlay() {
 
       {/* labels + dimensions */}
       {display.map(label)}
-      {wallValues.map((d) => (d.line
-        ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} kind="wall" dimKey={d.dimKey} />
-        : (
-          // The dimensions layer set to "Text", or a wall shorter than px(12) on screen: the text
-          // alone, as before (the lengths of the walls of a dragged vertex stay readable, 7.2 #22).
-          <text key={d.key} x={d.p.x} y={d.p.y} textAnchor="middle" dominantBaseline="middle"
-            transform={`rotate(${d.angle} ${d.p.x} ${d.p.y})`} fontSize={px(11)} pointerEvents="none" paintOrder="stroke"
-            strokeWidth={px(3)} strokeLinejoin="round" fontWeight={d.measured ? 600 : undefined}
-            className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${d.measured ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
-            {d.text}
-          </text>
-        )
-      ))}
+      {wallValues.map((d) => {
+        // A double-click on the text types the measured value of the face; a click still selects or
+        // drags the room under it (docs/measurements-plan.md section 4).
+        const editLabel = canEditDims ? d.faceLabel : null
+        // The field of this text is open: it replaces the text (it is drawn above this layer).
+        const editing = !!editLabel && editLabel === dimEditing
+        const onTextDoubleClick = editLabel ? () => openDim(editLabel, d.p, d.plannedCm, rooms.find((r) => r.id === d.roomId)) : undefined
+        const onTextPointerDown = editLabel ? (e: ReactPointerEvent) => onRoomDown(e, d.roomId, vp) : undefined
+        if (editing && !d.line) return null
+        return d.line
+          ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} kind="wall" dimKey={d.dimKey}
+              hideText={editing} onTextDoubleClick={onTextDoubleClick} onTextPointerDown={onTextPointerDown} />
+          : (
+            // The dimensions layer set to "Text", or a wall shorter than px(12) on screen: the text
+            // alone, as before (the lengths of the walls of a dragged vertex stay readable, 7.2 #22).
+            <text key={d.key} x={d.p.x} y={d.p.y} textAnchor="middle" dominantBaseline="middle"
+              transform={`rotate(${d.angle} ${d.p.x} ${d.p.y})`} fontSize={px(11)}
+              pointerEvents={editLabel ? 'auto' : 'none'} style={editLabel ? { cursor: 'text' } : undefined}
+              onDoubleClick={onTextDoubleClick && ((e) => { e.stopPropagation(); onTextDoubleClick() })}
+              onPointerDown={onTextPointerDown}
+              data-dim-text={editLabel ?? undefined}
+              paintOrder="stroke"
+              strokeWidth={px(3)} strokeLinejoin="round" fontWeight={d.measured ? 600 : undefined}
+              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${d.measured ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
+              {d.text}
+            </text>
+          )
+      })}
 
       {/* wall numbers: a small badge with the number of the wall ("6" = wall CU-6 of room CU),
           near the START end of the wall and in the band of the dimension text, so it never sits on
@@ -509,6 +582,10 @@ export function RoomsOverlay() {
       {rooms.filter((r) => r.id === editing).map((r) => (
         <RoomNameEditor key={'edit' + r.id} room={r} vp={vp} onClose={closeEditor} />
       ))}
+
+      {/* the field that types the length of a dimension text (docs/measurements-plan.md section 4):
+          topmost too, so a hit area of the plan never takes its clicks or its focus */}
+      <DimEditor onStep={stepDim} />
     </g>
   )
 }

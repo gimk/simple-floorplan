@@ -5,7 +5,7 @@ import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Viewport } from '../../canvas/Viewport'
 import { emptyDoc, useDoc, useUi, type DimStyle, type Layers } from '../../model/store'
-import type { Measurement, PlanDoc, Room, Selection } from '../../model/types'
+import type { Measurement, Mode, PlanDoc, Room, Selection, ToolId } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { useSidebar, type SidebarTab } from '../../shell/sidebar/store'
 import { RoomsLayer } from './RoomsLayer'
@@ -13,6 +13,7 @@ import { RoomsOverlay } from './RoomsOverlay'
 import { badgeSizePx, boxAt, boxHit, textBox } from './dims/dimBoxes'
 import { ensureV2 } from '../../model/v2/ensure'
 import { demoRooms } from '../measure/demo'
+import { useDimEdit } from './dims/dimEdit'
 
 const BASE_LAYERS: Layers = {
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
@@ -47,6 +48,9 @@ type Over = {
   dimStyle?: DimStyle
   /** Values measured on site, by survey label ('A-1'). */
   measurements?: Record<string, Measurement>
+  /** Mode and tool of the app: Edit mode with the Select tool types a length on the plan. */
+  mode?: Mode
+  tool?: ToolId
 }
 
 /** Draw the two layers of the rooms, in the order of the app: under the walls, then above them. */
@@ -59,8 +63,8 @@ const setup = (over: Over = {}) => {
   }
   applyState(useUi, {
     layers: { ...BASE_LAYERS, ...over.walls },
-    mode: 'edit',
-    tool: 'select',
+    mode: over.mode ?? 'edit',
+    tool: over.tool ?? 'select',
     selection: over.selection ?? null,
     multi: [],
     dimStyle: over.dimStyle ?? 'lines',
@@ -467,5 +471,67 @@ describe('wall number badges and small rooms (r1fix R1-2, R1-8)', () => {
         for (const d of dims) expect(boxHit(box, textBox(d.p, d.angle, d.text, zoom))).toBe(false)
       }
     }
+  })
+})
+
+describe('typing a length on a dimension text (docs/measurements-plan.md section 4)', () => {
+  /** The markup of the group of one dimension line, e.g. the walls of key 'A-1'. */
+  const groupOf = (html: string, key: string) => {
+    const m = new RegExp(`data-dim-key="${key}">([\\s\\S]*?)</g>`).exec(html)
+    return m ? m[1] : null
+  }
+  /** The markup of the text of one dimension line. */
+  const textOf = (html: string, key: string) => {
+    const group = groupOf(html, key)
+    return group ? /<text[\s\S]*?<\/text>/.exec(group)?.[0] ?? null : null
+  }
+
+  it('makes the text of a wall dimension a target, and leaves the line and its ticks read only', () => {
+    const html = setup()
+    const text = textOf(html, 'A-1')!
+    expect(text).toMatch(/pointer-events="auto"/)
+    expect(text).toContain('data-dim-text="A-1"')
+    // A single press on the text still selects or drags the room under it (no dead click).
+    expect(text).toContain('cursor:text')
+    // The group of the line stays read only: the line and the ticks never take a pointer event.
+    expect(html).toContain('<g pointer-events="none" data-dim="wall" data-dim-key="A-1">')
+    const line = /^<line[^>]*>/.exec(groupOf(html, 'A-1')!)![0]
+    expect(line).not.toContain('pointer-events')
+  })
+
+  it('keeps the texts read only with another tool, and in Measuring Mode', () => {
+    expect(setup({ tool: 'wall' })).not.toContain('data-dim-text=')
+    expect(setup({ mode: 'measure' })).not.toContain('data-dim-text=')
+    // The texts are still drawn, and the plan is unchanged otherwise.
+    expect(setup({ tool: 'wall' })).toContain('data-dim="wall" data-dim-key="A-1"')
+  })
+
+  it('types the value of the face of the helper dimensions of the selected wall', () => {
+    const doc = v2()
+    const html = setup({ selection: { kind: 'storedWall', wallId: wallId(doc), side: 'L' } })
+    expect(textOf(html, 'A-1')).toContain('data-dim-text="A-1"')
+    // A facade span of the selected wall keeps writing the outside value of the wall, when there is one.
+    expect(html).toContain('data-helper-dim="out:R:0"')
+  })
+
+  it('draws the field of the open text, with the value, the plan length and the unit', () => {
+    applyState(useDimEdit, {
+      edit: { label: 'A-1', at: { x: 200, y: 20 }, plannedCm: 390, roomCode: 'A', faces: 4 },
+    })
+    const html = setup({ measurements: { 'A-1': { label: 'A-1', actualCm: 412, updatedAt: '2026-01-01' } } })
+    expect(html).toContain('data-dim-editor="A-1"')
+    expect(html).toContain('aria-label="Measured A-1"')
+    // The measured value of the face, and the length of the plan as the placeholder.
+    expect(html).toContain('value="412"')
+    expect(html).toContain('placeholder="390"')
+    expect(html).toMatch(/inputMode="decimal"/i)
+    expect(html).toContain('cm')
+    // Centred on the text, 92 px wide at zoom 1 (about 90 px of field and its unit).
+    expect(html).toContain('x="154"')
+    applyState(useDimEdit, { edit: null })
+  })
+
+  it('draws no field when no dimension text is open', () => {
+    expect(setup()).not.toContain('data-dim-editor=')
   })
 })

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Calculator, Copy, Download } from 'lucide-react'
 import { planToDxf } from '../../core/dxf'
-import { useDoc } from '../../model/store'
+import { useDoc, useUi } from '../../model/store'
 import {
   BTN,
   CheckboxRow,
@@ -22,6 +22,10 @@ export function ExportPanel() {
   const doc = useDoc((s) => s.doc)
   const [withBg, setWithBg] = useState(false)
   const [a3, setA3] = useState(false)
+  // Measurements of the export: the settings of the View menu, plus these two options.
+  const [outsideDims, setOutsideDims] = useState(true)
+  const [surveyLabels, setSurveyLabels] = useState(true)
+  const [schedule, setSchedule] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const hasBg = !!doc.background?.visible
@@ -32,10 +36,25 @@ export function ExportPanel() {
     setBusy(label); setErr(null)
     try { await fn() } catch (e) { setErr(e instanceof Error ? e.message : String(e)) } finally { setBusy(null) }
   }
+  /**
+   * The options of the plan image: the background, and the measurements exactly as the plan writes
+   * them (wall length style, room tag rows, units, outside chains) plus the two options here.
+   */
   const opts = async () => {
+    const ui = useUi.getState()
     const bg = doc.background
     const on = withBg && !!bg?.visible
-    return { background: on, backgroundHref: on && bg ? await toDataUrl(bg.src) : undefined }
+    return {
+      background: on,
+      backgroundHref: on && bg ? await toDataUrl(bg.src) : undefined,
+      dimStyle: ui.dimStyle,
+      roomTag: ui.roomTag,
+      units: ui.canvasUnits,
+      // Outside chains need stored walls (a v2 document) and the layer of the plan.
+      outside: outsideDims && ui.layers.outsideDims,
+      surveyLabels,
+      schedule,
+    }
   }
 
   const svg = run('svg', async () => download(`${name}.svg`, new Blob([buildPlanSvg(doc, await opts()).svg], { type: 'image/svg+xml' })))
@@ -69,6 +88,9 @@ export function ExportPanel() {
         onChange={setWithBg}
       />
       <CheckboxRow name="exportA3" label="PDF size A3 (default A4)" checked={a3} onChange={setA3} />
+      <CheckboxRow name="exportOutsideDims" label="Outside dimensions (v2 plans)" checked={outsideDims} onChange={setOutsideDims} />
+      <CheckboxRow name="exportSurveyLabels" label="Show survey labels" checked={surveyLabels} onChange={setSurveyLabels} />
+      <CheckboxRow name="exportSchedule" label="Room schedule" checked={schedule} onChange={setSchedule} />
       <div className="grid grid-cols-4 gap-1">
         <button type="button" className={BTN} disabled={!!busy} onClick={svg}>SVG</button>
         <button type="button" className={BTN} disabled={!!busy} onClick={png}>PNG</button>

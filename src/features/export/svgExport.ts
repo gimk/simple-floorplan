@@ -1,10 +1,43 @@
 // Builds a CLEAN standalone SVG of the plan (no editor chrome). Units in the viewBox are cm.
+// The measurements (wall dimension lines, room tags, outside chains) are written like the plan:
+// the SVG text of each one comes from `svgDims.ts` (pure), with the fixed "paper zoom" of the
+// export (see the comment at the top of that file).
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { fmtCm, labelPoint, roomAreaM2, roomWalls, wallByStart } from '../../model/geometry'
+import { roomWalls, wallByStart } from '../../model/geometry'
+import { planPrecision } from '../../model/precision'
+import type { CanvasUnits, DimStyle, RoomTagFields } from '../../model/store'
+import { DEFAULT_UNITS } from '../../model/units'
 import type { PlanDoc, Room, Vec, WallType } from '../../model/types'
 import { elementFrame, wallThickness } from '../elements/geometry'
 import { COLORS, ElementSymbol } from '../elements/Symbol'
+import { scheduleRows, scheduleSvgTable, scheduleTableHeight } from '../schedule/rows'
+import {
+  esc,
+  exportOutsideRuns,
+  num,
+  outsideExtentPoints,
+  outsideRunSvg,
+  paperZoom,
+  roomTagLayout,
+  roomWallDimsSvg,
+} from './svgDims'
+
+/** The measurement settings of the export, taken from `useUi.getState()` when the user exports. */
+export type SvgMeasureOptions = {
+  /** Wall lengths: dimension lines with ticks ('lines', default) or the old text only ('text'). */
+  dimStyle?: DimStyle
+  /** Rows of the room tag. Default: the defaults of the app (code, name, area). */
+  roomTag?: RoomTagFields
+  /** Units of the lengths. Default: centimetres, 1 decimal (what `fmtCm` gives). */
+  units?: CanvasUnits
+  /** Outside (facade) chains and overall lengths. v2 documents only. Default: off. */
+  outside?: boolean
+  /** Write the survey label of a value ("SE-2") in front of it. Default: on, as the old export. */
+  surveyLabels?: boolean
+  /** Room schedule table under the legend (docs/measurements-plan.md section 6). Default: off. */
+  schedule?: boolean
+}
 
 export type SvgOptions = {
   /** Include the background image. `backgroundHref` should be a data: URL so the file is standalone. */
@@ -12,6 +45,11 @@ export type SvgOptions = {
   backgroundHref?: string
   /** Date label; default today (ISO yyyy-mm-dd). */
   date?: string
+} & SvgMeasureOptions
+
+/** The room tag of the app before the user changes anything (see `useUi` in model/store.ts). */
+export const DEFAULT_TAG_FIELDS: RoomTagFields = {
+  code: true, name: true, area: true, perimeter: false, ceiling: false, progress: false, areaDecimals: 2,
 }
 
 export type SvgResult = {
@@ -23,8 +61,6 @@ export type SvgResult = {
   fontSize: number
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-const num = (v: number) => String(Math.round(v * 100) / 100)
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 const pathOf = (rings: Vec[][]) => rings.map((r) => 'M' + r.map((p) => `${num(p.x)} ${num(p.y)}`).join('L') + 'Z').join('')
 
@@ -53,15 +89,41 @@ export function planBounds(doc: PlanDoc, opts: SvgOptions = {}) {
 }
 
 export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
-  const b = planBounds(doc, opts)
-  const cw = Math.max(b.maxX - b.minX, 100), ch = Math.max(b.maxY - b.minY, 100)
-  const fs = clamp(Math.max(cw, ch) / 60, 8, 30)
+  // ----- measurement settings (they come from the UI at export time; the function stays pure) -----
+  const dimStyle: DimStyle = opts.dimStyle ?? 'lines'
+  const tagFields = opts.roomTag ?? DEFAULT_TAG_FIELDS
+  const units = opts.units ?? DEFAULT_UNITS
+  const surveyLabels = opts.surveyLabels ?? true
+  const step = planPrecision(doc)
+  // Outside chains: a v2 document has stored walls, and the option can be off.
+  const runs = exportOutsideRuns(doc, opts.outside === true)
+
+  // ----- bounds -----
+  // The outside rows and their texts go OUTSIDE the wall band, so the box grows by what they reach
+  // (they would be cut off by the viewBox otherwise). One pass is enough: the rows only depend on
+  // the font size, which moves a little when the box grows.
+  const fit = (bb: { minX: number; minY: number; maxX: number; maxY: number }) =>
+    clamp(Math.max(Math.max(bb.maxX - bb.minX, 100), Math.max(bb.maxY - bb.minY, 100)) / 60, 8, 30)
+  const base = planBounds(doc, opts)
+  const b = outsideExtentPoints(runs, paperZoom(fit(base))).reduce(
+    (acc, q) => ({
+      minX: Math.min(acc.minX, q.x), minY: Math.min(acc.minY, q.y),
+      maxX: Math.max(acc.maxX, q.x), maxY: Math.max(acc.maxY, q.y),
+    }),
+    base,
+  )
+  const cw = Math.max(b.maxX - b.minX, 100)
+  const fs = fit(b)
   const m = fs * 4
   const W = Math.max(cw + 2 * m, fs * 48)
   const cx = (b.minX + b.maxX) / 2
   const x0 = cx - W / 2
   const topH = fs * 5
   const y0 = b.minY - m / 2 - topH
+  // The "paper zoom" of the measurements: screen px per cm of the paper. It makes the dimension
+  // text of the plan (px(11)) exactly the size the export writes a wall length (fs * 0.75); see the
+  // comment at the top of svgDims.ts.
+  const zoom = paperZoom(fs)
 
   // ----- footer: scale bar + wrapped legend -----
   const planBottom = b.maxY + m / 2
@@ -101,7 +163,17 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
   })
   leg.push('</g>')
   const rows = Math.ceil(legendItems.length / perRow)
-  const H = legTop + fs * 1.8 + rows * fs * 1.7 + fs - y0
+  const legBottom = legTop + fs * 1.8 + rows * fs * 1.7 + fs
+  // ----- room schedule (optional): under the legend, the image grows to hold it -----
+  const sched = opts.schedule ? scheduleRows(doc) : null
+  const schedTop = legBottom + fs
+  const schedH = sched && sched.rows.length ? fs * 1.8 + scheduleTableHeight(sched.rows.length, fs, true) + fs : 0
+  const schedSvg = sched && sched.rows.length
+    ? `<g id="schedule" fill="#0f172a"><text x="${num(x0 + fs * 2)}" y="${num(schedTop)}" font-size="${num(fs * 0.85)}" font-weight="700">Room schedule</text>`
+      + scheduleSvgTable(sched.rows, { x: x0 + fs * 2, y: schedTop + fs * 0.8, fontSize: fs * 0.75, areaDecimals: opts.roomTag?.areaDecimals, totals: sched.totals })
+      + '</g>'
+    : ''
+  const H = legBottom + schedH - y0
 
   // ----- header -----
   const date = opts.date ?? new Date().toISOString().slice(0, 10)
@@ -147,31 +219,27 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
     parts.push(`<g transform="matrix(${f.dir.x} ${f.dir.y} ${f.inward.x} ${f.inward.y} ${num(f.a.x)} ${num(f.a.y)})">${inner}</g>`)
   }
 
-  // ----- dimensions -----
-  const ids = new Map<string, string>() // room.id + wallStart -> label
-  for (const r of doc.rooms) for (const w of roomWalls(r)) ids.set(r.id + w.start.id, `${r.code}-${w.index + 1}`)
+  // ----- wall lengths and room tags -----
+  // The tag of a room is laid out first: the dimension texts of that room keep out of its box
+  // (as the plan, r1fix R1-8a).
+  const dimCtx = {
+    zoom, fs, step, units, surveyLabels,
+    measurements: doc.measurements ?? {},
+    // Thickness of the wall that starts at a vertex: the same defaults as the drawing.
+    thicknessOf: (r: Room, startId: string) => wallInfo(r, startId).t,
+  }
+  const tagCtx = { zoom, fs, measurements: doc.measurements ?? {}, defaultCeilingCm: doc.apartment?.defaultCeilingCm }
   for (const r of doc.rooms) {
-    for (const w of roomWalls(r)) {
-      if (w.length < fs * 6) continue
-      const id = ids.get(r.id + w.start.id)!
-      const meas = doc.measurements?.[id]
-      const verified = !!meas && meas.actualCm > 0
-      const val = verified ? meas!.actualCm : w.length
-      const off = wallInfo(r, w.start.id).t / 2 + fs * 0.9
-      const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off, my = (w.start.y + w.end.y) / 2 + w.inward.y * off
-      let ang = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
-      if (ang > 90 || ang < -90) ang += 180
-      parts.push(`<text x="${num(mx)}" y="${num(my)}" text-anchor="middle" dominant-baseline="middle" transform="rotate(${num(ang)} ${num(mx)} ${num(my)})" font-size="${num(fs * 0.75)}" fill="${verified ? VERIFIED : '#475569'}" font-weight="${verified ? 700 : 400}" paint-order="stroke" stroke="#fff" stroke-width="${num(fs * 0.25)}" stroke-linejoin="round" data-dim="${esc(id)}">${esc(id)}  ${fmtCm(val)}</text>`)
-    }
+    const tag = roomTagLayout(r, tagFields, tagCtx)
+    // Wall lengths: dimension lines (default) or the old text only, like the plan.
+    parts.push(roomWallDimsSvg(r, dimStyle, { ...dimCtx, avoid: tag.box }))
+    parts.push(tag.svg)
   }
 
-  // ----- room labels -----
-  for (const r of doc.rooms) {
-    const c = labelPoint([r.vertices, ...(r.holes ?? [])])
-    parts.push(`<text x="${num(c.x)}" y="${num(c.y)}" text-anchor="middle" fill="#0f172a" font-size="${num(fs)}"><tspan x="${num(c.x)}" font-weight="700">${esc(r.name)}</tspan><tspan x="${num(c.x)}" dy="${num(fs * 1.15)}" font-size="${num(fs * 0.85)}" fill="#475569">${roomAreaM2(r).toFixed(2).replace('.', ',')} m²</tspan></text>`)
-  }
+  // ----- outside dimension chains (v2 documents, when the option is on) -----
+  for (const run of runs) parts.push(outsideRunSvg(run, { zoom, fs, step, units, surveyLabels }))
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${num(x0)} ${num(y0)} ${num(W)} ${num(H)}" width="${num(W)}" height="${num(H)}">${style}${defs}<rect x="${num(x0)}" y="${num(y0)}" width="${num(W)}" height="${num(H)}" fill="#fff"/>${parts.join('')}${bar.join('')}${leg.join('')}</svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${num(x0)} ${num(y0)} ${num(W)} ${num(H)}" width="${num(W)}" height="${num(H)}">${style}${defs}<rect x="${num(x0)}" y="${num(y0)}" width="${num(W)}" height="${num(H)}" fill="#fff"/>${parts.join('')}${bar.join('')}${leg.join('')}${schedSvg}</svg>`
   return { svg, width: W, height: H, fontSize: fs }
 }
 

@@ -17,6 +17,7 @@ import { SolvePanel } from '../../features/solve'
 import { ElementsPanel } from '../../features/elements'
 import { TapePanel, PinPanel } from '../../features/annotations'
 import { BackgroundPanel } from '../../features/background'
+import { SchedulePanel } from '../../features/schedule'
 import { CalculatorsPanel, ExportPanel } from '../../features/export'
 import { SharePanel } from '../../features/share/SharePanel'
 import { PanelSection } from '../panel'
@@ -144,6 +145,8 @@ export function Sidebar() {
           <BackgroundPanel />
         </PanelSection>
         <LayersSection />
+        {/* Room schedule table (docs/measurements-plan.md 6); owns the "schedule" section id. */}
+        <SchedulePanel />
         {/* Each of these owns its collapsible PanelSection (ids "calculators", "export"). */}
         <CalculatorsPanel />
         <ExportPanel />
