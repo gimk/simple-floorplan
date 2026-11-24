@@ -247,6 +247,11 @@ The interface follows the model: a wall is one object with two sides.
 - **Deleting a room keeps its walls** (they become standalone). A wall without the flag still goes
   away when a room shape edit leaves it without faces. Deleting a wall that a room uses is refused
   with a toast naming the rooms.
+- **Walls are drawn once, from the graph** (v2): each stored wall is one band of its thickness;
+  joins at nodes: two walls = mitred corner; a wall that ends on the middle of another wall (T) =
+  square end against that wall's face; a free end = square; 3+ walls at a node = square ends plus a
+  node patch. Rooms draw only their floor (inside polygon) and labels. Styles (type, status,
+  renovation view, bearing highlight, selection) stay the same.
 
 ## Phases
 Each phase is one or more agent rounds. Commit after each round (tsc, tests, build pass).
