@@ -51,10 +51,10 @@ describe('wallJoinGeometry: an L corner', () => {
   it('is mitred: both bands share the two corner points of the bisector', () => {
     const w1 = bandOf(geo.bands, 'W1')
     const w2 = bandOf(geo.bands, 'W2')
-    // The two faces of the corner meet on the crossings of the face lines: (10, -10) on the outer
-    // side and (-10, 10) on the inner side of the elbow.
-    const outer = { x: 10, y: -10 }
-    const inner = { x: -10, y: 10 }
+    // W1 covers y in [-10, 10] up to the node, W2 covers x in [-10, 10] up to the node. The outer
+    // corner of the elbow is (10, 10) (south-east), the inner corner is (-10, -10).
+    const outer = { x: 10, y: 10 }
+    const inner = { x: -10, y: -10 }
     const corners1 = endCorners(w1)
     const corners2 = startCorners(w2)
     expect(corners1.some((p) => samePoint(p, outer))).toBe(true)
@@ -68,6 +68,30 @@ describe('wallJoinGeometry: an L corner', () => {
     expect(areaOf(w1)).toBeCloseTo(300 * 20, 6)
     expect(areaOf(w2)).toBeCloseTo(300 * 20, 6)
     expect(geo.patches).toEqual([])
+  })
+
+  it('fills the whole corner square: no cut on the outside corner (any wall direction)', () => {
+    // The same elbow with the walls stored in all four directions: the joint must be the same.
+    const variants: [string, string][][] = [
+      [['n0', 'n1'], ['n1', 'n2']],
+      [['n1', 'n0'], ['n1', 'n2']],
+      [['n0', 'n1'], ['n2', 'n1']],
+      [['n1', 'n0'], ['n2', 'n1']],
+    ]
+    for (const [w1, w2] of variants) {
+      const g = wallJoinGeometry({
+        nodes: [node('n0', -300, 0), node('n1', 0, 0), node('n2', 0, -300)],
+        walls: [wall('W1', w1[0], w1[1], 20), wall('W2', w2[0], w2[1], 20)],
+      })
+      const b1 = bandOf(g.bands, 'W1').points
+      const b2 = bandOf(g.bands, 'W2').points
+      // Points just inside the outer corner and on both sides of the mitre line are covered.
+      for (const p of [{ x: 9, y: 9 }, { x: 9, y: 5 }, { x: 5, y: 9 }, { x: -9, y: 9 }, { x: 9, y: -9 }]) {
+        expect(holds(b1, p) || holds(b2, p), `point ${p.x},${p.y} for ${JSON.stringify([w1, w2])}`).toBe(true)
+      }
+      // Nothing outside the elbow.
+      expect(holds(b1, { x: 11, y: 11 }) || holds(b2, { x: 11, y: 11 })).toBe(false)
+    }
   })
 
   it('is limited for a sharp angle: the corner stays within the miter limit', () => {

@@ -73,26 +73,32 @@ const squareCorners = (at: Vec, out: Vec, half: number): [Vec, Vec] => {
 
 /**
  * The two corners of a mitred join between the ends `e` and `o` of two walls at one node.
- * Both faces are cut on the same side (the + face of one wall meets the + face of the other), so
- * the two bands share both corner points exactly, whatever the angle and the thicknesses are.
+ * Both ends point AWAY from the node, so the + face of one wall (left of its `out`) meets the
+ * - face of the other: e+ with o- gives one corner, e- with o+ gives the other. The two bands then
+ * share both corner points exactly, whatever the angle and the thicknesses are, and the outside
+ * corner is a full point (no cut).
  */
 function miterCorners(e: End, o: End): [[Vec, Vec], [Vec, Vec]] {
   const span = cross(e.out, o.out)
   // In line (or parallel): no usable crossing, the caller keeps square ends.
   if (Math.abs(span) < PARALLEL_SIN) return [squareCorners(e.at, e.out, e.half), squareCorners(o.at, o.out, o.half)]
   const maxLen = MITER_LIMIT * 2 * Math.max(e.half, o.half)
-  const points = ([1, -1] as const).map((sgn) => {
-    const p1 = add(e.at, mul(perp(e.out), sgn * e.half))
-    const p2 = add(o.at, mul(perp(o.out), sgn * o.half))
+  /** Crossing of the face of `e` on side sgnE with the face of `o` on side sgnO. */
+  const corner = (sgnE: 1 | -1, sgnO: 1 | -1): Vec => {
+    const p1 = add(e.at, mul(perp(e.out), sgnE * e.half))
+    const p2 = add(o.at, mul(perp(o.out), sgnO * o.half))
     const t = cross(sub(p2, p1), o.out) / span
     const p = add(p1, mul(e.out, t))
     // A sharp angle sends the corner away: pull it back to the limit (a small bevel).
     const d = dist(p, e.at)
     return d <= maxLen || d < EPS ? p : add(e.at, mul(sub(p, e.at), maxLen / d))
-  })
+  }
+  const ePlus = corner(1, -1) // e+ meets o-
+  const eMinus = corner(-1, 1) // e- meets o+
+  // Corners are [plus side, minus side] of each end.
   return [
-    [points[0], points[1]],
-    [points[0], points[1]],
+    [ePlus, eMinus],
+    [eMinus, ePlus],
   ]
 }
 
