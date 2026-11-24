@@ -13,7 +13,7 @@ import { convertToV2 } from '../../model/v2/convert'
 
 const BASE_LAYERS: Layers = {
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
-  roomCodes: 'auto', wallLabels: 'auto',
+  roomCodes: 'auto', wallLabels: 'auto', outsideDims: true,
 }
 
 /**

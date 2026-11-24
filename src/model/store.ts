@@ -152,7 +152,26 @@ export type Layers = {
   roomCodes: LayerMode
   /** Small wall number badges ('6' = wall CU-6), to find the survey IDs on the plan. */
   wallLabels: LayerMode
+  /** Outside (facade) dimension chains and overall lengths (docs/measurements-plan.md section 3). */
+  outsideDims: boolean
 }
+
+/** Rows of the room tag on the plan (docs/measurements-plan.md section 2). */
+export type RoomTagFields = {
+  /** Room code before the name. The layer `roomCodes` still decides when codes are shown. */
+  code: boolean
+  name: boolean
+  area: boolean
+  perimeter: boolean
+  ceiling: boolean
+  /** Survey progress: measured walls / walls ('4/6 walls'). */
+  progress: boolean
+  /** Decimals of the area (0, 1 or 2). */
+  areaDecimals: 0 | 1 | 2
+}
+
+/** How wall lengths are drawn: dimension lines with ticks, or the old text only. */
+export type DimStyle = 'lines' | 'text'
 
 type UiState = {
   mode: Mode
@@ -179,6 +198,10 @@ type UiState = {
   /** Report of the last run of the Solve tab (whole plan, not per room). */
   solveReport: string | null
   layers: Layers
+  /** Wall lengths on the plan: dimension lines (default) or text only (docs/measurements-plan.md). */
+  dimStyle: DimStyle
+  /** Rows of the room tag (docs/measurements-plan.md section 2). */
+  roomTag: RoomTagFields
   /** Before / After / Both renovation display (see features/renovation, 7.4). */
   renovationView: RenovationView
   /**
@@ -245,8 +268,10 @@ export const useUi = create<UiState>()((set) => ({
   solveReport: null,
   layers: {
     background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
-    roomCodes: 'auto', wallLabels: 'auto',
+    roomCodes: 'auto', wallLabels: 'auto', outsideDims: true,
   },
+  dimStyle: 'lines',
+  roomTag: { code: true, name: true, area: true, perimeter: false, ceiling: false, progress: false, areaDecimals: 2 },
   renovationView: 'both',
   measureSource: 'tape',
   wallToolThicknessCm: 10,

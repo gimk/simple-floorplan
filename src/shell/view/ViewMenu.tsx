@@ -4,6 +4,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { Eye, X } from 'lucide-react'
 import { LayerCheckboxes, LayerModeRows } from './LayerControls'
+import { MeasureDisplayControls } from './MeasureDisplayControls'
 
 // 36 px target with a mouse, 44 px on a coarse pointer (same as the other canvas pills).
 const BTN = 'flex h-9 min-w-9 items-center justify-center rounded-md hover:bg-black/5 dark:hover:bg-white/10 max-md:h-11 max-md:min-w-11'
@@ -75,6 +76,9 @@ export function ViewMenu({ defaultOpen = false }: ViewMenuProps) {
           <LayerCheckboxes />
           <div className="my-2 h-px bg-black/10 dark:bg-white/15" aria-hidden="true" />
           <LayerModeRows />
+          <div className="my-2 h-px bg-black/10 dark:bg-white/15" aria-hidden="true" />
+          <h2 className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Measurements</h2>
+          <MeasureDisplayControls />
         </div>
       )}
     </div>

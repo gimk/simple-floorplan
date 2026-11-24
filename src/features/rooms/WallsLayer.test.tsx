@@ -11,7 +11,7 @@ import { WallsLayer } from './WallsLayer'
 
 const BASE_LAYERS: Layers = {
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
-  roomCodes: 'auto', wallLabels: 'auto',
+  roomCodes: 'auto', wallLabels: 'auto', outsideDims: true,
 }
 
 /**

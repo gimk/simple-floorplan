@@ -62,8 +62,8 @@ describe('ViewMenu popover', () => {
     expect(html).toContain('aria-label="Room codes visibility"')
     expect(html).toContain('aria-label="Wall labels visibility"')
     expect(html).toContain(AUTO_HINT)
-    // Two segmented groups, each with three choices.
-    expect(html.match(/aria-pressed="true"/g)).toHaveLength(2)
+    // Two layer groups (Auto / On / Off) and two measurement groups (wall lengths, area decimals).
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(4)
     expect(html.match(/>Auto</g)).toHaveLength(2)
     expect(html.match(/>On</g)).toHaveLength(2)
     expect(html.match(/>Off</g)).toHaveLength(2)

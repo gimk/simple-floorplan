@@ -8,7 +8,7 @@ import {
 
 const layers = (over: Partial<Layers> = {}): Layers => ({
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
-  roomCodes: 'auto', wallLabels: 'auto',
+  roomCodes: 'auto', wallLabels: 'auto', outsideDims: true,
   ...over,
 })
 
@@ -63,8 +63,8 @@ describe('modeLayerVisible', () => {
 })
 
 describe('layer key lists', () => {
-  it('has six plain layers and the two three-state ones', () => {
-    expect([...BOOLEAN_LAYER_KEYS]).toEqual(['background', 'dimensions', 'bearingHighlight', 'openings', 'notes', 'clashes'])
+  it('has seven plain layers and the two three-state ones', () => {
+    expect([...BOOLEAN_LAYER_KEYS]).toEqual(['background', 'dimensions', 'bearingHighlight', 'openings', 'notes', 'clashes', 'outsideDims'])
     expect([...MODE_LAYER_KEYS]).toEqual(['roomCodes', 'wallLabels'])
   })
 })

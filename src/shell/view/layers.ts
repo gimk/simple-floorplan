@@ -32,7 +32,7 @@ export function modeLayerVisible(layers: Layers, key: ModeLayerKey, ctx: LayerCt
 }
 
 /** Plain on/off layers, in display order. */
-export const BOOLEAN_LAYER_KEYS = ['background', 'dimensions', 'bearingHighlight', 'openings', 'notes', 'clashes'] as const
+export const BOOLEAN_LAYER_KEYS = ['background', 'dimensions', 'bearingHighlight', 'openings', 'notes', 'clashes', 'outsideDims'] as const
 export type BooleanLayerKey = (typeof BOOLEAN_LAYER_KEYS)[number]
 
 /** Three-state layers (auto / on / off), in display order. */

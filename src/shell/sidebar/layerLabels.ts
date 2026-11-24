@@ -11,4 +11,5 @@ export const LAYER_LABELS: Record<keyof Layers, string> = {
   clashes: 'Clearance clashes',
   roomCodes: 'Room codes',
   wallLabels: 'Wall labels',
+  outsideDims: 'Outside dimensions',
 }

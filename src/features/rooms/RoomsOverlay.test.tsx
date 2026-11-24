@@ -13,7 +13,7 @@ import { RoomsOverlay } from './RoomsOverlay'
 
 const BASE_LAYERS: Layers = {
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
-  roomCodes: 'auto', wallLabels: 'auto',
+  roomCodes: 'auto', wallLabels: 'auto', outsideDims: true,
 }
 
 /** Put the stores in the state the canvas reads (the string renderer reads the initial state). */
