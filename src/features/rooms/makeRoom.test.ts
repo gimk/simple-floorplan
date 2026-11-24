@@ -1,9 +1,12 @@
-// Make room tool: one room from a closed area of traces and room walls
-// (docs/walls-plan.md phase 6). `findEnclosingCycle` is not implemented yet: it is mocked here,
-// and the pure parts are tested without it.
+// Make room tool: one room from a closed area of wall centre lines
+// (docs/walls-plan.md phase 6). `findEnclosingCycle` is mocked here (the pure parts are tested
+// without it), and the v2 case (the walls of the graph are the centre lines) has its own tests.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EnclosingCycle } from '../../model/faces'
 import type { PlanDoc, Room, TraceWall, Vec } from '../../model/types'
+import { convertToV2 } from '../../model/v2/convert'
+import { addStandaloneWall } from '../../model/v2/write'
+import { docSegments } from './traces'
 import { createRoomFromCycle, makeRoomAt, samePolygon } from './makeRoom'
 
 const cycleMock = vi.fn<(segments: unknown, p: Vec, tol?: number) => EnclosingCycle | null>()
@@ -140,6 +143,81 @@ describe('createRoomFromCycle', () => {
     expect(out.kind).toBe('ok')
     if (out.kind !== 'ok') return
     expect('traces' in out.doc).toBe(false)
+  })
+})
+
+describe('a v2 document: the stored walls are the centre lines', () => {
+  /** A v2 document with one room SE, plus three standalone walls that close a square. */
+  const v2Doc = (): PlanDoc => {
+    const base = convertToV2(doc({ rooms: [rectRoom()] })).doc
+    const p2 = (x: number, y: number) => ({ x, y })
+    const ring: [Vec, Vec][] = [
+      [p2(1000, 0), p2(1400, 0)],
+      [p2(1400, 0), p2(1400, 400)],
+      [p2(1400, 400), p2(1000, 400)],
+      [p2(1000, 400), p2(1000, 0)],
+    ]
+    let out = base
+    for (const [a, b] of ring) out = addStandaloneWall(out, a, b, { type: 'partition', thicknessCm: 10 }).doc
+    return out
+  }
+
+  it('gives the centre lines of the stored walls, and no room wall a second time', () => {
+    const v2 = v2Doc()
+    const segments = docSegments(v2)
+    expect(segments.every((s) => s.id.startsWith('wall:'))).toBe(true)
+    // One segment per stored wall: 4 walls of SE + the 4 walls of the square.
+    expect(segments).toHaveLength((v2.walls ?? []).length)
+    expect(segments).toHaveLength(8)
+  })
+
+  it('makes the room by REUSING the walls, and the walls stay standalone', () => {
+    const v2 = v2Doc()
+    const cycle: EnclosingCycle = {
+      points: [p(1000, 0), p(1400, 0), p(1400, 400), p(1000, 400)],
+      segmentIds: [],
+    }
+    const out = createRoomFromCycle(v2, cycle)
+    expect(out.kind).toBe('ok')
+    if (out.kind !== 'ok') return
+    // No wall was added: the room is written into the walls that are already there.
+    expect((out.doc.walls ?? []).length).toBe((v2.walls ?? []).length)
+    const room = out.doc.rooms.find((r) => r.id === out.roomId)!
+    expect(room.cycle).toHaveLength(4)
+    const used = room.cycle!.map((f) => f.wallId)
+    expect(used.every((id) => (v2.walls ?? []).find((w) => w.id === id)!.standalone)).toBe(true)
+    // The walls keep their flag, and they hold the faces of the new room now.
+    for (const id of used) expect((out.doc.walls ?? []).find((w) => w.id === id)!.standalone).toBe(true)
+    // No trace is removed: a v2 document has none.
+    expect(out.doc.traces ?? []).toEqual([])
+  })
+
+  it('makes the room from the walls around the click (makeRoomAt, no traces)', () => {
+    const v2 = v2Doc()
+    cycleMock.mockReturnValue({
+      points: [p(1000, 0), p(1400, 0), p(1400, 400), p(1000, 400)],
+      segmentIds: [],
+    })
+    const out = makeRoomAt(v2, p(1200, 200))
+    expect(out.kind).toBe('ok')
+    if (out.kind !== 'ok') return
+    expect(out.doc.rooms).toHaveLength(2)
+    // The cycle search got the stored walls of the graph.
+    const segments = cycleMock.mock.calls[0][0] as { id: string }[]
+    expect(segments.length).toBe(8)
+    expect(segments.every((s) => s.id.startsWith('wall:'))).toBe(true)
+  })
+
+  it('turns a trace that an older document still holds into a wall, then reuses it', () => {
+    const withTrace: PlanDoc = { ...v2Doc(), traces: squareTraces() }
+    cycleMock.mockReturnValue(squareCycle)
+    const out = makeRoomAt(withTrace, p(1500, 200))
+    expect(out.kind).toBe('ok')
+    if (out.kind !== 'ok') return
+    // The trace became a wall of the graph, and the room's faces use walls that exist.
+    expect(out.doc.traces).toEqual([])
+    const room = out.doc.rooms.find((r) => r.id === out.roomId)!
+    expect(room.cycle!.every((f) => (out.doc.walls ?? []).some((w) => w.id === f.wallId))).toBe(true)
   })
 })
 

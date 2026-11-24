@@ -30,6 +30,8 @@ import { ElementList } from './ElementList'
 import { fitCheck } from './fit'
 import { deleteRoom, setRoomCode } from './ops'
 import { elementRows, wallRows, WALL_TYPE_CHIP } from './roomLists'
+import { isV2Doc } from '../../model/v2/targets'
+import { roomWallLinks } from './wallSides'
 import { HoleCard } from './VertexCard'
 
 export function RoomCard({ doc, room, selection, activeHole }: {
@@ -47,6 +49,9 @@ export function RoomCard({ doc, room, selection, activeHole }: {
   const ownCeiling = room.ceilingCm !== undefined && room.ceilingCm > 0
   const ceiling = effectiveCeilingCm(doc, room)
   const areaM2 = roomAreaM2(room)
+  // A v2 document: one line per FACE, with the stored wall it belongs to and what is on the other
+  // side of that wall (docs/walls-plan.md, Walls in the interface). v1 rooms keep the old list.
+  const links = isV2Doc(doc) && (doc.walls ?? []).length > 0 ? roomWallLinks(doc, room) : null
 
   const runApply = () => {
     const current = useDoc.getState().doc
@@ -155,19 +160,31 @@ export function RoomCard({ doc, room, selection, activeHole }: {
           return (
             <ul className="flex flex-col gap-0.5">
               {rows.map((row) => {
-                const current = selection.kind === 'wall' && selection.wallStart === row.wallStart
+                const link = links?.get(row.wallStart) ?? null
+                const current = link
+                  ? selection.kind === 'storedWall' && selection.wallId === link.wallId
+                  : selection.kind === 'wall' && selection.wallStart === row.wallStart
                 return (
                   <li key={row.wallStart}>
                     <button
                       type="button"
-                      aria-label={`Select wall ${row.label}`}
+                      aria-label={`Select wall ${row.label}${link ? ` (${link.wallId})` : ''}`}
                       aria-current={current ? 'true' : undefined}
-                      onClick={() => select({ kind: 'wall', roomId: room.id, wallStart: row.wallStart })}
+                      onClick={() =>
+                        link
+                          // A click opens the wall card, with the side this room is on.
+                          ? select({ kind: 'storedWall', wallId: link.wallId, side: link.side })
+                          : select({ kind: 'wall', roomId: room.id, wallStart: row.wallStart })}
                       className={`flex min-h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm pointer-coarse:min-h-11 ${
                         current ? 'bg-orange-700/10' : 'hover:bg-black/5 dark:hover:bg-white/10'
                       }`}
                     >
                       <span className="w-10 shrink-0 font-mono text-xs">{row.label}</span>
+                      {link && (
+                        <span className={`min-w-0 flex-1 truncate text-[11px] ${MUTED}`} data-room-wall-link={link.wallId}>
+                          {link.wallId} · {link.text}
+                        </span>
+                      )}
                       <span className={`shrink-0 rounded px-1 text-[11px] ${WALL_TYPE_CHIP[row.type]}`}>{row.typeLabel}</span>
                       <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
                         {row.verifiedCm === null ? (

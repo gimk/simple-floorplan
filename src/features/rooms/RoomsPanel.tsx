@@ -3,6 +3,7 @@
 // One undo step per edit, comma decimals.
 //   room  -> RoomCard   (room, walls list, elements list, measured lengths)
 //   wall  -> WallCard   (wall + "On this wall", header steps to the previous / next wall)
+//   storedWall -> StoredWallCard (a v2 wall: the wall once, then its two sides)
 //   group -> WallCard (walls) or GroupCard (rooms, points)
 //   vertex -> VertexCard
 // The apartment card and the whole-plan tools are elsewhere (apartment, Solve tab).
@@ -20,6 +21,7 @@ import { traceById } from './traceActions'
 import { RoomCard } from './RoomCard'
 import { VertexCard } from './VertexCard'
 import { WallCard } from './WallCard'
+import { StoredWallCard } from './StoredWallCard'
 
 // The whole-plan tools (apply to all rooms, solve whole plan, precision, keep locked) live
 // in the Solve tab (features/solve). `fitCheck` moved to ./fit; re-exported for old imports.
@@ -74,6 +76,10 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
   const groupKind = items.length > 1 ? items[0].kind : null
   if (groupKind === 'room' || groupKind === 'vertex') return <GroupCard kind={groupKind} count={items.length} />
   if (selection.kind === 'element') return null
+  // A stored wall of a v2 document: the wall is ONE object with two sides (Walls in the interface).
+  if (selection.kind === 'storedWall') {
+    return <StoredWallCard doc={doc} wallId={selection.wallId} side={selection.side} />
+  }
   const room = doc.rooms.find((r) => r.id === selection.roomId)
   if (!room) return null
 

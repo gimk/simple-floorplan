@@ -8,13 +8,15 @@ import { KIND_LABEL } from '../../features/elements/geometry'
 /** Tape/pin selection (own store, see features/annotations/selection.ts). */
 export type AnnotSelection = { kind: 'tape' | 'pin'; id: string } | null
 
-export type CrumbLevel = 'apartment' | 'room' | 'wall' | 'vertex' | 'element' | 'tape' | 'pin' | 'trace'
+export type CrumbLevel = 'apartment' | 'room' | 'wall' | 'storedWall' | 'vertex' | 'element' | 'tape' | 'pin' | 'trace'
 
 /** What clicking a crumb must select. */
 export type CrumbSelect =
   | { kind: 'apartment' }
   | { kind: 'room'; roomId: string }
   | { kind: 'wall'; roomId: string; wallStart: string }
+  /** A stored wall of a v2 document: it belongs to no room, so it has no room crumb above it. */
+  | { kind: 'storedWall'; wallId: string; side?: 'L' | 'R' }
   | { kind: 'vertex'; roomId: string; vertexId: string }
   | { kind: 'element'; elementId: string }
   | { kind: 'tape'; id: string }
@@ -50,6 +52,9 @@ export function parentSelection(doc: TrailDoc, selection: Selection, annot: Anno
   if (annot) return { kind: 'select', selection: roomSel(roomIdOfSelection(doc, null, annot)), clearAnnot: true }
   if (!selection) return { kind: 'none' }
   if (selection.kind === 'room') return { kind: 'select', selection: null }
+  // A stored wall is one object that belongs to no room (it sits between two of them), so Esc goes
+  // to NOTHING, not to the room of the clicked side. The card links to the rooms it touches.
+  if (selection.kind === 'storedWall') return { kind: 'select', selection: null }
   return { kind: 'select', selection: roomSel(roomIdOfSelection(doc, selection, null)) }
 }
 
@@ -84,6 +89,16 @@ export function buildTrail(doc: TrailDoc, selection: Selection, annot: AnnotSele
   }
   if (selection.kind === 'vertex') {
     crumbs.push({ level: 'vertex', text: 'Vertex', select: { kind: 'vertex', roomId: selection.roomId, vertexId: selection.vertexId } })
+    return crumbs
+  }
+  if (selection.kind === 'storedWall') {
+    // A stored wall: 'Wall W12'. It has no room above it, so the trail stops there (the card shows
+    // the rooms of its two sides as links).
+    crumbs.push({
+      level: 'storedWall',
+      text: `Wall ${selection.wallId}`,
+      select: { kind: 'storedWall', wallId: selection.wallId, side: selection.side },
+    })
     return crumbs
   }
   if (selection.kind === 'wall') {

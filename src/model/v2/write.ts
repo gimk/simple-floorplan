@@ -20,10 +20,22 @@
 // A document that is not in the v2 state (no room has a cycle) is written the v1 way: the polygon
 // goes into the room and the stored graph is left alone (the doc rule builds it again).
 //
-// `removeRoom` is the same write path for a room that goes away: its faces go, and its walls that
-// no other room uses go with it.
+// `removeRoom` is the same write path for a room that goes away: its faces go, and its walls STAY
+// (docs/walls-plan.md, "Walls in the interface"): a wall that another room still uses keeps its
+// faces, a wall that no room uses any more becomes a STANDALONE wall (`standalone: true`).
+//
+// One exception, and it is the MERGE: when one edit makes two rooms ONE space, the wall between
+// them is not a wall of the plan any more. `settleWallsWithoutFaces` runs after the rooms of an
+// edit and removes a wall that was used before the edit, has no face now, and whose middle a room
+// of the result COVERS (docs/walls-plan.md, "Walls in the interface"). A room that the user deletes
+// covers nothing, so its walls stay as standalone walls.
+//
+// A STANDALONE wall is a wall that stays when no room uses it: a wall drawn with the Wall tool, a
+// wall left by a deleted room, or a trace converted on load. It is never removed by the rules
+// below; only the user removes it (`removeWall`, which refuses while a room face uses it). A wall
+// WITHOUT the flag still goes away when a room shape edit leaves it without faces.
 
-import { DEFAULT_WALL_CM, cross, dist, dot, signedArea, sub } from '../geometry'
+import { DEFAULT_WALL_CM, cross, dist, dot, pointInPolygon, projectOnSegment, signedArea, sub } from '../geometry'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall, Vec, Vertex, WallProps } from '../types'
 import { deriveWallFaces, materializeRooms, roundStored, storedWallProps } from './materialize'
 
@@ -37,14 +49,20 @@ const NODE_MATCH_CM = 0.5
 const EPS = 1e-6
 /** Properties of a wall that the room gives no properties for. */
 const DEFAULT_PROPS: WallProps = { type: 'partition', thicknessCm: DEFAULT_WALL_CM }
+/** An end of a new wall this close to an existing node takes that node (cm). */
+export const NEW_WALL_SNAP_CM = 1
+/** A segment of a new wall shorter than this is no wall (cm). */
+export const MIN_WALL_CM = 1
+/** The middle of a wall this close to the polygon of a room is ON the polygon, not inside (cm). */
+export const MID_INSIDE_CM = 1
 
 export type WriteOptions = {
   /** Gives a new, unused id for a prefix ('v' corner, 'N' node, 'W' wall). Default: a counter. */
   newId?: (prefix: string) => string
 }
 
-/** A wall while it is edited: its two nodes and its properties (the faces are derived later). */
-type WallDraft = { id: string; a: string; b: string; props: WallProps }
+/** A wall while it is edited: its two nodes, its properties and its standalone flag. */
+type WallDraft = { id: string; a: string; b: string; props: WallProps; standalone?: boolean }
 
 /** The centre line of a wall: the two node positions, the unit direction a -> b and the length. */
 type Line = { a: Vec; b: Vec; d: Vec; length: number }
@@ -67,6 +85,7 @@ function storedWall(w: WallDraft): StoredWall {
   if (w.props.status !== undefined) out.status = w.props.status
   if (w.props.align !== undefined) out.align = w.props.align
   if (w.props.locked !== undefined) out.locked = w.props.locked
+  if (w.standalone) out.standalone = true
   return out
 }
 
@@ -92,7 +111,11 @@ class Draft {
   constructor(doc: Pick<PlanDoc, 'nodes' | 'walls' | 'rooms'>, opts: WriteOptions = {}) {
     this.opts = opts
     this.nodes = (doc.nodes ?? []).map((n) => ({ id: n.id, x: n.x, y: n.y }))
-    this.walls = (doc.walls ?? []).map((w) => ({ id: w.id, a: w.a, b: w.b, props: storedWallProps(w) }))
+    this.walls = (doc.walls ?? []).map((w) => {
+      const draft: WallDraft = { id: w.id, a: w.a, b: w.b, props: storedWallProps(w) }
+      if (w.standalone) draft.standalone = true
+      return draft
+    })
     for (const n of this.nodes) this.used.add(n.id)
     for (const w of this.walls) this.used.add(w.id)
     for (const r of doc.rooms) {
@@ -136,6 +159,34 @@ class Draft {
     for (const n of this.nodes) if (dist(n, p) <= NODE_MATCH_CM) return n.id
     const id = this.newId('N')
     this.nodes.push({ id, x: roundStored(p.x), y: roundStored(p.y) })
+    return id
+  }
+
+  /**
+   * The id of the node for one END of a new wall (the Wall tool, a trace converted on load):
+   *   - an existing node within 1 cm takes the point (two walls then share the node);
+   *   - a point on the MIDDLE of an existing wall becomes a new node ON that wall: the host wall is
+   *     not split (the faces of the two sides are cut independently, so a T junction needs no
+   *     split);
+   *   - elsewhere a new node at the point.
+   */
+  nodeForEnd(p: Vec): string {
+    for (const n of this.nodes) if (dist(n, p) <= NEW_WALL_SNAP_CM) return n.id
+    let best: { p: Vec; d: number } | null = null
+    for (const w of this.walls) {
+      const line = this.line(w.id)
+      if (!line) continue
+      const normal = { x: -line.d.y, y: line.d.x }
+      const off = Math.abs(dot(sub(p, line.a), normal))
+      if (off > ON_WALL_TOL_CM) continue
+      // Not at one of the two ends of the host wall (that end would have taken the point above).
+      const t = dot(sub(p, line.a), line.d)
+      if (t <= NEW_WALL_SNAP_CM || t >= line.length - NEW_WALL_SNAP_CM) continue
+      if (!best || off < best.d) best = { p: { x: line.a.x + line.d.x * t, y: line.a.y + line.d.y * t }, d: off }
+    }
+    const id = this.newId('N')
+    const at = best ? best.p : p
+    this.nodes.push({ id, x: roundStored(at.x), y: roundStored(at.y) })
     return id
   }
 
@@ -263,11 +314,14 @@ function buildCycle(draft: Draft, room: Room): RoomFace[] {
 
 // ---------- output ----------
 
-/** Remove the walls that no room uses any more, then the nodes that no wall uses. */
+/**
+ * Remove the walls that no room uses any more, then the nodes that no wall uses.
+ * A STANDALONE wall is never removed here (`standalone: true`): it stays with no face.
+ */
 function prune(draft: Draft, rooms: Room[], candidates: Set<string>): void {
   const used = new Set<string>()
   for (const r of rooms) for (const f of r.cycle ?? []) used.add(f.wallId)
-  draft.walls = draft.walls.filter((w) => used.has(w.id) || !candidates.has(w.id))
+  draft.walls = draft.walls.filter((w) => used.has(w.id) || w.standalone === true || !candidates.has(w.id))
   const usedNodes = new Set<string>()
   for (const w of draft.walls) {
     usedNodes.add(w.a)
@@ -331,7 +385,9 @@ export function applyRoomPolygon(doc: PlanDoc, roomId: string, room: Room, opts:
 }
 
 /**
- * Remove a room: its faces go, and the walls and nodes that no other room uses go with it.
+ * Remove a room. Its faces go, and its walls STAY (docs/walls-plan.md, "Walls in the interface"):
+ * a wall that another room still uses keeps its faces, and a wall that no room uses any more
+ * becomes a STANDALONE wall, so the drawing of the plan keeps the walls of the deleted room.
  * Gives the same document back when the room does not exist.
  */
 export function removeRoom(doc: PlanDoc, roomId: string): PlanDoc {
@@ -340,8 +396,168 @@ export function removeRoom(doc: PlanDoc, roomId: string): PlanDoc {
   const rooms = doc.rooms.filter((r) => r.id !== roomId)
   if (!isV2(doc)) return { ...doc, rooms }
   const draft = new Draft(doc)
-  const candidates = new Set<string>(room.cycle?.map((f) => f.wallId) ?? [])
-  for (const w of doc.walls ?? []) if (!w.faces.length) candidates.add(w.id)
+  // The walls that a room that stays still uses keep their place without the flag.
+  const stillUsed = new Set<string>()
+  for (const r of rooms) for (const f of r.cycle ?? []) stillUsed.add(f.wallId)
+  for (const f of room.cycle ?? []) {
+    const wall = draft.walls.find((w) => w.id === f.wallId)
+    if (wall && !stillUsed.has(wall.id)) wall.standalone = true
+  }
+  // No wall of the room goes away: the kept walls are candidates of nothing.
+  const candidates = new Set<string>()
+  for (const w of doc.walls ?? []) if (!w.faces.length && !w.standalone) candidates.add(w.id)
   if (allRoomsHaveCycle(doc)) prune(draft, rooms, candidates)
   return finish(doc, draft, rooms)
+}
+
+// ---------- walls that lost every face in one edit ----------
+
+/** Distance from a point to the nearest edge of a closed ring (cm). */
+function distToRing(p: Vec, ring: Vec[]): number {
+  let best = Infinity
+  for (let i = 0; i < ring.length; i++) {
+    const d = projectOnSegment(p, ring[i], ring[(i + 1) % ring.length]).distance
+    if (d < best) best = d
+  }
+  return best
+}
+
+/**
+ * True when the room polygon holds the point with room to spare: the point is inside it, more than
+ * `MID_INSIDE_CM` from its edges, and not in one of its holes. A point ON an edge is not inside: a
+ * wall on the outline of a room is the wall of that room, not a wall inside it.
+ */
+function roomHolds(p: Vec, room: Room): boolean {
+  const ring = room.vertices
+  if (ring.length < 3) return false
+  if (distToRing(p, ring) <= MID_INSIDE_CM) return false
+  if (!pointInPolygon(p, ring)) return false
+  for (const hole of room.holes) if (hole.length >= 3 && pointInPolygon(p, hole)) return false
+  return true
+}
+
+/**
+ * The walls that lost every face in ONE edit (docs/walls-plan.md, "Walls in the interface"):
+ *   - a wall that a room used before the edit and that no room uses now is REMOVED when the polygon
+ *     of a room of the result holds its middle: the wall between two rooms that became one space is
+ *     then the wall of that one space, and it must not be drawn across it (a MERGE);
+ *   - the same wall STAYS, as a STANDALONE wall, when no room holds it (a room that the user
+ *     deletes keeps its walls: that is the decided rule).
+ * A wall that was already standalone before the edit is never removed here, and a wall that is new
+ * in this edit is not touched: the user drew those walls, only the user removes them.
+ * The nodes that no wall uses any more go with a removed wall.
+ * `prev` is the document BEFORE the edit: it says which walls a room used.
+ */
+export function settleWallsWithoutFaces(doc: PlanDoc, prev: PlanDoc): PlanDoc {
+  if (!isV2(doc)) return doc
+  // The walls that a room of the result uses: a face in a cycle.
+  const used = new Set<string>()
+  for (const r of doc.rooms) for (const f of r.cycle ?? []) used.add(f.wallId)
+  const prevWalls = new Map((prev.walls ?? []).map((w) => [w.id, w]))
+  const draft = new Draft(doc)
+  let changed = false
+  draft.walls = draft.walls.filter((w) => {
+    const before = prevWalls.get(w.id)
+    if (used.has(w.id)) {
+      // A room uses the wall again (the merged room reuses a wall of the room that went away), so
+      // the standalone flag that `removeRoom` put on it in this edit says nothing true any more.
+      if (w.standalone && before && !before.standalone) {
+        w.standalone = undefined
+        changed = true
+      }
+      return true
+    }
+    // A new wall, a wall that the user drew (standalone) and a wall that already had no room face
+    // before the edit are not the business of the rule.
+    const wasUsed = before !== undefined && !before.standalone && before.faces.some((f) => f.roomId !== undefined)
+    if (!wasUsed) return true
+    const a = draft.pos(w.a)
+    const b = draft.pos(w.b)
+    const mid = a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : null
+    if (mid && doc.rooms.some((r) => roomHolds(mid, r))) {
+      // A room covers the wall: it was the wall between two rooms that are one space now.
+      changed = true
+      return false
+    }
+    // No room covers it: it stays as a standalone wall (the walls of a deleted room).
+    if (!w.standalone) {
+      w.standalone = true
+      changed = true
+    }
+    return true
+  })
+  if (!changed) return doc
+  // The nodes that no wall uses any more go with the walls that went away.
+  const usedNodes = new Set<string>()
+  for (const w of draft.walls) {
+    usedNodes.add(w.a)
+    usedNodes.add(w.b)
+  }
+  draft.nodes = draft.nodes.filter((n) => usedNodes.has(n.id))
+  return finish(doc, draft, doc.rooms)
+}
+
+// ---------- walls drawn on their own (docs/walls-plan.md, "Walls in the interface") ----------
+
+/**
+ * Add one wall to the graph as a STANDALONE wall: a wall that stays when no room uses it (the Wall
+ * tool, a trace converted on load). Both ends take an existing node within 1 cm, else a new node
+ * on the wall that the end lies on (a T junction: the host wall is NOT split), else a new node.
+ * A segment of less than 1 cm, and a segment between the two nodes of a wall that already exists,
+ * add nothing.
+ * `opts.newId` gives the ids ('N' node, 'W' wall) when a caller needs its own.
+ * This is a v2 write: a v1 document is written by its rooms (the stored graph follows them).
+ */
+export function addStandaloneWall(
+  doc: PlanDoc,
+  a: Vec,
+  b: Vec,
+  props: WallProps = DEFAULT_PROPS,
+  opts: WriteOptions = {},
+): { doc: PlanDoc; wallId: string | null } {
+  if (dist(a, b) < MIN_WALL_CM) return { doc, wallId: null }
+  const draft = new Draft(doc, opts)
+  const na = draft.nodeForEnd(a)
+  const nb = draft.nodeForEnd(b)
+  if (na === nb) return { doc, wallId: null }
+  // A wall between these two nodes is already there: a wall is never stored twice.
+  const known = draft.walls.find((w) => (w.a === na && w.b === nb) || (w.a === nb && w.b === na))
+  if (known) return { doc, wallId: known.id }
+  const id = draft.newId('W')
+  draft.walls.push({ id, a: na, b: nb, props: { ...props }, standalone: true })
+  return { doc: finish(doc, draft, doc.rooms), wallId: id }
+}
+
+/** The survey codes of the rooms whose faces use a wall, in the order of the rooms. */
+export function roomCodesOfWall(doc: Pick<PlanDoc, 'rooms' | 'walls'>, wallId: string): string[] {
+  const wall = (doc.walls ?? []).find((w) => w.id === wallId)
+  const ids = new Set<string>()
+  for (const r of doc.rooms) for (const f of r.cycle ?? []) if (f.wallId === wallId) ids.add(r.id)
+  for (const f of wall?.faces ?? []) if (f.roomId !== undefined) ids.add(f.roomId)
+  return doc.rooms.filter((r) => ids.has(r.id)).map((r) => r.code)
+}
+
+/**
+ * Remove one wall and the nodes that no wall uses any more. A wall that a room face uses is
+ * REFUSED: deleting it would open the room. `refusedBy` holds the survey codes of those rooms, so
+ * the caller can name them in a toast; it is empty when the wall was removed.
+ * A wall that is not in the document, and a wall of a v1 document (its stored graph is derived
+ * data), gives the document back unchanged.
+ */
+export function removeWall(doc: PlanDoc, wallId: string): { doc: PlanDoc; refusedBy: string[] } {
+  const wall = (doc.walls ?? []).find((w) => w.id === wallId)
+  if (!wall) return { doc, refusedBy: [] }
+  const refusedBy = roomCodesOfWall(doc, wallId)
+  if (refusedBy.length) return { doc, refusedBy }
+  // A v1 document: the walls are derived from the rooms, so there is nothing to remove here.
+  if (!isV2(doc)) return { doc, refusedBy: [] }
+  const draft = new Draft(doc)
+  draft.walls = draft.walls.filter((w) => w.id !== wallId)
+  const usedNodes = new Set<string>()
+  for (const w of draft.walls) {
+    usedNodes.add(w.a)
+    usedNodes.add(w.b)
+  }
+  draft.nodes = draft.nodes.filter((n) => usedNodes.has(n.id))
+  return { doc: finish(doc, draft, doc.rooms), refusedBy: [] }
 }

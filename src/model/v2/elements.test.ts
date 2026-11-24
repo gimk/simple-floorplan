@@ -308,13 +308,15 @@ describe('materializeElements: the wall is the source of the view', () => {
     expect(now.a.x).toBeCloseTo(before.a.x, 3)
   })
 
-  it('deleting both rooms keeps the element, without its wall', () => {
+  it('deleting both rooms keeps the element on its wall (the wall stays, standalone)', () => {
     const doc = withDoor()
     const next = v2SyncRule(doc, { ...doc, rooms: [] })
     expect(next.elements.length).toBe(1)
-    expect(next.elements[0].wallId).toBeUndefined()
-    expect(next.elements[0].alongCm).toBeUndefined()
-    // The last view stays, so the element comes back if a room returns.
+    // The walls of a deleted room stay as standalone walls (docs/walls-plan.md, "Walls in the
+    // interface"), so the door keeps its wall; its view (roomId) is the room that is gone.
+    expect(next.elements[0].wallId).toBe(doc.elements[0].wallId)
+    expect(next.elements[0].alongCm).toBe(doc.elements[0].alongCm)
+    expect((next.walls ?? []).find((w) => w.id === doc.elements[0].wallId)!.standalone).toBe(true)
     expect(next.elements[0].roomId).toBe('A')
     expect(next.elements[0].offsetCm).toBe(100)
   })

@@ -7,6 +7,7 @@ import type { PlanDoc, Room } from '../types'
 import { convertToV2 } from './convert'
 import { materializeRooms } from './materialize'
 import { v2SyncRule } from './syncRule'
+import { addStandaloneWall } from './write'
 
 /** A v1 document with these rooms. */
 const plan = (rooms: Room[]): PlanDoc => ({
@@ -145,16 +146,20 @@ describe('v2SyncRule: rooms changed, walls not', () => {
     expect(room.vertices.length).toBe(4)
   })
 
-  it('removes a room with the walls that no other room uses', () => {
+  it('keeps a room that goes away as walls (they become standalone walls)', () => {
     const doc = v2(acRooms())
     const shared = wallsBetween(doc, 'A', 'C')[0]
+    const aWalls = roomOf(doc, 'A').cycle!.map((f) => f.wallId)
     const next: PlanDoc = { ...doc, rooms: doc.rooms.filter((r) => r.id !== 'A') }
     const out = v2SyncRule(doc, next)
     expect(out.rooms.length).toBe(1)
     expect(problems(out)).toEqual([])
-    // C keeps the shared wall (it is a facade of C now), and the left wall of A is gone.
+    // C keeps the shared wall (it is a facade of C now). The walls that only A used STAY too, as
+    // standalone walls, so the drawing of the plan keeps the walls of the room that was deleted.
     expect((out.walls ?? []).some((w) => w.id === shared.id)).toBe(true)
-    expect(verticalWallsAt(out, 0).length).toBe(0)
+    expect(verticalWallsAt(out, 0).length).toBe(1)
+    expect(verticalWallsAt(out, 0)[0].standalone).toBe(true)
+    for (const id of aWalls) expect((out.walls ?? []).some((w) => w.id === id)).toBe(true)
     expect(out.rooms[0].vertices.length).toBe(4)
   })
 })
@@ -238,5 +243,76 @@ describe('v2SyncRule: the wall graph of a document without walls', () => {
     const doc: PlanDoc = { ...v1, schemaVersion: 2, walls: undefined, nodes: undefined }
     const next: PlanDoc = { ...doc, rooms: [...doc.rooms, mk('B', [[600, 0], [900, 0], [900, 400], [600, 400]], 3)] }
     expect(v2SyncRule(doc, next)).toBe(next)
+  })
+})
+
+// A MERGE removes one room, so its walls lose their faces. The wall between two rooms that became
+// one space is drawn across the merged room if it stays: the rule drops it (docs/walls-plan.md,
+// "Walls in the interface": a wall without the flag goes away when no face is left, and a room
+// covers it now). A room that the user DELETE keeps its walls (they become standalone walls).
+describe('v2SyncRule: two rooms become one space (a merge)', () => {
+  /** The merge as a tool or a command writes it: ONE room with the union polygon, no cycle. */
+  const mergeAC = (doc: PlanDoc): PlanDoc => ({
+    ...doc,
+    rooms: [mk('A', [[0, 0], [600, 0], [600, 400], [0, 400]], 1)],
+  })
+
+  it('removes the wall between the two rooms and keeps the walls of the outside', () => {
+    const doc = v2(acRooms())
+    const shared = wallsBetween(doc, 'A', 'C')[0]
+    const outer = (doc.walls ?? []).filter((w) => w.id !== shared.id).map((w) => w.id)
+    const out = v2SyncRule(doc, mergeAC(doc))
+
+    // One room, on the union polygon (the corners of the two rooms that lie on the outline stay:
+    // the top and the bottom edge are two walls that meet at a node, and no rule merges them).
+    expect(out.rooms.length).toBe(1)
+    const xs = out.rooms[0].vertices.map((v) => Math.round(v.x))
+    const ys = out.rooms[0].vertices.map((v) => Math.round(v.y))
+    expect([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]).toEqual([0, 600, 0, 400])
+    // The wall between the two rooms is GONE: it was the wall of one space, not a wall of the plan.
+    expect((out.walls ?? []).some((w) => w.id === shared.id)).toBe(false)
+    expect(verticalWallsAt(out, 300)).toEqual([])
+    // Not one wall of the outside goes away, and none becomes a standalone wall.
+    for (const id of outer) expect((out.walls ?? []).some((w) => w.id === id)).toBe(true)
+    expect((out.walls ?? []).filter((w) => w.standalone)).toEqual([])
+    expect(problems(out)).toEqual([])
+    // No node of the result is used by no wall (the two nodes of the wall that went away are gone
+    // unless the walls of the top and the bottom edge still meet at them).
+    for (const n of out.nodes ?? []) {
+      expect((out.walls ?? []).some((w) => w.a === n.id || w.b === n.id)).toBe(true)
+    }
+  })
+
+  it('keeps the walls of a room that the user deletes (standalone walls)', () => {
+    const doc = v2(acRooms())
+    const shared = wallsBetween(doc, 'A', 'C')[0]
+    // A goes away; C stays alone.
+    const out = v2SyncRule(doc, { ...doc, rooms: doc.rooms.filter((r) => r.id !== 'A') })
+    expect(out.rooms.length).toBe(1)
+    expect(out.rooms[0].id).toBe('C')
+    // The wall between the two rooms is the outer wall of C now: it keeps the face of C and no flag.
+    const between = (out.walls ?? []).find((w) => w.id === shared.id)!
+    expect(between.standalone).toBeUndefined()
+    expect(between.faces.some((f) => f.roomId === 'C')).toBe(true)
+    // The walls of the deleted room STAY, as standalone walls: no room covers them, so the rule
+    // does not remove them.
+    const left = verticalWallsAt(out, 0)
+    expect(left.length).toBe(1)
+    expect(left[0].standalone).toBe(true)
+    expect(left[0].faces.filter((f) => f.roomId !== undefined)).toEqual([])
+  })
+
+  it('keeps a standalone wall that the user drew inside the room', () => {
+    const doc = v2(acRooms())
+    // A wall drawn on its own in the middle of A (the Wall tool).
+    const withWall = addStandaloneWall(doc, { x: 100, y: 200 }, { x: 200, y: 200 }, { type: 'partition', thicknessCm: 10 })
+    expect(withWall.wallId).not.toBeNull()
+    const drawn = withWall.wallId!
+    const out = v2SyncRule(withWall.doc, mergeAC(withWall.doc))
+    // The middle wall of the two rooms is gone, but the wall that the user drew stays: it was
+    // standalone before the edit, so no rule removes it.
+    expect(verticalWallsAt(out, 300)).toEqual([])
+    expect((out.walls ?? []).some((w) => w.id === drawn)).toBe(true)
+    expect((out.walls ?? []).find((w) => w.id === drawn)!.standalone).toBe(true)
   })
 })

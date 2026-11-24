@@ -1,6 +1,7 @@
-// Make room tool (docs/walls-plan.md phase 6): click inside a closed area formed by the traced
-// walls and the room wall centre lines. That area becomes one room in ONE undo step, its name
-// editor opens, and the traces that the new room walls cover are removed.
+// Make room tool (docs/walls-plan.md phase 6): click inside a closed area formed by the wall centre
+// lines (the stored walls of a v2 document, the traces and room walls of a v1 document). That area
+// becomes one room in ONE undo step, its name editor opens, and - in a v1 document - the traces
+// that the new room walls cover are removed.
 // The area under the pointer is previewed (orange), calculated at most once per frame.
 import { useEffect, useRef, useState, type PointerEvent as RPE } from 'react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'

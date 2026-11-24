@@ -3,8 +3,10 @@
 // All lengths are cm. One undo step per edit, comma decimals (docs/sidebar-plan-3.md step 4).
 import { fmtCm, innerWallLengths, roomWalls } from '../../model/geometry'
 import type { SelItem } from '../../model/selection'
-import { useDoc } from '../../model/store'
-import type { PlanDoc, Room, WallAlign, WallProps, WallType } from '../../model/types'
+import { useDoc, useUi } from '../../model/store'
+import type { PlanDoc, Room, StoredWall, WallAlign, WallProps, WallType } from '../../model/types'
+import { removeWall } from '../../model/v2/write'
+import { undoToast } from '../toast'
 import { moveHoleVertex, moveVertices, movableLinked } from './ops'
 import { setWallAlign } from './thickness'
 import { wallProps } from './walls'
@@ -69,6 +71,32 @@ export function setWallAligns(refs: WallRef[], align: WallAlign) {
 /** Change the type; each wall keeps its current thickness. */
 export function setWallTypes(refs: WallRef[], type: WallType) {
   patchWalls(refs, () => ({ type }))
+}
+
+// ---------- a stored wall: one object with two sides (docs/walls-plan.md, Walls in the interface) ----------
+
+/** Write the properties of one stored wall (one undo step). The sync rule rebuilds both rooms. */
+export function patchStoredWall(wallId: string, patch: Partial<StoredWall>) {
+  update((d) => ({ ...d, walls: (d.walls ?? []).map((w) => (w.id === wallId ? { ...w, ...patch } : w)) }))
+}
+
+/** Toast text of a refused removal: 'Wall W12 is part of rooms EN, CO.' */
+export const refusedDeleteText = (wallId: string, refusedBy: string[]) =>
+  `Wall ${wallId} is part of rooms ${refusedBy.join(', ')}.`
+
+/**
+ * Remove a stored wall (docs/walls-plan.md phase 5c, `removeWall`). A wall that a room uses is
+ * REFUSED: nothing is written and the room codes come back, so the caller can name them in a toast.
+ */
+export function deleteStoredWall(wallId: string): { removed: boolean; refusedBy: string[] } {
+  const doc = useDoc.getState().doc
+  const res = removeWall(doc, wallId)
+  if (res.refusedBy.length) return { removed: false, refusedBy: res.refusedBy }
+  if (res.doc === doc) return { removed: false, refusedBy: [] }
+  update(() => res.doc)
+  useUi.getState().select(null)
+  undoToast('Wall deleted', () => useDoc.temporal.getState().undo())
+  return { removed: true, refusedBy: [] }
 }
 
 /** Signed cm difference, French decimal comma: "+2,1" / "−0,6". */

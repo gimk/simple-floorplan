@@ -1,11 +1,16 @@
 // Traced walls (docs/walls-plan.md phase 6): pure helpers, cm. No React here.
 //
-// A trace is the centre line of a wall drawn with the Wall tool. Traces are a drawing aid: the
-// Make room tool turns them into rooms, then removes the parts that a room wall now covers.
+// In a v1 document a trace is the centre line of a wall drawn with the Wall tool: a drawing aid
+// that the Make room tool turns into a room. A v2 document has no traces: the Wall tool writes
+// real walls (`addWallSegment` -> `addStandaloneWall`), and a load converts the traces it finds
+// (src/model/v2/ensure.ts, `tracesToWalls`). The functions below keep working for both, so the
+// tool and the tests do not need to know which kind of document they get.
 import { dist, dot, norm, sub } from '../../model/geometry'
 import { uid } from '../../model/store'
 import type { FaceSegment } from '../../model/faces'
 import type { PlanDoc, TraceWall, Vec, WallProps } from '../../model/types'
+import { isV2Doc } from '../../model/v2/targets'
+import { addStandaloneWall, removeWall } from '../../model/v2/write'
 import { DEFAULT_THICKNESS } from './walls'
 
 /** Traced walls of a doc (older documents have no field). */
@@ -24,6 +29,32 @@ export function addTrace(
 ): PlanDoc {
   const trace: TraceWall = { id, a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, thicknessCm: props.thicknessCm, type: props.type }
   return { ...doc, traces: [...tracesOf(doc), trace] }
+}
+
+/**
+ * Add one segment of the Wall tool: a STORED WALL in a v2 document (standalone: true, the thickness
+ * and the type of the tool), a trace in a v1 document. One undo step per segment, as before.
+ * `wallId` is the id of the segment (a stored wall id in a v2 document), or null when the segment
+ * added nothing (a dot, or a wall that is already there).
+ */
+export function addWallSegment(
+  doc: PlanDoc,
+  a: Vec,
+  b: Vec,
+  props: WallProps,
+  id = uid('trace'),
+): { doc: PlanDoc; wallId: string | null } {
+  if (isV2Doc(doc)) return addStandaloneWall(doc, a, b, props)
+  return { doc: addTrace(doc, a, b, props, id), wallId: id }
+}
+
+/**
+ * Remove the segment that the Wall tool added last (Backspace): the stored wall of a v2 document
+ * (refused while a room uses it, so a room never opens), or the trace of a v1 document.
+ */
+export function removeWallSegment(doc: PlanDoc, id: string): PlanDoc {
+  if ((doc.walls ?? []).some((w) => w.id === id)) return removeWall(doc, id).doc
+  return deleteTrace(doc, id)
 }
 
 /** Remove one traced wall from the doc. */
@@ -50,12 +81,27 @@ export function roomWallProps(doc: Pick<PlanDoc, 'rooms'>, roomId: string, verte
   return w ? { type: w.type, thicknessCm: w.thicknessCm } : { type: 'partition', thicknessCm: DEFAULT_THICKNESS.partition }
 }
 
+/** The document parts that the centre-line segments come from. */
+export type SegmentSource = Pick<PlanDoc, 'rooms' | 'traces'> & Partial<Pick<PlanDoc, 'nodes' | 'walls' | 'schemaVersion'>>
+
 /**
  * All centre-line segments of the plan, as `findEnclosingCycle` reads them:
- * `trace:<id>` for a traced wall, `room:<roomId>:<vertexId>` for a room wall.
+ *   - v2 document: `wall:<wallId>` for each stored wall (the walls are the source, and a room wall
+ *     is a face of a stored wall, so it is not a second segment);
+ *   - v1 document: `trace:<id>` for a traced wall, `room:<roomId>:<vertexId>` for a room wall.
  */
-export function docSegments(doc: Pick<PlanDoc, 'rooms' | 'traces'>): FaceSegment[] {
+export function docSegments(doc: SegmentSource): FaceSegment[] {
   const out: FaceSegment[] = []
+  if (isV2Doc(doc)) {
+    const nodes = new Map((doc.nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
+    for (const w of doc.walls ?? []) {
+      const a = nodes.get(w.a)
+      const b = nodes.get(w.b)
+      if (!a || !b || dist(a, b) < 1) continue
+      out.push({ id: `wall:${w.id}`, a, b })
+    }
+    return out
+  }
   for (const t of tracesOf(doc)) out.push({ id: `trace:${t.id}`, a: t.a, b: t.b })
   for (const r of doc.rooms) {
     const n = r.vertices.length
@@ -66,8 +112,16 @@ export function docSegments(doc: Pick<PlanDoc, 'rooms' | 'traces'>): FaceSegment
   return out
 }
 
-/** Wall properties that a cycle edge takes: from the trace it lies on, else from the room wall. */
-export function propsOfSegment(doc: Pick<PlanDoc, 'rooms' | 'traces'>, segmentId: string): WallProps | null {
+/**
+ * Wall properties that a cycle edge takes: from the stored wall it lies on, else from the trace,
+ * else from the room wall.
+ */
+export function propsOfSegment(doc: SegmentSource, segmentId: string): WallProps | null {
+  if (segmentId.startsWith('wall:')) {
+    const id = segmentId.slice('wall:'.length)
+    const w = (doc.walls ?? []).find((x) => x.id === id)
+    return w ? { type: w.type ?? 'partition', thicknessCm: w.thicknessCm ?? DEFAULT_THICKNESS.partition } : null
+  }
   if (segmentId.startsWith('trace:')) return traceProps(doc, segmentId.slice('trace:'.length))
   if (segmentId.startsWith('room:')) {
     const rest = segmentId.slice('room:'.length)

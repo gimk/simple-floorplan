@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { dist, roomInnerRing } from '../../model/geometry'
 import type { PlanDoc, Room } from '../../model/types'
-import { diagonalTarget, hoverTarget, roomByCode } from './hoverTarget'
+import { diagonalTarget, hoverTarget, roomByCode, storedWallLine } from './hoverTarget'
 
 /** Square room CU, 400 x 300 cm, walls CU-1..CU-4 (default thickness). */
 const cuisine = (over: Partial<Room> = {}): Room => ({
@@ -98,5 +98,28 @@ describe('hoverTarget: unknown labels', () => {
   it('finds the room of a code', () => {
     expect(roomByCode(doc(), 'CU')?.id).toBe('r-cu')
     expect(roomByCode(doc(), 'ZZ')).toBeUndefined()
+  })
+})
+
+describe('storedWallLine', () => {
+  /** One stored wall W1 from (0,0) to (400,0), the line of the wall values 'W1-C' and 'W1-E'. */
+  const graph = (): PlanDoc => ({
+    ...doc([]),
+    nodes: [{ id: 'N1', x: 0, y: 0 }, { id: 'N2', x: 400, y: 0 }],
+    walls: [{ id: 'W1', a: 'N1', b: 'N2', faces: [] }],
+  })
+
+  it('gives the two ends of the centre line of a stored wall', () => {
+    expect(storedWallLine(graph(), 'W1')).toEqual({ wallId: 'W1', a: { x: 0, y: 0 }, b: { x: 400, y: 0 } })
+    // The hover of a wall value uses the same line.
+    expect(hoverTarget(graph(), 'W1-C')).toEqual({
+      kind: 'storedWall', wallId: 'W1', a: { x: 0, y: 0 }, b: { x: 400, y: 0 }, label: 'W1-C', outside: false,
+    })
+  })
+
+  it('is null when the wall or one of its nodes is gone', () => {
+    expect(storedWallLine(graph(), 'W9')).toBeNull()
+    expect(storedWallLine({ ...graph(), nodes: [{ id: 'N1', x: 0, y: 0 }] }, 'W1')).toBeNull()
+    expect(storedWallLine(doc([]), 'W1')).toBeNull()
   })
 })

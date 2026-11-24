@@ -1,6 +1,8 @@
 // Traced walls on the plan (docs/walls-plan.md phase 6): dashed centre line, translucent band of
 // the wall thickness, length label. With the Select tool a trace is selectable and, with
 // Delete / Backspace, deletable (see features/rooms/interaction.ts, deleteSelection).
+// A v2 document draws nothing here: its walls are real walls of the graph (WallsLayer.tsx), and a
+// load converts the traces it finds into those walls (src/model/v2/ensure.ts).
 import { useViewport } from '../../canvas/Viewport'
 import { dist, fmtCm } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
@@ -15,11 +17,12 @@ const labelAngle = (t: TraceWall) => {
 
 export function TracesLayer() {
   const traces = useDoc((s) => s.doc.traces)
+  const v2 = useDoc((s) => s.doc.schemaVersion === 2)
   const selection = useUi((s) => s.selection)
   const tool = useUi((s) => s.tool)
   const mode = useUi((s) => s.mode)
   const { px, zoom } = useViewport()
-  if (!traces?.length) return null
+  if (!traces?.length || v2) return null
   // Only the Select tool picks a trace; the Wall and Make room tools draw over them.
   const interactive = tool === 'select' && mode === 'edit'
   const selected = selection?.kind === 'trace' ? selection.id : null

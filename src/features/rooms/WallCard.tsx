@@ -28,6 +28,9 @@ import {
 import { ElementList } from './ElementList'
 import { wallElementRows } from './roomLists'
 import { wallProps } from './walls'
+import { isV2Doc } from '../../model/v2/targets'
+import { StoredWallCard } from './StoredWallCard'
+import { sideOfRoomWall } from './wallSides'
 
 /** Survey label of a wall reference, e.g. "SE-2"; "?" when the room or the wall is gone. */
 function refLabel(doc: PlanDoc, w: WallRef): string {
@@ -45,6 +48,13 @@ export function WallCard({ doc, room, wallStart, group }: {
   // The stored wall this room wall is part of: it holds the centre and outside face values.
   const stored = storedWallOfRoomWall(doc, room.id, wallStart)
   if (!wall || !props) return null
+  // A v2 document: a wall is ONE object with two sides, so the card of a single wall is
+  // StoredWallCard (docs/walls-plan.md, Walls in the interface). A v1 document, and a Shift + click
+  // group of walls, keep this per-room card. No hook is called above this point, so the early
+  // return is safe.
+  if (stored && !group && isV2Doc(doc)) {
+    return <StoredWallCard doc={doc} wallId={stored.id} side={sideOfRoomWall(doc, stored.id, room.id, wallStart)} />
+  }
 
   const select = useUi.getState().select
   /** Step to the previous / next wall of this room, wrapping around. */

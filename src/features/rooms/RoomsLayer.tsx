@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
-import { dist, fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
+import { DEFAULT_WALL_CM, dist, fmtCm, innerWallLengths, labelPlacement, labelPoint, roomWalls } from '../../model/geometry'
 import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import { measuredText, planPrecision, shownLength } from '../../model/precision'
@@ -17,7 +17,8 @@ import { wallProps } from './walls'
 import { piecesPath, renovationRooms, wallAppearance, type DisplayRoom } from '../renovation/logic'
 import { useSidebar } from '../../shell/sidebar/store'
 import { modeLayerVisible } from '../../shell/view/layers'
-import { hoverTarget } from './hoverTarget'
+import { hoverTarget, storedWallLine } from './hoverTarget'
+import { sideOfPoint } from './wallSides'
 import { focusMeasureField } from '../measure/focusField'
 import { inputId } from '../measure/actions'
 import { outsideFaceSide, storedWallOfRoomWall, wallCentreCm, wallValueLabel } from '../../model/wallValues'
@@ -35,15 +36,17 @@ function outsideFaceLabelAt(
   wall: Wall,
   doc: { rooms: Room[]; walls?: StoredWall[]; nodes?: StoredNode[] },
 ): string | null {
-  // The room is on the side of `inward`: the other side of the centre line is the outside half.
-  const p = vp.toWorld(e.clientX, e.clientY)
-  const side = (p.x - wall.start.x) * wall.inward.x + (p.y - wall.start.y) * wall.inward.y
-  if (side >= 0) return null
   const stored = storedWallOfRoomWall(doc, roomId, wall.start.id)
-  if (!stored) return null
+  const line = stored ? storedWallLine(doc, stored.id) : null
+  if (!stored || !line) return null
   const centreCm = wallCentreCm(doc.nodes ?? [], stored)
-  if (centreCm === null || !outsideFaceSide(stored, centreCm)) return null
-  return wallValueLabel(stored.id, 'outside')
+  const outside = centreCm === null ? null : outsideFaceSide(stored, centreCm)
+  if (!outside) return null
+  // Same side rule as a click in edit mode: the side of the click on the centre line of the stored
+  // wall. The outside half of a facade wall opens its outside face value ('W12-E'); the room side
+  // opens the field of the room wall.
+  const p = vp.toWorld(e.clientX, e.clientY)
+  return sideOfPoint(line.a, line.b, p) === outside ? wallValueLabel(stored.id, 'outside') : null
 }
 
 const pathOf = (rings: Vec[][]) =>
@@ -80,6 +83,9 @@ export function RoomsLayer() {
   const measurements = useDoc((s) => s.doc.measurements)
   const storedWalls = useDoc((s) => s.doc.walls)
   const storedNodes = useDoc((s) => s.doc.nodes)
+  // Walls are the source of a v2 document: this layer draws the floors, the labels and the hit
+  // areas, and the walls come from the wall graph (features/rooms/WallsLayer.tsx).
+  const wallsFromGraph = useDoc((s) => s.doc.schemaVersion === 2)
   // Element under the pointer in the Solve tab list ('CU-6', 'CU-D', 'SE-1-T', 'W12-E'): shown here.
   const hoverLabel = useUi((s) => s.hoverLabel)
   const hoverDiagonal = useUi((s) => s.hoverDiagonal)
@@ -132,6 +138,15 @@ export function RoomsLayer() {
   // Outlined rooms: the room of the selected item, or every room of a room group.
   const selRoomIds = new Set(items.flatMap((s) => (s.kind === 'room' || (s.kind !== 'element' && s === selection) ? [s.roomId] : [])))
   const selWalls = new Set(items.flatMap((s) => (s.kind === 'wall' ? [s.roomId + ':' + s.wallStart] : [])))
+  // A selected stored wall ('W12'): the whole wall is highlighted on its centre line, and the side
+  // the user clicked is drawn a bit stronger (docs/walls-plan.md, Walls in the interface).
+  const selStoredWall = useMemo(() => {
+    if (selection?.kind !== 'storedWall') return null
+    const line = storedWallLine({ walls: storedWalls, nodes: storedNodes }, selection.wallId)
+    if (!line) return null
+    const wall = (storedWalls ?? []).find((w) => w.id === selection.wallId)
+    return { ...line, thicknessCm: wall?.thicknessCm ?? DEFAULT_WALL_CM, side: selection.side }
+  }, [selection, storedWalls, storedNodes])
   // Bearing wall stripes: ~6 px apart (perpendicular), ~1 px wide, at 45°, zoom independent.
   // A 45° pattern tile of `tile` repeats its lines every tile / sqrt(2).
   const stripeGap = px(6)
@@ -256,8 +271,9 @@ export function RoomsLayer() {
           strokeWidth={px(2.5)} strokeDasharray={`${px(6)} ${px(4)}`} className="stroke-orange-500" />
       ))}
 
-      {/* walls: mitered polygons, so corners join cleanly at any angle */}
-      {rooms.map((r) => quadsOf(r).map((q) => {
+      {/* walls: mitered polygons, so corners join cleanly at any angle. A v2 document draws its
+          walls once, from the wall graph (features/rooms/WallsLayer.tsx). */}
+      {!wallsFromGraph && rooms.map((r) => quadsOf(r).map((q) => {
         const p = wallProps(r, q.startId)
         const look = wallAppearance(p.type, p.status, renovationView)
         if (!look.visible) return null
@@ -338,6 +354,28 @@ export function RoomsLayer() {
             data-selected-wall={r.id + ':' + q.startId}
             strokeWidth={px(2)} className="fill-orange-500/35 stroke-orange-500" />
         )))}
+      {selStoredWall && (() => {
+        // The band of the selected wall is drawn once from the wall graph (WallsLayer); here, the
+        // two faces of the wall get a line a little outside that band, and the face of the side the
+        // user clicked is stronger (docs/walls-plan.md, Walls in the interface).
+        const { a, b, thicknessCm, side } = selStoredWall
+        const len = dist(a, b)
+        const ux = len > 0 ? (b.x - a.x) / len : 0, uy = len > 0 ? (b.y - a.y) / len : 0
+        // Left of a -> b is (-uy, ux): that is side L. Side R is the other way.
+        const off = thicknessCm / 2 + px(2)
+        const face = (k: 1 | -1) => ({
+          x1: a.x - uy * off * k, y1: a.y + ux * off * k, x2: b.x - uy * off * k, y2: b.y + ux * off * k,
+        })
+        const weight = (s: 'L' | 'R') => (side === undefined || side === s ? px(3) : px(1.5))
+        return (
+          <g pointerEvents="none" data-selected-wall-side={side ?? ''} data-wall-side-of={selStoredWall.wallId}>
+            <line {...face(1)} strokeLinecap="round" strokeWidth={weight('L')}
+              className={side === 'L' ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
+            <line {...face(-1)} strokeLinecap="round" strokeWidth={weight('R')}
+              className={side === 'R' ? 'stroke-orange-600 dark:stroke-orange-300' : 'stroke-orange-500/70'} />
+          </g>
+        )
+      })()}
 
       {/* hover highlight: the element of the survey label under the pointer in the Solve tab list
           (and later in Measuring Mode). Drawn above the walls, and it takes no pointer event. */}

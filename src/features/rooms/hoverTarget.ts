@@ -24,6 +24,22 @@ export type HoverTarget =
   /** Nothing hovered, or the label does not name an element of this plan. */
   | null
 
+/**
+ * Centre line of a stored wall ('W12'): the two positions of its nodes. This is the line a hover of
+ * a wall value and the selection highlight of the wall are drawn on. null when the wall, or one of
+ * its two nodes, is not on the plan.
+ */
+export function storedWallLine(
+  doc: Pick<PlanDoc, 'walls' | 'nodes'>,
+  wallId: string,
+): { wallId: string; a: Vec; b: Vec } | null {
+  const wall = (doc.walls ?? []).find((w) => w.id === wallId)
+  const na = wall ? (doc.nodes ?? []).find((n) => n.id === wall.a) : undefined
+  const nb = wall ? (doc.nodes ?? []).find((n) => n.id === wall.b) : undefined
+  if (!wall || !na || !nb) return null
+  return { wallId: wall.id, a: { x: na.x, y: na.y }, b: { x: nb.x, y: nb.y } }
+}
+
 /** Room with this survey code, if any. Room codes contain no '-'. */
 export const roomByCode = (doc: Pick<PlanDoc, 'rooms'>, code: string): Room | undefined =>
   doc.rooms.find((r) => r.code === code)
@@ -63,15 +79,9 @@ export function hoverTarget(
   // A stored wall: 'W12-C' (centre line) or 'W12-E' (outside face). Drawn between its two nodes.
   const wallValue = parseWallValueLabel(label)
   if (wallValue) {
-    const wall = (doc.walls ?? []).find((w) => w.id === wallValue.wallId)
-    const na = wall ? (doc.nodes ?? []).find((n) => n.id === wall.a) : undefined
-    const nb = wall ? (doc.nodes ?? []).find((n) => n.id === wall.b) : undefined
-    if (!wall || !na || !nb) return null
-    return {
-      kind: 'storedWall', wallId: wall.id,
-      a: { x: na.x, y: na.y }, b: { x: nb.x, y: nb.y }, label,
-      outside: wallValue.kind === 'outside',
-    }
+    const line = storedWallLine(doc, wallValue.wallId)
+    if (!line) return null
+    return { kind: 'storedWall', wallId: line.wallId, a: line.a, b: line.b, label, outside: wallValue.kind === 'outside' }
   }
   const code = labelRoomCode(label)
   if (!code) return null

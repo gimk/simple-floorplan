@@ -6,7 +6,7 @@ import { dist, signedArea } from '../geometry'
 import type { Measurement, PlanDoc, Room, Vec } from '../types'
 import { convertToV2 } from './convert'
 import { faceEndCm, faceForward, faceStartCm } from './materialize'
-import { applyRoomPolygon, removeRoom } from './write'
+import { addStandaloneWall, applyRoomPolygon, removeRoom, removeWall, settleWallsWithoutFaces } from './write'
 
 /** A v1 document with these rooms. */
 const plan = (rooms: Room[], measurements: Record<string, Measurement> = {}): PlanDoc => ({
@@ -100,7 +100,9 @@ function writeProblems(doc: PlanDoc): string[] {
   for (const r of doc.rooms) for (const f of r.cycle ?? []) usedWalls.add(f.wallId)
   for (const w of walls.values()) {
     if (!w.faces.length) problems.push(`wall ${w.id}: no face`)
-    if (!usedWalls.has(w.id)) problems.push(`wall ${w.id}: used by no room`)
+    // A standalone wall STAYS when no room uses it (a wall drawn on its own, a wall of a deleted
+    // room): that is the plan of the interface, not a problem.
+    if (!usedWalls.has(w.id) && !w.standalone) problems.push(`wall ${w.id}: used by no room`)
     if (w.thicknessCm === undefined || w.type === undefined) problems.push(`wall ${w.id}: no properties`)
   }
   for (const r of doc.rooms) {
@@ -386,33 +388,196 @@ describe('applyRoomPolygon: corner and wall edits', () => {
 })
 
 describe('removeRoom', () => {
-  it('removes the faces and the walls of the room, and keeps the shared walls', () => {
+  it('keeps the walls of the room (standalone), and the shared wall keeps its face of A', () => {
     const doc = v2([
       mk('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1),
       mk('B', [[300, 0], [600, 0], [600, 400], [300, 400]], 2),
       mk('C', [[900, 0], [1200, 0], [1200, 400], [900, 400]], 3),
     ])
     const shared = wallBetween(doc, 'A', 'B')[0]
+    const bWalls = roomOf(doc, 'B').cycle!.map((f) => f.wallId)
     const after = removeRoom(doc, 'B')
 
     expect(after.rooms.map((r) => r.id)).toEqual(['A', 'C'])
-    // Three walls of B go, the shared wall stays with the face of A, and C does not move.
-    const kept = (after.walls ?? []).find((w) => w.id === shared.id)
-    expect(kept).toBeDefined()
-    expect(kept!.faces.filter((f) => f.roomId === 'B')).toEqual([])
-    expect(kept!.faces.some((f) => f.roomId === 'A')).toBe(true)
+    // Deleting a room KEEPS its walls: no wall of B goes away.
+    expect(after.walls).toHaveLength((doc.walls ?? []).length)
+    for (const id of bWalls) expect((after.walls ?? []).some((w) => w.id === id)).toBe(true)
+    // The shared wall stays with the face of A, without the flag (A still uses it).
+    const kept = (after.walls ?? []).find((w) => w.id === shared.id)!
+    expect(kept.faces.filter((f) => f.roomId === 'B')).toEqual([])
+    expect(kept.faces.some((f) => f.roomId === 'A')).toBe(true)
+    expect(kept.standalone).toBeUndefined()
+    // The three walls that only B used are standalone walls now: a free side on both faces.
+    for (const id of bWalls.filter((x) => x !== shared.id)) {
+      const wall = (after.walls ?? []).find((w) => w.id === id)!
+      expect(wall.standalone).toBe(true)
+      expect(wall.faces.filter((f) => f.roomId !== undefined)).toEqual([])
+    }
     expect(corners(roomOf(after, 'A'))).toEqual(corners(roomOf(doc, 'A')))
     expect(corners(roomOf(after, 'C'))).toEqual(corners(roomOf(doc, 'C')))
-    expect(after.walls).toHaveLength(8)
     expect(writeProblems(after)).toEqual([])
   })
 
-  it('leaves an empty graph when the last room goes, and nothing when the room is not there', () => {
+  it('keeps the walls of the last room, and gives nothing back when the room is not there', () => {
     const doc = v2([mk('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1)])
+    const wallIds = roomOf(doc, 'A').cycle!.map((f) => f.wallId)
     const empty = removeRoom(doc, 'A')
     expect(empty.rooms).toEqual([])
-    expect(empty.walls).toEqual([])
-    expect(empty.nodes).toEqual([])
+    expect((empty.walls ?? []).map((w) => w.id).sort()).toEqual([...wallIds].sort())
+    expect((empty.walls ?? []).every((w) => w.standalone === true)).toBe(true)
+    expect((empty.nodes ?? []).length).toBeGreaterThan(0)
     expect(removeRoom(doc, 'nope')).toBe(doc)
+  })
+})
+
+describe('a standalone wall', () => {
+  it('is added with its two nodes, its properties and the flag', () => {
+    const doc = v2([mk('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1)])
+    const out = addStandaloneWall(doc, { x: 900, y: 0 }, { x: 900, y: 500 }, { type: 'bearing', thicknessCm: 25 })
+    expect(out.wallId).not.toBeNull()
+    const wall = (out.doc.walls ?? []).find((w) => w.id === out.wallId)!
+    expect(wall.standalone).toBe(true)
+    expect(wall.type).toBe('bearing')
+    expect(wall.thicknessCm).toBe(25)
+    // A wall alone has no room face: both of its sides are outside.
+    expect(wall.faces.every((f) => f.roomId === undefined)).toBe(true)
+    expect(writeProblems(out.doc)).toEqual([])
+  })
+
+  it('takes an existing node within 1 cm, and a new node on the middle of a wall (a T junction)', () => {
+    const doc = v2([mk('A', [[0, 0], [400, 0], [400, 400], [0, 400]], 1)])
+    const nodeA = (doc.nodes ?? []).find((n) => Math.abs(n.x - 0) < 0.5 && Math.abs(n.y - 0) < 0.5)!
+    // The first end takes the node of the corner, the second one lands on the middle of a wall.
+    const out = addStandaloneWall(doc, { x: 0.4, y: 0.3 }, { x: 200, y: 400 }, { type: 'partition', thicknessCm: 10 })
+    expect(out.wallId).not.toBeNull()
+    const wall = (out.doc.walls ?? []).find((w) => w.id === out.wallId)!
+    expect(wall.a === nodeA.id || wall.b === nodeA.id).toBe(true)
+    // The host wall is NOT split: its spans still cover it whole.
+    const host = (out.doc.walls ?? []).find((w) => w.faces.some((f) => f.roomId === 'A' && f.from === 0 && f.to === 400))
+    expect(host).toBeDefined()
+    // The new node is on the host line, and no second wall was stored on that line.
+    const nodes = new Map((out.doc.nodes ?? []).map((n) => [n.id, n]))
+    const end = wall.a === nodeA.id ? nodes.get(wall.b)! : nodes.get(wall.a)!
+    expect(Math.abs(end.y - 400)).toBeLessThan(0.5)
+    // One wall on that line only: the host, which is not split.
+    expect(wallsOnLine(out.doc, false, 400).length).toBe(1)
+    expect(writeProblems(out.doc)).toEqual([])
+  })
+
+  it('adds nothing for a dot, and nothing for a wall that is already there', () => {
+    const doc = v2([mk('A', [[0, 0], [400, 0], [400, 400], [0, 400]], 1)])
+    expect(addStandaloneWall(doc, { x: 0, y: 0 }, { x: 0.2, y: 0 }, { type: 'partition', thicknessCm: 10 }).doc).toBe(doc)
+    // The wall of the top edge of A is already there (same two nodes): nothing is stored twice.
+    const again = addStandaloneWall(doc, { x: 0, y: 0 }, { x: 400, y: 0 }, { type: 'partition', thicknessCm: 10 })
+    expect(again.doc).toBe(doc)
+    expect(again.wallId).not.toBeNull()
+  })
+
+  it('stays when a room shape edit leaves it without a face, and a wall without the flag goes', () => {
+    const doc = v2([mk('A', [[0, 0], [400, 0], [400, 300], [0, 300]], 1)])
+    const withWall = addStandaloneWall(doc, { x: 100, y: 600 }, { x: 300, y: 600 }, { type: 'partition', thicknessCm: 10 }).doc
+    const standaloneId = (withWall.walls ?? []).find((w) => w.standalone)!.id
+    // A shape edit that does not touch the standalone wall: it stays.
+    const moved = withVertex(roomOf(withWall, 'A'), 0, [-20, -20])
+    const after = applyRoomPolygon(withWall, 'A', moved)
+    expect((after.walls ?? []).some((w) => w.id === standaloneId)).toBe(true)
+    // A wall without the flag that loses its last face GOES: the room moves away from its top wall.
+    const topId = roomOf(withWall, 'A').cycle![0].wallId
+    const loose = { ...withWall, walls: (withWall.walls ?? []).map((w) => (w.id === topId ? { ...w, standalone: undefined } : w)) }
+    const lower = withCorners(roomOf(loose, 'A'), [0, 1], [0, 100])
+    const shrunk = applyRoomPolygon(loose, 'A', lower)
+    expect((shrunk.walls ?? []).some((w) => w.id === topId)).toBe(false)
+    // The standalone wall of the plan is not touched by that edit.
+    expect((shrunk.walls ?? []).some((w) => w.id === standaloneId)).toBe(true)
+  })
+})
+
+describe('removeWall', () => {
+  it('removes a standalone wall and the nodes that no wall uses', () => {
+    const doc = v2([mk('A', [[0, 0], [400, 0], [400, 400], [0, 400]], 1)])
+    const added = addStandaloneWall(doc, { x: 900, y: 0 }, { x: 900, y: 500 }, { type: 'partition', thicknessCm: 10 })
+    expect(added.wallId).not.toBeNull()
+    const nodeCount = (added.doc.nodes ?? []).length
+    const out = removeWall(added.doc, added.wallId!)
+    expect(out.refusedBy).toEqual([])
+    expect((out.doc.walls ?? []).some((w) => w.id === added.wallId)).toBe(false)
+    expect((out.doc.nodes ?? []).length).toBe(nodeCount - 2)
+    expect(writeProblems(out.doc)).toEqual([])
+  })
+
+  it('is refused while a room face uses the wall, and names those rooms', () => {
+    const doc = v2([
+      mk('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1),
+      mk('B', [[300, 0], [600, 0], [600, 400], [300, 400]], 2),
+    ])
+    const shared = wallBetween(doc, 'A', 'B')[0]
+    const out = removeWall(doc, shared.id)
+    expect(out.doc).toBe(doc)
+    expect(out.refusedBy).toEqual(['A', 'B'])
+    // A wall that is not in the document changes nothing.
+    expect(removeWall(doc, 'nope')).toEqual({ doc, refusedBy: [] })
+  })
+})
+
+// A wall that a room used before an edit and that no room uses after it (docs/walls-plan.md, "Walls
+// in the interface"): the rule takes it away when a room of the result covers it (a MERGE), and
+// keeps it as a standalone wall when no room covers it (a room that the user deleted).
+describe('settleWallsWithoutFaces', () => {
+  /** Two rooms side by side, y 0..400: ONE wall between them, at x = 300. */
+  const twoRooms = () => v2([
+    mk('A', [[0, 0], [300, 0], [300, 400], [0, 400]], 1),
+    mk('C', [[300, 0], [600, 0], [600, 400], [300, 400]], 2),
+  ])
+
+  /** The wall that separates the two rooms, as a standalone wall of the graph. */
+  const withStandalone = (doc: PlanDoc, wallId: string): PlanDoc => ({
+    ...doc,
+    walls: (doc.walls ?? []).map((w) => (w.id === wallId ? { ...w, standalone: true } : w)),
+  })
+
+  it('removes the wall between two rooms that are one room now', () => {
+    const doc = twoRooms()
+    const shared = wallBetween(doc, 'A', 'C')[0].id
+    // A merge, as the write path of the edit leaves it: C is gone, the wall between the rooms lost
+    // its faces (a standalone wall), and A has the polygon of the two rooms.
+    const noC = removeRoom(doc, 'C')
+    const merged = applyRoomPolygon(withStandalone(noC, shared), 'A', mk('A', [[0, 0], [600, 0], [600, 400], [0, 400]], 1))
+    expect((merged.walls ?? []).find((w) => w.id === shared)!.standalone).toBe(true)
+    const out = settleWallsWithoutFaces(merged, doc)
+    // A room of the result covers its middle: the wall of that one space goes away.
+    expect((out.walls ?? []).some((w) => w.id === shared)).toBe(false)
+    for (const n of out.nodes ?? []) expect((out.walls ?? []).some((w) => w.a === n.id || w.b === n.id)).toBe(true)
+    expect(out.rooms.length).toBe(1)
+    expect(writeProblems(out)).toEqual([])
+  })
+
+  it('keeps a wall that no room covers, as a standalone wall', () => {
+    const doc = twoRooms()
+    // A goes away: `removeRoom` gives its own walls the standalone flag, and C covers nothing there.
+    const after = removeRoom(doc, 'A')
+    const out = settleWallsWithoutFaces(after, doc)
+    // Nothing to do: the document comes back as it was.
+    expect(out).toBe(after)
+    // The wall between the two rooms keeps the face of C, without the flag.
+    const between = wallBetween(after, 'A', 'C')
+    expect(between).toEqual([])
+    expect((out.walls ?? []).filter((w) => w.standalone === true).length).toBeGreaterThan(0)
+    for (const w of out.walls ?? []) {
+      if (!w.standalone) continue
+      // A standalone wall has no room face: no room covers it.
+      expect(w.faces.filter((f) => f.roomId !== undefined)).toEqual([])
+    }
+    expect(out.rooms.length).toBe(1)
+  })
+
+  it('never removes a wall that the user drew (standalone before the edit)', () => {
+    const doc = twoRooms()
+    // A wall drawn on its own in the middle of A, then a merge that covers it.
+    const withWall = addStandaloneWall(doc, { x: 100, y: 200 }, { x: 200, y: 200 }, { type: 'partition', thicknessCm: 10 })
+    const drawn = withWall.wallId!
+    const merged = applyRoomPolygon(withWall.doc, 'A', mk('A', [[0, 0], [600, 0], [600, 400], [0, 400]], 1))
+    const out = settleWallsWithoutFaces(merged, withWall.doc)
+    expect((out.walls ?? []).some((w) => w.id === drawn)).toBe(true)
+    expect((out.walls ?? []).find((w) => w.id === drawn)!.standalone).toBe(true)
   })
 })

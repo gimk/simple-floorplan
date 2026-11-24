@@ -22,6 +22,7 @@ import {
 import { undoToast } from '../toast'
 import { moveNode, moveRoom as roomMove, moveWall } from '../../model/v2/drag'
 import { isV2Doc } from '../../model/v2/targets'
+import { sideOfRoomWall } from './wallSides'
 
 export type Vp = { toWorld: (x: number, y: number) => Vec; px: (n: number) => number }
 
@@ -638,12 +639,23 @@ function dragWallOnGraph(
 export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallStart: string) {
   if (e.button !== 0 || !e.isPrimary) return
   e.stopPropagation()
+  const doc0 = useDoc.getState().doc
+  const room0 = findRoom(roomId)
+  // A v2 document: the wall is a STORED wall, so a click selects the WHOLE wall, with the side the
+  // user clicked (the side where the room of the clicked wall lies). The drag below still moves the
+  // same stored wall on the graph (docs/walls-plan.md, Walls in the interface).
+  const storedWallId = isV2Doc(doc0) && room0 ? storedWallAtCorner(doc0, room0, wallStart) : null
+  const side = storedWallId ? sideOfRoomWall(doc0, storedWallId, roomId, wallStart) : undefined
   // Shift + click (no drag) toggles the wall in the group; Shift + drag is still "this room only".
+  // A group of walls stays a group of ROOM walls (the group card edits them together), so Shift +
+  // click keeps its old meaning in a v2 document too.
   const shift = e.shiftKey
   const flip = () => toggle({ kind: 'wall', roomId, wallStart })
-  const selectMe = () => useUi.getState().select({ kind: 'wall', roomId, wallStart })
+  const selectMe = () => {
+    if (storedWallId) useUi.getState().select({ kind: 'storedWall', wallId: storedWallId, side })
+    else useUi.getState().select({ kind: 'wall', roomId, wallStart })
+  }
   if (!shift) selectMe()
-  const room0 = findRoom(roomId)
   const i = room0 ? room0.vertices.findIndex((v) => v.id === wallStart) : -1
   // Moving a wall changes its neighbours' lengths: a locked neighbour blocks the drag.
   if (!room0 || i < 0 || locked(room0, i - 1) || locked(room0, i + 1)) { if (shift) flip(); return }
@@ -653,11 +665,6 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
   const normal = roomWalls(room0)[i].inward
   const axisAligned = Math.abs(normal.x) > 0.999 || Math.abs(normal.y) > 0.999
   const down = vp.toWorld(e.clientX, e.clientY)
-  // Shared corners follow (Shift = this room only).
-  const doc0 = useDoc.getState().doc
-  // A v2 document: the wall is a STORED wall, so the drag moves it on the graph: the rooms on both
-  // sides follow and the walls at its ends stretch (docs/walls-plan.md phase 5c).
-  const storedWallId = isV2Doc(doc0) ? storedWallAtCorner(doc0, room0, wallStart) : null
   if (storedWallId) {
     dragWallOnGraph(e, vp, roomId, wallStart, storedWallId, room0, a0, normal, axisAligned, down, shift, flip, selectMe)
     return

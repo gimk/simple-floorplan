@@ -23,7 +23,7 @@
 import type { PlanDoc, Room } from '../types'
 import { syncElements } from './elements'
 import { deriveWallFaces, materializeRooms } from './materialize'
-import { applyRoomPolygon, removeRoom } from './write'
+import { applyRoomPolygon, removeRoom, settleWallsWithoutFaces } from './write'
 
 /** Same content, whatever the object (a room that a drag already calculated is not rebuilt). */
 const sameRoom = (a: Room, b: Room) => JSON.stringify(a) === JSON.stringify(b)
@@ -89,5 +89,9 @@ export function v2SyncRule(prev: PlanDoc, next: PlanDoc): PlanDoc {
     if (was && !polygonChanged(was, r)) continue
     doc = applyRoomPolygon(doc, r.id, r)
   }
+  // A wall that lost every face in this edit: the wall between two rooms that became ONE space goes
+  // away (a room of the result holds it), a wall of a room that the user deleted stays as a
+  // standalone wall (docs/walls-plan.md, "Walls in the interface").
+  doc = settleWallsWithoutFaces(doc, prev)
   return syncElements(prev, doc)
 }

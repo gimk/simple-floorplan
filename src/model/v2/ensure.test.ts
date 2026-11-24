@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { demoRooms } from '../../features/measure/demo'
 import { normalizeOrigin } from '../origin'
 import type { Measurement, PlanDoc, Room } from '../types'
-import { ensureV2 } from './ensure'
+import { ensureV2, tracesToWalls } from './ensure'
 import { conversionProblems } from './invariants'
 import { labelOfTarget } from './targets'
 
@@ -153,5 +153,56 @@ describe('ensureV2: a v2 document', () => {
     const out = ensureV2({ ...v2, title: 'Other' })
     expect(out.measurements).toBe(before)
     expect(out.oldMeasurements).toBeUndefined()
+  })
+})
+
+describe('traces of an older document (the Wall tool of phase 6)', () => {
+  /** A vertical traced wall 400 cm long, 25 cm thick, far from the demo rooms. */
+  const trace = { id: 'trace-1', a: { x: 6000, y: 6000 }, b: { x: 6000, y: 6400 }, thicknessCm: 25, type: 'bearing' as const }
+
+  const wallsOf = (doc: PlanDoc) => (doc.walls ?? []).filter((w) => w.standalone)
+
+  it('become standalone walls of the graph, and doc.traces is cleared', () => {
+    const v1 = { ...demoV1(), traces: [trace] }
+    const v2 = ensureV2(v1, { now: NOW })
+    expect(v2.schemaVersion).toBe(2)
+    expect(v2.traces).toEqual([])
+    const added = wallsOf(v2)
+    expect(added.length).toBe(1)
+    expect(added[0].thicknessCm).toBe(25)
+    expect(added[0].type).toBe('bearing')
+    // A wall with no room face: both of its sides are outside.
+    expect(added[0].faces.every((f) => f.roomId === undefined)).toBe(true)
+    // The length of the drawn wall is kept.
+    const nodes = new Map((v2.nodes ?? []).map((n) => [n.id, n]))
+    expect(Math.abs(nodes.get(added[0].a)!.y - nodes.get(added[0].b)!.y)).toBe(400)
+    // No value moved: the conversion and the trace do not touch the measurements.
+    expect(valuesOnly(v2.measurements)).toEqual(valuesOnly(ensureV2(demoV1(), { now: NOW }).measurements))
+  })
+
+  it('become walls of a document that is already v2 (a load of an older client)', () => {
+    const v2 = ensureV2(demoV1(), { now: NOW })
+    const withTrace: PlanDoc = { ...v2, traces: [trace] }
+    const out = ensureV2(withTrace)
+    expect(out.traces).toEqual([])
+    expect(wallsOf(out).length).toBe(1)
+    // Every room keeps its polygon and its labels.
+    expect(out.rooms.map((r) => r.code)).toEqual(v2.rooms.map((r) => r.code))
+    expect(out.rooms.map((r) => r.vertices.length)).toEqual(v2.rooms.map((r) => r.vertices.length))
+    // A load of the same document again changes nothing.
+    expect(ensureV2(out)).toEqual(out)
+  })
+
+  it('add nothing to a document without traces, and keep the ids W<n> free of the walls there', () => {
+    const v1 = demoV1()
+    expect(ensureV2(v1, { now: NOW })).toEqual(ensureV2(v1, { now: NOW }))
+    const withTrace = ensureV2({ ...v1, traces: [trace] }, { now: NOW })
+    const ids = (withTrace.walls ?? []).map((w) => w.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('tracesToWalls gives the same document back when there is no trace', () => {
+    const v2 = ensureV2(demoV1(), { now: NOW })
+    expect(tracesToWalls(v2)).toBe(v2)
   })
 })

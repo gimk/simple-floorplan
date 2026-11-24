@@ -1,8 +1,9 @@
 // Wall tool logic (docs/walls-plan.md phase 6). Pure helpers, cm. No React here.
 //
-// The Wall tool draws a CHAIN of centre lines. Each finished segment is stored as one trace
-// (`doc.traces`), so every click is one undo step: a wrong segment costs one Ctrl+Z, not the
-// whole chain. The chain only exists while the tool draws it (the last point is the current one).
+// The Wall tool draws a CHAIN of centre lines. Each finished segment is stored at once - a stored
+// wall in a v2 document (`traces.addWallSegment`), a trace in a v1 document - so every click is one
+// undo step: a wrong segment costs one Ctrl+Z, not the whole chain. The chain only exists while the
+// tool draws it (the last point is the current one).
 import { dist, fmtCm } from '../../model/geometry'
 import { DEFAULT_THICKNESS } from './walls'
 import type { PlanDoc, Vec, WallProps, WallType } from '../../model/types'
@@ -63,18 +64,22 @@ export function previewLabel(a: Vec, b: Vec): string {
 }
 
 export type SnapTargets = {
-  /** Points to snap onto: room corners, trace end points, the chain points already placed. */
+  /** Points to snap onto: room corners, trace end points, wall nodes, the chain points placed. */
   vertices: Vec[]
-  /** Lines to snap onto: room wall centre lines and traces (nearest point = T junction). */
+  /** Lines to snap onto: room wall centre lines, traces and stored walls (a T junction). */
   edges: [Vec, Vec][]
 }
 
+/** The document parts that the snapping targets come from. */
+export type SnapSource = Pick<PlanDoc, 'rooms' | 'traces'> & Partial<Pick<PlanDoc, 'nodes' | 'walls'>>
+
 /**
- * Snapping targets of the Wall tool: room corners and room wall centre lines, and the end points
- * and centre lines of the traces. The points of the chain are added too, so a chain can close on
- * its own start point exactly.
+ * Snapping targets of the Wall tool: room corners and room wall centre lines, the end points and
+ * centre lines of the traces, and the nodes and centre lines of the stored walls (so a new wall
+ * meets an existing wall on its node, or takes a node on its middle). The points of the chain are
+ * added too, so a chain can close on its own start point exactly.
  */
-export function snapTargets(doc: Pick<PlanDoc, 'rooms' | 'traces'>, chain: Chain = []): SnapTargets {
+export function snapTargets(doc: SnapSource, chain: Chain = []): SnapTargets {
   const vertices: Vec[] = []
   const edges: [Vec, Vec][] = []
   for (const r of doc.rooms) {
@@ -89,6 +94,14 @@ export function snapTargets(doc: Pick<PlanDoc, 'rooms' | 'traces'>, chain: Chain
   for (const t of doc.traces ?? []) {
     vertices.push(t.a, t.b)
     edges.push([t.a, t.b])
+  }
+  // The walls of a v2 document: their nodes and their centre lines.
+  const nodes = new Map((doc.nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
+  for (const n of doc.nodes ?? []) vertices.push({ x: n.x, y: n.y })
+  for (const w of doc.walls ?? []) {
+    const a = nodes.get(w.a)
+    const b = nodes.get(w.b)
+    if (a && b) edges.push([a, b])
   }
   for (const p of chain) vertices.push(p)
   return { vertices, edges }

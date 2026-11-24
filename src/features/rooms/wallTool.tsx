@@ -1,8 +1,9 @@
 // Wall tool (docs/walls-plan.md phase 6): click to start, each click adds one segment to the chain,
 // double-click or Enter ends the chain, Esc cancels the chain, Backspace removes the last point.
 //
-// ONE UNDO STEP PER SEGMENT: every click stores its trace in `doc.traces` at once, so a wrong
-// segment costs one Ctrl+Z and not the whole chain. The chain itself is not in the doc.
+// ONE UNDO STEP PER SEGMENT: every click stores its segment at once - a real wall (`standalone`) in
+// a v2 document, a trace in a v1 document -, so a wrong segment costs one Ctrl+Z and not the whole
+// chain. The chain itself is not in the doc.
 import { useEffect, useMemo, useState, type PointerEvent as RPE } from 'react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
 import { dist } from '../../model/geometry'
@@ -11,7 +12,7 @@ import type { Vec } from '../../model/types'
 import { useGuides } from './guides'
 import { NoticeLayer } from './notice'
 import { snapPoint, type SnapGuide } from './snap'
-import { addTrace } from './traces'
+import { addWallSegment, removeWallSegment } from './traces'
 import { SAME_POINT_CM, addChainPoint, nextWallProps, previewLabel, removeChainPoint, segmentsWith, snapTargets } from './wallToolLogic'
 
 const inInput = (t: EventTarget | null) => t instanceof Element && !!t.closest('input, textarea, select, [contenteditable]')
@@ -42,6 +43,8 @@ export function WallTool() {
   const { px } = vp
   const rooms = useDoc((s) => s.doc.rooms)
   const traces = useDoc((s) => s.doc.traces)
+  const nodes = useDoc((s) => s.doc.nodes)
+  const walls = useDoc((s) => s.doc.walls)
   const snapOpts = useUi((s) => s.snap)
   const thicknessCm = useUi((s) => s.wallToolThicknessCm)
   const wallType = useUi((s) => s.wallToolType)
@@ -50,7 +53,7 @@ export function WallTool() {
   const [ids, setIds] = useState<string[]>([])
   const [hover, setHover] = useState<Vec | null>(null)
   const setGuides = useGuides((s) => s.set)
-  const targets = useMemo(() => snapTargets({ rooms, traces }, points), [rooms, traces, points])
+  const targets = useMemo(() => snapTargets({ rooms, traces, nodes, walls }, points), [rooms, traces, nodes, walls, points])
   const props = nextWallProps(thicknessCm, wallType)
 
   const endChain = () => { setPoints([]); setIds([]); setHover(null); setGuides([]) }
@@ -70,11 +73,13 @@ export function WallTool() {
     if (!points.length) { setPoints([p]); return }
     const last = points[points.length - 1]
     if (dist(last, p) < SAME_POINT_CM) return
-    const traceId = uid('trace')
-    // One undo step per segment.
-    useDoc.getState().update((d) => addTrace(d, last, p, props, traceId))
+    // The segment: a stored wall in a v2 document (its ends take the nodes they land on), a trace
+    // in a v1 document. One undo step per segment.
+    const segment = addWallSegment(useDoc.getState().doc, last, p, props, uid('trace'))
+    if (segment.doc === useDoc.getState().doc) return
+    useDoc.getState().update(() => segment.doc)
     setPoints(addChainPoint(points, p))
-    setIds([...ids, traceId])
+    setIds([...ids, segment.wallId ?? ''])
   }
 
   // Keys in CAPTURE phase: an active chain must cancel itself and keep the wall tool (7.2 #13).
@@ -95,8 +100,8 @@ export function WallTool() {
         e.preventDefault(); e.stopPropagation()
         const lastId = ids[ids.length - 1]
         if (lastId) {
-          // The last point was stored as a trace: remove it with its point (one undo step).
-          useDoc.getState().update((d) => ({ ...d, traces: (d.traces ?? []).filter((t) => t.id !== lastId) }))
+          // The last point was stored as its segment: remove it with its point (one undo step).
+          useDoc.getState().update((d) => removeWallSegment(d, lastId))
           setIds(ids.slice(0, -1))
         }
         setPoints(removeChainPoint(points))

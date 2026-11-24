@@ -1,6 +1,9 @@
-// Wall tool: chain logic, bearing label and snapping targets (docs/walls-plan.md phase 6).
+// Wall tool: chain logic, bearing label, snapping targets and the segment it stores
+// (docs/walls-plan.md phase 6 and "Walls in the interface").
 import { describe, expect, it } from 'vitest'
 import type { PlanDoc, Room, Vec } from '../../model/types'
+import { convertToV2 } from '../../model/v2/convert'
+import { addWallSegment, removeWallSegment } from './traces'
 import {
   addChainPoint, bearingDeg, chainSegments, fmtAngle, nextWallProps, previewLabel, removeChainPoint,
   safeType, segmentsWith, snapTargets,
@@ -98,6 +101,64 @@ describe('snapping targets of the Wall tool', () => {
   it('includes hole corners (a shaft corner is a corner of the plan)', () => {
     const d = doc({ rooms: [rectRoom({ holes: [[p(10, 10), p(20, 10), p(20, 20)].map((v, i) => ({ id: `h${i}`, ...v }))] })] })
     expect(hasPoint(snapTargets(d).vertices, 20, 20)).toBe(true)
+  })
+})
+
+describe('snapping targets on a v2 document', () => {
+  it('gives the nodes and the centre lines of the stored walls', () => {
+    const v1 = doc()
+    const v2 = convertToV2(v1).doc
+    const t = snapTargets(v2)
+    // A node of the graph is a point to snap onto, and a wall is a line to land on (a T junction).
+    expect(hasPoint(t.vertices, 0, 0)).toBe(true)
+    expect(hasPoint(t.vertices, 400, 0)).toBe(true)
+    expect(hasEdge(t.edges, p(0, 0), p(400, 0))).toBe(true)
+    expect(hasEdge(t.edges, p(400, 0), p(400, 300))).toBe(true)
+  })
+})
+
+describe('the segment that the Wall tool stores', () => {
+  it('is a standalone stored wall in a v2 document, with the properties of the tool', () => {
+    const v2 = convertToV2(doc()).doc
+    const out = addWallSegment(v2, p(1000, 0), p(1000, 400), { type: 'bearing', thicknessCm: 25 })
+    expect(out.wallId).not.toBeNull()
+    const wall = (out.doc.walls ?? []).find((w) => w.id === out.wallId)!
+    expect(wall.standalone).toBe(true)
+    expect(wall.type).toBe('bearing')
+    expect(wall.thicknessCm).toBe(25)
+    // No trace: a v2 document keeps its walls in the graph.
+    expect(out.doc.traces ?? []).toEqual([])
+  })
+
+  it('is a trace in a v1 document, as before', () => {
+    const v1 = doc()
+    const out = addWallSegment(v1, p(1000, 0), p(1000, 400), { type: 'partition', thicknessCm: 12 }, 'tr9')
+    expect(out.wallId).toBe('tr9')
+    expect((out.doc.traces ?? []).map((t) => t.id)).toEqual(['tr9'])
+    expect(out.doc.walls).toBeUndefined()
+  })
+
+  it('takes the node of a wall end within 1 cm, and makes a node on the middle of a wall', () => {
+    const v2 = convertToV2(doc()).doc
+    const out = addWallSegment(v2, p(0.2, 0.2), p(400, 150), { type: 'partition', thicknessCm: 10 })
+    expect(out.wallId).not.toBeNull()
+    const wall = (out.doc.walls ?? []).find((w) => w.id === out.wallId)!
+    const nodes = new Map((out.doc.nodes ?? []).map((n) => [n.id, n]))
+    const ends = [nodes.get(wall.a)!, nodes.get(wall.b)!]
+    // One end is the corner of the room, the other one is on the middle of its right wall.
+    expect(ends.some((e) => Math.abs(e.x) < 0.5 && Math.abs(e.y) < 0.5)).toBe(true)
+    expect(ends.some((e) => Math.abs(e.x - 400) < 0.5 && Math.abs(e.y - 150) < 0.5)).toBe(true)
+  })
+
+  it('goes back with Backspace, and stays away while a room uses it', () => {
+    const v2 = convertToV2(doc()).doc
+    const out = addWallSegment(v2, p(1000, 0), p(1000, 400), { type: 'partition', thicknessCm: 10 })
+    const back = removeWallSegment(out.doc, out.wallId!)
+    expect((back.walls ?? []).some((w) => w.id === out.wallId)).toBe(false)
+    // A wall of the room (a face of room SE) cannot be removed: the room would open.
+    const roomWall = v2.rooms[0].cycle![0].wallId
+    const kept = removeWallSegment(v2, roomWall)
+    expect(kept).toBe(v2)
   })
 })
 

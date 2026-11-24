@@ -60,7 +60,7 @@
 //     window SE-1 at=80 w=160 h=140 sill=90 french
 //     measure SE-1=421 SE-D=594
 
-import { roomWalls } from '../model/geometry'
+import { DEFAULT_WALL_CM, roomWalls } from '../model/geometry'
 import { surveyIds } from '../model/survey'
 import type {
   ElementKind,
@@ -80,6 +80,7 @@ import type {
 } from '../model/types'
 import { parsePlan, type PlanDocV1 } from './schema'
 import { ensureV2 } from '../model/v2/ensure'
+import { addStandaloneWall } from '../model/v2/write'
 
 // ---------- errors ----------
 
@@ -1116,7 +1117,55 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
     ...(precisionCm !== undefined ? { apartment: { ...(doc.apartment ?? {}), precisionCm } } : {}),
   }
   const out = ensureV2(carried, { now }) as PlanDocV1
+  // The walls that the user drew are not in the text (see `carryStandaloneWalls`): they go back into
+  // the graph of the import, with their properties.
+  const withWalls = carryStandaloneWalls(out, baseDoc)
   // `ensureV2` writes the report of ITS conversion: the report of the project (already shown once)
   // is kept instead, so an import does not show the conversion report again.
-  return baseDoc.conversion ? { ...out, conversion: baseDoc.conversion } : out
+  return baseDoc.conversion ? { ...withWalls, conversion: baseDoc.conversion } : withWalls
+}
+
+/**
+ * The STANDALONE walls of a project (a wall drawn with the Wall tool, a wall left by a deleted
+ * room: `standalone: true`, docs/walls-plan.md "Walls in the interface") are NOT in the .sfp text,
+ * which holds the rooms only. `ensureV2` builds the graph of the import from the rooms of the text,
+ * so those walls are added again here, each one with its properties, and the import deletes no wall.
+ * An id of the project is kept when the graph of the import has no item with it (`newId` below);
+ * else the write path gives a new one. A wall that lies on a wall of the import is that wall: a wall
+ * is never stored twice.
+ */
+function carryStandaloneWalls(doc: PlanDocV1, baseDoc: PlanDoc): PlanDocV1 {
+  const walls = (baseDoc.walls ?? []).filter((w) => w.standalone === true)
+  if (!walls.length) return doc
+  const pos = new Map((baseDoc.nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
+  let out: PlanDocV1 = doc
+  const counters = new Map<string, number>()
+  for (const wall of walls) {
+    const a = pos.get(wall.a)
+    const b = pos.get(wall.b)
+    // A wall whose two nodes are not in the project: nothing to add.
+    if (!a || !b) continue
+    // The ids of the project that the graph of the import is free to give back to this wall.
+    const taken = new Set([...(out.nodes ?? []).map((n) => n.id), ...(out.walls ?? []).map((w) => w.id)])
+    const wanted: Record<string, string[]> = {
+      W: taken.has(wall.id) ? [] : [wall.id],
+      N: [wall.a, wall.b].filter((id) => !taken.has(id)),
+    }
+    const props: WallProps = { type: wall.type ?? 'partition', thicknessCm: wall.thicknessCm ?? DEFAULT_WALL_CM }
+    if (wall.status !== undefined) props.status = wall.status
+    if (wall.align !== undefined) props.align = wall.align
+    if (wall.locked !== undefined) props.locked = wall.locked
+    const added = addStandaloneWall(out, a, b, props, {
+      // The write path asks for one id at a time: the id of the project first, then a free one.
+      newId: (prefix) => {
+        const free = wanted[prefix]?.shift()
+        if (free) return free
+        const n = (counters.get(prefix) ?? 0) + 1
+        counters.set(prefix, n)
+        return `${prefix}${n}`
+      },
+    })
+    out = added.doc as PlanDocV1
+  }
+  return out
 }

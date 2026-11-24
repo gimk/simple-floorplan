@@ -11,6 +11,7 @@ import { useDoc, useUi } from './model/store'
 import type { ToolId } from './model/types'
 import { BackgroundLayer, CalibrateTool } from './features/background'
 import { MakeRoomTool, RoomsLayer, RoomTools, TracesLayer, WallTool } from './features/rooms'
+import { WallsLayer } from './features/rooms/WallsLayer'
 import { ElementsLayer, PlaceElementTool } from './features/elements'
 import { MeasureMode, MeasurePanel } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
@@ -348,6 +349,8 @@ export default function App() {
               <CanvasGrid />
               {layers.background && <BackgroundLayer />}
               <RoomsLayer />
+              {/* Walls drawn once from the wall graph (v2 documents), above the room floors. */}
+              <WallsLayer />
               {/* Traced walls of the Wall tool: always shown, above the rooms (phase 6). */}
               <TracesLayer />
               {layers.clashes && <ClashLayer />}

@@ -15,6 +15,10 @@
 //
 // It never moves a value: measurements stay keyed by their label, and the labels do not change
 // (the conversion keeps the room order and the corner ids; see src/model/v2/convert.ts).
+//
+// The traced walls of the Wall tool (`doc.traces`, phase 6) become STANDALONE walls here, and
+// `doc.traces` is cleared: in a v2 document the Wall tool draws real walls (docs/walls-plan.md,
+// "Walls in the interface"). See `tracesToWalls`.
 
 import { ensureStoredGraph } from '../graphRule'
 import type { PlanDoc } from '../types'
@@ -22,11 +26,26 @@ import { convertToV2 } from './convert'
 import { attachElements, materializeElements } from './elements'
 import { attachTargets } from './targets'
 import { materializeDoc } from './syncRule'
-import { applyRoomPolygon } from './write'
+import { addStandaloneWall, applyRoomPolygon } from './write'
 
 export type EnsureV2Options = {
   /** Time of the conversion, for `doc.conversion.at`. Default: the clock. */
   now?: string
+}
+
+/**
+ * The traced walls of a document (the Wall tool of an older version) become STANDALONE walls: a
+ * wall drawn by the user is a real wall in a v2 document (docs/walls-plan.md, "Walls in the
+ * interface"). Same thickness and same type; the walls take the next free ids `W<n>`. `doc.traces`
+ * is empty after this step. The values are not touched: a value is keyed by its label.
+ * Gives the same document back when there is no trace.
+ */
+export function tracesToWalls(doc: PlanDoc): PlanDoc {
+  const traces = doc.traces ?? []
+  if (!traces.length) return doc
+  let next = doc
+  for (const t of traces) next = addStandaloneWall(next, t.a, t.b, { type: t.type, thicknessCm: t.thicknessCm }).doc
+  return { ...next, traces: [] }
 }
 
 /** The document in the v2 state: walls as the source, a calculated room view, stored targets. */
@@ -42,7 +61,8 @@ function convert(doc: PlanDoc, now: string): PlanDoc {
   if (v2.schemaVersion !== 2) return doc
   // Every element now belongs to a wall (phase 7). Its view (roomId, wallStart, offsetCm) does not
   // change, so nothing moves on the plan.
-  return attachElements(attachTargets({ ...v2, conversion: { at: now, report } }))
+  // The traced walls of the Wall tool become standalone walls, and `doc.traces` is cleared.
+  return tracesToWalls(attachElements(attachTargets({ ...v2, conversion: { at: now, report } })))
 }
 
 /**
@@ -51,9 +71,11 @@ function convert(doc: PlanDoc, now: string): PlanDoc {
  * hold walls.
  */
 function keepV2(doc: PlanDoc): PlanDoc {
-  let next = doc
-  if (Array.isArray(doc.walls) && Array.isArray(doc.nodes)) {
-    for (const r of doc.rooms) {
+  // A trace cannot stay in a v2 document: it is a wall of the graph (a load of an older client, or
+  // a document that an older version saved while the Wall tool still drew traces).
+  let next = tracesToWalls(doc)
+  if (Array.isArray(next.walls) && Array.isArray(next.nodes)) {
+    for (const r of next.rooms) {
       if (r.cycle?.length || r.vertices.length < 3) continue
       const written = applyRoomPolygon(next, r.id, r)
       // The polygon was refused (fewer than 3 walls): the saved room stays as it is.
