@@ -1,9 +1,11 @@
 // Tests of the measurements of the exported plan (docs/measurements-plan.md): the wall lengths as
 // dimension lines (or the old text), the room tag rows, and the outside chains of a v2 document.
-import { describe, expect, it } from 'vitest'
-import { emptyDoc } from '../../model/store'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { emptyDoc, useDoc } from '../../model/store'
 import type { PlanDoc, Room } from '../../model/types'
 import { ensureV2 } from '../../model/v2/ensure'
+import { loadDemoApartment } from '../measure/demo'
+import { boxHit } from '../rooms/dims/dimBoxes'
 import { buildPlanSvg, DEFAULT_TAG_FIELDS } from './svgExport'
 
 const now = '2026-01-01T00:00:00Z'
@@ -207,5 +209,65 @@ describe('room schedule in the export', () => {
     expect(on.svg).toContain('Room schedule')
     expect(on.svg).toContain('Séjour')
     expect(on.height).toBeGreaterThan(off.height)
+  })
+})
+
+// The export writes the room wall values with the rules of the plan (visual review V-1, V-2, V-3,
+// V-6, V-7): one declutter pass over the whole plan, at the paper zoom.
+describe('buildPlanSvg: the declutter rules of the plan', () => {
+  beforeEach(() => {
+    useDoc.setState({ doc: emptyDoc() })
+  })
+
+  it('the demo apartment shows no two values that overlap, and no value past a line end', () => {
+    loadDemoApartment()
+    const doc = useDoc.getState().doc
+    const res = buildPlanSvg(doc)
+    const layout = res.layout!
+    const entries = layout.rooms.flatMap((x) => x.entries)
+    const drawn = entries.filter((e) => e.box)
+    // The plan is dense: most faces keep a value, and some lose it to the pass.
+    expect(drawn.length).toBeGreaterThan(10)
+    expect(drawn.length).toBeLessThan(entries.length)
+    for (const e of entries) {
+      // Rule 2: a value never goes past the end of its line (the line keeps its length, the text or
+      // nothing). So no wall line is marked "outside".
+      expect(e.line?.outside ?? false).toBe(false)
+    }
+    // Rule 1 of the pass: no two drawn values have boxes that overlap.
+    for (let i = 0; i < drawn.length; i++) {
+      for (let j = i + 1; j < drawn.length; j++) {
+        expect(boxHit(drawn[i].box!, drawn[j].box!)).toBe(false)
+      }
+    }
+    // And no drawn value touches a room tag or an outside row text.
+    expect(layout.blockers.length).toBeGreaterThan(0)
+    for (const e of drawn) {
+      for (const b of layout.blockers) expect(boxHit(e.box!, b)).toBe(false)
+    }
+    // The image itself: the outside rows are off, so nothing at all goes past a line end.
+    expect(res.svg).not.toContain('data-dim-outside')
+  })
+
+  it('a room too small on the paper shows no wall dimension (V-2)', () => {
+    const big = room(600, 500)
+    // 45 x 35 cm on the centre line: under px(60) in both directions at this font size.
+    const tiny: Room = {
+      id: 'r2', code: 'WC', name: 'Wc', walkOrder: 2, holes: [], walls: {},
+      vertices: [
+        { id: 'w1', x: 700, y: 0 },
+        { id: 'w2', x: 745, y: 0 },
+        { id: 'w3', x: 745, y: 35 },
+        { id: 'w4', x: 700, y: 35 },
+      ],
+    }
+    const res = buildPlanSvg(docOf(big, { rooms: [big, tiny] }))
+    const layout = res.layout!
+    // No line and no value for the tiny room ...
+    expect(layout.rooms.find((x) => x.room.id === 'r2')!.entries).toEqual([])
+    expect(res.svg).not.toContain('data-dim="WC-')
+    // ... and the big room keeps its four values.
+    expect(layout.rooms.find((x) => x.room.id === 'r1')!.entries.filter((e) => e.box)).toHaveLength(4)
+    expect(res.svg).toContain('data-dim="SE-1"')
   })
 })

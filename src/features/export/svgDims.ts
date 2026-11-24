@@ -9,17 +9,28 @@
 // plan (px(11)) exactly as big as the text the export already writes for a wall length (fs * 0.75):
 //     zoom = 11 / (fs * 0.75)      [screen px per cm]
 // A size of n px is then n / zoom cm on the paper (worldPx(n, zoom)), so a tick of px(8), a gap of
-// px(7) and a minimum line of px(12) keep their proportions against the plan, whatever its scale.
+// px(7) and a minimum line keep their proportions against the plan, whatever its scale: the room
+// wall values use `DECLUTTER.minLinePx`, the outside rows the px(12) of the style.
+//
+// THE ROOM WALL VALUES FOLLOW THE RULES OF THE PLAN (visual review V-1, V-2, V-3, V-6, V-7):
+// 1. a face shorter than `DECLUTTER.minLinePx` on the paper draws no line and no value;
+// 2. a value that does not fit between the ticks of its line is NOT written past the end of the
+//    line any more: the line and its ticks stay, the value goes (`hideText`);
+// 3. a room under `DECLUTTER.smallRoomPx` in both directions shows no wall dimensions at all;
+// 4. one greedy pass (`keepDimTexts`) keeps the values that hit no other value, no room tag and no
+//    outside row text; `planDimsLayout()` is that pass for the whole plan.
 //
 // Light colours only (the export is always on white paper): no dark mode.
 import { surveyIds } from '../../model/survey'
 import { fmtLen, type LengthUnits } from '../../model/units'
 import { measuredTextIn, shownLength } from '../../model/precision'
-import { roomAreaM2, labelPoint, roomWalls, roomInnerRing, innerWallLengths } from '../../model/geometry'
+import { dist, roomAreaM2, labelPoint, roomWalls, roomInnerRing, innerWallLengths } from '../../model/geometry'
 import type { Measurement, PlanDoc, Room, Vec } from '../../model/types'
 import type { DimStyle, RoomTagFields } from '../../model/store'
 import { DIM_STYLE, worldPx, dimLine, type DimLine } from '../rooms/dims/dimLine'
-import { boxHit, dimTextBox, fittingRows, ringBox, tagBox, type Box } from '../rooms/dims/dimBoxes'
+import { fittingRows, ringBox, textBox, textQuad, type Box } from '../rooms/dims/dimBoxes'
+import { DECLUTTER, keepDimTexts, smallRoomDims, type DimTextCandidate } from '../rooms/dims/declutter'
+import { outsideDimTextBoxes } from '../rooms/dims/outsideTextBoxes'
 import { roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from '../rooms/roomTag'
 import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
 
@@ -111,6 +122,11 @@ export type DimSvgInput = {
   kind: 'wall' | 'outside'
   fs: number
   zoom: number
+  /**
+   * Draw the line and its ticks only: the value does not fit between the ticks, or the declutter
+   * pass dropped it (V-1). Nothing goes past the end of a line then.
+   */
+  hideText?: boolean
 }
 
 /**
@@ -118,7 +134,7 @@ export type DimSvgInput = {
  * and the value centred above the line, always up, with a white halo. A measured value is bold and
  * green; a survey label goes in front of it, smaller and grey.
  */
-export function dimSvg({ line, text, dimKey, kind, fs, zoom }: DimSvgInput): string {
+export function dimSvg({ line, text, dimKey, kind, fs, zoom, hideText }: DimSvgInput): string {
   const p = (n: number) => worldPx(n, zoom)
   const ticks = line.ticks.map((t) => `M${num(t.x1)} ${num(t.y1)}L${num(t.x2)} ${num(t.y2)}`).join('')
   const label = text.label
@@ -130,11 +146,13 @@ export function dimSvg({ line, text, dimKey, kind, fs, zoom }: DimSvgInput): str
     `stroke="${PAPER.line}" stroke-width="${num(p(DIM_STYLE.lineStroke))}" data-dim-line="${kind}"/>` +
     `<path d="${ticks}" fill="none" stroke="${PAPER.line}" stroke-width="${num(p(DIM_STYLE.tickStroke))}" ` +
     `data-dim-ticks="${kind}"/>` +
-    `<text x="${num(line.text.x)}" y="${num(line.text.y)}" text-anchor="middle" dominant-baseline="middle" ` +
-    `transform="rotate(${num(line.angle)} ${num(line.text.x)} ${num(line.text.y)})" font-size="${num(fs * 0.75)}" ` +
-    `fill="${text.measured ? PAPER.measured : PAPER.text}" font-weight="${text.measured ? 600 : 400}" ` +
-    `paint-order="stroke" stroke="${PAPER.halo}" stroke-width="${num(p(3))}" stroke-linejoin="round" ` +
-    `data-dim="${esc(dimKey)}"${line.outside ? ' data-dim-outside=""' : ''}>${body}</text>`
+    (hideText
+      ? ''
+      : `<text x="${num(line.text.x)}" y="${num(line.text.y)}" text-anchor="middle" dominant-baseline="middle" ` +
+        `transform="rotate(${num(line.angle)} ${num(line.text.x)} ${num(line.text.y)})" font-size="${num(fs * 0.75)}" ` +
+        `fill="${text.measured ? PAPER.measured : PAPER.text}" font-weight="${text.measured ? 600 : 400}" ` +
+        `paint-order="stroke" stroke="${PAPER.halo}" stroke-width="${num(p(3))}" stroke-linejoin="round" ` +
+        `data-dim="${esc(dimKey)}"${line.outside ? ' data-dim-outside=""' : ''}>${body}</text>`)
   )
 }
 
@@ -150,24 +168,59 @@ export type WallDimCtx = {
   measurements: Record<string, Measurement>
   /** Thickness of the wall that starts at a vertex, cm (with the defaults of the plan). */
   thicknessOf: (r: Room, wallStart: string) => number
-  /** Box of the room tag, cm: a dimension text that would cross it goes outside (as the plan). */
-  avoid?: Box | null
 }
 
 /**
- * The wall lengths of one room: one dimension line along the inside face of each wall in the
- * "Lines" style (the span the value measures, ticks at the corners, value above the line), or the
- * old text only in the "Text" style (no line, no tick, offset off the wall band).
+ * One wall length of a room, with the place of its value (before the declutter pass): the input of
+ * `keepDimTexts()` (`box`, `quad`, `wallCm`, `ring`) and what `roomWallDimsSvg()` draws.
  */
-export function roomWallDimsSvg(r: Room, style: DimStyle, ctx: WallDimCtx): string {
+export type WallDimEntry = {
+  /** Key of the value in the declutter pass: 'd' + room id + wall start id. */
+  key: string
+  /** Face of the value, for the `data-dim` attribute (the survey label, or "SE-1"). */
+  dimKey: string
+  /** The value, with its survey label. */
+  text: DimText
+  /** A value measured on site: it keeps its text before a calculated one. */
+  measured: boolean
+  /** Dimension line of the value; null in the "Text" style (a text only, no line, no tick). */
+  line: DimLine | null
+  /** Centre of the value, cm. */
+  p: Vec
+  /** Rotation of the value, degrees, always up. */
+  angle: number
+  /** Box of the value, cm; null when no value is drawn (line too short, or the pass dropped it). */
+  box: Box | null
+  /** Corners of the turned value box, cm: the wall band test of the pass. */
+  quad: Vec[] | null
+  /** Length of the wall, cm: a longer wall keeps its value first. */
+  wallCm: number
+  /** Inner ring of the room: the value must stay inside it. */
+  ring: Vec[]
+}
+
+/**
+ * The wall lengths of one room, before the declutter pass: one dimension line along the inside face
+ * of each wall in the "Lines" style (the span the value measures, ticks at the corners, value above
+ * the line), or the old text only in the "Text" style (no line, no tick, offset off the wall band).
+ *
+ * Rule 1: a face under `DECLUTTER.minLinePx` on the paper draws nothing. Rule 2: a value that does
+ * not fit between the ticks of its line is not written past the end of the line: the entry keeps its
+ * line and loses its text (`box` = null). Rule 3: a room under `DECLUTTER.smallRoomPx` in both
+ * directions has no wall dimension at all.
+ */
+export function roomWallDimEntries(r: Room, style: DimStyle, ctx: WallDimCtx): WallDimEntry[] {
   const { zoom, fs } = ctx
   const p = (n: number) => worldPx(n, zoom)
   // The survey labels of the faces, by start vertex (the labels of the Solve tab).
   const labels = new Map<string, string>()
   for (const id of surveyIds(r)) if (id.kind === 'wall' && id.wallStart) labels.set(id.wallStart, id.label)
   const inner = innerWallLengths(r)
-  const ring = style === 'lines' ? roomInnerRing(r) : []
-  const parts: string[] = []
+  // Inside corners of the room: the face a wall length is measured on, corner to corner.
+  const ring = roomInnerRing(r)
+  // V-2: a room whose inside box is under px(60) in both directions shows no wall dimension at all.
+  if (smallRoomDims(ringBox(ring), zoom)) return []
+  const out: WallDimEntry[] = []
   for (const w of roomWalls(r)) {
     const label = labels.get(w.start.id)
     const text = faceText({
@@ -177,37 +230,73 @@ export function roomWallDimsSvg(r: Room, style: DimStyle, ctx: WallDimCtx): stri
       step: style === 'lines' ? ctx.step : 0,
       units: ctx.units,
     })
+    const key = 'd' + r.id + w.start.id
     if (style === 'lines') {
       const start = ring[w.index]
       const end = ring[(w.index + 1) % ring.length]
       if (!start || !end) continue
-      const base = { start, end, normal: w.inward, offsetCm: p(10), zoom, text: fullDimText(text) }
-      let line = dimLine(base)
+      const base = { start, end, normal: w.inward, offsetCm: p(10), zoom, minLinePx: DECLUTTER.minLinePx }
+      let line = dimLine({ ...base, text: fullDimText(text) })
       if (!line) continue
-      // The text of a wall length must not cross the room tag: it goes past the end of its line,
-      // and when that still crosses the tag it is not drawn (the plan, r1fix R1-8a).
-      if (ctx.avoid && boxHit(dimTextBox(line, fullDimText(text), zoom), ctx.avoid)) {
-        const outside = dimLine({ ...base, textPlace: 'outside', textGapPx: DIM_STYLE.textGap + OUTSIDE_EXTRA_PX })
-        if (!outside || boxHit(dimTextBox(outside, fullDimText(text), zoom), ctx.avoid)) continue
-        line = outside
+      // V-1: the value does not fit between the ticks, so it is not written past the end of its
+      // line any more (that put numbers across walls): the line and the ticks stay, the value goes.
+      let showText = true
+      if (line.outside) {
+        line = dimLine({ ...base, text: '' }) ?? line
+        showText = false
       }
-      parts.push(dimSvg({ line, text, dimKey: label ?? `${r.code}-${w.index + 1}`, kind: 'wall', fs, zoom }))
+      const body = fullDimText(text)
+      out.push({
+        key, dimKey: label ?? `${r.code}-${w.index + 1}`, text, measured: text.measured, line,
+        p: line.text, angle: line.angle,
+        box: showText ? textBox(line.text, line.angle, body, zoom) : null,
+        quad: showText ? textQuad(line.text, line.angle, body, zoom) : null,
+        wallCm: dist(start, end), ring,
+      })
       continue
     }
     // "Wall lengths: Text": the old look, a text only, a fixed distance into the room.
     if (w.length < fs * 6) continue
     const off = ctx.thicknessOf(r, w.start.id) / 2 + fs * 0.9
-    const mx = (w.start.x + w.end.x) / 2 + w.inward.x * off
-    const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
+    const at = {
+      x: (w.start.x + w.end.x) / 2 + w.inward.x * off,
+      y: (w.start.y + w.end.y) / 2 + w.inward.y * off,
+    }
     let angle = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
     if (angle > 90 || angle < -90) angle += 180
-    const body = text.label ? `<tspan font-size="${num(fs * 0.5)}" fill="${PAPER.label}">${esc(text.label)}</tspan>  ` : ''
+    const body = fullDimText(text)
+    out.push({
+      key, dimKey: label ?? '', text, measured: text.measured, line: null, p: at, angle,
+      box: textBox(at, angle, body, zoom),
+      quad: textQuad(at, angle, body, zoom),
+      wallCm: w.length, ring,
+    })
+  }
+  return out
+}
+
+/**
+ * The wall dimension SVG of one room: the entries that the declutter pass kept. A line and its ticks
+ * are always drawn; the value is drawn only when the entry still has its box (`hideText`), so
+ * nothing goes past the end of a line (V-1). The "Text" style draws the value only.
+ */
+export function roomWallDimsSvg(entries: WallDimEntry[], ctx: { fs: number; zoom: number }): string {
+  const { fs, zoom } = ctx
+  const parts: string[] = []
+  for (const e of entries) {
+    if (e.line) {
+      parts.push(dimSvg({ line: e.line, text: e.text, dimKey: e.dimKey, kind: 'wall', fs, zoom, hideText: !e.box }))
+      continue
+    }
+    if (!e.box) continue
+    const { p: at, angle } = e
+    const body = e.text.label ? `<tspan font-size="${num(fs * 0.5)}" fill="${PAPER.label}">${esc(e.text.label)}</tspan>  ` : ''
     parts.push(
-      `<text x="${num(mx)}" y="${num(my)}" text-anchor="middle" dominant-baseline="middle" ` +
-      `transform="rotate(${num(angle)} ${num(mx)} ${num(my)})" font-size="${num(fs * 0.75)}" ` +
-      `fill="${text.measured ? PAPER.measured : PAPER.line}" font-weight="${text.measured ? 700 : 400}" ` +
+      `<text x="${num(at.x)}" y="${num(at.y)}" text-anchor="middle" dominant-baseline="middle" ` +
+      `transform="rotate(${num(angle)} ${num(at.x)} ${num(at.y)})" font-size="${num(fs * 0.75)}" ` +
+      `fill="${e.measured ? PAPER.measured : PAPER.line}" font-weight="${e.measured ? 700 : 400}" ` +
       `paint-order="stroke" stroke="${PAPER.halo}" stroke-width="${num(fs * 0.25)}" stroke-linejoin="round" ` +
-      `data-dim="${esc(label ?? '')}">${body}${esc(text.value)}</text>`,
+      `data-dim="${esc(e.dimKey)}">${body}${esc(e.text.value)}</text>`,
     )
   }
   return parts.join('')
@@ -279,9 +368,19 @@ export function roomTagLayout(r: Room, fields: RoomTagFields, ctx: TagCtx): TagL
     size: (n) => size(n),
     room: ringBox(ring.length >= 3 ? ring : r.vertices),
   })
-  const box = tagBox(c, size(kept.length).w, size(kept.length).h, false)
   // The whole block (title + rows) is centred on the label point.
   const y0 = c.y - (kept.length * step) / 2 + fs * 0.35
+  // The box of the tag as it is DRAWN, not only as it is laid out: from the ascent of the title to
+  // the descent of the last row. The rows start at y0 and take one step each, so the centred box of
+  // `tagBox` stops above the last row, and a wall value that the declutter pass keeps off the tag
+  // would still touch it (a value on "3,46 m²"). The pass reads this box.
+  const half = size(kept.length).w / 2
+  const box: Box = {
+    x0: c.x - half,
+    y0: y0 - fs * 0.75,
+    x1: c.x + half,
+    y1: y0 + fs * 0.35 + kept.length * step + fs * 0.3,
+  }
   const title = lines.title.name
     ? `<tspan x="${num(c.x)}" font-weight="700" data-room-label="${esc(r.id)}">` +
       (code ? `<tspan font-weight="700" font-family="monospace" data-room-code-text="${esc(r.code)}">${esc(code)}  </tspan>` : '') +
@@ -301,6 +400,94 @@ export function roomTagLayout(r: Room, fields: RoomTagFields, ctx: TagCtx): TagL
       `data-room-tag="${esc(r.id)}">${title}${rows}</text>`,
     box,
   }
+}
+
+// ---- the wall values of the whole plan: one declutter pass ----
+
+/** What the wall values and the room tags of a whole plan need. */
+export type PlanDimsInput = {
+  doc: PlanDoc
+  /** "Lines" (default) or the old text only. */
+  style: DimStyle
+  /** Rows of the room tag. */
+  tagFields: RoomTagFields
+  /** The paper zoom, screen px per cm of the paper (see the top of this file). */
+  zoom: number
+  /** Font size of the export, cm. */
+  fs: number
+  /** Precision of the plan, cm. */
+  step: number
+  units: LengthUnits
+  surveyLabels: boolean
+  thicknessOf: (r: Room, wallStart: string) => number
+  defaultCeilingCm?: number
+  /** The outside runs that are drawn; empty when the outside rows are off or the doc is v1. */
+  runs: OutsideDimRun[]
+}
+
+/** The wall values and the tag of one room, after the declutter pass. */
+export type RoomDims = { room: Room; entries: WallDimEntry[]; tag: TagLayout }
+
+export type PlanDimsLayout = {
+  rooms: RoomDims[]
+  /** Keys of the wall values that are drawn. */
+  kept: Set<string>
+  /** Boxes of those values, cm. */
+  boxes: Box[]
+  /** Boxes no value may touch: the room tags, and the texts of the outside rows. */
+  blockers: Box[]
+}
+
+/**
+ * The wall values and the room tags of the whole plan, with the declutter pass of the canvas
+ * (features/rooms/dims/declutter.ts), at the paper zoom: measured values first, then the longer
+ * walls; a value whose box hits a kept value, a room tag or an outside row text, or that crosses the
+ * wall band of its room, is dropped, while its line and its ticks stay (V-1, V-2, V-3, V-6, V-7).
+ * A dropped value keeps `box` = null, and `roomWallDimsSvg()` draws no text for it.
+ */
+export function planDimsLayout(input: PlanDimsInput): PlanDimsLayout {
+  const { doc, style, zoom, fs, step, units, surveyLabels, thicknessOf } = input
+  const dimCtx: WallDimCtx = {
+    zoom, fs, step, units, surveyLabels,
+    measurements: doc.measurements ?? {},
+    thicknessOf,
+  }
+  const tagCtx: TagCtx = { zoom, fs, measurements: doc.measurements ?? {}, defaultCeilingCm: input.defaultCeilingCm }
+  const rooms: RoomDims[] = doc.rooms.map((r) => ({
+    room: r,
+    entries: roomWallDimEntries(r, style, dimCtx),
+    tag: roomTagLayout(r, input.tagFields, tagCtx),
+  }))
+  // The texts of the outside rows that are drawn are blockers too (as on the canvas).
+  const outsideBoxes = outsideDimTextBoxes(input.runs, {
+    zoom,
+    segmentText: (seg) => fullDimText({
+      ...segmentText(seg, step, units),
+      label: surveyLabels && seg.label ? seg.label : undefined,
+    }),
+    overallText: (run) => fmtLen(run.overallCm, units),
+  })
+  const blockers: Box[] = [
+    ...rooms.flatMap((x) => (x.tag.box ? [x.tag.box] : [])),
+    ...outsideBoxes,
+  ]
+  const candidates: DimTextCandidate[] = []
+  for (const x of rooms) {
+    for (const e of x.entries) {
+      if (!e.box || !e.quad) continue
+      candidates.push({ key: e.key, box: e.box, quad: e.quad, measured: e.measured, wallCm: e.wallCm, ring: e.ring })
+    }
+  }
+  const pass = keepDimTexts({ candidates, blockers, zoom })
+  for (const x of rooms) {
+    for (const e of x.entries) {
+      if (e.box && !pass.kept.has(e.key)) {
+        e.box = null
+        e.quad = null
+      }
+    }
+  }
+  return { rooms, kept: pass.kept, boxes: pass.boxes, blockers }
 }
 
 // ---- the outside dimension chains ----

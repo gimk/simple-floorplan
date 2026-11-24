@@ -19,8 +19,9 @@ import {
   outsideExtentPoints,
   outsideRunSvg,
   paperZoom,
-  roomTagLayout,
+  planDimsLayout,
   roomWallDimsSvg,
+  type PlanDimsLayout,
 } from './svgDims'
 
 /** The measurement settings of the export, taken from `useUi.getState()` when the user exports. */
@@ -59,6 +60,11 @@ export type SvgResult = {
   height: number
   /** Font size used (cm) */
   fontSize: number
+  /**
+   * The wall values and the room tags that were drawn, after the declutter pass (visual review
+   * V-1..V-7): a test reads the boxes of the values from here, without a browser.
+   */
+  layout?: PlanDimsLayout
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -220,19 +226,18 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
   }
 
   // ----- wall lengths and room tags -----
-  // The tag of a room is laid out first: the dimension texts of that room keep out of its box
-  // (as the plan, r1fix R1-8a).
-  const dimCtx = {
-    zoom, fs, step, units, surveyLabels,
-    measurements: doc.measurements ?? {},
+  // The tags of the plan are laid out first, then ONE declutter pass keeps the wall values that hit
+  // no other value, no room tag and no outside row text (the rules of the plan, V-1..V-7): a dropped
+  // value keeps its line and its ticks, and nothing goes past the end of a line any more.
+  const layout = planDimsLayout({
+    doc, style: dimStyle, tagFields, zoom, fs, step, units, surveyLabels, runs,
     // Thickness of the wall that starts at a vertex: the same defaults as the drawing.
     thicknessOf: (r: Room, startId: string) => wallInfo(r, startId).t,
-  }
-  const tagCtx = { zoom, fs, measurements: doc.measurements ?? {}, defaultCeilingCm: doc.apartment?.defaultCeilingCm }
-  for (const r of doc.rooms) {
-    const tag = roomTagLayout(r, tagFields, tagCtx)
+    defaultCeilingCm: doc.apartment?.defaultCeilingCm,
+  })
+  for (const { entries, tag } of layout.rooms) {
     // Wall lengths: dimension lines (default) or the old text only, like the plan.
-    parts.push(roomWallDimsSvg(r, dimStyle, { ...dimCtx, avoid: tag.box }))
+    parts.push(roomWallDimsSvg(entries, { fs, zoom }))
     parts.push(tag.svg)
   }
 
@@ -240,7 +245,7 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
   for (const run of runs) parts.push(outsideRunSvg(run, { zoom, fs, step, units, surveyLabels }))
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${num(x0)} ${num(y0)} ${num(W)} ${num(H)}" width="${num(W)}" height="${num(H)}">${style}${defs}<rect x="${num(x0)}" y="${num(y0)}" width="${num(W)}" height="${num(H)}" fill="#fff"/>${parts.join('')}${bar.join('')}${leg.join('')}${schedSvg}</svg>`
-  return { svg, width: W, height: H, fontSize: fs }
+  return { svg, width: W, height: H, fontSize: fs, layout }
 }
 
 function wallSwatch(x: number, y: number, fs: number, type: WallType) {

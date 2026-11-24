@@ -6,8 +6,13 @@ import { DIM_STYLE, worldPx } from '../rooms/dims/dimLine'
 import { outsideDims, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, type OutsideDimRun } from '../rooms/outside/outsideDims'
 import { ensureV2 } from '../../model/v2/ensure'
 import { emptyDoc } from '../../model/store'
-import { faceText, paperZoom, roomTagLayout, segmentText, outsideExtentPoints, outsideRunSvg, dimSvg } from './svgDims'
+import {
+  faceText, paperZoom, roomTagLayout, segmentText, outsideExtentPoints, outsideRunSvg, dimSvg,
+  planDimsLayout, roomWallDimEntries, roomWallDimsSvg,
+} from './svgDims'
 import { dimLine } from '../rooms/dims/dimLine'
+import { boxHit } from '../rooms/dims/dimBoxes'
+import type { DimStyle, RoomTagFields } from '../../model/store'
 
 const room = (over: Partial<Room> = {}): Room => ({
   id: 'r1', code: 'SE', name: 'Living', walkOrder: 1, holes: [], walls: {}, ceilingCm: 250,
@@ -103,6 +108,20 @@ describe('roomTagLayout', () => {
   it('uses the height of the apartment when the room has none', () => {
     const { svg } = roomTagLayout(room({ ceilingCm: undefined }), TAG, { ...ctx, defaultCeilingCm: 260 })
     expect(svg).toContain('H 2,60 m')
+  })
+
+  it('the box of the tag covers the rows it draws, so a wall value keeps off them (V-1)', () => {
+    const { svg, box } = roomTagLayout(room(), TAG, ctx)
+    expect(box).not.toBeNull()
+    // The rows are drawn below the title, one step each: the box must hold them all.
+    const ys = [...svg.matchAll(/<tspan[^>]*\sy="([-\d.]+)"/g)].map((m) => Number(m[1]))
+    expect(ys.length).toBeGreaterThan(0)
+    expect(Math.max(...ys)).toBeLessThan(box!.y1)
+    expect(Math.min(...ys)).toBeGreaterThan(box!.y0)
+    // The title line is inside the box too.
+    const titleY = Number(/<text x="[-\d.]+" y="([-\d.]+)"/.exec(svg)![1])
+    expect(titleY).toBeGreaterThan(box!.y0)
+    expect(titleY).toBeLessThan(box!.y1)
   })
 
   it('shows the code alone in a very small room', () => {
@@ -217,5 +236,129 @@ describe('outsideRunSvg: the text of a short chain segment', () => {
     expect(s3.x).toBeGreaterThan(680)
     // Segment 2 (40 -> 660 cm) is long: its text stays between its ticks.
     expect(textAt(svg, 'S2').outside).toBe(false)
+  })
+})
+
+// ---- the rules of the plan on the paper (visual review V-1, V-2, V-3, V-6, V-7) ----
+
+/** A room from a rectangle of w x h cm on its centre line, first vertex at (0, 0). */
+const rect = (id: string, code: string, name: string, w: number, h: number): Room => ({
+  id, code, name, walkOrder: 1, holes: [], walls: {}, ceilingCm: 250,
+  vertices: [
+    { id: `${id}a`, x: 0, y: 0 },
+    { id: `${id}b`, x: w, y: 0 },
+    { id: `${id}c`, x: w, y: h },
+    { id: `${id}d`, x: 0, y: h },
+  ],
+})
+
+const ALL_ROWS: RoomTagFields = {
+  code: true, name: true, area: true, perimeter: true, ceiling: true, progress: true, areaDecimals: 2,
+}
+
+/** The context of a room at a font size of `fs` cm on the paper. */
+const dimCtx = (fs: number, over: Partial<Parameters<typeof roomWallDimEntries>[2]> = {}) => ({
+  zoom: paperZoom(fs), fs, step: 0.5, units: { unit: 'cm' as const, decimals: 1 as const },
+  surveyLabels: false, measurements: {}, thicknessOf: () => 10, ...over,
+})
+
+describe('roomWallDimEntries: the rules of the plan', () => {
+  it('a face shorter than px(24) on the paper has no line and no value (V-1)', () => {
+    const ctx = dimCtx(10) // 1 cm = 1,47 px on the paper, so px(24) is 16 cm
+    // 20 x 12 cm on the centre line: the inside faces are 10 x 2 cm, under 16 cm.
+    expect(roomWallDimEntries(rect('r1', 'WC', 'Wc', 20, 12), 'lines', ctx)).toEqual([])
+    // 422 x 312 cm: every face is far over the minimum.
+    expect(roomWallDimEntries(rect('r1', 'SE', 'Living', 422, 312), 'lines', ctx)).toHaveLength(4)
+  })
+
+  it('a value that does not fit between its ticks keeps its line and loses its text (V-1)', () => {
+    // A narrow room: the inside faces of the short walls are 50 cm, 73 px at this size, and the
+    // measured value "SE-1 ✓ 52 · 50" is 87 px wide: it does not fit between the ticks of the top
+    // wall, so that face keeps its line and has no value any more (the plan does the same).
+    const narrow = rect('r1', 'SE', 'Living', 60, 300)
+    const ctx = dimCtx(10, { surveyLabels: true, measurements: { 'SE-1': { label: 'SE-1', actualCm: 52, updatedAt: '2026-01-01T00:00:00Z' } } })
+    const entries = roomWallDimEntries(narrow, 'lines', ctx)
+    const top = entries.find((e) => e.dimKey === 'SE-1')!
+    expect(top.wallCm).toBeCloseTo(50, 6)
+    expect(top.box).toBeNull()
+    // The line stays, and it does not carry the text past its end.
+    expect(top.line).not.toBeNull()
+    expect(top.line!.outside).toBe(false)
+    // The other faces are long enough, or their value fits: they keep their value.
+    expect(entries.filter((e) => e.box)).toHaveLength(3)
+    const svg = roomWallDimsSvg(entries, { fs: 10, zoom: paperZoom(10) })
+    expect(svg.split('data-dim-line="wall"').length - 1).toBe(4)
+    // One text element per value that is drawn: the top face has none.
+    expect(svg.split('<text').length - 1).toBe(3)
+    expect(svg).not.toContain('data-dim="SE-1"')
+  })
+
+  it('a room under px(60) in both directions has no wall dimension at all (V-2)', () => {
+    const ctx = dimCtx(10) // px(60) is 41 cm on the paper
+    // 45 x 35 cm on the centre line: the inside box is 35 x 25 cm, 51 x 37 px.
+    expect(roomWallDimEntries(rect('r1', 'WC', 'Wc', 45, 35), 'lines', ctx)).toEqual([])
+    // Long and thin keeps its dimensions: only one direction is small.
+    expect(roomWallDimEntries(rect('r1', 'CO', 'Hall', 400, 55), 'lines', ctx).length).toBeGreaterThan(0)
+  })
+})
+
+describe('planDimsLayout: one pass over the whole plan', () => {
+  const layoutOf = (rooms: Room[], fs: number, style: DimStyle = 'lines', fields: RoomTagFields = ALL_ROWS) =>
+    planDimsLayout({
+      doc: { ...emptyDoc(), rooms },
+      style, tagFields: fields, zoom: paperZoom(fs), fs, step: 0.5,
+      units: { unit: 'cm', decimals: 1 }, surveyLabels: false, thicknessOf: () => 10, runs: [],
+    })
+
+  it('drops the values that hit a room tag, and keeps their lines and ticks (V-1)', () => {
+    // A big tag (every row on) in a small room: the tag box covers the values of the walls.
+    const layout = layoutOf([rect('r1', 'SE', 'Living', 300, 200)], 40)
+    const room0 = layout.rooms[0]
+    const tag = room0.tag.box
+    expect(tag).not.toBeNull()
+    const withLine = room0.entries.filter((e) => e.line)
+    const drawn = room0.entries.filter((e) => e.box)
+    expect(withLine).toHaveLength(4)
+    // The tag is a blocker: some values go, and no value that stays touches it.
+    expect(drawn.length).toBeLessThan(withLine.length)
+    for (const e of drawn) expect(boxHit(e.box!, tag!)).toBe(false)
+    // The lines and the ticks of the dropped values stay.
+    const svg = roomWallDimsSvg(room0.entries, { fs: 40, zoom: paperZoom(40) })
+    expect(svg.split('data-dim-line="wall"').length - 1).toBe(4)
+    expect(svg.split('<text').length - 1).toBe(drawn.length)
+  })
+
+  it('never leaves two room wall values that overlap (V-1, V-7)', () => {
+    // Two rooms side by side, both narrow: their parallel walls are close, so their values meet.
+    const a = rect('r1', 'SE', 'Living', 200, 120)
+    const b: Room = {
+      ...rect('r2', 'CU', 'Kitchen', 200, 120),
+      vertices: rect('r2', 'CU', 'Kitchen', 200, 120).vertices.map((v) => ({ ...v, y: v.y + 120 })),
+    }
+    const layout = layoutOf([a, b], 20)
+    const drawn = layout.rooms.flatMap((x) => x.entries.filter((e) => e.box))
+    expect(drawn.length).toBeGreaterThan(0)
+    for (let i = 0; i < drawn.length; i++) {
+      for (let j = i + 1; j < drawn.length; j++) {
+        expect(boxHit(drawn[i].box!, drawn[j].box!)).toBe(false)
+      }
+    }
+    expect(layout.kept.size).toBe(drawn.length)
+  })
+
+  it('the outside row texts are blockers when the rows are drawn', () => {
+    const doc = ensureV2({ ...emptyDoc(), rooms: [rect('r1', 'SE', 'Living', 422, 312)] })
+    const runs = outsideDims(doc)
+    const zoom = paperZoom(20)
+    const layout = planDimsLayout({
+      doc, style: 'lines', tagFields: { ...ALL_ROWS, progress: false }, zoom, fs: 20, step: 0.5,
+      units: { unit: 'cm', decimals: 1 }, surveyLabels: false, thicknessOf: () => 10, runs,
+    })
+    const outside = layout.blockers.filter((b) => !layout.rooms.some((x) => x.tag.box === b))
+    expect(outside.length).toBeGreaterThan(0)
+    // Every value that is drawn keeps off every outside text box.
+    for (const e of layout.rooms[0].entries.filter((x) => x.box)) {
+      for (const b of outside) expect(boxHit(e.box!, b)).toBe(false)
+    }
   })
 })
