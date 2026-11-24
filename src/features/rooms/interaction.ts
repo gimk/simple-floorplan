@@ -22,6 +22,7 @@ import {
 import { undoToast } from '../toast'
 import { moveNode, moveRoom as roomMove, moveWall } from '../../model/v2/drag'
 import { isV2Doc } from '../../model/v2/targets'
+import { deleteStoredWalls } from './cards'
 import { storedWallLine } from './hoverTarget'
 import { sideOfPoint, wallFaceAcross, wallFaceAt, wallFaceAtPoint } from './wallSides'
 
@@ -232,7 +233,7 @@ export function moveGraphRooms(doc: PlanDoc, roomIds: string[], delta: Vec, this
  * Pointer down on a room fill (or its label): select it, then, without `vp`, nothing else
  * (old behaviour). With `vp`, a drag past the 4 px threshold moves the whole room.
  * Shift + click (no drag) adds or removes the room from the selection group; Shift + drag
- * still means "this room only". Dragging a room of a group moves every room of the group;
+ * still means "this room only" (in a v2 document it draws a selection box instead). Dragging a room of a group moves every room of the group;
  * a click without Shift and without a drag selects this room only.
  */
 export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
@@ -243,6 +244,12 @@ export function onRoomDown(e: ReactPointerEvent, roomId: string, vp?: Vp) {
   const ids = group ?? [roomId]
   if (!group && !shift) selectRoom(roomId)
   if (!vp) { if (shift) flip(); return }
+  // A v2 document: Shift + drag that starts on a room floor draws a box that ADDS to the selection
+  // (SelectTool in ./tools.tsx), so here Shift only toggles the room on a click, and never moves it.
+  if (shift && isV2Doc(useDoc.getState().doc)) {
+    track(e, { onMove: () => {}, onEnd: (moved) => { if (!moved) flip() } })
+    return
+  }
   const room0 = findRoom(roomId)
   const doc0 = useDoc.getState().doc
   const down = vp.toWorld(e.clientX, e.clientY)
@@ -684,10 +691,8 @@ function roomsOnWall(doc: PlanDoc, wallId: string): Set<string> {
  *   - a plain click on the face that is already selected shows the face directly ACROSS, on the
  *     other side, at the same position along the wall (`flip`): that is how the user picks
  *     either side at will. A side with no face there (a single wall) selects the side alone;
- *   - Shift + click gives the room wall group item of the room on the clicked side (the old
- *     behaviour of a room wall click, mapped through that room). `group` is null when the clicked
- *     side has no room there (outside): there is no room wall to group, so the caller selects the
- *     whole wall instead.
+ *   - Shift + click gives the WALL as a group item (`group`): the caller adds it to the selection
+ *     group, or removes it when it is there already, the same as for rooms.
  */
 export function storedWallDownAction(args: {
   doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>
@@ -699,10 +704,7 @@ export function storedWallDownAction(args: {
   at: Vec
 }): { select: Selection | null; group: SelItem | null; flip: boolean } {
   const { doc, wallId, side, prev, shift, at } = args
-  if (shift) {
-    const face = wallFaceAt(doc, wallId, side, at)
-    return { select: null, group: face ? { kind: 'wall', roomId: face.roomId, wallStart: face.wallStart } : null, flip: false }
-  }
+  if (shift) return { select: null, group: { kind: 'storedWall', wallId }, flip: false }
   const pick = wallFaceAtPoint(doc, wallId, at)
   const same = prev?.kind === 'storedWall' && prev.wallId === wallId
     && (pick ? prev.face === pick.key : prev.face === undefined && prev.side === side)
@@ -751,8 +753,7 @@ export function onStoredWallDown(e: ReactPointerEvent, vp: Vp, wallId: string) {
     shift,
     {
       onShiftDrag: selectMe,
-      // Shift + click: the room wall group of the room on the clicked side (no room there = the
-      // whole wall, because there is no room wall to add to a group).
+      // Shift + click: the wall joins the selection group, or leaves it.
       onShiftClick: () => (action.group ? toggle(action.group) : selectMe()),
       onPlainClick: () => { if (action.flip) across() },
     },
@@ -1006,7 +1007,12 @@ export function deleteGroup(): boolean {
     useUi.getState().select(primary && primary.kind === 'vertex' ? { kind: 'room', roomId: primary.roomId } : null)
     return true
   }
-  // Walls: nothing to delete (same as a single wall).
+  if (items[0].kind === 'storedWall') {
+    // Stored walls: one undo step. A wall that a room uses stays, and the toast says which.
+    deleteStoredWalls(items.flatMap((s) => (s.kind === 'storedWall' ? [s.wallId] : [])))
+    return true
+  }
+  // Room walls (a v1 document): nothing to delete (same as a single wall).
   return true
 }
 

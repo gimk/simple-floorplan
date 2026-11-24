@@ -4,11 +4,11 @@
 import type { Selection } from './types'
 
 export type SelItem = NonNullable<Selection>
-/** Kinds that Shift + click can add to a group. */
-export type MultiItem = Extract<SelItem, { kind: 'room' | 'wall' | 'vertex' }>
+/** Kinds that Shift + click can add to a group (a stored wall is a wall of a v2 document). */
+export type MultiItem = Extract<SelItem, { kind: 'room' | 'wall' | 'vertex' | 'storedWall' }>
 export type SelState = { selection: Selection; multi: SelItem[] }
 
-export const isMultiKind = (s: SelItem): s is MultiItem => s.kind === 'room' || s.kind === 'wall' || s.kind === 'vertex'
+export const isMultiKind = (s: SelItem): s is MultiItem => s.kind === 'room' || s.kind === 'wall' || s.kind === 'vertex' || s.kind === 'storedWall'
 
 /** Stable key of one item. */
 export function selKey(s: SelItem): string {

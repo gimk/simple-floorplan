@@ -7,7 +7,7 @@ import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, StoredWall, WallAlign, WallProps, WallType } from '../../model/types'
 import { moveNode } from '../../model/v2/drag'
 import { removeWall } from '../../model/v2/write'
-import { undoToast } from '../toast'
+import { toast, undoToast } from '../toast'
 import { moveHoleVertex, moveVertices, movableLinked } from './ops'
 import { setWallAlign } from './thickness'
 import { wallProps } from './walls'
@@ -136,6 +136,12 @@ export function patchStoredWall(wallId: string, patch: Partial<StoredWall>) {
   update((d) => ({ ...d, walls: (d.walls ?? []).map((w) => (w.id === wallId ? { ...w, ...patch } : w)) }))
 }
 
+/** Write the same properties to several stored walls: ONE undo step for all of them. */
+export function patchStoredWalls(wallIds: string[], patch: Partial<StoredWall>) {
+  const ids = new Set(wallIds)
+  update((d) => ({ ...d, walls: (d.walls ?? []).map((w) => (ids.has(w.id) ? { ...w, ...patch } : w)) }))
+}
+
 /**
  * Give a stored wall a DRAWN length: its far end (node b) moves along the wall, the near end (node
  * a) stays. A room that uses the wall follows (the sync rule rebuilds its polygon), and the whole
@@ -189,6 +195,37 @@ export function deleteStoredWall(wallId: string): { removed: boolean; refusedBy:
   useUi.getState().select(null)
   undoToast('Wall deleted', () => useDoc.temporal.getState().undo())
   return { removed: true, refusedBy: [] }
+}
+
+/** Toast text when some walls of a group stay: 'Kept W3 (rooms EN, CO), W5 (rooms CO).' */
+export const keptWallsText = (kept: { wallId: string; refusedBy: string[] }[]) =>
+  `Kept ${kept.map((k) => `${k.wallId} (rooms ${k.refusedBy.join(', ')})`).join(', ')}: a room uses ${kept.length > 1 ? 'them' : 'it'}.`
+
+/**
+ * Remove a group of stored walls in ONE undo step, with the rule of `deleteStoredWall`: a wall that
+ * a room uses is refused and stays. The others go. The toast says which walls stayed and why.
+ * The walls that stayed are the selection after the delete (one wall = a single selection).
+ */
+export function deleteStoredWalls(wallIds: string[]): { removed: string[]; kept: { wallId: string; refusedBy: string[] }[] } {
+  const doc = useDoc.getState().doc
+  const removed: string[] = []
+  const kept: { wallId: string; refusedBy: string[] }[] = []
+  let next = doc
+  for (const wallId of wallIds) {
+    const res = removeWall(next, wallId)
+    if (res.refusedBy.length) kept.push({ wallId, refusedBy: res.refusedBy })
+    else if (res.doc !== next) { next = res.doc; removed.push(wallId) }
+  }
+  if (removed.length) update(() => next)
+  const ui = useUi.getState()
+  if (kept.length) {
+    const left = kept.map((k): SelItem => ({ kind: 'storedWall', wallId: k.wallId }))
+    ui.set({ selection: left[left.length - 1], multi: left.length > 1 ? left : [] })
+  } else ui.select(null)
+  const keptNote = kept.length ? ` ${keptWallsText(kept)}` : ''
+  if (removed.length) undoToast(`${removed.length} ${removed.length > 1 ? 'walls' : 'wall'} deleted.${keptNote}`, () => useDoc.temporal.getState().undo())
+  else if (kept.length) toast(keptWallsText(kept))
+  return { removed, kept }
 }
 
 /** Signed cm difference, French decimal comma: "+2,1" / "−0,6". */

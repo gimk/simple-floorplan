@@ -65,7 +65,7 @@ export function RoomsOverlay() {
       <text key={d.id} x={c.x} y={c.y} textAnchor="middle" data-label-vertical={place.vertical ? '' : undefined}
         transform={place.vertical ? `rotate(-90 ${place.p.x} ${place.p.y})` : undefined} pointerEvents={interactive ? 'auto' : 'none'}
         className="fill-slate-800 dark:fill-slate-100" fontSize={px(14)}>
-        <tspan x={c.x} fontWeight={600} style={interactive ? { cursor: 'text' } : undefined}
+        <tspan x={c.x} fontWeight={600} data-room-label={d.id} style={interactive ? { cursor: 'text' } : undefined}
           onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : undefined}
           onDoubleClick={interactive && !d.merged ? (e) => { e.stopPropagation(); setEditing(d.id) } : undefined}>
           {code !== '' && (

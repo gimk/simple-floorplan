@@ -4,6 +4,7 @@ import { dist, fmtCm, norm, sub } from '../../model/geometry'
 import { selectedItems, selectItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { Vec } from '../../model/types'
+import { isV2Doc } from '../../model/v2/targets'
 import { newEdgeCrosses, selfIntersects } from './crossing'
 import { boxOf, itemsInBox } from './boxSelect'
 import { useGuides } from './guides'
@@ -338,8 +339,12 @@ function SelectTool() {
   }, [])
 
   // Click on empty space (svg root or background image) clears the selection.
-  // Mouse drag there draws a box: rooms fully inside, else walls, else points (Shift adds).
-  // Rooms, walls and elements handle their own pointerdown and are never the target here.
+  // Mouse drag there draws a box: rooms fully inside, else walls, else points (Shift adds). In a
+  // v2 document the walls are stored walls (both nodes inside).
+  // Rule for the start of the box: a drag that starts on empty canvas draws it. A plain drag that
+  // starts on a room floor still moves the room. In a v2 document, Shift + drag that starts on a
+  // room floor (or its name) draws the box too and ADDS to the selection; the room handler only
+  // toggles the room on a Shift + click (see onRoomDown). Walls and elements are never a start.
   const [band, setBand] = useState<{ a: Vec; b: Vec } | null>(null)
   const toWorld = vp.toWorld
   useEffect(() => {
@@ -347,7 +352,9 @@ function SelectTool() {
     if (!svg) return
     const down = (e: PointerEvent) => {
       if (e.button !== 0 || !e.isPrimary) return
-      if (!(e.target === svg || e.target instanceof SVGImageElement)) return
+      const v2 = isV2Doc(useDoc.getState().doc)
+      const onFloor = v2 && e.shiftKey && e.target instanceof Element && !!e.target.closest('[data-room-id], [data-room-label]')
+      if (!(e.target === svg || e.target instanceof SVGImageElement || onFloor)) return
       if (svg.hasAttribute('data-pan-ready')) return
       const add = e.shiftKey
       if (!add) useUi.getState().select(null)
@@ -370,7 +377,8 @@ function SelectTool() {
       const up = (ev: PointerEvent) => {
         stop()
         if (!moved) return
-        const found = itemsInBox(useDoc.getState().doc.rooms, boxOf(a, toWorld(ev.clientX, ev.clientY)))
+        const doc = useDoc.getState().doc
+        const found = itemsInBox(doc.rooms, boxOf(a, toWorld(ev.clientX, ev.clientY)), isV2Doc(doc) ? doc : undefined)
         const ui = useUi.getState()
         ui.set(selectItems(ui, found, add))
       }

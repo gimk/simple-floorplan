@@ -1,14 +1,14 @@
 // One click on a stored wall (docs/walls-plan.md, "Walls in the interface"):
 //   - the whole wall is selected, with the side of the half that was clicked;
 //   - a second click on the same side, without a drag, shows the other side;
-//   - Shift + click keeps the room wall group behaviour, through the room of the clicked side;
+//   - Shift + click adds the WALL to the selection group, or removes it (the same as rooms);
 //   - a double click adds a vertex to the room of the clicked side;
 //   - all of it works on a wall that no room uses (a wall left by a deleted room).
 // The pointer sequence is played on a stub `window`: the code of the drag registers its listeners
 // on `window`, so the tests need one (node has no DOM).
 import { beforeEach, describe, expect, it } from 'vitest'
 import { emptyDoc, useDoc, useUi } from '../../model/store'
-import type { PlanDoc, Room, Vec } from '../../model/types'
+import type { PlanDoc, Room } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { removeRoom } from '../../model/v2/write'
 import { onStoredNodeDown, onStoredWallDouble, onStoredWallDown, storedWallDownAction } from './interaction'
@@ -92,23 +92,6 @@ const selAt = (doc: PlanDoc, wallId: string, x: number, y: number) => {
 const faceOn = (doc: PlanDoc, wallId: string, side: 'L' | 'R') =>
   doc.walls!.find((w) => w.id === wallId)!.faces.find((f) => f.side === side && f.roomId !== undefined)!
 
-/**
- * A world point of a wall, in the middle of the face of `roomId`, a little off the centre line
- * towards that room: a click there selects the side of that room.
- */
-const pointOnWall = (doc: PlanDoc, wallId: string, roomId: string): Vec => {
-  const wall = doc.walls!.find((w) => w.id === wallId)!
-  const a = doc.nodes!.find((n) => n.id === wall.a)!
-  const b = doc.nodes!.find((n) => n.id === wall.b)!
-  const face = wall.faces.find((f) => f.roomId === roomId)!
-  const len = Math.hypot(b.x - a.x, b.y - a.y)
-  const t = (face.from + face.to) / 2
-  const mid = { x: a.x + ((b.x - a.x) * t) / len, y: a.y + ((b.y - a.y) * t) / len }
-  // Left of a -> b is (-dy, dx): side L is that way, side R is the other way.
-  const k = face.side === 'L' ? 3 : -3
-  return { x: mid.x - ((b.y - a.y) / len) * k, y: mid.y + ((b.x - a.x) / len) * k }
-}
-
 let win: ReturnType<typeof pointerWindow>
 
 beforeEach(() => {
@@ -164,23 +147,27 @@ describe('a click on a stored wall', () => {
     expect(useUi.getState().selection).toEqual(selAt(kept, wall.id, 200, 450))
   })
 
-  it('keeps the room wall group behaviour on Shift + click (room of the clicked side)', () => {
+  it('toggles the WALL in the selection group on Shift + click', () => {
     const doc = v2()
     const wall = sharedWall(doc)
-    const side = sideAt(doc, wall.id, 200, 320)
-    // The face of the room that lies on the clicked side of the stored wall.
-    const face = faceOn(doc, wall.id, side)
+    const other = doc.walls!.find((w) => w.id !== wall.id)!
     onStoredWallDown(down(200, 320, true), vp, wall.id)
     win.fire('pointerup', { pointerId: 1 })
-    expect(useUi.getState().selection).toEqual({ kind: 'wall', roomId: face.roomId, wallStart: face.wallStart })
-    // A second Shift + click on another wall of the same side builds a group of room walls.
-    const other = doc.walls!.find((w) => w.id !== wall.id && w.faces.some((f) => f.roomId === face.roomId))!
-    const at = pointOnWall(doc, other.id, face.roomId!)
-    onStoredWallDown(down(at.x, at.y, true), vp, other.id)
+    expect(useUi.getState().selection).toEqual({ kind: 'storedWall', wallId: wall.id })
+    // A second Shift + click on another wall builds a group of stored walls.
+    const line = doc.nodes!.filter((n) => n.id === other.a || n.id === other.b)
+    const mid = { x: (line[0].x + line[1].x) / 2, y: (line[0].y + line[1].y) / 2 }
+    onStoredWallDown(down(mid.x, mid.y, true), vp, other.id)
     win.fire('pointerup', { pointerId: 1 })
-    const ui = useUi.getState()
-    expect(ui.multi).toHaveLength(2)
-    expect(ui.selection?.kind).toBe('wall')
+    let ui = useUi.getState()
+    expect(ui.multi).toEqual([{ kind: 'storedWall', wallId: wall.id }, { kind: 'storedWall', wallId: other.id }])
+    expect(ui.selection).toEqual({ kind: 'storedWall', wallId: other.id })
+    // Shift + click on a wall of the group removes it.
+    onStoredWallDown(down(mid.x, mid.y, true), vp, other.id)
+    win.fire('pointerup', { pointerId: 1 })
+    ui = useUi.getState()
+    expect(ui.multi).toEqual([])
+    expect(ui.selection).toEqual({ kind: 'storedWall', wallId: wall.id })
   })
 
   it('drags the whole wall on the graph, in one undo step, also when no room uses it', () => {
@@ -283,11 +270,15 @@ describe('storedWallDownAction', () => {
       .toEqual({ select: selAt(d, wall.id, at.x, at.y), group: null, flip: false })
   })
 
-  it('gives no group item for a side with no room (outside)', () => {
+  it('gives the wall as the group item on Shift + click, also for a side with no room (outside)', () => {
     const kept = removeRoom(v2(), 'B')
     const wall = lonelyWall(kept)
     const action = storedWallDownAction({ doc: kept, wallId: wall.id, side: 'L', prev: null, shift: true, at: { x: 200, y: 450 } })
-    expect(action.group).toBeNull()
+    expect(action).toEqual({ select: null, group: { kind: 'storedWall', wallId: wall.id }, flip: false })
+    const d = v2()
+    const shared = sharedWall(d)
+    expect(storedWallDownAction({ doc: d, wallId: shared.id, side: 'L', prev: null, shift: true, at: { x: 200, y: 320 } }).group)
+      .toEqual({ kind: 'storedWall', wallId: shared.id })
   })
 })
 

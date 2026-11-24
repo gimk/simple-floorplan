@@ -24,6 +24,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { dist, fmtCm } from '../../model/geometry'
+import { selectedItems } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { StoredWall, Vec } from '../../model/types'
 import { wallAppearance } from '../renovation/logic'
@@ -56,6 +57,7 @@ export function WallsLayer() {
   const walls = useDoc((s) => s.doc.walls)
   const nodes = useDoc((s) => s.doc.nodes)
   const selection = useUi((s) => s.selection)
+  const multi = useUi((s) => s.multi)
   const layers = useUi((s) => s.layers)
   const renovationView = useUi((s) => s.renovationView)
   // The walls can be selected and dragged with the select tool, in edit mode only.
@@ -72,7 +74,9 @@ export function WallsLayer() {
   const geometry = useMemo(() => wallJoinGeometry({ nodes, walls }), [nodes, walls])
   if (!v2 || !walls?.length) return null
 
-  const selected = selection?.kind === 'storedWall' ? selection.wallId : null
+  // Every stored wall of the selection group is outlined; the end handles show for ONE wall only.
+  const selectedIds = new Set(selectedItems({ selection, multi }).flatMap((s) => (s.kind === 'storedWall' ? [s.wallId] : [])))
+  const selected = selection?.kind === 'storedWall' && selectedIds.size === 1 ? selection.wallId : null
   const selectedWall = selected ? (walls ?? []).find((w) => w.id === selected) : undefined
   /** Bearing wall stripes: ~6 px apart (perpendicular), ~1 px wide, at 45°, zoom independent. */
   const stripeGap = px(6)
@@ -227,8 +231,8 @@ export function WallsLayer() {
         )
       })}
 
-      {/* The selected wall: the whole band, in the colour of a selected item. */}
-      {selected && geometry.bands.filter((b) => b.wallId === selected).map((b) => {
+      {/* The selected walls: the whole band, in the colour of a selected item. */}
+      {selectedIds.size > 0 && geometry.bands.filter((b) => selectedIds.has(b.wallId)).map((b) => {
         const wall = byId.get(b.wallId)
         const look = wall ? wallAppearance(propsOf(wall).type, propsOf(wall).status, renovationView) : null
         if (!look?.visible) return null
@@ -240,7 +244,7 @@ export function WallsLayer() {
       })}
 
       {/* The wall under the pointer: a light band, so the user sees what a click selects. */}
-      {interactive && hovered && hovered !== selected && geometry.bands.filter((b) => b.wallId === hovered).map((b) => (
+      {interactive && hovered && !selectedIds.has(hovered) && geometry.bands.filter((b) => b.wallId === hovered).map((b) => (
         <path key={'hover' + b.wallId} d={polygonPath(b.points)} pointerEvents="none" data-hover-stored-wall={b.wallId}
           strokeWidth={px(1.5)} strokeOpacity={0.8} className="fill-orange-500/15 stroke-orange-500" />
       ))}

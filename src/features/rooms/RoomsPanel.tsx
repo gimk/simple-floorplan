@@ -4,7 +4,7 @@
 //   room  -> RoomCard   (room, walls list, elements list, measured lengths)
 //   wall  -> WallCard   (wall + "On this wall", header steps to the previous / next wall)
 //   storedWall -> StoredWallCard (a v2 wall: the wall once, then its two sides)
-//   group -> WallCard (walls) or GroupCard (rooms, points)
+//   group -> WallCard (walls), StoredWallGroupCard (stored walls) or GroupCard (rooms, points)
 //   vertex -> VertexCard
 // The apartment card and the whole-plan tools are elsewhere (apartment, Solve tab).
 import { useEffect, useMemo } from 'react'
@@ -22,6 +22,7 @@ import { RoomCard } from './RoomCard'
 import { VertexCard } from './VertexCard'
 import { WallCard } from './WallCard'
 import { StoredWallCard } from './StoredWallCard'
+import { StoredWallGroupCard } from './StoredWallGroupCard'
 
 // The whole-plan tools (apply to all rooms, solve whole plan, precision, keep locked) live
 // in the Solve tab (features/solve). `fitCheck` moved to ./fit; re-exported for old imports.
@@ -84,6 +85,11 @@ export function RoomsPanelView({ doc, selection, items = selection ? [selection]
   // Shift + click group: rooms and points show a summary, walls are edited together.
   const groupKind = items.length > 1 ? items[0].kind : null
   if (groupKind === 'room' || groupKind === 'vertex') return <GroupCard kind={groupKind} count={items.length} />
+  // A group of stored walls (v2 document): one card, the controls apply to every wall.
+  if (groupKind === 'storedWall') {
+    return <StoredWallGroupCard doc={doc} wallIds={items.flatMap((s) => (s.kind === 'storedWall' ? [s.wallId] : []))}
+      primaryId={selection.kind === 'storedWall' ? selection.wallId : ''} />
+  }
   if (selection.kind === 'element') return null
   // A stored wall of a v2 document: the wall is ONE object with two sides (Walls in the interface).
   if (selection.kind === 'storedWall') {

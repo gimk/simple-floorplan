@@ -130,12 +130,13 @@ export function useRoomsFrame() {
     useUi.getState().select({ kind: 'room', roomId })
   }
   // Outlined rooms: the room of the selected item, or every room of a room group.
-  const selRoomIds = new Set(items.flatMap((s) => (s.kind === 'room' || (s.kind !== 'element' && s === selection) ? [s.roomId] : [])))
+  const selRoomIds = new Set(items.flatMap((s) => (s.kind === 'room' || (s.kind !== 'element' && s.kind !== 'storedWall' && s === selection) ? [s.roomId] : [])))
   const selWalls = new Set(items.flatMap((s) => (s.kind === 'wall' ? [s.roomId + ':' + s.wallStart] : [])))
   // A selected stored wall ('W12'): the whole wall is highlighted on its centre line, and the side
   // the user clicked is drawn a bit stronger (docs/walls-plan.md, Walls in the interface).
   const selStoredWall = useMemo(() => {
-    if (selection?.kind !== 'storedWall') return null
+    // A group of stored walls has no side or face lines and no A / B markers: only a single wall.
+    if (selection?.kind !== 'storedWall' || items.length > 1) return null
     const line = storedWallLine({ walls: storedWalls, nodes: storedNodes }, selection.wallId)
     if (!line) return null
     const wall = (storedWalls ?? []).find((w) => w.id === selection.wallId)
@@ -146,7 +147,7 @@ export function useRoomsFrame() {
     const pick = view && selection.face ? faceByKey(view, selection.face) : null
     const face = pick ? { key: pick.key, side: pick.side, from: pick.face.from, to: pick.face.to } : undefined
     return { ...line, thicknessCm: wall?.thicknessCm ?? DEFAULT_WALL_CM, side: face?.side ?? selection.side, face }
-  }, [selection, storedWalls, storedNodes, rooms, measurements])
+  }, [selection, items, storedWalls, storedNodes, rooms, measurements])
   // Room whose name is being renamed inline: a double-click on the name, or a tool that has just
   // made the room (Make room tool, docs/walls-plan.md phase 6). The editor is drawn by
   // RoomsOverlay, which is the only user of this state.
