@@ -85,6 +85,15 @@ export const refusedDeleteText = (wallId: string, refusedBy: string[]) =>
   `Wall ${wallId} is part of rooms ${refusedBy.join(', ')}.`
 
 /**
+ * Show one side of a stored wall on the plan (the 'Side A' / 'Side B' buttons of the wall card,
+ * docs/walls-plan.md "Walls in the interface"). The wall stays selected and the card stays open,
+ * so the side the user chooses is the side highlighted on the canvas.
+ */
+export function setStoredWallSide(wallId: string, side: 'L' | 'R') {
+  useUi.getState().select({ kind: 'storedWall', wallId, side })
+}
+
+/**
  * Remove a stored wall (docs/walls-plan.md phase 5c, `removeWall`). A wall that a room uses is
  * REFUSED: nothing is written and the room codes come back, so the caller can name them in a toast.
  */

@@ -4,9 +4,9 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { dist, dot, projectOnSegment, roomWalls } from '../../model/geometry'
 import { inGroup, selectedItems, type SelItem } from '../../model/selection'
 import { beginDrag, endDrag, useDoc, useUi } from '../../model/store'
-import type { PlanDoc, Room, Vec } from '../../model/types'
+import type { PlanDoc, Room, Selection, Vec } from '../../model/types'
 import { selfIntersects } from './crossing'
-import { setDragInfo } from './draginfo'
+import { setDragInfo, type DragInfo } from './draginfo'
 import { useGuides } from './guides'
 import { clearHoleSel, getActiveHole } from './holes'
 import { notify } from './notice'
@@ -22,7 +22,8 @@ import {
 import { undoToast } from '../toast'
 import { moveNode, moveRoom as roomMove, moveWall } from '../../model/v2/drag'
 import { isV2Doc } from '../../model/v2/targets'
-import { sideOfRoomWall } from './wallSides'
+import { storedWallLine } from './hoverTarget'
+import { otherSide, sideOfPoint, wallFaceAt } from './wallSides'
 
 export type Vp = { toWorld: (x: number, y: number) => Vec; px: (n: number) => number }
 
@@ -156,14 +157,6 @@ function nodeAtCorner(doc: PlanDoc, room: Room, cornerId: string): string | null
   if (!a || !b) return null
   const ids = new Set([a.a, a.b])
   return [b.a, b.b].find((id) => ids.has(id)) ?? null
-}
-
-/** Id of the stored wall of the room wall that starts at a corner, or null (a v1 room). */
-function storedWallAtCorner(doc: PlanDoc, room: Room, cornerId: string): string | null {
-  const k = faceAt(room, cornerId)
-  const wallId = k < 0 ? undefined : room.cycle?.[k].wallId
-  if (!wallId) return null
-  return (doc.walls ?? []).some((w) => w.id === wallId) ? wallId : null
 }
 
 /** Rooms whose polygon follows when these nodes move: the rooms with a face on a wall at a node. */
@@ -573,27 +566,61 @@ function dragCornerNode(
   })
 }
 
+/** A length below this is zero on the plan (cm): the two ends of a wall are closer than this. */
+const END_TOL_CM = 1
+
+/** What stays the same from the pointer down to the pointer up of one drag of a stored wall. */
+type StoredWallDrag = {
+  /** The wall that moves. */
+  wallId: string
+  /** World point of node a at the start: the wall moves from it, along its normal. */
+  a0: Vec
+  /** World point of the pointer at the start. */
+  down: Vec
+  /** Unit normal of the wall: the wall slides along this line only. */
+  normal: Vec
+  /** True for a horizontal or vertical wall: it snaps to the other walls (any other wall: grid). */
+  axisAligned: boolean
+  /** Rooms whose vertices and edges are not snap targets (the rooms that use this wall). */
+  excludeRooms: Set<string>
+  /** The two ends of the wall: they move with it, so they are not snap targets. */
+  excludePoints: Vec[]
+  /** Dimension labels of the walls attached to the drag (see ./draginfo.ts). */
+  info?: DragInfo
+}
+
+/** What a click on a stored wall does, at the end of the pointer sequence. */
+type WallClickHooks = {
+  /** Shift + drag: the wall is selected, and the drag starts. */
+  onShiftDrag?: () => void
+  /** Shift + click without a drag. */
+  onShiftClick?: () => void
+  /** Plain click without a drag. */
+  onPlainClick?: () => void
+}
+
 /**
  * Drag one stored WALL of a v2 document: its two nodes move, so the rooms on both sides follow
- * (one wall, two faces) and the walls at its ends stretch. Shift = this room only is not applied
- * here: a stored wall belongs to both of its rooms.
+ * (one wall, two faces) and the walls at its ends stretch. One undo step for the whole drag, and
+ * the same snapping as a room wall drag. A wall that no room uses (a single wall, or a wall left
+ * by a deleted room) takes the same path. Shift = this room only does not apply here: a stored
+ * wall belongs to both of its rooms.
  */
-function dragWallOnGraph(
-  e: ReactPointerEvent, vp: Vp, roomId: string, wallStart: string, wallId: string, room0: Room,
-  a0: Vec, normal: Vec, axisAligned: boolean, down: Vec, shift: boolean,
-  flip: () => void, selectMe: () => void,
-) {
-  const n = room0.vertices.length
-  const i = room0.vertices.findIndex((v) => v.id === wallStart)
-  const aId = room0.vertices[i].id, bId = room0.vertices[(i + 1) % n].id
+function dragStoredWallOnGraph(e: ReactPointerEvent, vp: Vp, o: StoredWallDrag, shift: boolean, hooks: WallClickHooks) {
   const doc0 = useDoc.getState().doc
-  const wall = (doc0.walls ?? []).find((w) => w.id === wallId)
-  const wallLocked = !!wall?.locked
-  const affected = roomsOfNodes(doc0, new Set([wall?.a, wall?.b].filter((x): x is string => !!x)))
+  const wall = (doc0.walls ?? []).find((w) => w.id === o.wallId)
+  if (!wall) { if (shift) hooks.onShiftClick?.(); else hooks.onPlainClick?.(); return }
+  const wallLocked = !!wall.locked
+  const affected = roomsOfNodes(doc0, new Set([wall.a, wall.b]))
+  const atEnd = (p: Vec) => o.excludePoints.some((q) => dist(p, q) <= END_TOL_CM)
   let start: PlanDoc | null = null
-  let last: Vec = a0
+  let last: Vec = o.a0
   track(e, {
-    onStart: () => { if (shift) selectMe(); start = beginDrag(); setDragInfo({ kind: 'wall', roomId, wallStart }) },
+    onStart: () => {
+      if (shift) hooks.onShiftDrag?.()
+      start = beginDrag()
+      if (o.info) setDragInfo(o.info)
+    },
     onMove: (ev) => {
       if (!start) return
       const base = start
@@ -603,29 +630,29 @@ function dragWallOnGraph(
         return
       }
       const w = vp.toWorld(ev.clientX, ev.clientY)
-      let d = dot({ x: w.x - down.x, y: w.y - down.y }, normal)
+      let d = dot({ x: w.x - o.down.x, y: w.y - o.down.y }, o.normal)
       if (!ev.altKey) {
         const ui = useUi.getState()
-        if (axisAligned) {
+        if (o.axisAligned) {
           // Snap the wall to the walls of the other rooms (the same as a v1 wall drag).
-          const r = snapPoint({ x: a0.x + normal.x * d, y: a0.y + normal.y * d }, {
+          const r = snapPoint({ x: o.a0.x + o.normal.x * d, y: o.a0.y + o.normal.y * d }, {
             opts: { ...ui.snap, angles: false }, tolCm: vp.px(10),
-            vertices: otherVertices(base, (rid, vid) => rid === roomId && (vid === aId || vid === bId)),
-            edges: otherEdges(base, (rid) => rid === roomId),
+            vertices: otherVertices(base).filter((p) => !atEnd(p)),
+            edges: otherEdges(base, (rid) => o.excludeRooms.has(rid)),
           })
           useGuides.getState().set(r.guides)
-          d = dot({ x: r.point.x - a0.x, y: r.point.y - a0.y }, normal)
+          d = dot({ x: r.point.x - o.a0.x, y: r.point.y - o.a0.y }, o.normal)
         } else if (ui.snap.grid && ui.snap.gridCm > 0) {
           d = Math.round(d / ui.snap.gridCm) * ui.snap.gridCm
         }
       } else useGuides.getState().set([])
-      last = { x: a0.x + normal.x * d, y: a0.y + normal.y * d }
-      const delta = { x: normal.x * d, y: normal.y * d }
-      useDoc.getState().updateSilent(() => moveStoredWall(base, wallId, delta))
+      last = { x: o.a0.x + o.normal.x * d, y: o.a0.y + o.normal.y * d }
+      const delta = { x: o.normal.x * d, y: o.normal.y * d }
+      useDoc.getState().updateSilent(() => moveStoredWall(base, o.wallId, delta))
     },
     onEnd: () => {
       setDragInfo(null)
-      if (!start) { if (shift) flip(); return }
+      if (!start) { if (shift) hooks.onShiftClick?.(); else hooks.onPlainClick?.(); return }
       if (newlyCrossing(start, useDoc.getState().doc, affected)) {
         useDoc.getState().updateSilent(() => start as PlanDoc)
         notify(CROSS_MSG, last)
@@ -636,25 +663,125 @@ function dragWallOnGraph(
   })
 }
 
+/** Rooms that have a face on one side of a stored wall (their walls are not snap targets). */
+function roomsOnWall(doc: PlanDoc, wallId: string): Set<string> {
+  const out = new Set<string>()
+  for (const r of doc.rooms) for (const f of r.cycle ?? []) if (f.wallId === wallId) out.add(r.id)
+  for (const f of (doc.walls ?? []).find((w) => w.id === wallId)?.faces ?? []) {
+    if (f.roomId !== undefined) out.add(f.roomId)
+  }
+  return out
+}
+
+/**
+ * What a pointer down on a stored wall does, before the drag. Pure (no store, no pointer
+ * tracking), so the rule is tested alone:
+ *   - a plain click selects the WHOLE wall, with the side of the half that was clicked;
+ *   - a plain click on the wall that is already selected with this side shows the OTHER side
+ *     (`flip`): that is how the user picks either side at will;
+ *   - Shift + click gives the room wall group item of the room on the clicked side (the old
+ *     behaviour of a room wall click, mapped through that room). `group` is null when the clicked
+ *     side has no room there (outside): there is no room wall to group, so the caller selects the
+ *     whole wall instead.
+ */
+export function storedWallDownAction(args: {
+  doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>
+  wallId: string
+  side: 'L' | 'R'
+  prev: Selection
+  shift: boolean
+  /** World point of the pointer: it gives the face under the click. */
+  at: Vec
+}): { select: Selection | null; group: SelItem | null; flip: boolean } {
+  const { doc, wallId, side, prev, shift, at } = args
+  if (shift) {
+    const face = wallFaceAt(doc, wallId, side, at)
+    return { select: null, group: face ? { kind: 'wall', roomId: face.roomId, wallStart: face.wallStart } : null, flip: false }
+  }
+  const same = prev?.kind === 'storedWall' && prev.wallId === wallId && prev.side === side
+  return { select: same ? null : { kind: 'storedWall', wallId, side }, group: null, flip: same }
+}
+
+/**
+ * Pointer down on ONE stored wall: the single hit area of the wall graph (features/rooms/
+ * WallsLayer.tsx, docs/walls-plan.md "Walls in the interface"). The side comes from the half of
+ * the wall under the pointer, so the user selects either side at will. Then the wall drags on the
+ * graph, with one undo step per drag, also when no room uses the wall.
+ */
+export function onStoredWallDown(e: ReactPointerEvent, vp: Vp, wallId: string) {
+  if (e.button !== 0 || !e.isPrimary) return
+  e.stopPropagation()
+  const doc0 = useDoc.getState().doc
+  const line = storedWallLine(doc0, wallId)
+  if (!line) return
+  const down = vp.toWorld(e.clientX, e.clientY)
+  const side = sideOfPoint(line.a, line.b, down) ?? 'L'
+  const shift = e.shiftKey
+  const action = storedWallDownAction({ doc: doc0, wallId, side, prev: useUi.getState().selection, shift, at: down })
+  if (action.select) useUi.getState().select(action.select)
+  const selectMe = () => useUi.getState().select({ kind: 'storedWall', wallId, side })
+  dragStoredWallOnGraph(
+    e, vp,
+    {
+      wallId,
+      a0: line.a,
+      down,
+      normal: normalOf(line.a, line.b),
+      axisAligned: axisAlignedOf(line.a, line.b),
+      excludeRooms: roomsOnWall(doc0, wallId),
+      excludePoints: [line.a, line.b],
+    },
+    shift,
+    {
+      onShiftDrag: selectMe,
+      // Shift + click: the room wall group of the room on the clicked side (no room there = the
+      // whole wall, because there is no room wall to add to a group).
+      onShiftClick: () => (action.group ? toggle(action.group) : selectMe()),
+      onPlainClick: () => { if (action.flip) useUi.getState().select({ kind: 'storedWall', wallId, side: otherSide(side) }) },
+    },
+  )
+}
+
+/** Unit normal of a wall: the direction a wall drag moves it along. */
+function normalOf(a: Vec, b: Vec): Vec {
+  const len = dist(a, b)
+  return len < 1e-6 ? { x: 0, y: -1 } : { x: -(b.y - a.y) / len, y: (b.x - a.x) / len }
+}
+
+/** True for a horizontal or vertical wall: it snaps to the other walls, like a room wall. */
+function axisAlignedOf(a: Vec, b: Vec): boolean {
+  const n = normalOf(a, b)
+  return Math.abs(n.x) > 0.999 || Math.abs(n.y) > 0.999
+}
+
+/**
+ * Double click on a stored wall: add a vertex to the room of the clicked side, at the point of the
+ * click. Nothing happens when that side has no room there (outside, or a wall that no room uses).
+ */
+export function onStoredWallDouble(e: { clientX: number; clientY: number }, vp: Vp, wallId: string) {
+  const doc = useDoc.getState().doc
+  const line = storedWallLine(doc, wallId)
+  if (!line) return
+  const w = vp.toWorld(e.clientX, e.clientY)
+  const side = sideOfPoint(line.a, line.b, w) ?? 'L'
+  const face = wallFaceAt(doc, wallId, side, w)
+  if (!face) return
+  onWallDouble(e, vp, face.roomId, face.wallStart)
+}
+
+/**
+ * A v1 document: pointer down on a wall of a room (the per-room hit areas of RoomsLayer). A v2
+ * document has ONE hit area per stored wall, so it uses `onStoredWallDown` instead.
+ */
 export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallStart: string) {
   if (e.button !== 0 || !e.isPrimary) return
   e.stopPropagation()
   const doc0 = useDoc.getState().doc
   const room0 = findRoom(roomId)
-  // A v2 document: the wall is a STORED wall, so a click selects the WHOLE wall, with the side the
-  // user clicked (the side where the room of the clicked wall lies). The drag below still moves the
-  // same stored wall on the graph (docs/walls-plan.md, Walls in the interface).
-  const storedWallId = isV2Doc(doc0) && room0 ? storedWallAtCorner(doc0, room0, wallStart) : null
-  const side = storedWallId ? sideOfRoomWall(doc0, storedWallId, roomId, wallStart) : undefined
   // Shift + click (no drag) toggles the wall in the group; Shift + drag is still "this room only".
-  // A group of walls stays a group of ROOM walls (the group card edits them together), so Shift +
-  // click keeps its old meaning in a v2 document too.
   const shift = e.shiftKey
   const flip = () => toggle({ kind: 'wall', roomId, wallStart })
-  const selectMe = () => {
-    if (storedWallId) useUi.getState().select({ kind: 'storedWall', wallId: storedWallId, side })
-    else useUi.getState().select({ kind: 'wall', roomId, wallStart })
-  }
+  const selectMe = () => useUi.getState().select({ kind: 'wall', roomId, wallStart })
   if (!shift) selectMe()
   const i = room0 ? room0.vertices.findIndex((v) => v.id === wallStart) : -1
   // Moving a wall changes its neighbours' lengths: a locked neighbour blocks the drag.
@@ -665,10 +792,6 @@ export function onWallDown(e: ReactPointerEvent, vp: Vp, roomId: string, wallSta
   const normal = roomWalls(room0)[i].inward
   const axisAligned = Math.abs(normal.x) > 0.999 || Math.abs(normal.y) > 0.999
   const down = vp.toWorld(e.clientX, e.clientY)
-  if (storedWallId) {
-    dragWallOnGraph(e, vp, roomId, wallStart, storedWallId, room0, a0, normal, axisAligned, down, shift, flip, selectMe)
-    return
-  }
   const linkedAAll = movableLinked(doc0, roomId, aId)
   const linkedBAll = movableLinked(doc0, roomId, bId)
   const linkedKeysAll = new Set([...linkedAAll, ...linkedBAll].map(refKey))

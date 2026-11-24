@@ -5,6 +5,9 @@
 //   Side A / B    : the faces of that side in order along the wall (room code + name, its label
 //                   'EN-3', the value field, 'Measured x · Solved y'), and 'Outside' for a span
 //                   that no room covers (with the facade value W12-E when the whole side is out).
+//                   The header of each side is a BUTTON (`aria-pressed`): it selects that side, so
+//                   the plan highlights it. A single wall (no room at all) shows 'Outside' on both
+//                   sides and can be deleted.
 //   Doors and windows on this wall : the elements whose `wallId` is this wall.
 //   Delete wall   : refused while a room uses the wall (a toast names the rooms).
 // The side the user clicked on the canvas is highlighted. All lengths are cm, one undo step per
@@ -20,12 +23,14 @@ import { wallValueLabel } from '../../model/wallValues'
 import { setMeasurement } from '../measure/actions'
 import { NumField } from '../measure/NumField'
 import {
-  BTN, ERROR, EmptyHint, FieldRow, IconButton, MUTED, NumberField, PanelSection, Segmented, SwitchRow,
+  BTN, ERROR, EmptyHint, FieldRow, HEADING, IconButton, MUTED, NumberField, PANEL_CARD, PanelSection, SECTION_PAD,
+  Segmented, SwitchRow,
 } from '../../shell/panel'
 import { toast } from '../toast'
 import { solveGlobal } from './globalSolve'
 import {
-  deleteStoredWall, patchStoredWall, refusedDeleteText, structuralWarning, WALL_ALIGNS, WALL_STATUSES, WALL_TYPES,
+  deleteStoredWall, patchStoredWall, refusedDeleteText, setStoredWallSide, structuralWarning, WALL_ALIGNS, WALL_STATUSES,
+  WALL_TYPES,
 } from './cards'
 import { ElementList } from './ElementList'
 import { KIND_LABEL, VARIANT_LABEL } from '../elements/geometry'
@@ -199,6 +204,7 @@ export function StoredWallCard({ doc, wallId, side }: {
       {view.sides.map((s) => (
         <SideSection
           key={s.side}
+          wallId={wall.id}
           doc={doc}
           view={s}
           active={side === s.side}
@@ -229,8 +235,14 @@ export function StoredWallCard({ doc, wallId, side }: {
   )
 }
 
-/** One side of the wall: its faces in order along the wall, in the room's own order. */
-function SideSection({ doc, view, active, measureSource, solvedLine }: {
+/**
+ * One side of the wall: its faces in order along the wall, in the room's own order. The header is a
+ * BUTTON: a click selects this side (`selection.side`), so the plan highlights that side of the
+ * wall (docs/walls-plan.md "Walls in the interface"). The other side keeps its faces one click
+ * away, so the user reads and measures either side at will.
+ */
+function SideSection({ wallId, doc, view, active, measureSource, solvedLine }: {
+  wallId: string
   doc: PlanDoc
   view: WallSideView
   active: boolean
@@ -239,14 +251,32 @@ function SideSection({ doc, view, active, measureSource, solvedLine }: {
 }) {
   const select = useUi.getState().select
   return (
-    <PanelSection
-      title={`Side ${view.letter}`}
-      collapsible
-      id={`stored-wall-side-${view.side}`}
-      className={active ? 'ring-2 ring-orange-500/60' : undefined}
-      description={view.outside ? 'No room on this side.' : undefined}
+    <section
+      className={`${PANEL_CARD} ${SECTION_PAD} flex flex-col ${active ? 'ring-2 ring-orange-500/60' : ''}`}
+      aria-label={`Side ${view.letter}`}
     >
-      <ul className="flex flex-col gap-2" data-wall-side={view.side} data-wall-side-active={active ? 'true' : 'false'}>
+      <div className="flex min-h-9 items-center gap-1">
+        <button
+          type="button"
+          aria-pressed={active}
+          data-wall-side-button={view.side}
+          title={`Show side ${view.letter} on the plan`}
+          onClick={() => setStoredWallSide(wallId, view.side)}
+          className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11"
+        >
+          <span className={`truncate ${HEADING}`}>Side {view.letter}</span>
+        </button>
+      </div>
+      {view.outside && <p className={`mt-1 ${MUTED}`}>No room on this side.</p>}
+      <ul className="mt-2 flex flex-col gap-2" data-wall-side={view.side} data-wall-side-active={active ? 'true' : 'false'}>
+        {view.faces.length === 0 && (
+          // A side that no room covers and that has no face at all: a single wall (the Wall tool,
+          // or a wall left by a deleted room), or the free side of a facade.
+          <li className="flex min-w-0 items-baseline gap-2" data-wall-outside="none">
+            <span className="min-w-0 flex-1 truncate text-xs">Outside</span>
+            {view.facadeLabel && <span className={`shrink-0 font-mono text-[11px] ${MUTED}`}>{view.facadeLabel}</span>}
+          </li>
+        )}
         {view.faces.map((face) => (
           <li key={`${face.from}-${face.to}-${face.kind === 'room' ? face.label : 'out'}`}>
             {face.kind === 'room'
@@ -264,7 +294,7 @@ function SideSection({ doc, view, active, measureSource, solvedLine }: {
           </li>
         ))}
       </ul>
-    </PanelSection>
+    </section>
   )
 }
 

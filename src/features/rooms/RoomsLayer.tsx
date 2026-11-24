@@ -83,8 +83,9 @@ export function RoomsLayer() {
   const measurements = useDoc((s) => s.doc.measurements)
   const storedWalls = useDoc((s) => s.doc.walls)
   const storedNodes = useDoc((s) => s.doc.nodes)
-  // Walls are the source of a v2 document: this layer draws the floors, the labels and the hit
-  // areas, and the walls come from the wall graph (features/rooms/WallsLayer.tsx).
+  // Walls are the source of a v2 document: this layer draws the floors, the labels and the ROOM
+  // hit areas; the walls come from the wall graph (features/rooms/WallsLayer.tsx), with one hit
+  // area per stored wall.
   const wallsFromGraph = useDoc((s) => s.doc.schemaVersion === 2)
   // Element under the pointer in the Solve tab list ('CU-6', 'CU-D', 'SE-1-T', 'W12-E'): shown here.
   const hoverLabel = useUi((s) => s.hoverLabel)
@@ -492,8 +493,12 @@ export function RoomsLayer() {
         )
       }))}
 
-      {/* wall hit areas (select tool only) */}
-      {interactive && rooms.map((r) => roomWalls(r).map((w) => {
+      {/* wall hit areas (select tool only, v1 documents). A v2 document has ONE hit area per
+          stored wall, in features/rooms/WallsLayer.tsx: a wall is never selected by two systems,
+          and a wall that no room uses (a single wall) is selectable there. Double click (add a
+          vertex to the room of the clicked side) and Shift + click (group of room walls of that
+          side) are handled by the same hit area there. */}
+      {interactive && !wallsFromGraph && rooms.map((r) => roomWalls(r).map((w) => {
         const p = wallProps(r, w.start.id)
         // A wall hidden by the renovation view cannot be selected.
         if (!wallAppearance(p.type, p.status, renovationView).visible) return null

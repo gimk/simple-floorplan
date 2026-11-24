@@ -4,8 +4,10 @@ import { renderToString } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { Measurement, PlanDoc, Room, WallElement } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
+import { removeRoom } from '../../model/v2/write'
+import { useUi } from '../../model/store'
 import { RoomsPanelView } from './RoomsPanel'
-import { refusedDeleteText } from './cards'
+import { refusedDeleteText, setStoredWallSide } from './cards'
 import { StoredWallCard } from './StoredWallCard'
 
 /** One room of a test plan: polygon in cm, one corner id per point. */
@@ -117,6 +119,34 @@ describe('StoredWallCard', () => {
     // No element on this wall: the card shows its empty hint.
     expect(render(doc, wall.id)).toContain('No door, window or fixture on this wall.')
     expect(refusedDeleteText(wall.id, ['A', 'B'])).toBe(`Wall ${wall.id} is part of rooms A, B.`)
+  })
+
+  it('has a Side A and a Side B button that select that side of the wall', () => {
+    const doc = plan()
+    const id = sharedWall(doc).id
+    const html = render(doc, id, 'L')
+    // The header of each side is a button (aria-pressed), so either side can be chosen at will.
+    expect(html).toContain('aria-pressed="true" data-wall-side-button="L"')
+    expect(html).toContain('aria-pressed="false" data-wall-side-button="R"')
+    expect(render(doc, id, 'R')).toContain('aria-pressed="true" data-wall-side-button="R"')
+    // The button writes the side of the selection, which the plan draws stronger.
+    setStoredWallSide(id, 'R')
+    expect(useUi.getState().selection).toEqual({ kind: 'storedWall', wallId: id, side: 'R' })
+    setStoredWallSide(id, 'L')
+    expect(useUi.getState().selection).toEqual({ kind: 'storedWall', wallId: id, side: 'L' })
+    useUi.setState({ selection: null, multi: [] })
+  })
+
+  it('shows both sides of a single wall as Outside, and keeps its Delete wall button', () => {
+    // A room deleted: its walls stay, and no room sees them any more.
+    const doc = removeRoom(plan(), 'B')
+    const lonely = doc.walls!.find((w) => w.faces.every((f) => f.roomId === undefined))!
+    const html = render(doc, lonely.id)
+    expect(html.match(/data-wall-outside=/g)).toHaveLength(2)
+    expect(html.match(/No room on this side\./g)).toHaveLength(2)
+    expect(html).toContain('Delete wall')
+    // The facets of a wall that a room uses are not on this card.
+    expect(html).not.toContain('data-wall-face=')
   })
 })
 

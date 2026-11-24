@@ -133,6 +133,47 @@ export function sideOfRoomWall(
   return wall ? sideOfRoomFace(wall, roomId, wallStart) : undefined
 }
 
+/** A room face of one side of a stored wall, found by a click on that wall. */
+export type WallFaceRef = { roomId: string; wallStart: string; label: string }
+
+/** A click this close to an end of a face still counts as on that face (cm). */
+const FACE_TOL_CM = 1
+
+/**
+ * The room face of the side `side` of a stored wall that holds a point of the plan (cm). The
+ * point is put on the centre line of the wall first, so a click anywhere in the band of the wall
+ * finds its face. null when that side has no room at this point: outside on that side, or a click
+ * past an end.
+ *
+ * This maps one click on a wall (one hit area, in WallsLayer) to the room of the side that was
+ * clicked: Shift + click (group of room walls) and a double click (add a vertex) use it.
+ */
+export function wallFaceAt(
+  doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'measurements'>,
+  wallId: string,
+  side: 'L' | 'R',
+  p: Vec,
+): WallFaceRef | null {
+  const view = storedWallView(doc, wallId)
+  if (!view) return null
+  const len = dist(view.a, view.b)
+  if (len < 1e-6) return null
+  const { a, b } = view
+  const t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / len
+  const along = Math.min(Math.max(t, 0), view.centreCm)
+  const mine = view.sides.find((s) => s.side === side)
+  for (const f of mine?.faces ?? []) {
+    if (f.kind !== 'room') continue
+    if (along >= f.from - FACE_TOL_CM && along <= f.to + FACE_TOL_CM) {
+      return { roomId: f.roomId, wallStart: f.wallStart, label: f.label }
+    }
+  }
+  return null
+}
+
+/** The other side of a wall: 'L' -> 'R', 'R' -> 'L'. */
+export const otherSide = (side: 'L' | 'R'): 'L' | 'R' => (side === 'L' ? 'R' : 'L')
+
 /** Rooms of the document, sorted the way the walk-through shows them. */
 const walkOrdered = (rooms: Room[]) => [...rooms].sort((a, b) => a.walkOrder - b.walkOrder || a.code.localeCompare(b.code))
 

@@ -5,7 +5,7 @@ import { demoRooms } from '../measure/demo'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { materializeRooms } from '../../model/v2/materialize'
-import { roomWallLinks, sideOfPoint, sideOfRoomWall, storedWallView } from './wallSides'
+import { otherSide, roomWallLinks, sideOfPoint, sideOfRoomWall, storedWallView, wallFaceAt } from './wallSides'
 
 const face = (wallId: string, side: 'L' | 'R', from: number, to: number, cornerId: string): RoomFace =>
   ({ wallId, side, from, to, cornerId })
@@ -149,6 +149,47 @@ describe('sideOfRoomFace', () => {
     expect(sideOfRoomWall(doc, 'W1', 'B', 'b0')).toBe('R')
     expect(sideOfRoomWall(doc, 'W1', 'ZZ', 'zz')).toBeUndefined()
     expect(sideOfRoomWall(doc, 'W9', 'A', 'a0')).toBeUndefined()
+  })
+})
+
+describe('wallFaceAt', () => {
+  /** One wall N1 (0,0) -> N2 (400,0), room A on side L and room B on side R, over the whole wall. */
+  const twoRooms = () => v2(nodes(), [wall('W1', 'N1', 'N2')], [
+    roomWithCycle('A', [face('W1', 'L', 0, 400, 'a0')], 1),
+    roomWithCycle('B', [face('W1', 'R', 0, 400, 'b0')], 2),
+  ])
+
+  it('gives the room of the side that holds the point of the click', () => {
+    const doc = twoRooms()
+    // A point below the wall is on side L (y points down), one above is on side R.
+    expect(wallFaceAt(doc, 'W1', 'L', { x: 200, y: 20 })).toEqual({ roomId: 'A', wallStart: 'a0', label: 'A-1' })
+    expect(wallFaceAt(doc, 'W1', 'R', { x: 200, y: -20 })).toEqual({ roomId: 'B', wallStart: 'b0', label: 'B-1' })
+    // A click past an end still lands on the face: it is put back on the wall.
+    expect(wallFaceAt(doc, 'W1', 'L', { x: 460, y: 10 })?.roomId).toBe('A')
+  })
+
+  it('gives the face that covers the point when a side is cut in two', () => {
+    const doc = v2(nodes(), [wall('W1', 'N1', 'N2')], [
+      roomWithCycle('A', [face('W1', 'L', 0, 400, 'a0')], 1),
+      roomWithCycle('B', [face('W1', 'R', 0, 150, 'b0'), face('W1', 'R', 150, 400, 'b1')], 2),
+    ])
+    expect(wallFaceAt(doc, 'W1', 'R', { x: 80, y: -10 })?.wallStart).toBe('b0')
+    expect(wallFaceAt(doc, 'W1', 'R', { x: 300, y: -10 })?.wallStart).toBe('b1')
+  })
+
+  it('gives null on a side with no room (a single wall, or a facade)', () => {
+    const doc = v2(nodes(), [{ ...wall('W1', 'N1', 'N2'), standalone: true }], [])
+    expect(wallFaceAt(doc, 'W1', 'L', { x: 200, y: 20 })).toBeNull()
+    expect(wallFaceAt(doc, 'W1', 'R', { x: 200, y: -20 })).toBeNull()
+    // A wall that is not on the plan has no face either.
+    expect(wallFaceAt(doc, 'W9', 'L', { x: 200, y: 20 })).toBeNull()
+  })
+})
+
+describe('otherSide', () => {
+  it('swaps the two sides of a wall', () => {
+    expect(otherSide('L')).toBe('R')
+    expect(otherSide('R')).toBe('L')
   })
 })
 

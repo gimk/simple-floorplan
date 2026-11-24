@@ -5,12 +5,20 @@
 // The styles are the ones of the room walls: the type owns the fill, the renovation status and the
 // renovation view decide what is shown, the bearing highlight layer adds the light tone and the
 // diagonal stripes, and the selected wall (`Selection { kind: 'storedWall' }`) is outlined in
-// orange. This layer draws only: the hit areas of the walls are in `RoomsLayer`.
-import { useMemo } from 'react'
+// orange.
+//
+// HIT AREAS: this layer owns them for a v2 document. There is ONE hit area per STORED wall, taken
+// from the graph (the band plus a line on the centre line, so a thin wall is easy to hit). A wall
+// that no room uses (a single wall, or a wall left by a deleted room) has one too, so it can be
+// selected, dragged and deleted. A click selects the whole wall with the side of the half that was
+// clicked (`sideOfPoint`), so both sides are selectable at will. The per-room wall hit areas of
+// `RoomsLayer` are used by a v1 document only.
+import { useMemo, useState } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { useDoc, useUi } from '../../model/store'
 import type { StoredWall, Vec } from '../../model/types'
 import { wallAppearance } from '../renovation/logic'
+import { onStoredWallDouble, onStoredWallDown } from './interaction'
 import { polygonPath, polylinePath } from './wallOutline'
 import { wallJoinGeometry } from './wallJoins'
 
@@ -33,7 +41,11 @@ export function WallsLayer() {
   const selection = useUi((s) => s.selection)
   const layers = useUi((s) => s.layers)
   const renovationView = useUi((s) => s.renovationView)
-  const { px } = useViewport()
+  // The walls can be selected and dragged with the select tool, in edit mode only.
+  const interactive = useUi((s) => s.mode === 'edit' && s.tool === 'select')
+  const vp = useViewport()
+  const { px } = vp
+  const [hovered, setHovered] = useState<string | null>(null)
   const geometry = useMemo(() => wallJoinGeometry({ nodes, walls }), [nodes, walls])
   if (!v2 || !walls?.length) return null
 
@@ -72,8 +84,9 @@ export function WallsLayer() {
       )
     }
     const bearingHighlight = p.type === 'bearing' && layers.bearingHighlight
-    // The two faces of the band: start+ -> end+ and start- -> end- (see wallJoins.WallBand).
-    const faces = [[points[0], points[2]], [points[1], points[3]]]
+    // The two faces of the band: start+ -> end- (the + face) and start- -> end+ (the - face), see
+    // wallJoins.WallBand. The corners of the two ends label opposite physical sides.
+    const faces = [[points[0], points[3]], [points[1], points[2]]]
     return (
       <g>
         <path d={d} pointerEvents="none" className={bearingHighlight ? 'fill-slate-300 dark:fill-slate-600' : wallClass[p.type]} />
@@ -135,6 +148,40 @@ export function WallsLayer() {
           <path key={'sel' + b.wallId} d={polygonPath(b.points)} pointerEvents="none" strokeOpacity={0.9}
             data-selected-stored-wall={b.wallId} strokeWidth={px(2)}
             className="fill-orange-500/35 stroke-orange-500" />
+        )
+      })}
+
+      {/* The wall under the pointer: a light band, so the user sees what a click selects. */}
+      {interactive && hovered && hovered !== selected && geometry.bands.filter((b) => b.wallId === hovered).map((b) => (
+        <path key={'hover' + b.wallId} d={polygonPath(b.points)} pointerEvents="none" data-hover-stored-wall={b.wallId}
+          strokeWidth={px(1.5)} strokeOpacity={0.8} className="fill-orange-500/15 stroke-orange-500" />
+      ))}
+
+      {/* ONE hit area per STORED wall (docs/walls-plan.md, Walls in the interface): the band, plus a
+          transparent line of at least 10 px on the centre line, so a thin wall is easy to hit. It is
+          drawn above the room floors and under the handles of the tool overlay. The side of the
+          click is the half of the wall under the pointer. */}
+      {interactive && geometry.bands.map((b) => {
+        const wall = byId.get(b.wallId)
+        if (!wall) return null
+        if (!wallAppearance(propsOf(wall).type, propsOf(wall).status, renovationView).visible) return null
+        const a = nodes?.find((n) => n.id === wall.a)
+        const end = nodes?.find((n) => n.id === wall.b)
+        const thickness = propsOf(wall).thicknessCm
+        return (
+          <g key={'hit' + b.wallId} data-wall-hit={b.wallId} data-wall-thickness={thickness}
+            data-wall-locked={wall.locked ? '' : undefined}
+            style={{ cursor: wall.locked ? 'not-allowed' : 'pointer' }}
+            onPointerDown={(ev) => onStoredWallDown(ev, vp, b.wallId)}
+            onDoubleClick={(ev) => onStoredWallDouble(ev, vp, b.wallId)}
+            onPointerEnter={() => setHovered(b.wallId)}
+            onPointerLeave={() => setHovered((h) => (h === b.wallId ? null : h))}>
+            <path d={polygonPath(b.points)} fill="transparent" stroke="none" />
+            {a && end && (
+              <line x1={a.x} y1={a.y} x2={end.x} y2={end.y} stroke="transparent" strokeLinecap="round"
+                strokeWidth={Math.max(thickness, px(10))} />
+            )}
+          </g>
         )
       })}
     </g>

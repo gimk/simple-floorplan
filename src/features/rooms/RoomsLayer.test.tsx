@@ -8,6 +8,7 @@ import type { PlanDoc, Room } from '../../model/types'
 import { useSidebar, type SidebarTab } from '../../shell/sidebar/store'
 import { RoomsLayer } from './RoomsLayer'
 import { measuredText } from '../../model/precision'
+import { convertToV2 } from '../../model/v2/convert'
 
 const BASE_LAYERS: Layers = {
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
@@ -216,5 +217,18 @@ describe('Measuring Mode on the canvas', () => {
     const html = setup({ mode: 'edit' })
     expect(html).toContain('data-wall-type')
     expect(html).not.toContain('data-measure-wall-hit')
+  })
+
+  it('draws no per-room wall hit area for a v2 document (one hit area per stored wall)', () => {
+    // A v1 room turned into a v2 document: the walls are stored walls, so their hit areas are in
+    // features/rooms/WallsLayer.tsx and a wall must not be selected by two systems.
+    setup({ mode: 'edit' })
+    applyState(useDoc, { doc: convertToV2(doc([cuisine()])).doc })
+    const html = renderToString(<Viewport><RoomsLayer /></Viewport>)
+    expect(html).not.toContain('data-wall-type')
+    expect(html).not.toContain('stroke="transparent"')
+    // The room floors and their labels are still there.
+    expect(html).toContain('data-room-id="r-cu"')
+    expect(html).toContain('Cuisine')
   })
 })
