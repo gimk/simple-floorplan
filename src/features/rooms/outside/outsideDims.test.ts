@@ -176,9 +176,16 @@ describe('groupRuns', () => {
       { id: 'B1', x: 350, y: 0 }, { id: 'B2', x: 650, y: 0 },
     ]
     const walls = [wall('W1', 'A1', 'A2'), wall('W2', 'B1', 'B2')]
-    const runs = outsideDims(doc(nodes, walls))
+    // A room under each wall (side L, y down), so the walls are facades and not single walls.
+    const rooms = [room('R1', [face('W1', 'L', 0, 300, 'A1')]), room('R2', [face('W2', 'L', 0, 300, 'B1')], 2)]
+    const runs = outsideDims(doc(nodes, walls, rooms))
     const top = runs.filter((r) => Math.abs(r.normal.y + 1) < 1e-9)
     expect(top).toHaveLength(2)
     expect(top.map((r) => Math.round(r.overallCm)).sort((a, b) => a - b)).toEqual([300, 300])
+  })
+
+  it('skips a wall that no room uses (a single wall is not a facade)', () => {
+    const nodes: StoredNode[] = [{ id: 'A1', x: 0, y: 0 }, { id: 'A2', x: 300, y: 0 }]
+    expect(outsideDims(doc(nodes, [wall('W1', 'A1', 'A2')]))).toEqual([])
   })
 })
