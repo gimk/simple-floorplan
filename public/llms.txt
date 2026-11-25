@@ -248,7 +248,10 @@ Simple Floorplan exposes a stateless MCP Streamable HTTP endpoint at `/api/mcp` 
 - `find_shared_walls` — Detect collinear shared walls and bearing status (`{ projectId, roomCodes? }`).
 - `run_commands` — Execute an atomic batch of commands (`{ projectId, commands, dryRun?, baseVersion? }`).
 - `set_measurement` — Record a verified laser measurement (`{ projectId, label, cm }`).
-- `place_element` — Place a door, window, opening, radiator, or cupboard on a wall.
+- `place_element` — Place a door, window, opening, or radiator on a wall.
+- `add_storage` — Add a BUILT-IN STORAGE (a closet) on the OUTER side of a wall of a room: a small room with its own side and back walls, and a front door in the host wall that opens into the room (`{ projectId, room, wall, offsetCm, widthCm, depthCm, sideCm?, backCm?, door? }`).
+- `update_storage` — Change the position, the dimensions and/or the front door of a built-in storage; a field that is left out keeps its value (`{ projectId, storage, offsetCm?, widthCm?, depthCm?, sideCm?, backCm?, door? }`).
+- `delete_storage` — Delete a built-in storage: its room, its own walls and its front door; the host wall is merged back into one wall (`{ projectId, storage }`).
 - `add_room` — Add a room by `rect` or `vertices`.
 - `slice_room` — Split a room along a line `(a, b)`.
 - `merge_rooms` — Merge two adjacent rooms (blocks bearing walls unless `allowBearingRemoval: true`; supports `dryRun`).
@@ -298,7 +301,7 @@ room EN "Entry" rect(0,0 180x240) ceiling=265 walk=1 [outdoor] [diag=0,3] [id=ro
   hole poly(60,60 90,60 90,90 60,90)     # cutouts
   door EN-1 at=40 w=90 h=204 single hinge=start swing=in [note="..."]
   window SE-1 at=80 w=160 h=140 sill=90 french
-  cupboard CU-3 at=10 w=100 depth=60 wall-cabinet
+  storage EN-1 from 100 width 60 depth 40 door single
   measure EN-1=181 EN-2=239 EN-D=255 EN-H=265   # or top-level: measure SE-2 = 412.5
   note "Electrical panel near EN-4"
   pin at(10,0) wall=EN-1 text="Meter" photos=key1,key2
@@ -311,7 +314,8 @@ pin at(10,10) room=EN text="..."
 ```
 
 - `rect(x,y WxH)` for axis-aligned rectangles, `poly(x,y x,y ...)` otherwise. A vertex may carry an explicit id: `poly(v1:0,0 v2:180,0 ...)` (emitted only when it differs from the deterministic default `v_<code>_<i>`).
-- Element kinds: `door | window | opening | cupboard | radiator | other`. Variants are bare words: doors `single|double|sliding|pocket`, windows `standard|french|fixed`, storage `wall-cabinet|recessed|wardrobe`.
+- Element kinds: `door | window | opening | radiator | other`. Variants are bare words: doors `single|double|sliding|pocket|bifold`, windows `standard|french|fixed`.
+- Built-in storage: one `storage` line in the room block of the parent room — `storage WALL from NUM width NUM depth NUM [side NUM] [back NUM] [door single|double|sliding|pocket|bifold|none]`. A storage is a small room on the OUTER side of that wall (a closet) with its own side and back walls, and a front door in the host wall that opens into the room. From start: distance from the room's inside corner to the near inside face of the storage; `width` is the inside clear width; `depth` is the inside clear depth from the outer face of the host wall; `side` and `back` are the side and back wall thicknesses (default 5 cm). A storage room is never written as a `room` and its front door is never written as a `door`.
 - Fields: `at=` offset from wall start, `w=` width, `h=` height, `sill=`, `depth=`, `hinge=start|end`, `swing=in|out`, `note=`, `id=`.
 - Round-trip is lossless for geometry and values: `dslToPlan(planToDsl(doc))` deep-equals `doc` on geometry/values (ids are regenerated deterministically when not explicit). Implemented in `src/core/dsl.ts` (`planToDsl`, `dslToPlan`, `DslParseError` with line numbers).
 

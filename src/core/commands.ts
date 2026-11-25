@@ -1115,24 +1115,47 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
 
     case 'delete_room': {
       const room = resolveRoom(doc, cmd)
+      // A built-in storage is not a room of its own (docs/storage-plan.md): deleting it is deleting
+      // the storage, so its front door, its own walls and the split of the host wall go with it and
+      // the parent room keeps its geometry (review finding 3).
+      if (room.storage) {
+        const next = deleteStorage(doc, room.id)
+        const kept = new Set(next.elements.map((e) => e.id))
+        return {
+          doc: next as PlanDocV1,
+          result: {
+            deletedRoomId: room.id,
+            deletedCode: room.code,
+            removedElements: doc.elements.filter((e) => !kept.has(e.id)).map((e) => e.id),
+          },
+          warnings,
+        }
+      }
+      // The built-in storages of this room go first, with their front doors and their own walls.
+      let base: PlanDocV1 = doc
+      for (const child of doc.rooms.filter((r) => r.storage?.parentRoomId === room.id)) {
+        base = deleteStorage(base, child.id) as PlanDocV1
+      }
       // A wall that another room also uses stays: a door on a shared wall is ONE element, so the
       // element stays on its wall and the sync rule gives it the room on the other side
       // (docs/walls-plan.md phase 7, review finding 8).
       const keptWalls = new Set<string>()
-      if (doc.schemaVersion === 2) {
-        for (const r of doc.rooms) {
+      if (base.schemaVersion === 2) {
+        for (const r of base.rooms) {
           if (r.id === room.id) continue
           for (const f of r.cycle ?? []) keptWalls.add(f.wallId)
         }
       }
       const goes = (e: WallElement) =>
-        e.roomId === room.id && !(doc.schemaVersion === 2 && e.wallId !== undefined && keptWalls.has(e.wallId))
-      const removedElements = doc.elements.filter(goes).map((e) => e.id)
+        e.roomId === room.id && !(base.schemaVersion === 2 && e.wallId !== undefined && keptWalls.has(e.wallId))
       const next: PlanDocV1 = {
-        ...doc,
-        rooms: doc.rooms.filter((r) => r.id !== room.id),
-        elements: doc.elements.filter((e) => !goes(e)),
+        ...base,
+        rooms: base.rooms.filter((r) => r.id !== room.id),
+        elements: base.elements.filter((e) => !goes(e)),
       }
+      // The elements that go: those of the room and the front doors of its storages (already gone).
+      const keptIds = new Set(next.elements.map((e) => e.id))
+      const removedElements = doc.elements.filter((e) => !keptIds.has(e.id)).map((e) => e.id)
       return {
         doc: next,
         result: { deletedRoomId: room.id, deletedCode: room.code, removedElements },

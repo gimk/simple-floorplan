@@ -2,6 +2,9 @@
 import { planPrecision, roundTo } from '../../model/precision'
 import type { PlanDoc } from '../../model/types'
 import type { GraphConflict } from '../../model/wallGraph'
+import { v2SyncRule } from '../../model/v2/syncRule'
+import { updateStorage } from '../storage/actions'
+import { readStorageParams, type StorageParams } from '../storage/geometry'
 import { solveGlobal, type GlobalSolved, type GlobalSurface, type OutOfSquare, type RoomAngles, type SurfaceMode } from './globalSolve'
 import { wallProps } from './walls'
 
@@ -20,6 +23,11 @@ export type GlobalReport = {
   conflicts?: { roomCodes: string[]; kind: GraphConflict['kind']; detail: string }[]
   /** Room corners that the fit did not keep at a right angle (Room angles = Free only). */
   outOfSquare?: OutOfSquare[]
+  /**
+   * Built-in storages that the solve could not put back on their host wall. The solved plan keeps
+   * them as they are (review finding 2).
+   */
+  storageWarnings?: string[]
 }
 
 export type GlobalApplyOptions = {
@@ -60,6 +68,17 @@ const fmt1 = (v: number) => v.toFixed(1).replace('.', ',')
  * found are written to the walls (both sides). Returns the same doc when nothing can be solved.
  */
 export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc: PlanDoc; report: GlobalReport; solved: GlobalSolved; thicknessChanges: ThicknessChange[] } {
+  // A built-in storage is a small room on the OUTER side of a wall of its parent room: it has no
+  // value of its own, so the fit may crush it (the host wall moves and its back wall stays), and the
+  // fit must not change its width, its depth or its position on the host wall
+  // (docs/storage-plan.md, review finding 2). Read its parameters before the solve and put it back
+  // on the solved host wall after it.
+  const storages = doc.rooms.filter((r) => r.storage)
+  const savedParams = new Map<string, StorageParams>()
+  for (const s of storages) {
+    const p = readStorageParams(doc, s)
+    if (p) savedParams.set(s.id, p)
+  }
   const solved = solveGlobal(doc, {
     keepLocked: opts.keepLocked ?? true,
     surfaceMode: opts.surfaceMode ?? 'off',
@@ -107,7 +126,30 @@ export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc:
     })
     return { ...r, walls, vertices: r.vertices.map((v, i) => ({ ...v, x: snap(pts[i].x), y: snap(pts[i].y) })) }
   })
-  return { doc: { ...doc, rooms }, report, solved, thicknessChanges }
+
+  // A v2 document keeps the polygons of its rooms as a view of the wall graph, so the solved
+  // polygons go into the graph first (the same rule as the store). The storage actions read the
+  // graph, and a graph that was not written yet would put the old polygons back.
+  let next: PlanDoc = storages.length ? v2SyncRule(doc, { ...doc, rooms }) : { ...doc, rooms }
+  // Put each built-in storage back on its solved host wall with the parameters it had before the
+  // solve. A storage that cannot be put back keeps its place and gets a warning.
+  const storageWarnings: string[] = []
+  for (const s of storages) {
+    const p = savedParams.get(s.id)
+    if (!p) {
+      storageWarnings.push(`Storage ${s.code}: its dimensions cannot be read, so it keeps its place`)
+      continue
+    }
+    const res = updateStorage(next, s.id, p)
+    if ('error' in res) storageWarnings.push(`Storage ${s.code}: ${res.error}, so it keeps its place`)
+    else next = res.doc
+  }
+  return {
+    doc: next,
+    report: storageWarnings.length ? { ...report, storageWarnings } : report,
+    solved,
+    thicknessChanges,
+  }
 }
 
 /** Graph conflicts with room codes instead of room ids, one per pair of rooms and kind. */
@@ -132,14 +174,17 @@ function pairConflicts(doc: PlanDoc, list: GraphConflict[]): NonNullable<GlobalR
 export function previewGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): GlobalPreview {
   const r = applyGlobal(doc, opts)
   const moves: CornerMove[] = []
-  r.doc.rooms.forEach((room, ri) => {
-    const before = doc.rooms[ri]
+  const beforeOf = new Map(doc.rooms.map((room) => [room.id, room]))
+  for (const room of r.doc.rooms) {
+    const before = beforeOf.get(room.id)
+    // A built-in storage follows its host wall: it is not a corner move of a room.
+    if (!before || before.storage) continue
     room.vertices.forEach((v, i) => {
       const dxCm = v.x - before.vertices[i].x, dyCm = v.y - before.vertices[i].y
       const distCm = Math.hypot(dxCm, dyCm)
       if (distCm > 1e-9) moves.push({ roomId: room.id, code: room.code, vertexIndex: i, dxCm, dyCm, distCm })
     })
-  })
+  }
   moves.sort((a, b) => b.distCm - a.distCm)
   return { moves, thicknessChanges: r.thicknessChanges, report: r.report }
 }
@@ -171,5 +216,6 @@ export function describeGlobal(r: GlobalReport): string {
     const what = c.kind === 'same-side-overlap' ? 'overlap' : 'touch without sharing one wall'
     lines.push(`Check: rooms ${c.roomCodes.join(' and ')} ${what} (${c.detail})`)
   }
+  for (const w of r.storageWarnings ?? []) lines.push(`Check: ${w}`)
   return lines.join('\n')
 }

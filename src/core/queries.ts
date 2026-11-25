@@ -152,13 +152,18 @@ export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSche
   let totalIndoorAreaM2 = 0
   let totalOutdoorAreaM2 = 0
 
-  // A built-in storage is shown inside its parent room, never as a room of its own.
+  // The area totals of the plan include the built-in storages: a storage is floor area of the
+  // apartment (docs/storage-plan.md, review finding 8). Only the room COUNT and the room list stay
+  // without them: a storage is shown inside its parent room, never as a room of its own.
+  for (const r of ordered) {
+    const areaM2 = round2(roomAreaM2(r))
+    if (r.outdoor) totalOutdoorAreaM2 += areaM2
+    else totalIndoorAreaM2 += areaM2
+  }
   const listed = ordered.filter((r) => !r.storage)
 
   const rooms = listed.map((r) => {
     const areaM2 = round2(roomAreaM2(r))
-    if (r.outdoor) totalOutdoorAreaM2 += areaM2
-    else totalIndoorAreaM2 += areaM2
     const rp = roomProgress(doc, r)
     const walls = roomWalls(r)
     const perimeterM = round2(walls.reduce((s, w) => s + w.length, 0) / 100)
@@ -219,7 +224,14 @@ export function queryUnmeasured(doc: PlanDoc, args?: z.infer<typeof UnmeasuredAr
   if ((args?.roomId || args?.roomCode) && !targetRoom) {
     throw new QueryError('ROOM_NOT_FOUND', `Room not found: ${args.roomCode ?? args.roomId}`)
   }
-  const ids = (targetRoom ? surveyIds(targetRoom, doc.apartment?.defaultCeilingCm) : allSurveyIds(doc)).filter((s) => !s.optional)
+  // The values of a built-in storage are not part of the survey of the plan: the progress counts the
+  // rooms only, so the list of the remaining values leaves the storages out (review finding 8). A
+  // storage that the caller names itself is still answered.
+  const storageRoomIds = new Set(doc.rooms.filter((r) => r.storage).map((r) => r.id))
+  const ids = (targetRoom
+    ? surveyIds(targetRoom, doc.apartment?.defaultCeilingCm)
+    : allSurveyIds(doc).filter((s) => !storageRoomIds.has(s.roomId)))
+    .filter((s) => !s.optional)
   const roomMap = new Map(doc.rooms.map((r) => [r.id, r]))
   const remaining = ids
     .filter((s) => doc.measurements?.[s.label] == null)
