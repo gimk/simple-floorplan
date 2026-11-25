@@ -301,7 +301,7 @@ describe('storage error cases', () => {
     expect('error' in addStorage(doc, 'R1', 'W1', { ...DEFAULT_PARAMS, offsetCm: 0 }, 'single')).toBe(false)
   })
 
-  it('rejects storage that overlaps another room', () => {
+  it('adds storage that overlaps another room with a warning', () => {
     // Add a second room right above W1 (y = -200..0)
     const base = makeV1Doc()
     const other: Room = {
@@ -320,7 +320,9 @@ describe('storage error cases', () => {
     }
     const doc: PlanDoc = { ...base, rooms: [...base.rooms, other] }
     const res = addStorage(doc, 'R1', 'v1', DEFAULT_PARAMS, 'single')
-    expect('error' in res).toBe(true)
+    expect('error' in res).toBe(false)
+    if ('error' in res) return
+    expect(res.warning).toBe('Storage overlaps another room')
   })
 
   it('rejects updateStorage on invalid new dimensions without mutating doc', () => {

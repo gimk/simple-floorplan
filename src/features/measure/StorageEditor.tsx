@@ -31,7 +31,7 @@ function StorageRow({ doc, parent, storage }: { doc: PlanDoc; parent: Room; stor
 
   const applyParams = (nextParams: StorageParams, nextDoor: StorageDoor = door) => {
     const res = useDoc.getState().updateStorage(storage.id, nextParams, nextDoor)
-    setError(res.error ?? null)
+    setError(res.error ?? (res.warning ? `Warning: ${res.warning}` : null))
   }
 
   const onWallChange = (newWallStart: string) => {
@@ -41,7 +41,7 @@ function StorageRow({ doc, parent, storage }: { doc: PlanDoc; parent: Room; stor
       return
     }
     useDoc.getState().update(() => res.doc)
-    setError(null)
+    setError(res.warning ? `Warning: ${res.warning}` : null)
   }
 
   return (
@@ -123,7 +123,7 @@ export function StorageEditor({ doc, room }: { doc: PlanDoc; room: Room }) {
       setAddError(res.error)
       return
     }
-    setAddError(null)
+    setAddError(res.warning ? `Warning: ${res.warning}` : null)
   }
 
   return (

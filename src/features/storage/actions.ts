@@ -45,6 +45,8 @@ function toClipRing(pts: Vec[]): [number, number][] {
   return pts.map((p) => [p.x, p.y])
 }
 
+const OVERLAP_WARNING = 'Storage overlaps another room'
+
 function overlapsAnyRoom(doc: PlanDoc, poly: Vec[], excludeRoomId?: string): boolean {
   const ring = toClipRing(poly)
   for (const r of doc.rooms) {
@@ -308,7 +310,7 @@ function addStorageImpl(
   params: StorageParams,
   door: StorageDoor,
   preserve?: PreserveMeta,
-): { doc: PlanDoc; storageRoomId: string } | { error: string } {
+): { doc: PlanDoc; storageRoomId: string; warning?: string } | { error: string } {
   const err = validateParams(params)
   if (err) return { error: err }
 
@@ -328,7 +330,7 @@ function addStorageV1(
   p: StorageParams,
   door: StorageDoor,
   preserve?: PreserveMeta,
-): { doc: PlanDoc; storageRoomId: string } | { error: string } {
+): { doc: PlanDoc; storageRoomId: string; warning?: string } | { error: string } {
   const w = wallByStart(parent, hostWall)
   if (!w) return { error: 'Host wall not found' }
 
@@ -354,9 +356,7 @@ function addStorageV1(
     p,
     metrics.cornerInset,
   )
-  if (overlapsAnyRoom(doc, [A, B, C, D])) {
-    return { error: 'Storage overlaps another room' }
-  }
+  const overlap = overlapsAnyRoom(doc, [A, B, C, D], parent.id)
 
   const storageRoomId = preserve?.id ?? uid('room')
   const code = preserve?.code ?? nextRoomCode(doc)
@@ -404,6 +404,7 @@ function addStorageV1(
       elements: [...doc.elements, frontDoor],
     },
     storageRoomId,
+    ...(overlap ? { warning: OVERLAP_WARNING } : {}),
   }
 }
 
@@ -414,7 +415,7 @@ function addStorageV2(
   p: StorageParams,
   door: StorageDoor,
   preserve?: PreserveMeta,
-): { doc: PlanDoc; storageRoomId: string } | { error: string } {
+): { doc: PlanDoc; storageRoomId: string; warning?: string } | { error: string } {
   const walls = doc.walls ?? []
   const nodes = doc.nodes ?? []
   const parentFaceIdx = parent.cycle?.findIndex((f) => f.wallId === hostWall) ?? -1
@@ -479,9 +480,7 @@ function addStorageV2(
     p,
     metrics.cornerInset,
   )
-  if (overlapsAnyRoom(doc, [A, B, C, D])) {
-    return { error: 'Storage overlaps another room' }
-  }
+  const overlap = overlapsAnyRoom(doc, [A, B, C, D], parent.id)
 
   const newId = makeIdGenerator(doc)
   const forward = roomFaceForward(parent, targetFace)
@@ -581,7 +580,7 @@ function addStorageV2(
   }
   const withFaces: PlanDoc = { ...draftDoc, walls: deriveWallFaces(draftDoc) }
   const materialized: PlanDoc = { ...withFaces, rooms: materializeRooms(withFaces) }
-  return { doc: syncElements(doc, materialized), storageRoomId }
+  return { doc: syncElements(doc, materialized), storageRoomId, ...(overlap ? { warning: OVERLAP_WARNING } : {}) }
 }
 
 /**
@@ -595,7 +594,7 @@ export function addStorage(
   params: StorageParams,
   door: StorageDoor,
   preserve?: PreserveMeta,
-): { doc: PlanDoc; storageRoomId: string } | { error: string } {
+): { doc: PlanDoc; storageRoomId: string; warning?: string } | { error: string } {
   return addStorageImpl(doc, parentRoomId, hostWall, params, door, preserve)
 }
 
@@ -769,7 +768,7 @@ export function updateStorage(
   storageRoomId: string,
   params: StorageParams,
   door?: StorageDoor,
-): { doc: PlanDoc } | { error: string } {
+): { doc: PlanDoc; warning?: string } | { error: string } {
   const err = validateParams(params)
   if (err) return { error: err }
 
@@ -821,5 +820,5 @@ export function updateStorage(
     walkOrder: storageRoom.walkOrder,
   })
   if ('error' in res) return res
-  return { doc: res.doc }
+  return { doc: res.doc, ...(res.warning ? { warning: res.warning } : {}) }
 }

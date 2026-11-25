@@ -29,7 +29,7 @@ function StorageInspector({ doc, room }: { doc: PlanDoc; room: Room }) {
 
   const applyParams = (nextParams: StorageParams, nextDoor: StorageDoor = door) => {
     const res = useDoc.getState().updateStorage(room.id, nextParams, nextDoor)
-    setError(res.error ?? null)
+    setError(res.error ?? (res.warning ? `Warning: ${res.warning}` : null))
   }
 
   const onWallChange = (newWallStart: string) => {
@@ -40,7 +40,7 @@ function StorageInspector({ doc, room }: { doc: PlanDoc; room: Room }) {
       return
     }
     useDoc.getState().update(() => res.doc)
-    setError(null)
+    setError(res.warning ? `Warning: ${res.warning}` : null)
   }
 
   const onDelete = () => {

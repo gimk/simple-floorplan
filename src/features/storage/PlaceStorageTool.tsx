@@ -51,6 +51,7 @@ export function PlaceStorageTool() {
       toast(res.error)
       return
     }
+    if (res.warning) toast(res.warning)
     useUi.getState().select({ kind: 'room', roomId: res.storageRoomId })
   }
 

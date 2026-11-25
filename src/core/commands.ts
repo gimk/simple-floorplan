@@ -1666,6 +1666,7 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
       const door: StorageDoor = cmd.door ?? 'single'
       const res = addStorage(doc, parent.id, storageHostWallId(doc, room, wall), params, door)
       if ('error' in res) throw new CommandError('STORAGE_INVALID', res.error)
+      if (res.warning) warnings.push({ code: 'STORAGE_OVERLAP', message: res.warning })
       return {
         doc: res.doc as PlanDocV1,
         result: { ...storageResult(res.doc, res.storageRoomId, label), door },
@@ -1688,6 +1689,7 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
       }
       const res = updateStorage(doc, storageRoom.id, params, cmd.door)
       if ('error' in res) throw new CommandError('STORAGE_INVALID', res.error)
+      if (res.warning) warnings.push({ code: 'STORAGE_OVERLAP', message: res.warning })
       return {
         doc: res.doc as PlanDocV1,
         result: { ...storageResult(res.doc, storageRoom.id), ...(cmd.door !== undefined ? { door: cmd.door } : {}) },

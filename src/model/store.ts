@@ -33,8 +33,8 @@ type DocState = {
    */
   updateSilent: (fn: (d: PlanDoc) => PlanDoc, opts?: { remote?: boolean }) => void
   replace: (d: PlanDoc) => void
-  addStorage: (parentRoomId: string, hostWall: string, params: StorageParams, door: StorageDoor) => { storageRoomId: string } | { error: string }
-  updateStorage: (storageRoomId: string, params: StorageParams, door?: StorageDoor) => { error?: string }
+  addStorage: (parentRoomId: string, hostWall: string, params: StorageParams, door: StorageDoor) => { storageRoomId: string; warning?: string } | { error: string }
+  updateStorage: (storageRoomId: string, params: StorageParams, door?: StorageDoor) => { error?: string; warning?: string }
   deleteStorage: (storageRoomId: string) => void
 }
 
@@ -90,13 +90,13 @@ export const useDoc = create<DocState>()(
         const res = addStorageDoc(get().doc, parentRoomId, hostWall, params, door)
         if ('error' in res) return res
         get().update(() => res.doc)
-        return { storageRoomId: res.storageRoomId }
+        return { storageRoomId: res.storageRoomId, warning: res.warning }
       },
       updateStorage: (storageRoomId, params, door) => {
         const res = updateStorageDoc(get().doc, storageRoomId, params, door)
         if ('error' in res) return res
         get().update(() => res.doc)
-        return {}
+        return { warning: res.warning }
       },
       deleteStorage: (storageRoomId) => {
         const next = deleteStorageDoc(get().doc, storageRoomId)
