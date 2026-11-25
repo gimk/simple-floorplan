@@ -39,6 +39,7 @@ import { innerWallLengths } from '../../model/geometry'
 import { buildWallGraph, type GraphConflict } from '../../model/wallGraph'
 import type { PlanDoc, Room, StoredNode, StoredWall, SurfaceReference, Vec, WallAlign } from '../../model/types'
 import { thicknessLabel } from '../../model/survey'
+import { outsideDims } from './outside/outsideDims'
 import { outsideFaceSide, parseWallValueLabel, wallEnds, wallValueLabel, type RoomWallRef } from '../../model/wallValues'
 import { sourceSigmaCm } from '../../model/measureSource'
 import { SOURCE_LABELS } from '../apartment/logic'
@@ -216,6 +217,9 @@ export type GlobalSolved = {
   /** Rooms that overlap or nearly touch, found by the wall graph. */
   conflicts: GraphConflict[]
 }
+
+/** How the outside face of a stored wall ends at a node, in the row W*-E. */
+type EndMode = 'far' | 'near' | 'centre'
 
 /** Unknowns of one wall group. */
 type GroupVar = {
@@ -587,7 +591,8 @@ function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
   // W12-C: the length between the CENTRE lines of the walls at its two ends (the crossing of the
   //        centre line of this wall with the centre line of each end wall).
   // W12-E: the length between the OUTSIDE faces: the crossing of the outside face of this wall with
-  //        the face of each end wall that looks away from it (the outside corner of the plan).
+  //        the face of each end wall that the outside face meets: the face away from this wall at an
+  //        outside corner, the NEAR face at an inside corner and at a T junction (outside rows).
   // In any direction these are distances between two crossings, so a facade value finds the
   // thickness of an exterior wall that no loop crosses, also for a wall at an angle.
   // A centre value read on a plan has no source more often than not: no source counts as 'plan'.
@@ -607,6 +612,22 @@ function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
     const e = edgeOf[ref.roomIndex]?.[ref.index]
     if (!e || e.group < 0) return null
     return { g: e.group, theta: groupVars[e.group].drawnTheta }
+  }
+  /** Group of the room wall drawn on a stored wall, and the drawn angle of its normal. */
+  const groupOfStoredWall = (w: StoredWall): { g: number; theta: number } | null => {
+    const ref = w.faces.find((f) => f.roomId !== undefined && f.wallStart !== undefined)
+    if (!ref || ref.roomId === undefined) return null
+    const ri = rooms.findIndex((r) => r.id === ref.roomId)
+    const k = ri < 0 ? -1 : rooms[ri].vertices.findIndex((v) => v.id === ref.wallStart)
+    const e = k < 0 ? undefined : edgeOf[ri]?.[k]
+    return e && e.group >= 0 ? { g: e.group, theta: groupVars[e.group].drawnTheta } : null
+  }
+  // The outside rows of the plan, by label: the planned length of W*-E is the chain segment.
+  const plannedSegments = new Map<string, { a: Vec; b: Vec }>()
+  if (storedWalls.length) {
+    for (const run of outsideDims({ rooms, nodes: storedNodes, walls: storedWalls, measurements: doc.measurements })) {
+      for (const seg of run.segments) if (seg.label) plannedSegments.set(seg.label, { a: seg.a, b: seg.b })
+    }
   }
   for (const wall of storedWalls) {
     const na = nodeAt.get(wall.a), nb = nodeAt.get(wall.b)
@@ -655,21 +676,104 @@ function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
     /** The lines of this wall and of an end wall must cross, else there is no length to give. */
     const crosses = (g: { theta: number } | null) => !!g && Math.abs(Math.sin(g.theta - ownTheta)) > PARALLEL_SIN
     /**
+     * The end of the outside row of the plan (facadePlannedLengths: one source): the wall and the
+     * face (or centre line) that the end point lies on, so the row of the solver uses the same
+     * geometry as the row on the plan. null when the wall has no row, or no wall with a room wall
+     * holds the end point.
+     */
+    const plannedEnd = (endIndex: 0 | 1): { g: number; s: -1 | 0 | 1 } | null => {
+      const seg = plannedSegments.get(outsideLabel)
+      if (!seg) return null
+      const pa = ux * seg.a.x + uy * seg.a.y <= ux * seg.b.x + uy * seg.b.y ? seg.a : seg.b
+      const pb = pa === seg.a ? seg.b : seg.a
+      const pt = endIndex === 0 ? pa : pb
+      let best: { g: number; s: -1 | 0 | 1; gap: number } | null = null
+      for (const w of storedWalls) {
+        if (w.id === wall.id) continue
+        const wa = nodeAt.get(w.a), wb = nodeAt.get(w.b)
+        if (!wa || !wb) continue
+        const wl = Math.hypot(wb.x - wa.x, wb.y - wa.y)
+        if (wl < 1) continue
+        const wd = { x: (wb.x - wa.x) / wl, y: (wb.y - wa.y) / wl }
+        if (Math.abs(wd.x * uy - wd.y * ux) <= PARALLEL_SIN) continue
+        const gw = groupOfStoredWall(w)
+        if (!gw) continue
+        const off = (pt.x - wa.x) * -wd.y + (pt.y - wa.y) * wd.x
+        const along = (pt.x - wa.x) * wd.x + (pt.y - wa.y) * wd.y
+        const gap = Math.max(-along, along - wl, 0)
+        if (gap > w.thicknessCm) continue
+        const half = w.thicknessCm / 2
+        const kind = Math.abs(off) <= 0.5 ? 0 : Math.abs(Math.abs(off) - half) <= 0.5 ? (off > 0 ? 1 : -1) : null
+        if (kind === null) continue
+        // The line of the group has its own normal: flip the face when the normals are opposed.
+        const gn = exactNormal(gw.theta)
+        const flip = gn.nx * -wd.y + gn.ny * wd.x >= 0 ? 1 : -1
+        const spec = { g: gw.g, s: (kind * flip) as -1 | 0 | 1, gap }
+        if (!best || gap < best.gap) best = spec
+      }
+      return best
+    }
+    /**
      * Length between the two crossings with the end walls, along the centre line of this wall, or
-     * along its outside face. The face of an end wall that is used is the one away from this wall:
-     * that is the outside corner of the plan.
+     * along its outside face. The face of an end wall that is used: the one away from this wall at
+     * an outside corner, the near one at an inside corner or a T junction.
      */
     const lengthRow = (outside: boolean): ((c: Ctx) => D) | undefined => {
       if (!own || !gA || !gB || !crosses(gA) || !crosses(gB)) return undefined
       const og = own.g
       const ownLine = (c: Ctx): D => (outside ? faceOffset(c.d[og], c.t[og], outsideSign) : c.d[og])
-      const endLine = (c: Ctx, g: number, sgn: 1 | -1): D =>
-        outside ? sub(c.d[g], scale(c.t[g], sgn / 2)) : c.d[g]
-      const point = (c: Ctx, g: number, sgn: 1 | -1): { x: D; y: D } =>
-        crossLines(c, false, -1, og, ownLine(c), g, endLine(c, g, sgn))
+      // The face of the end wall that the outside face of this wall meets, as the outside rows
+      // (outsideDims) do: the far face at an outside corner, the NEAR face at an inside corner (the
+      // end wall leaves the node on the outside side of this wall) or when a wall passes through the
+      // node (T junction), and the CENTRE line of the end wall when the outside face goes on in line
+      // past the node (the chain of the row is cut there).
+      // `s` is the face of the end wall group: its line is d + s * t / 2 (s = 0: the centre line).
+      const endLine = (c: Ctx, g: number, s: -1 | 0 | 1): D =>
+        outside && s !== 0 ? add(c.d[g], scale(c.t[g], s / 2)) : c.d[g]
+      const point = (c: Ctx, g: number, s: -1 | 0 | 1): { x: D; y: D } =>
+        crossLines(c, false, -1, og, ownLine(c), g, endLine(c, g, s))
+      const outsideDir = side === 'L' ? 1 : -1
+      const modeAt = (ref: RoomWallRef | null, nodeId: string): EndMode => {
+        const at = nodeAt.get(nodeId)
+        if (!at) return 'far'
+        let near = !!ref && (Math.abs(ref.farOffsetCm) <= 0.5 || ref.farOffsetCm * outsideDir > 0)
+        for (const w of storedWalls) {
+          if (w.id === wall.id) continue
+          const pa = nodeAt.get(w.a), pb = nodeAt.get(w.b)
+          if (!pa || !pb) continue
+          const len = Math.hypot(pb.x - pa.x, pb.y - pa.y)
+          if (len < 1) continue
+          const wd = { x: (pb.x - pa.x) / len, y: (pb.y - pa.y) / len }
+          const along = (at.x - pa.x) * wd.x + (at.y - pa.y) * wd.y
+          const off = (at.x - pa.x) * -wd.y + (at.y - pa.y) * wd.x
+          if (Math.abs(off) > 1) continue
+          const parallel = Math.abs(wd.x * uy - wd.y * ux) <= PARALLEL_SIN
+          const isEnd = w.a === nodeId || w.b === nodeId
+          if (parallel) {
+            // A wall in line that goes on from this node with an outside face on the same side.
+            if (!isEnd) continue
+            const wl = { x: -wd.y, y: wd.x }
+            const ws = outsideFaceSide(w, len)
+            if (!ws) continue
+            const wn = ws === 'L' ? wl : { x: -wl.x, y: -wl.y }
+            const sameFace = wn.x * outsideNormal.x + wn.y * outsideNormal.y > 0.5
+              && Math.abs(w.thicknessCm - wall.thicknessCm) <= 1
+            const away = (w.a === nodeId ? wd.x : -wd.x) * (nodeId === wall.a ? -ux : ux)
+              + (w.a === nodeId ? wd.y : -wd.y) * (nodeId === wall.a ? -uy : uy)
+            if (sameFace && away > 0.5) return 'centre'
+          } else if (!isEnd && along > 1 && along < len - 1) {
+            near = true
+          }
+        }
+        return near ? 'near' : 'far'
+      }
+      const specOf = (g: { g: number }, sgn: 1 | -1, mode: EndMode): { g: number; s: -1 | 0 | 1 } =>
+        ({ g: g.g, s: mode === 'centre' ? 0 : mode === 'near' ? sgn : (-sgn as 1 | -1) })
+      const specA = (outside && plannedEnd(0)) || specOf(gA, sgnA, modeAt(ends.a, wall.a))
+      const specB = (outside && plannedEnd(1)) || specOf(gB, sgnB, modeAt(ends.b, wall.b))
       return (c: Ctx) => {
-        const a = point(c, gA.g, sgnA)
-        const b = point(c, gB.g, sgnB)
+        const a = point(c, specA.g, specA.s)
+        const b = point(c, specB.g, specB.s)
         return hypot(sub(b.x, a.x), sub(b.y, a.y))
       }
     }
