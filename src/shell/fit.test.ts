@@ -19,35 +19,35 @@ const screenBox = (b: typeof B, w: number, h: number, insets = FIT_INSETS) => {
 }
 
 describe('fitInsetView', () => {
-  it('keeps 112 px under the plan for the hint bar, and 16 px on the other sides', () => {
+  it('keeps 136 px under the plan for the hint bar, and 16 px on the other sides', () => {
     expect(FIT_PAD).toBe(16)
-    expect(FIT_BOTTOM_PAD).toBe(112)
-    // A tall plan: the height limits, 900 - 16 - 112 = 772 px of free box for 1600 cm.
+    expect(FIT_BOTTOM_PAD).toBe(136)
+    // A tall plan: the height limits, 900 - 16 - 136 = 748 px of free box for 1600 cm.
     const tall = { minX: 0, minY: 0, maxX: 1000, maxY: 1600 }
     const { v, left, right, top, bottom } = screenBox(tall, 1440, 900)
-    expect(v.zoom).toBeCloseTo(772 / 1600, 6)
-    expect(bottom).toBeCloseTo(112, 6)
+    expect(v.zoom).toBeCloseTo(748 / 1600, 6)
+    expect(bottom).toBeCloseTo(136, 6)
     expect(top).toBeCloseTo(16, 6)
     // The plan is narrower than the free box: centred, so each side gets more than 16 px.
     expect(left).toBeGreaterThan(16)
     expect(left).toBeCloseTo(right, 6)
   })
 
-  it('leaves the same 112 px under the plan when the width limits', () => {
+  it('leaves the same 136 px under the plan when the width limits', () => {
     // A wide plan: the width limits (1440 - 32 = 1408 px for 4000 cm).
     const b = { minX: 0, minY: 0, maxX: 4000, maxY: 500 }
     const { v, bottom, left, right } = screenBox(b, 1440, 900)
     expect(v.zoom).toBeCloseTo(1408 / 4000, 6)
     expect(left).toBeCloseTo(16, 6)
     expect(right).toBeCloseTo(16, 6)
-    // The plan is short: centred in the free height, so more than 112 px left under it.
-    expect(bottom).toBeGreaterThan(112)
+    // The plan is short: centred in the free height, so more than 136 px left under it.
+    expect(bottom).toBeGreaterThan(136)
   })
 
   it('never puts the bottom of the plan under the bottom bar', () => {
     for (const [w, h] of [[390, 844], [1440, 900], [768, 1000], [1920, 1080]]) {
       const { bottom, top, left, right } = screenBox(B, w, h)
-      expect(bottom).toBeGreaterThanOrEqual(112 - 1e-9)
+      expect(bottom).toBeGreaterThanOrEqual(136 - 1e-9)
       expect(top).toBeGreaterThanOrEqual(16 - 1e-9)
       expect(left).toBeGreaterThanOrEqual(16 - 1e-9)
       expect(right).toBeGreaterThanOrEqual(16 - 1e-9)

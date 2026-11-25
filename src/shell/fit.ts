@@ -11,7 +11,7 @@ import { clampZoom, docBounds, type Bounds, type View } from './viewMath'
 /** Margin around the plan, screen px (top, right and left). */
 export const FIT_PAD = 16
 /** Margin under the plan, screen px: the floating tool bar and the one-line hint bar sit there (V-5). */
-export const FIT_BOTTOM_PAD = 112
+export const FIT_BOTTOM_PAD = 136
 
 /** Screen margins of a fitted plan, px. */
 export type Insets = { top: number; right: number; bottom: number; left: number }
