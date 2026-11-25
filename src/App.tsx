@@ -1,5 +1,5 @@
 // App shell. OWNER: lead (integration). Feature agents: do not edit; ask for changes in your result file.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useStore } from 'zustand'
 import {
   Keyboard, MoreVertical, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Search,
@@ -34,7 +34,7 @@ import { toggleAllSnap } from './shell/commands'
 import { TOOLS } from './shell/tools'
 import { Sidebar } from './shell/sidebar/Sidebar'
 import { LayersPanel } from './features/layers'
-import { useLayersPanel } from './shell/layersPanel'
+import { LAYERS_DEFAULT_W, clampWidth, useLayersPanel } from './shell/layersPanel'
 import { parentSelection } from './shell/sidebar/trail'
 import { installBridge } from './shell/bridge'
 import { fitToDoc } from './shell/fit'
@@ -237,6 +237,25 @@ export default function App() {
   // #11: sidebar open by default on wide screens; an overlay drawer below 768 px.
   const layersOpen = useLayersPanel((s) => s.open)
   const setLayersOpen = useLayersPanel((s) => s.setOpen)
+  // Width of the Layers panel: dragged by its right edge, remembered (src/shell/layersPanel.ts).
+  const layersWidth = useLayersPanel((s) => s.width)
+  const setLayersWidth = useLayersPanel((s) => s.setWidth)
+  const layersDrag = useRef<{ x: number; width: number } | null>(null)
+  const onLayersHandleDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    layersDrag.current = { x: e.clientX, width: layersWidth }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+  }
+  const onLayersHandleMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = layersDrag.current
+    if (!d) return
+    setLayersWidth(clampWidth(d.width + (e.clientX - d.x)), false)
+  }
+  const onLayersHandleUp = () => {
+    if (!layersDrag.current) return
+    layersDrag.current = null
+    setLayersWidth(useLayersPanel.getState().width, true)
+  }
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768)
   const inspectorOpenTick = useUi((s) => s.inspectorOpenTick)
   useEffect(() => {
@@ -360,21 +379,38 @@ export default function App() {
             <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden="true" onClick={() => setLayersOpen(false)} />
           )}
           {!measureDesktop && (
-            <aside
-              className={`${layersOpen ? 'flex' : 'hidden'} w-[260px] shrink-0 flex-col gap-3 overflow-y-auto border-r border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:max-w-[85vw] max-md:shadow-2xl`}
-              aria-label="Layers panel"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">Layers</h2>
-                <button
-                  type="button" title="Hide layers panel ([)" aria-label="Collapse layers panel"
-                  className={btn} onClick={() => setLayersOpen(false)}
-                >
-                  <PanelLeftClose size={16} />
-                </button>
-              </div>
-              <LayersPanel />
-            </aside>
+            // The wrapper sizes the panel and carries the drag handle; on a phone it is a drawer,
+            // so it becomes transparent to the layout (contents) and the aside floats again.
+            <div className={`relative shrink-0 ${layersOpen ? 'max-md:contents' : 'hidden'}`} style={{ width: layersWidth }}>
+              <aside
+                className="flex h-full flex-col gap-3 overflow-y-auto border-r border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-[260px] max-md:max-w-[85vw] max-md:shadow-2xl"
+                aria-label="Layers panel"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold">Layers</h2>
+                  <button
+                    type="button" title="Hide layers panel ([)" aria-label="Collapse layers panel"
+                    className={btn} onClick={() => setLayersOpen(false)}
+                  >
+                    <PanelLeftClose size={16} />
+                  </button>
+                </div>
+                <LayersPanel />
+              </aside>
+              {/* Desktop only: 4 px handle on the right edge, double-click = default width. */}
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize layers panel"
+                title="Drag to resize, double-click to reset"
+                onPointerDown={onLayersHandleDown}
+                onPointerMove={onLayersHandleMove}
+                onPointerUp={onLayersHandleUp}
+                onPointerCancel={onLayersHandleUp}
+                onDoubleClick={() => setLayersWidth(LAYERS_DEFAULT_W)}
+                className="absolute inset-y-0 right-0 hidden w-1 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-sky-500/50 md:block"
+              />
+            </div>
           )}
           <main className="relative min-w-0 flex-1">
             <Viewport overlay={measureDesktop ? null : <ToolOverlay />}>

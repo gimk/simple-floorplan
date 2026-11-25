@@ -4,7 +4,7 @@
 // (`hoverLabel`). Delete / Backspace is NOT handled here: the canvas handlers listen on window and
 // act on the selection, so the same code deletes from a row.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Layers, Lock, TriangleAlert } from 'lucide-react'
+import { Check, ChevronDown, Layers, Lock, TriangleAlert } from 'lucide-react'
 import { selKey, selectedItems, toggleItem, type SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
@@ -27,15 +27,31 @@ type ListProps = {
   focusKey?: string | null
 }
 
+/** The short text of a row: only the length (or the area). The state is an icon, the rest is a tooltip. */
 function detailOf(n: LayerNode, units: LengthUnits): string {
-  const parts: string[] = []
-  if (n.type === 'room' && n.areaM2 !== undefined) parts.push(`${formatM2(n.areaM2)} m²`)
+  if (n.type === 'room' && n.areaM2 !== undefined) return `${formatM2(n.areaM2)} m²`
+  if (n.type === 'wall' && n.lengthCm !== undefined) return `${fmtLen(n.lengthCm, units)} ${unitSuffix(units)}`
+  if (n.type === 'element' && n.widthCm !== undefined) return `${fmtLen(n.widthCm, units)} ${unitSuffix(units)}`
+  return ''
+}
+
+const warningsText = (n: LayerNode): string => (n.warnings ?? []).map((w) => WARNING_TEXT[w]).join(' · ')
+
+/**
+ * The full information of a row, for the native tooltip: the row itself stays short, so a 260 px
+ * panel never cuts the label (UI review: rows showed "E..." instead of "R1-1").
+ */
+function titleOf(n: LayerNode, units: LengthUnits): string {
+  const parts = [n.label]
+  const detail = detailOf(n, units)
+  if (detail) parts.push(detail)
   if (n.type === 'wall') {
-    if (n.lengthCm !== undefined) parts.push(`${fmtLen(n.lengthCm, units)} ${unitSuffix(units)}`)
     parts.push(n.measured ? 'measured' : 'estimated')
     if (n.wallType) parts.push(WALL_TYPE_LABEL[n.wallType].toLowerCase())
   }
-  if (n.type === 'element' && n.widthCm !== undefined) parts.push(`${fmtLen(n.widthCm, units)} ${unitSuffix(units)}`)
+  if (n.locked) parts.push('locked')
+  const warn = warningsText(n)
+  if (warn) parts.push(warn)
   return parts.join(' · ')
 }
 
@@ -54,7 +70,7 @@ function Row({ n, depth, ...p }: ListProps & { n: LayerNode; depth: number }) {
         ref={ref}
         data-layer-key={n.key}
         className={`flex min-h-8 items-center gap-1 rounded-md border pr-1 text-sm ${isSel ? ROW_ON : ROW_OFF}`}
-        style={{ paddingLeft: depth * 12 }}
+        style={{ paddingLeft: depth * 8 }}
         onMouseEnter={() => n.hoverLabel && p.onHover?.(n.hoverLabel)}
         onMouseLeave={() => n.hoverLabel && p.onHover?.(null)}
       >
@@ -73,17 +89,20 @@ function Row({ n, depth, ...p }: ListProps & { n: LayerNode; depth: number }) {
         <button
           type="button"
           disabled={!n.sel && !n.children.length}
+          title={titleOf(n, p.units)}
           onClick={(e) => (n.sel ? p.onSelect(n.sel, e.shiftKey || e.metaKey || e.ctrlKey) : p.onToggle(n.key))}
           className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 text-left ${group ? 'text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400' : n.type === 'room' ? 'font-medium' : ''}`}
         >
-          <span className="truncate">{n.label}</span>
+          {/* The label never truncates: it is the one thing a row must always show. */}
+          <span className="shrink-0 whitespace-nowrap">{n.label}</span>
+          {n.measured && <Check size={12} aria-label="Measured" className="shrink-0 text-emerald-600 dark:text-emerald-400" />}
           {detail && <span className={`truncate ${MUTED}`}>{detail}</span>}
         </button>
         {n.locked && <Lock size={12} aria-label="Locked" className="shrink-0 text-slate-500 dark:text-slate-400" />}
         {n.warnings && n.warnings.length > 0 && (
           <span
-            title={n.warnings.map((w) => WARNING_TEXT[w]).join(' · ')}
-            aria-label={n.warnings.map((w) => WARNING_TEXT[w]).join(' · ')}
+            title={warningsText(n)}
+            aria-label={warningsText(n)}
             className="shrink-0 text-amber-600 dark:text-amber-400"
           >
             <TriangleAlert size={14} />
