@@ -15,7 +15,10 @@
 //   Delete wall   : the trash button of the header (one delete per card). It is refused while a
 //                   room uses the wall (a toast names the rooms).
 // The side the user clicked on the canvas is highlighted. All lengths are cm, one undo step per
-// edit of the wall itself; a value is not an undo step (same as Measuring Mode).
+// edit of the wall itself. A value typed in EDIT Mode is a direct edit of the plan: one undo step,
+// written on Enter or blur, and the re-solve after it folds into that same step (see
+// `writeWallValue`). A value typed in MEASURING Mode is a value only: written live, no undo step,
+// and it never moves the plan (docs/measurements-plan.md 4, docs/solver-plan.md).
 import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { Check, DoorOpen, Ruler, Trash2 } from 'lucide-react'
@@ -44,6 +47,71 @@ import { sideFaceKeys, storedWallView, type WallSideFace, type WallSideView } fr
 
 /** The title of the card: 'Wall W12'. */
 const wallTitle = (wallId: string) => `Wall ${wallId}`
+
+/** How a value was measured ('tape', 'laser', 'plan' or none), and what it measures. */
+type ValueSource = Parameters<typeof setMeasurement>[2]
+type ValueTarget = Parameters<typeof setMeasurement>[3]
+
+/**
+ * Write one value of a wall card: `W12-C` (centre), `W12-E` (outside face) or the face of a room
+ * (`EN-3`). Both wall cards go through this function, so one undo step is one step everywhere.
+ *
+ * In EDIT Mode a value typed on the plan is a direct edit of the plan: the write is ONE undo step,
+ * so Ctrl+Z removes the typed value only. With the solver On, the debounced re-solve after the
+ * write folds into that same step (`solveNowSilent`, src/features/solver/triggers.ts), so one undo
+ * does not also undo an older edit (for example turning the solver Off).
+ *
+ * In MEASURING Mode a value is a value only: no undo step, and it never moves the plan (Apply, or
+ * leaving the mode, moves it). The solver never runs in that mode.
+ */
+export function writeWallValue(label: string, cm: number | null, source?: ValueSource, target?: ValueTarget) {
+  setMeasurement(label, cm, source, target, { undo: useUi.getState().mode === 'edit' })
+}
+
+/**
+ * The value field of one face or outside span of the wall.
+ *   Edit Mode      : `NumberField`, so the value is written on Enter or blur. One undo step per
+ *                    typed value, not one per key press: a step in the middle of a number would be
+ *                    wrong (the same rule as the diagonal of RoomCard and DimEditor).
+ *   Measuring Mode : `NumField`, written live as the user types, with no undo step (as before).
+ */
+function WallValueField({ id, value, placeholder, ariaLabel, onWrite }: {
+  id: string
+  value: number | null
+  placeholder?: string
+  ariaLabel: string
+  onWrite: (cm: number | null) => void
+}) {
+  const editing = useUi((s) => s.mode) === 'edit'
+  if (!editing) {
+    return (
+      <NumField
+        id={id}
+        compact
+        value={value ?? undefined}
+        placeholder={placeholder}
+        ariaLabel={ariaLabel}
+        onValue={onWrite}
+      />
+    )
+  }
+  return (
+    <NumberField
+      id={id}
+      name={id}
+      unit="cm"
+      value={value}
+      min={1}
+      placeholder={placeholder}
+      ariaLabel={ariaLabel}
+      onCommit={(v) => {
+        if (v !== null && !(v > 0)) return false
+        onWrite(v)
+        return true
+      }}
+    />
+  )
+}
 
 /** Elements that sit on one stored wall, in order along the wall. */
 function wallElements(doc: Pick<PlanDoc, 'elements'>, wallId: string): ElementRow[] {
@@ -223,7 +291,7 @@ export function StoredWallCard({ doc, wallId, side, face }: {
             min={1}
             onCommit={(v) => {
               if (v !== null && !(v > 0)) return false
-              setMeasurement(centreLabel, v, 'plan', targetOfLabel(doc, centreLabel))
+              writeWallValue(centreLabel, v, 'plan', targetOfLabel(doc, centreLabel))
               return true
             }}
           />
@@ -384,13 +452,12 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
           {face.label}
         </FaceButton>
       </div>
-      <NumField
+      <WallValueField
         id={`stored-wall-${face.label}`}
-        compact
-        value={face.measuredCm ?? undefined}
+        value={face.measuredCm}
         placeholder={face.plannedCm != null ? fmtCm(face.plannedCm) : undefined}
         ariaLabel={`Measured ${face.label} (${face.code}, side ${active})`}
-        onValue={(n) => setMeasurement(face.label, n, measureSource, targetOfLabel(doc, face.label))}
+        onWrite={(n) => writeWallValue(face.label, n, measureSource, targetOfLabel(doc, face.label))}
       />
       {verified && solvedLine(face.label, face.measuredCm!, face.plannedCm)}
     </div>
@@ -422,13 +489,12 @@ function OutsideRow({ doc, face, view, measureSource, solvedLine, selected, onSe
       </div>
       {label && (
         <>
-          <NumField
+          <WallValueField
             id={`stored-wall-${label}`}
-            compact
-            value={value ?? undefined}
+            value={value}
             placeholder={view.facadePlannedCm != null ? fmtCm(view.facadePlannedCm) : undefined}
             ariaLabel={`Measured ${label} (outside face)`}
-            onValue={(n) => setMeasurement(label, n, measureSource, targetOfLabel(doc, label))}
+            onWrite={(n) => writeWallValue(label, n, measureSource, targetOfLabel(doc, label))}
           />
           {value != null && solvedLine(label, value, view.facadePlannedCm)}
         </>

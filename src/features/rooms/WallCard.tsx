@@ -10,7 +10,6 @@ import type { PlanDoc, Room, StoredWall, WallAlign, WallStatus, WallType } from 
 import {
   outsideFaceSide, storedWallOfRoomWall, wallCentreCm, wallOutsidePlanCm, wallValueLabel,
 } from '../../model/wallValues'
-import { setMeasurement } from '../measure/actions'
 import { solverChangeForLabel, wallSolvedSummary } from '../solver/lookup'
 import { EmptyHint, FieldRow, IconButton, NumberField, PanelSection, Segmented, SwitchRow } from '../../shell/panel'
 import { MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
@@ -31,7 +30,7 @@ import { ElementList } from './ElementList'
 import { wallElementRows } from './roomLists'
 import { wallProps } from './walls'
 import { isV2Doc } from '../../model/v2/targets'
-import { StoredWallCard } from './StoredWallCard'
+import { StoredWallCard, writeWallValue } from './StoredWallCard'
 import { sideOfRoomWall } from './wallSides'
 
 /** Survey label of a wall reference, e.g. "SE-2"; "?" when the room or the wall is gone. */
@@ -216,7 +215,7 @@ function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
           min={1}
           onCommit={(v) => {
             if (v !== null && !(v > 0)) return false
-            setMeasurement(centreLabel, v, 'plan')
+            writeWallValue(centreLabel, v, 'plan')
             return true
           }}
         />
@@ -239,7 +238,7 @@ function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
               min={1}
               onCommit={(v) => {
                 if (v !== null && !(v > 0)) return false
-                setMeasurement(outsideLabel, v, measureSource)
+                writeWallValue(outsideLabel, v, measureSource)
                 return true
               }}
             />
