@@ -249,6 +249,76 @@ describe('outsideDims', () => {
   })
 })
 
+describe('outsideDims at an inside corner', () => {
+  it('ends the two rows that meet at the inside corner of an L on the outer faces (walls 10 cm)', () => {
+    const runs = outsideDims(lShape())
+    // Inside corner P4 (300, 400): W3 comes from the right, W4 goes down. Both rows stop where the
+    // two outer faces meet: (305, 405). Convex end of W3 at P3: outer faces of W2 and W3 meet at (605, 405).
+    const w3 = runs.find((r) => r.key === 'W3:R')!
+    expect(w3.a).toEqual({ x: 605, y: 405 })
+    expect(w3.b).toEqual({ x: 305, y: 405 })
+    const w4 = runs.find((r) => r.key === 'W4:R')!
+    expect(w4.a).toEqual({ x: 305, y: 405 })
+    expect(w4.b).toEqual({ x: 305, y: 705 })
+    // Convex corners unchanged: W1 goes from (-5, -5) to (605, -5).
+    const w1 = runs.find((r) => r.key === 'W1:R')!
+    expect(w1.a).toEqual({ x: -5, y: -5 })
+    expect(w1.b).toEqual({ x: 605, y: -5 })
+    for (const run of runs) expect(sumOf(run)).toBeCloseTo(run.overallCm, 6)
+  })
+
+  it('does the same when the wall that is met passes through the node (T junction)', () => {
+    // H (0,0)-(600,0) has room R1 below it. V rises from the node T (300, 0) to U (300, -300) and
+    // has room R2 on its side L (x > 300), which also covers H from 300 to 600. The top of H left of V
+    // and the left of V are outside faces that meet at an inside corner on the centre line of H.
+    const nodes: StoredNode[] = [
+      { id: 'A', x: 0, y: 0 }, { id: 'B', x: 600, y: 0 }, { id: 'T', x: 300, y: 0 }, { id: 'U', x: 300, y: -300 },
+    ]
+    const walls = [wall('H', 'A', 'B'), wall('V', 'T', 'U')]
+    const rooms = [
+      room('R1', [face('H', 'L', 0, 600, 'c1')]),
+      room('R2', [face('V', 'L', 0, 300, 'c2'), face('H', 'R', 300, 600, 'c3')], 2),
+    ]
+    const runs = outsideDims(doc(nodes, walls, rooms))
+    // Row of the top of H: it stops on the outer face of V (x = 295), not on its centre (x = 300).
+    const h = runs.find((r) => r.key === 'H:R')!
+    expect(h.a).toEqual({ x: 0, y: -5 })
+    expect(h.b).toEqual({ x: 295, y: -5 })
+    // Row of the left of V: it starts on the outer face of H (y = -5), not on its centre (y = 0).
+    const v = runs.find((r) => r.key === 'V:R')!
+    expect(v.a).toEqual({ x: 295, y: -5 })
+    expect(v.b).toEqual({ x: 295, y: -300 })
+    for (const run of runs) expect(sumOf(run)).toBeCloseTo(run.overallCm, 6)
+  })
+
+  it('gives a facade value W12-E that equals the chain segment, also at an inside corner', () => {
+    const doc2 = convertToV2({
+      ...emptyDoc(),
+      rooms: [{
+        id: 'A', code: 'A', name: 'A',
+        vertices: [
+          { id: 'v0', x: 0, y: 0 }, { id: 'v1', x: 600, y: 0 }, { id: 'v2', x: 600, y: 400 },
+          { id: 'v3', x: 300, y: 400 }, { id: 'v4', x: 300, y: 700 }, { id: 'v5', x: 0, y: 700 },
+        ],
+        holes: [], walls: {}, walkOrder: 1,
+      }],
+    }).doc
+    const runs = outsideDims(doc2)
+    expect(runs).toHaveLength(6)
+    const lengths: number[] = []
+    for (const run of runs) {
+      const w = (doc2.walls ?? []).find((x) => run.key.startsWith(`${x.id}:`))!
+      expect(run.segments).toHaveLength(1)
+      const plan = wallOutsidePlanCm(doc2.rooms, doc2.nodes ?? [], w)!
+      expect(run.segments[0].label).toBe(`${w.id}-E`)
+      expect(run.segments[0].lengthCm).toBeCloseTo(plan, 6)
+      lengths.push(Math.round(plan))
+    }
+    // Two walls meet at the inside corner: 300 centre, 10 cm walls: 300 + 5 (convex) - 5 (inside).
+    expect(lengths.sort((a, b) => a - b)).toEqual([300, 300, 310, 410, 610, 710])
+  })
+})
+
 describe('groupRuns', () => {
   it('puts two collinear spans that touch end to end in one run', () => {
     const spans = outsideSpans(rectangle())

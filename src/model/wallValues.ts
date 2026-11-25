@@ -75,6 +75,11 @@ export type RoomWallRef = {
   thicknessCm: number
   /** |sin| of the angle between this wall and the stored wall: 1 when they are perpendicular. */
   sinToWall: number
+  /**
+   * Signed distance (cm) of the far end of this room wall from the centre line of the stored wall,
+   * positive on side L. 0 when the room wall passes through the end node (T junction): no side.
+   */
+  farOffsetCm: number
 }
 
 /** The room walls that continue the a end and the b end of a stored wall. */
@@ -126,8 +131,12 @@ export function wallEnds(rooms: Room[], nodes: StoredNode[], wall: StoredWall): 
       const sin = Math.abs(w.dir.x * d.y - w.dir.y * d.x)
       if (sin <= PARALLEL_SIN) return null
       if (projectOnSegment(end, w.start, w.end).distance > ON_WALL_TOL_CM) return null
+      const vs = v(w.start)
+      const ve = v(w.end)
+      // The room wall leaves the end node to one side, unless it passes through (both sides).
+      const farOffsetCm = vs * ve < 0 ? 0 : Math.abs(vs) > Math.abs(ve) ? vs : ve
       return {
-        roomId: room.id, roomIndex, wallStart: w.start.id, index,
+        roomId: room.id, roomIndex, wallStart: w.start.id, index, farOffsetCm,
         thicknessCm: room.walls[w.start.id]?.thicknessCm ?? DEFAULT_WALL_CM,
         sinToWall: sin,
       }
@@ -145,13 +154,22 @@ export function wallEnds(rooms: Room[], nodes: StoredNode[], wall: StoredWall): 
  * distance along this wall from its centre line to the outside face of the end wall. That distance
  * is half the end wall thickness divided by the sine of the angle between the two walls: half the
  * thickness for a right angle (the usual case), more for a wall that leans.
+ * At an inside (concave) corner that distance is taken off instead of added.
  * An end with no such wall adds nothing, and the solver skips a value on such a wall.
  */
 export function wallOutsidePlanCm(rooms: Room[], nodes: StoredNode[], wall: StoredWall): number | null {
   const centre = wallCentreCm(nodes, wall)
   if (centre === null) return null
   const ends = wallEnds(rooms, nodes, wall)
-  const reach = (r: RoomWallRef | null) => (r ? r.thicknessCm / 2 / r.sinToWall : 0)
+  // At an inside (concave) corner the end wall leaves towards the OUTSIDE side of this wall: the two
+  // outer faces meet short of the centre line end, so the reach is taken off, not added.
+  const side = outsideFaceSide(wall, centre)
+  const sign = side === 'L' ? 1 : -1
+  const reach = (r: RoomWallRef | null) => {
+    if (!r) return 0
+    const half = r.thicknessCm / 2 / r.sinToWall
+    return side && r.farOffsetCm * sign > ON_WALL_TOL_CM ? -half : half
+  }
   return centre + reach(ends.a) + reach(ends.b)
 }
 
