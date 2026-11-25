@@ -13,7 +13,7 @@
 import { addDocRule, addSettleRule, isSilentEdit, useDoc, useUi, type DocRule, type SettleRule } from '../../model/store'
 import { solveNow, solveNowSilent } from './actions'
 import { userEditedWalls } from './engine'
-import { isEditRuledDoc } from './rule'
+import { clearSolverDragStart, isEditRuledDoc, solverSettleRule } from './rule'
 
 export const SOLVER_DEBOUNCE_MS = 300
 
@@ -92,10 +92,10 @@ const triggerDocRule: DocRule = (prev, next) => {
  * remote updates, `replace()`, or undo/redo.
  */
 const triggerSettleRule: SettleRule = (doc) => {
-  sawLocal = true
   if (dragDirty) {
     dragDirty = false
-    if (doc.solver?.enabled && useUi.getState().mode === 'edit') {
+    if (doc.solver?.enabled && useUi.getState().mode === 'edit' && isEditRuledDoc(doc)) {
+      sawLocal = true
       scheduleDebouncedSolve()
     }
   }
@@ -108,6 +108,7 @@ export function installSolverTriggers() {
   installed = true
 
   addDocRule(triggerDocRule)
+  addSettleRule(solverSettleRule)
   addSettleRule(triggerSettleRule)
 
   useDoc.subscribe((s, prev) => {
@@ -127,6 +128,7 @@ export function installSolverTriggers() {
     }
     // External doc change (undo, redo, replace, remote): drop any stale pending solve.
     dragDirty = false
+    clearSolverDragStart()
     cancelPendingSolve()
   })
 
@@ -135,6 +137,7 @@ export function installSolverTriggers() {
     if (s.mode === 'measure' && prev.mode !== 'measure') {
       cancelPendingSolve()
       dragDirty = false
+      clearSolverDragStart()
       return
     }
 
@@ -164,6 +167,7 @@ export function installSolverTriggers() {
 export function _resetSolverTriggersForTest() {
   cancelPendingSolve()
   dragDirty = false
+  clearSolverDragStart()
   precisionDirty = false
   sawLocal = false
 }

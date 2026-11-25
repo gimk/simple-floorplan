@@ -924,6 +924,7 @@ function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
   // ---- holds (stored wall ids kept at their base position and/or thickness) ----
   // Very strong priors (not measurement rows, so rmsCm and residuals stay clean) keep a held
   // wall's centre line (offset + angle) and/or thickness at its drawn value.
+  // Walls in line share one group, so a hold on one holds the group.
   const HOLD_POS_SIGMA_CM = 0.002
   const HOLD_ANGLE_SIGMA_RAD = 0.005 * DEG
   const HOLD_THICK_SIGMA_CM = 0.002

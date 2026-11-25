@@ -4,6 +4,8 @@ import { emptyDoc } from '../../model/store'
 import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../model/types'
 import { ensureV2 } from '../../model/v2/ensure'
 import { materializeRooms } from '../../model/v2/materialize'
+import { addStorage } from '../storage/actions'
+import { readStorageParams, storageHostWall } from '../storage/geometry'
 import { restoreChange, revokeChange, solverOff, solverOn, userEditedWalls } from './engine'
 import { solverEditRule } from './rule'
 
@@ -219,5 +221,152 @@ describe('solver engine', () => {
 
     const snapParsed = SnapshotPutBodySchema.parse({ ...solved, baseVersion: 3 })
     expect(snapParsed.solver).toEqual(solved.solver)
+  })
+
+  it('preserves built-in storages on solverOn/solverOff and keeps solverOn idempotent', () => {
+    const roomDoc = makeSingleRoomV2()
+    const added = addStorage(
+      roomDoc,
+      'R1',
+      'W1',
+      { offsetCm: 50, widthCm: 120, depthCm: 60, sideCm: 5, backCm: 5 },
+      'single',
+    )
+    expect('error' in added).toBe(false)
+    if ('error' in added) return
+    // After splitting W1 into 3 faces, the right and left vertical walls are KI-4 and KI-6.
+    const base: PlanDoc = { ...added.doc, measurements: meas({ 'KI-4': 320, 'KI-6': 320 }) }
+    const baseStorage = base.rooms.find((r) => r.storage)!
+    const baseParams = readStorageParams(base, baseStorage)!
+    const baseNodeIds = base.nodes!.map((n) => n.id)
+    const baseWallIds = base.walls!.map((w) => w.id)
+
+    const { doc: solved } = solverOn(base, { now: FIXED_NOW })
+    // Host wall moved north so the storage actually had to follow it.
+    expect(solved.nodes!.find((n) => n.id === 'N1')!.y).not.toBeCloseTo(0, 1)
+    // Node and wall ids stay stable (moved in place, not deleted + recreated).
+    expect(solved.nodes!.map((n) => n.id)).toEqual(baseNodeIds)
+    expect(solved.walls!.map((w) => w.id)).toEqual(baseWallIds)
+    const solvedStorage = solved.rooms.find((r) => r.storage)!
+    expect(storageHostWall(solved, solvedStorage)).not.toBeNull()
+    const solvedParams = readStorageParams(solved, solvedStorage)!
+    expect(solvedParams.widthCm).toBeCloseTo(baseParams.widthCm, 1)
+    expect(solvedParams.depthCm).toBeCloseTo(baseParams.depthCm, 1)
+    expect(solvedParams.offsetCm).toBeCloseTo(baseParams.offsetCm, 1)
+
+    // solverOff restores exact base geometry, storages included.
+    const restored = solverOff(solved)
+    expect(restored.nodes).toEqual(base.nodes)
+    expect(restored.walls).toEqual(base.walls)
+    expect(restored.rooms).toEqual(base.rooms)
+    expect(readStorageParams(restored, restored.rooms.find((r) => r.storage)!)).toEqual(baseParams)
+
+    // solverOn twice is idempotent.
+    const { doc: solvedAgain } = solverOn(solved, { now: FIXED_NOW })
+    expect(solvedAgain.nodes).toEqual(solved.nodes)
+    expect(solvedAgain.walls).toEqual(solved.walls)
+    expect(solvedAgain.solver).toEqual(solved.solver)
+  })
+
+  it('moves T-junction interior nodes with their host wall and restores them on solverOff', () => {
+    const roomDoc = makeSingleRoomV2({ 'KI-2': 320, 'KI-4': 320 })
+    const base: PlanDoc = {
+      ...roomDoc,
+      nodes: [
+        ...roomDoc.nodes!,
+        { id: 'Nt', x: 200, y: 0 },
+        { id: 'Ne', x: 200, y: -150 },
+      ],
+      walls: [
+        ...roomDoc.walls!,
+        { id: 'Ws', a: 'Nt', b: 'Ne', faces: [], type: 'partition', thicknessCm: 10, standalone: true },
+      ],
+    }
+
+    const { doc: solved } = solverOn(base, { now: FIXED_NOW })
+    const n1 = solved.nodes!.find((n) => n.id === 'N1')!
+    const n2 = solved.nodes!.find((n) => n.id === 'N2')!
+    const nt = solved.nodes!.find((n) => n.id === 'Nt')!
+    expect(n1.y).not.toBeCloseTo(0, 1)
+    expect(nt.y).toBeCloseTo((n1.y + n2.y) / 2, 1)
+    expect(nt.x).toBeCloseTo((n1.x + n2.x) / 2, 1)
+    expect(solved.solver!.baseNodes.Nt).toEqual({ x: 200, y: 0 })
+
+    const restored = solverOff(solved)
+    expect(restored.nodes!.find((n) => n.id === 'Nt')).toEqual({ id: 'Nt', x: 200, y: 0 })
+  })
+
+  it('matches only the single closest corner node within CORNER_NODE_TOL_CM', () => {
+    // Corner 1 at (400, 0) has wPrev = W1 (N1 -> N2 at 400,0) and wCur = W2 (N2b at 400.3,0 -> N3).
+    // Both N2 (dist 0) and N2b (dist 0.3 <= 0.5) are within CORNER_NODE_TOL_CM,
+    // but only the single closest node (N2) should receive the corner observation for corner 1.
+    const base = makeSingleRoomV2({ 'KI-1': 420, 'KI-3': 420 })
+    const withTinyGap: PlanDoc = {
+      ...base,
+      nodes: [...base.nodes!, { id: 'N2b', x: 400.3, y: 0 }],
+      walls: base.walls!.map((w) => (w.id === 'W2' ? { ...w, a: 'N2b' } : w)),
+    }
+    const { doc: solved } = solverOn(withTinyGap, { now: FIXED_NOW })
+    const n2 = solved.nodes!.find((n) => n.id === 'N2')!
+    const n2b = solved.nodes!.find((n) => n.id === 'N2b')!
+    expect(n2.x).not.toBeCloseTo(400, 1)
+    // N2b must not have been collapsed onto N2.
+    expect(n2b.x).toBeCloseTo(400.3, 1)
+  })
+
+  it('prunes changes, baseNodes, baseThickness, and revoked when walls or nodes are deleted', () => {
+    const base = makeLoopV2()
+    const { doc: solved } = solverOn(base, { now: FIXED_NOW })
+    const thickChange = solved.solver!.changes.find((c) => c.kind === 'thickness')!
+    const delWallId = thickChange.wallId
+    const delWall = solved.walls!.find((w) => w.id === delWallId)!
+    const delNodeId = delWall.a
+    const withRevoked: PlanDoc = {
+      ...solved,
+      solver: {
+        ...solved.solver!,
+        revoked: [{ kind: 'position', wallId: delWallId, by: 'revoke' }],
+      },
+    }
+    const afterDelete: PlanDoc = {
+      ...withRevoked,
+      nodes: withRevoked.nodes!.filter((n) => n.id !== delNodeId),
+      walls: withRevoked.walls!.filter((w) => w.id !== delWallId),
+    }
+
+    const ruled = solverEditRule(withRevoked, afterDelete)
+    expect(ruled.solver!.changes.some((c) => c.wallId === delWallId)).toBe(false)
+    expect(delWallId in ruled.solver!.baseThickness).toBe(false)
+    expect(delNodeId in ruled.solver!.baseNodes).toBe(false)
+    expect(ruled.solver!.revoked.some((h) => h.wallId === delWallId)).toBe(false)
+
+    // solverOff and solverOn guard against stale/missing ids too.
+    const offFromStale = solverOff(afterDelete)
+    expect(offFromStale.solver!.revoked.some((h) => h.wallId === delWallId)).toBe(false)
+
+    const { doc: onFromStale } = solverOn(afterDelete, { now: FIXED_NOW })
+    expect(onFromStale.solver!.revoked.some((h) => h.wallId === delWallId)).toBe(false)
+  })
+
+  it('holds only walls whose line moved perpendicularly, not walls that merely stretched', () => {
+    const base = makeSingleRoomV2({ 'KI-1': 405, 'KI-2': 320, 'KI-3': 405, 'KI-4': 320 })
+    const { doc: solved } = solverOn(base, { now: FIXED_NOW })
+    expect(solved.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W1')).toBe(true)
+    expect(solved.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W2')).toBe(true)
+
+    // Move N2 horizontally by +15 cm: W2's line moves, while horizontal W1 only stretches along its line.
+    const userMoved: PlanDoc = {
+      ...solved,
+      nodes: solved.nodes!.map((n) => (n.id === 'N2' ? { ...n, x: n.x + 15 } : n)),
+    }
+    const edited = userEditedWalls(solved, userMoved)
+    expect(edited.position).toContain('W2')
+    expect(edited.position).not.toContain('W1')
+
+    const ruled = solverEditRule(solved, userMoved)
+    expect(ruled.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W2')).toBe(false)
+    expect(ruled.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W1')).toBe(true)
+    expect(ruled.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W2', by: 'edit' })
+    expect(ruled.solver!.revoked.some((h) => h.wallId === 'W1')).toBe(false)
   })
 })

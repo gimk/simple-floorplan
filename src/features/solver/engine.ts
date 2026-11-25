@@ -6,20 +6,23 @@
 // `doc.solver`, and rebuilds room views via `applyGraphUpdate`. `solverOff` writes back
 // `baseNodes` and `baseThickness` and rebuilds the room views, restoring the exact base geometry.
 // A v1 document is converted once via `ensureV2` before solving.
+import { DEFAULT_WALL_CM, dot, mul, roomWalls, sub } from '../../model/geometry'
 import { planPrecision, roundTo } from '../../model/precision'
 import type { PlanDoc, SolverChange, SolverHold, SolverKey, StoredNode, StoredWall, Vec } from '../../model/types'
 import { applyGraphUpdate } from '../../model/v2/drag'
 import { ensureV2 } from '../../model/v2/ensure'
 import { applyGlobal, type GlobalApplyOptions, type GlobalReport } from '../rooms/applyGlobal'
 import type { GlobalHold } from '../rooms/globalSolve'
-import { updateStorage } from '../storage/actions'
-import { readStorageParams, type StorageParams } from '../storage/geometry'
+import { readStorageParams, storageCorners, wallRunMetrics, type StorageParams } from '../storage/geometry'
 
 /** Movement or thickness change threshold (cm) below which a node/wall counts as unchanged. */
 const MOVE_TOL_CM = 0.05
 
 /** Distance (cm) within which a room corner matches an endpoint node of its adjacent stored wall. */
 const CORNER_NODE_TOL_CM = 0.5
+
+/** Distance (cm) within which an interior T-junction node lies on a wall's base centre line. */
+const ON_LINE_TOL_CM = 1
 
 /** Noise threshold (cm) for detecting user edits between prev and next docs. */
 const EDIT_EPS_CM = 1e-6
@@ -50,8 +53,10 @@ export type EditedWalls = {
 export function solverOff(doc: PlanDoc): PlanDoc {
   const s = doc.solver
   if (!s) return doc
-  const hasBaseNodes = Object.keys(s.baseNodes).length > 0
-  const hasBaseThick = Object.keys(s.baseThickness).length > 0
+  const liveWallIds = doc.walls ? new Set(doc.walls.map((w) => w.id)) : null
+  const prunedRevoked = liveWallIds ? s.revoked.filter((h) => liveWallIds.has(h.wallId)) : s.revoked
+  const hasBaseNodes = doc.nodes ? doc.nodes.some((n) => n.id in s.baseNodes) : false
+  const hasBaseThick = doc.walls ? doc.walls.some((w) => w.id in s.baseThickness) : false
   let next = doc
   if ((hasBaseNodes || hasBaseThick) && doc.schemaVersion === 2 && doc.nodes && doc.walls) {
     const nodes: StoredNode[] = hasBaseNodes
@@ -69,7 +74,7 @@ export function solverOff(doc: PlanDoc): PlanDoc {
       ...(s.solvedAt !== undefined ? { solvedAt: s.solvedAt } : {}),
       ...(s.rmsCm !== undefined ? { rmsCm: s.rmsCm } : {}),
       changes: [],
-      revoked: s.revoked,
+      revoked: prunedRevoked,
       baseNodes: {},
       baseThickness: {},
     },
@@ -132,7 +137,8 @@ function changeSize(c: SolverChange): number {
 export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc; report: GlobalReport } {
   const offDoc = solverOff(doc)
   const base = offDoc.schemaVersion === 2 && offDoc.nodes && offDoc.walls ? offDoc : ensureV2(offDoc, { now: opts.now })
-  const revoked: SolverHold[] = base.solver?.revoked ?? []
+  const liveWallIds = new Set((base.walls ?? []).map((w) => w.id))
+  const revoked: SolverHold[] = (base.solver?.revoked ?? []).filter((h) => liveWallIds.has(h.wallId))
   const hold = holdsFrom(revoked)
   const heldThickSet = new Set(hold.thickness ?? [])
 
@@ -195,25 +201,72 @@ export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc
       const candidates = new Set<string>()
       if (wPrev) { candidates.add(wPrev.a); candidates.add(wPrev.b) }
       if (wCur) { candidates.add(wCur.a); candidates.add(wCur.b) }
+      let bestId: string | null = null
+      let bestDist = CORNER_NODE_TOL_CM
       for (const nid of candidates) {
         const bn = baseNodeMap.get(nid)
         if (!bn) continue
-        if (Math.hypot(bn.x - p0.x, bn.y - p0.y) <= CORNER_NODE_TOL_CM) {
-          const list = nodeObs.get(nid)
-          if (list) list.push(p1)
-          else nodeObs.set(nid, [p1])
+        const d = Math.hypot(bn.x - p0.x, bn.y - p0.y)
+        if (d <= bestDist) {
+          bestDist = d
+          bestId = nid
         }
+      }
+      if (bestId !== null) {
+        const list = nodeObs.get(bestId)
+        if (list) list.push(p1)
+        else nodeObs.set(bestId, [p1])
       }
     }
   }
 
-  const nextNodes: StoredNode[] = base.nodes.map((n) => {
+  let nextNodes: StoredNode[] = base.nodes.map((n) => {
     const obs = nodeObs.get(n.id)
     if (!obs || !obs.length) return n
     const mx = obs.reduce((s, p) => s + p.x, 0) / obs.length
     const my = obs.reduce((s, p) => s + p.y, 0) / obs.length
     return { ...n, x: snap(mx), y: snap(my) }
   })
+
+  // Project interior T-junction nodes onto their moved host wall at the same fractional parameter.
+  const solvedPosMap = new Map(nextNodes.map((n) => [n.id, { x: n.x, y: n.y }]))
+  const tJunctionBest = new Map<string, { perp: number; pos: Vec }>()
+  for (const w of base.walls) {
+    const a0 = baseNodeMap.get(w.a)
+    const b0 = baseNodeMap.get(w.b)
+    const a1 = solvedPosMap.get(w.a)
+    const b1 = solvedPosMap.get(w.b)
+    if (!a0 || !b0 || !a1 || !b1) continue
+    if (Math.hypot(a1.x - a0.x, a1.y - a0.y) <= 1e-9 && Math.hypot(b1.x - b0.x, b1.y - b0.y) <= 1e-9) continue
+    const len0 = Math.hypot(b0.x - a0.x, b0.y - a0.y)
+    const len1 = Math.hypot(b1.x - a1.x, b1.y - a1.y)
+    if (len0 < 1e-6 || len1 < 1e-6) continue
+    const dx0 = (b0.x - a0.x) / len0
+    const dy0 = (b0.y - a0.y) / len0
+    for (const n0 of base.nodes) {
+      if (n0.id === w.a || n0.id === w.b || nodeObs.has(n0.id)) continue
+      const rx = n0.x - a0.x
+      const ry = n0.y - a0.y
+      const perp = Math.abs(dx0 * ry - dy0 * rx)
+      if (perp > ON_LINE_TOL_CM) continue
+      const u = rx * dx0 + ry * dy0
+      if (u <= 1e-6 || u >= len0 - 1e-6) continue
+      const prevBest = tJunctionBest.get(n0.id)
+      if (!prevBest || perp < prevBest.perp) {
+        const t = u / len0
+        tJunctionBest.set(n0.id, {
+          perp,
+          pos: { x: snap(a1.x + (b1.x - a1.x) * t), y: snap(a1.y + (b1.y - a1.y) * t) },
+        })
+      }
+    }
+  }
+  if (tJunctionBest.size) {
+    nextNodes = nextNodes.map((n) => {
+      const hit = tJunctionBest.get(n.id)
+      return hit ? { ...n, x: hit.pos.x, y: hit.pos.y } : n
+    })
+  }
 
   // Map solved wall thicknesses from applied.doc.rooms back to stored wall ids.
   const appliedRoomMap = new Map(applied.doc.rooms.map((r) => [r.id, r]))
@@ -237,14 +290,133 @@ export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc
     return cm !== undefined ? { ...w, thicknessCm: cm } : w
   })
 
-  // Apply updated nodes and walls in place, then re-attach built-in storages if any.
-  let nextDoc = applyGraphUpdate(base, nextNodes, nextWalls)
-  for (const s of storages) {
-    const p = savedParams.get(s.id)
-    if (!p) continue
-    const res = updateStorage(nextDoc, s.id, p)
-    if (!('error' in res)) nextDoc = res.doc
+  // Move built-in storage nodes in place with their solved host wall so every node and wall id
+  // stays stable and baseNodes covers them for exact solverOff restoration.
+  const nonStorageWallIds = new Set<string>()
+  for (const r of base.rooms) {
+    if (r.storage) continue
+    for (const f of r.cycle ?? []) nonStorageWallIds.add(f.wallId)
   }
+  const storageOnlyWallIds = new Set<string>()
+  for (const s of storages) {
+    for (const f of s.cycle ?? []) {
+      if (!nonStorageWallIds.has(f.wallId)) storageOnlyWallIds.add(f.wallId)
+    }
+  }
+
+  if (storages.length) {
+    const prelimDoc = applyGraphUpdate(base, nextNodes, nextWalls)
+    const nextPosMap = new Map(nextNodes.map((n) => [n.id, { x: n.x, y: n.y }]))
+    const nextWallThickMap = new Map(nextWalls.map((w) => [w.id, w.thicknessCm]))
+    const nonStorageNodeIds = new Set<string>()
+    for (const w of base.walls) {
+      if (!nonStorageWallIds.has(w.id)) continue
+      nonStorageNodeIds.add(w.a)
+      nonStorageNodeIds.add(w.b)
+    }
+    const isHostSplitNode = (nid: string, hostRunWallIds: Set<string>) =>
+      base.walls!.every((w) => (w.a !== nid && w.b !== nid) || !nonStorageWallIds.has(w.id) || hostRunWallIds.has(w.id))
+
+    const storageNodePos = new Map<string, Vec>()
+    for (const s of storages) {
+      const p = savedParams.get(s.id)
+      const cycle = s.cycle
+      if (!p || !cycle || cycle.length < 4) continue
+      const parentId = s.storage?.parentRoomId
+      const parent = base.rooms.find((r) => r.id === parentId)
+      const solvedParent = prelimDoc.rooms.find((r) => r.id === parentId)
+      if (!parent?.cycle || !solvedParent?.cycle) continue
+
+      const frontWallId = cycle[0].wallId
+      const parentFaceIdx = parent.cycle.findIndex((f) => f.wallId === frontWallId)
+      if (parentFaceIdx < 0) continue
+      const baseMetrics = wallRunMetrics(parent, parentFaceIdx)
+      const solvedMetrics = wallRunMetrics(solvedParent, parentFaceIdx)
+      const solvedPw = roomWalls(solvedParent)[parentFaceIdx]
+      const frontWall = baseWallMap.get(frontWallId)
+      if (!baseMetrics || !solvedMetrics || !solvedPw || !frontWall) continue
+
+      const baseA = baseNodeMap.get(frontWall.a)
+      const baseB = baseNodeMap.get(frontWall.b)
+      if (!baseA || !baseB) continue
+      const dotA = dot(sub(baseA, baseMetrics.startCentre), baseMetrics.dir)
+      const dotB = dot(sub(baseB, baseMetrics.startCentre), baseMetrics.dir)
+      const nA = dotA <= dotB ? frontWall.a : frontWall.b
+      const nB = dotA <= dotB ? frontWall.b : frontWall.a
+
+      const wSide1 = baseWallMap.get(cycle[1].wallId)
+      const wSide2 = baseWallMap.get(cycle[cycle.length - 1].wallId)
+      const otherEnd = (w: StoredWall | undefined, nid: string) =>
+        !w ? null : w.a === nid ? w.b : w.b === nid ? w.a : null
+      const nC = otherEnd(wSide1, nB) ?? otherEnd(wSide2, nB)
+      const nD = otherEnd(wSide1, nA) ?? otherEnd(wSide2, nA)
+
+      const hostRunWallIds = new Set(baseMetrics.faceIndices.map((fi) => parent.cycle![fi].wallId))
+      const h1 = nextWallThickMap.get(frontWallId) ?? DEFAULT_WALL_CM
+      const { A, B } = storageCorners(
+        solvedMetrics.startCentre,
+        solvedMetrics.endCentre,
+        solvedPw.inward,
+        h1,
+        p,
+        solvedMetrics.cornerInset,
+      )
+      if (isHostSplitNode(nA, hostRunWallIds)) storageNodePos.set(nA, { x: snap(A.x), y: snap(A.y) })
+      if (isHostSplitNode(nB, hostRunWallIds)) storageNodePos.set(nB, { x: snap(B.x), y: snap(B.y) })
+
+      const posA = storageNodePos.get(nA) ?? nextPosMap.get(nA)
+      const posB = storageNodePos.get(nB) ?? nextPosMap.get(nB)
+      if (!posA || !posB) continue
+
+      const out = mul(solvedPw.inward, -1)
+      const depthOut = h1 / 2 + p.depthCm + p.backCm / 2
+      if (nC && !nonStorageNodeIds.has(nC)) {
+        storageNodePos.set(nC, { x: snap(posB.x + out.x * depthOut), y: snap(posB.y + out.y * depthOut) })
+      }
+      if (nD && !nonStorageNodeIds.has(nD)) {
+        storageNodePos.set(nD, { x: snap(posA.x + out.x * depthOut), y: snap(posA.y + out.y * depthOut) })
+      }
+
+      // Interpolate any intermediate back-wall nodes between nC and nD.
+      if (nC && nD && cycle.length > 4) {
+        const c0 = baseNodeMap.get(nC)
+        const d0 = baseNodeMap.get(nD)
+        const c1 = storageNodePos.get(nC) ?? nextPosMap.get(nC)
+        const d1 = storageNodePos.get(nD) ?? nextPosMap.get(nD)
+        if (c0 && d0 && c1 && d1) {
+          const backLen0 = Math.hypot(d0.x - c0.x, d0.y - c0.y)
+          if (backLen0 > 1e-6) {
+            const bdx = (d0.x - c0.x) / backLen0
+            const bdy = (d0.y - c0.y) / backLen0
+            for (const bf of cycle.slice(2, -1)) {
+              const bw = baseWallMap.get(bf.wallId)
+              if (!bw) continue
+              for (const nid of [bw.a, bw.b]) {
+                if (nid === nC || nid === nD || nonStorageNodeIds.has(nid)) continue
+                const bn = baseNodeMap.get(nid)
+                if (!bn) continue
+                const frac = Math.min(Math.max(((bn.x - c0.x) * bdx + (bn.y - c0.y) * bdy) / backLen0, 0), 1)
+                storageNodePos.set(nid, {
+                  x: snap(c1.x + (d1.x - c1.x) * frac),
+                  y: snap(c1.y + (d1.y - c1.y) * frac),
+                })
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (storageNodePos.size) {
+      nextNodes = nextNodes.map((n) => {
+        const p = storageNodePos.get(n.id)
+        return p ? { ...n, x: p.x, y: p.y } : n
+      })
+    }
+  }
+
+  // Apply updated nodes and walls in place (keeping all ids stable).
+  const nextDoc = applyGraphUpdate(base, nextNodes, nextWalls)
 
   // Diff base vs solved to record baseNodes, baseThickness, and SolverChange list.
   const nextNodeMap = new Map((nextDoc.nodes ?? []).map((n) => [n.id, n]))
@@ -273,6 +445,7 @@ export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc
 
   const changes: SolverChange[] = []
   for (const w0 of base.walls) {
+    if (storageOnlyWallIds.has(w0.id)) continue
     const label = wallLabel(base, w0.id)
     const a0 = baseNodeMap.get(w0.a)
     const b0 = baseNodeMap.get(w0.b)
@@ -404,9 +577,29 @@ export function userEditedWalls(prev: PlanDoc, next: PlanDoc): EditedWalls {
   const posSet = new Set<string>()
   const thickSet = new Set<string>()
   const prevWalls = new Map((prev.walls ?? []).map((w) => [w.id, w]))
+  const nextNodes = new Map((next.nodes ?? []).map((n) => [n.id, n]))
   for (const w of next.walls ?? []) {
-    if (movedNodeSet.has(w.a) || movedNodeSet.has(w.b)) posSet.add(w.id)
     const pw = prevWalls.get(w.id)
+    if (movedNodeSet.has(w.a) || movedNodeSet.has(w.b)) {
+      const a0 = pw ? prevNodes.get(pw.a) : prevNodes.get(w.a)
+      const b0 = pw ? prevNodes.get(pw.b) : prevNodes.get(w.b)
+      const a1 = nextNodes.get(w.a)
+      const b1 = nextNodes.get(w.b)
+      if (a0 && b0 && a1 && b1) {
+        const len0 = Math.hypot(b0.x - a0.x, b0.y - a0.y)
+        if (len0 > 1e-6) {
+          const nx = -(b0.y - a0.y) / len0
+          const ny = (b0.x - a0.x) / len0
+          const pa = Math.abs((a1.x - a0.x) * nx + (a1.y - a0.y) * ny)
+          const pb = Math.abs((b1.x - b0.x) * nx + (b1.y - b0.y) * ny)
+          if (Math.max(pa, pb) > EDIT_EPS_CM) posSet.add(w.id)
+        } else {
+          posSet.add(w.id)
+        }
+      } else {
+        posSet.add(w.id)
+      }
+    }
     if (
       pw
       && pw.thicknessCm !== undefined
