@@ -40,6 +40,10 @@ export const RoomFaceSchema = z.object({
   cornerId: z.string().min(1),
 })
 
+export const RoomStorageSchema = z.object({
+  parentRoomId: z.string().min(1),
+})
+
 export const RoomSchema = z.object({
   id: z.string().min(1),
   code: z.string().min(1),
@@ -53,6 +57,7 @@ export const RoomSchema = z.object({
   outdoor: z.boolean().optional(),
   walkOrder: z.number().finite().default(1),
   diagonal: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
+  storage: RoomStorageSchema.optional(),
 })
 
 /**

@@ -4,6 +4,7 @@ import { area, dist, dot, norm, pointInPolygon, projectOnSegment, signedArea, su
 import { nextRoomCode } from '../../model/survey'
 import { uid, nowIso } from '../../model/store'
 import type { PlanDoc, Room, Vec, Vertex, WallElement, WallProps } from '../../model/types'
+import { deleteStorage } from '../storage/actions'
 
 const EPS = 0.05
 
@@ -96,7 +97,13 @@ export function insertVertex(doc: PlanDoc, roomId: string, wallStart: string, po
 }
 
 export function deleteRoom(doc: PlanDoc, roomId: string): PlanDoc {
-  return { ...doc, rooms: doc.rooms.filter((r) => r.id !== roomId), elements: doc.elements.filter((e) => e.roomId !== roomId) }
+  let next = doc
+  for (const r of doc.rooms) {
+    if (r.storage?.parentRoomId === roomId) {
+      next = deleteStorage(next, r.id)
+    }
+  }
+  return { ...next, rooms: next.rooms.filter((r) => r.id !== roomId), elements: next.elements.filter((e) => e.roomId !== roomId) }
 }
 
 /** Rename a room code and migrate survey data keyed by it. */

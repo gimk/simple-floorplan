@@ -6,6 +6,7 @@ import { ensureStoredGraph } from './graphRule'
 import { ensureV2 } from './v2/ensure'
 import { toggleItem, type SelItem } from './selection'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
+import { addStorage as addStorageDoc, deleteStorage as deleteStorageDoc, updateStorage as updateStorageDoc, type StorageDoor, type StorageParams } from '../features/storage/actions'
 
 // ---------- Document store (undoable) ----------
 // All plan data lives here. Mutate ONLY via `update(fn)` (immer-like draft is NOT used:
@@ -32,6 +33,9 @@ type DocState = {
    */
   updateSilent: (fn: (d: PlanDoc) => PlanDoc, opts?: { remote?: boolean }) => void
   replace: (d: PlanDoc) => void
+  addStorage: (parentRoomId: string, hostWall: string, params: StorageParams, door: StorageDoor) => { storageRoomId: string } | { error: string }
+  updateStorage: (storageRoomId: string, params: StorageParams, door?: StorageDoor) => { error?: string }
+  deleteStorage: (storageRoomId: string) => void
 }
 
 let silent = false
@@ -69,7 +73,7 @@ const local = (fn: (d: PlanDoc) => PlanDoc) => (d: PlanDoc) => {
 
 export const useDoc = create<DocState>()(
   temporal(
-    (set) => ({
+    (set, get) => ({
       doc: emptyDoc(),
       update: (fn) => set((s) => ({ doc: local(fn)(s.doc) })),
       updateSilent: (fn, opts) => {
@@ -82,6 +86,22 @@ export const useDoc = create<DocState>()(
       // its walls again) runs BEFORE this call, at every load point: hydrate, openDoc, the server
       // snapshot that connect adopts, the .sfp import and the demo apartment.
       replace: (d) => set({ doc: ensureStoredGraph(d) }),
+      addStorage: (parentRoomId, hostWall, params, door) => {
+        const res = addStorageDoc(get().doc, parentRoomId, hostWall, params, door)
+        if ('error' in res) return res
+        get().update(() => res.doc)
+        return { storageRoomId: res.storageRoomId }
+      },
+      updateStorage: (storageRoomId, params, door) => {
+        const res = updateStorageDoc(get().doc, storageRoomId, params, door)
+        if ('error' in res) return res
+        get().update(() => res.doc)
+        return {}
+      },
+      deleteStorage: (storageRoomId) => {
+        const next = deleteStorageDoc(get().doc, storageRoomId)
+        if (next !== get().doc) get().update(() => next)
+      },
     }),
     {
       partialize: (s) => ({ doc: s.doc }),

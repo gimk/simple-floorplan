@@ -27,6 +27,12 @@ export type WallProps = {
   align?: WallAlign
 }
 
+/** Built-in storage metadata when a room is a closet attached to a parent room (docs/storage-plan.md). */
+export type RoomStorage = {
+  /** The room that the storage opens into. */
+  parentRoomId: string
+}
+
 export type Room = {
   id: string
   /** Short survey code, e.g. "SE", "C1". Unique per project. */
@@ -50,6 +56,8 @@ export type Room = {
   walkOrder: number
   /** Index of the two vertices used for the survey diagonal, if any. */
   diagonal?: [number, number]
+  /** Present when this room is a built-in storage attached to a parent room. */
+  storage?: RoomStorage
 }
 
 export type ElementKind = 'door' | 'window' | 'opening' | 'radiator' | 'other'
