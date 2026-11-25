@@ -4,6 +4,7 @@ import type { ElementKind, MeasureSource, Mode, PlanDoc, Selection, ToolId, Wall
 import type { RenovationView } from '../features/renovation/logic'
 import { ensureStoredGraph } from './graphRule'
 import { ensureV2 } from './v2/ensure'
+import { repairGraph } from './v2/repair'
 import { toggleItem, type SelItem } from './selection'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
 import { addStorage as addStorageDoc, deleteStorage as deleteStorageDoc, updateStorage as updateStorageDoc, type StorageDoor, type StorageParams } from '../features/storage/actions'
@@ -124,7 +125,10 @@ export const endDrag = (start: PlanDoc) => {
   t.setState({ pastStates: [...t.getState().pastStates, { doc: start }].slice(-200), futureStates: [] })
   // The drag is one undo step from `start`; settle its result in that same step.
   const cur = useDoc.getState().doc
-  const settled = settle(cur)
+  // The end of a drag: points that now touch (within 1 cm) become one point, and walls that now
+  // overlap on one line become one run. A point in the middle of a straight run is the user's.
+  const cleaned = repairGraph(settle(cur), { inline: false }).doc
+  const settled = cleaned
   if (settled !== cur) { silent = true; useDoc.setState({ doc: settled }); silent = false }
 }
 

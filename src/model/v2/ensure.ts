@@ -24,6 +24,7 @@ import { ensureStoredGraph } from '../graphRule'
 import type { PlanDoc } from '../types'
 import { convertToV2 } from './convert'
 import { attachElements, materializeElements } from './elements'
+import { repairGraph } from './repair'
 import { attachTargets } from './targets'
 import { materializeDoc } from './syncRule'
 import { addStandaloneWall, applyRoomPolygon } from './write'
@@ -44,7 +45,7 @@ export function tracesToWalls(doc: PlanDoc): PlanDoc {
   const traces = doc.traces ?? []
   if (!traces.length) return doc
   let next = doc
-  for (const t of traces) next = addStandaloneWall(next, t.a, t.b, { type: t.type, thicknessCm: t.thicknessCm }).doc
+  for (const t of traces) next = addStandaloneWall(next, t.a, t.b, { type: t.type, thicknessCm: t.thicknessCm }, { splitHosts: false }).doc
   return { ...next, traces: [] }
 }
 
@@ -85,5 +86,18 @@ function keepV2(doc: PlanDoc): PlanDoc {
   }
   // Elements on walls (phase 7): an element saved with the view only gets its wall, and every view is
   // calculated again, so an element follows the wall after any change of the graph.
-  return materializeElements(attachElements(attachTargets(next)))
+  const loaded = materializeElements(attachElements(attachTargets(next)))
+  // The wall graph is cleaned as the document loads (duplicates, overlaps, points that touch): the
+  // load is not an undo step, so nothing can undo into the old state. The loader that shows
+  // the result to the user is told through `setRepairNotifier`.
+  const fixed = repairGraph(loaded)
+  if (fixed.changes.length) repairNotifier?.(fixed.changes, fixed.removed)
+  return fixed.doc
+}
+
+type RepairNotifier = (changes: string[], removed: number) => void
+let repairNotifier: RepairNotifier | null = null
+/** Set the function that is called when a load changed the walls (the app shows a toast). */
+export function setRepairNotifier(fn: RepairNotifier | null): void {
+  repairNotifier = fn
 }

@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
 import { hydrate } from './model/store'
+import { setRepairNotifier } from './model/v2/ensure'
+import { toast } from './features/toast'
 import ShareViewer from './share/ShareViewer'
 import { installMeasureRules } from './features/rooms/measureRules'
 import { installOriginRule } from './features/rooms/originRule'
@@ -24,6 +26,8 @@ if (isShareLink) {
   // Measurements follow their wall, and a measured room follows its values (local edits only).
   installMeasureRules()
   installOriginRule()
+  // A load that cleaned duplicate walls or points tells the user once.
+  setRepairNotifier((_changes, removed) => toast(`Cleaned ${removed} duplicate walls/points`))
   // Load the saved doc from IndexedDB first, so the first paint is already correct.
   void hydrate().finally(() => {
     createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)

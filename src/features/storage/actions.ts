@@ -7,6 +7,7 @@ import {
 import { nextRoomCode } from '../../model/survey'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall, Vec, WallElement, WallProps } from '../../model/types'
 import { syncElements } from '../../model/v2/elements'
+import { layWall } from '../../model/v2/spans'
 import { deriveWallFaces, materializeRooms, roomFaceForward, roundStored, storedWallProps } from '../../model/v2/materialize'
 import {
   isV2Doc, storageCorners, storageDoorType, storageFrontDoor, storageHostWall, wallRunMetrics,
@@ -512,14 +513,24 @@ function addStorageV2(
   const right = resolveSideWall(hostSplit.state, nBId, snappedB, snappedC, true, p.sideCm, newWallSide, newId)
   const left = resolveSideWall(right.state, nAId, snappedA, snappedD, false, p.sideCm, newWallSide, newId)
 
-  const wBackId = newId('W')
-  const finalState: GraphState = {
-    ...left.state,
-    walls: [
-      ...left.state.walls,
-      { id: wBackId, a: right.freeNodeId, b: left.freeNodeId, faces: [], type: 'partition', thicknessCm: p.backCm },
-    ],
-  }
+  // The back wall goes through the same helper as every wall: a wall that already covers the span
+  // is reused (and cut where the back wall ends inside it), so no wall is stored twice.
+  const back = layWall(
+    { nodes: left.state.nodes, walls: left.state.walls, rooms: left.state.rooms, elements: left.state.elements },
+    right.freeNodeId,
+    left.freeNodeId,
+    { type: 'partition', thicknessCm: p.backCm },
+    false,
+    newId,
+  )
+  const finalState: GraphState = back.g
+  const backFaces: RoomFace[] = back.pieces.map((pc) => ({
+    wallId: pc.wallId,
+    side: pc.forward ? newWallSide : newWallSide === 'L' ? 'R' : 'L',
+    from: 0,
+    to: roundStored(pc.lengthCm),
+    cornerId: newId('v'),
+  }))
 
   // Build storage room cycle A-B-C-D
   const storageRoomId = preserve?.id ?? uid('room')
@@ -534,7 +545,7 @@ function addStorageV2(
       cornerId: newId('v'),
     },
     { wallId: right.wallId, side: right.side, from: 0, to: roundStored(dist(snappedB, right.freePos)), cornerId: newId('v') },
-    { wallId: wBackId, side: newWallSide, from: 0, to: roundStored(dist(right.freePos, left.freePos)), cornerId: newId('v') },
+    ...backFaces,
     { wallId: left.wallId, side: left.side, from: 0, to: roundStored(dist(left.freePos, snappedA)), cornerId: newId('v') },
   ]
   const storageRoom: Room = {

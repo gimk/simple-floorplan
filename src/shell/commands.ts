@@ -12,6 +12,7 @@ import {
 } from './view/layers'
 import { fitToDoc } from './fit'
 import { toast } from '../features/toast'
+import { repairGraph } from '../model/v2/repair'
 
 export type CommandGroup = 'Tools' | 'Edit' | 'View' | 'Layers' | 'Selection' | 'Export' | 'Help'
 
@@ -249,6 +250,19 @@ export function commandList(ctx: CommandCtx = {}): Command[] {
     shortcut: 'Ctrl/Cmd+Shift+Z',
     enabled: temporal.futureStates.length > 0,
     run: () => useDoc.temporal.getState().redo(),
+  })
+  out.push({
+    id: 'edit:clean-walls',
+    title: 'Clean up walls',
+    group: 'Edit',
+    keywords: 'repair duplicate overlap merge points',
+    enabled: true,
+    run: () => {
+      const res = repairGraph(useDoc.getState().doc)
+      if (!res.changes.length) { toast('Walls are already clean'); return }
+      useDoc.getState().update(() => res.doc)
+      toast(`Cleaned ${res.removed} duplicate walls/points`)
+    },
   })
   out.push({
     id: 'view:fit',

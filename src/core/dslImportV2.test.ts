@@ -92,7 +92,9 @@ describe('.sfp import into a v2 project (review finding 2)', () => {
     // (docs/walls-plan.md, "Walls in the interface": src/model/v2/ensure.ts, tracesToWalls). The
     // text does not hold the wall graph, so an import rebuilds it from the rooms of the text.
     expect(base.traces).toEqual([])
-    expect((base.walls ?? []).filter((w) => w.standalone).length).toBe(1)
+    // The trace lies on the wall of SE (0,0)-(400,0): that wall already holds it, so no second wall is stored.
+    expect((base.walls ?? []).filter((w) => w.standalone).length).toBe(0)
+    expect((base.walls ?? []).length).toBe(4)
     expect(imported.traces).toEqual([])
     expect(imported.apartment?.precisionCm).toBe(1)
   })

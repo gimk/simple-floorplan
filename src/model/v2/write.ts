@@ -37,19 +37,19 @@
 
 import { DEFAULT_WALL_CM, cross, dist, dot, pointInPolygon, projectOnSegment, signedArea, sub } from '../geometry'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall, Vec, Vertex, WallProps } from '../types'
+import { syncElements } from './elements'
 import { deriveWallFaces, materializeRooms, roundStored, storedWallProps } from './materialize'
+import { layWall, type GraphParts } from './spans'
 
 /** An edge lies on a wall when both of its ends are this close to the centre line (cm). */
 export const ON_WALL_TOL_CM = 1
 /** Two directions with a sine below this are one line (a wall at an angle too). */
 const PARALLEL_SIN = 0.02
-/** A point this close to an existing node takes that node (cm). */
-const NODE_MATCH_CM = 0.5
 /** A length or a distance below this is zero. */
 const EPS = 1e-6
 /** Properties of a wall that the room gives no properties for. */
 const DEFAULT_PROPS: WallProps = { type: 'partition', thicknessCm: DEFAULT_WALL_CM }
-/** An end of a new wall this close to an existing node takes that node (cm). */
+/** One tolerance of the graph (cm): an end of a new wall, or a point of a polygon, this close to a node takes it. */
 export const NEW_WALL_SNAP_CM = 1
 /** A segment of a new wall shorter than this is no wall (cm). */
 export const MIN_WALL_CM = 1
@@ -59,6 +59,11 @@ export const MID_INSIDE_CM = 1
 export type WriteOptions = {
   /** Gives a new, unused id for a prefix ('v' corner, 'N' node, 'W' wall). Default: a counter. */
   newId?: (prefix: string) => string
+  /**
+   * `addStandaloneWall`: cut a wall where an end of the new wall lands inside it (default true). The
+   * load step of the traces gives false: no wall that a room uses is cut while a document loads.
+   */
+  splitHosts?: boolean
 }
 
 /** A wall while it is edited: its two nodes, its properties and its standalone flag. */
@@ -156,7 +161,7 @@ class Draft {
 
   /** The id of the node at `p`: an existing node there, or a new node. */
   nodeAt(p: Vec): string {
-    for (const n of this.nodes) if (dist(n, p) <= NODE_MATCH_CM) return n.id
+    for (const n of this.nodes) if (dist(n, p) <= NEW_WALL_SNAP_CM) return n.id
     const id = this.newId('N')
     this.nodes.push({ id, x: roundStored(p.x), y: roundStored(p.y) })
     return id
@@ -216,7 +221,9 @@ function edgePieces(draft: Draft, p: Vec, q: Vec): Piece[] {
     const line = draft.line(w.id)
     if (!line) continue
     // The wall must be on one line with the edge (a wall at an angle covers an edge at its angle).
-    if (Math.abs(cross(line.d, d)) > PARALLEL_SIN) continue
+    // A short wall is judged by the distance of its ends to the line of the edge: a sine of 0.02 is
+    // more than 1 cm of drift on a wall of 50 cm or less.
+    if (Math.abs(cross(line.d, d)) > PARALLEL_SIN && line.length * Math.abs(cross(line.d, d)) > ON_WALL_TOL_CM) continue
     // Both ends of the edge must be on the centre line of the wall (within the tolerance).
     const n = { x: -line.d.y, y: line.d.x }
     const offStart = Math.abs(dot(sub(p, line.a), n))
@@ -502,12 +509,16 @@ export function settleWallsWithoutFaces(doc: PlanDoc, prev: PlanDoc): PlanDoc {
 /**
  * Add one wall to the graph as a STANDALONE wall: a wall that stays when no room uses it (the Wall
  * tool, a trace converted on load). Both ends take an existing node within 1 cm, else a new node
- * on the wall that the end lies on (a T junction: the host wall is NOT split), else a new node.
- * A segment of less than 1 cm, and a segment between the two nodes of a wall that already exists,
- * add nothing.
+ * on the wall that the end lies on, else a new node.
+ * A wall on the same line (within 1 cm) that already holds a span of the new wall is reused for that
+ * span, and is cut where an end of the new wall lies inside it. A T junction (a wall at an angle)
+ * does not cut the host wall. Only the spans that no wall holds get a new wall (`layWall`).
+ * A segment of less than 1 cm, and a segment that existing walls already hold, add nothing.
  * `opts.newId` gives the ids ('N' node, 'W' wall) when a caller needs its own.
  * This is a v2 write: a v1 document is written by its rooms (the stored graph follows them).
  */
+const usedNodesOf = (g: GraphParts): Set<string> => new Set(g.walls.flatMap((w) => [w.a, w.b]))
+
 export function addStandaloneWall(
   doc: PlanDoc,
   a: Vec,
@@ -517,15 +528,37 @@ export function addStandaloneWall(
 ): { doc: PlanDoc; wallId: string | null } {
   if (dist(a, b) < MIN_WALL_CM) return { doc, wallId: null }
   const draft = new Draft(doc, opts)
+  const nodesBefore = draft.nodes.length
   const na = draft.nodeForEnd(a)
   const nb = draft.nodeForEnd(b)
   if (na === nb) return { doc, wallId: null }
-  // A wall between these two nodes is already there: a wall is never stored twice.
-  const known = draft.walls.find((w) => (w.a === na && w.b === nb) || (w.a === nb && w.b === na))
-  if (known) return { doc, wallId: known.id }
-  const id = draft.newId('W')
-  draft.walls.push({ id, a: na, b: nb, props: { ...props }, standalone: true })
-  return { doc: finish(doc, draft, doc.rooms), wallId: id }
+  // An existing wall on the same line is reused (and cut where an end lands inside it); only the
+  // spans that no wall holds get a new wall: a wall is never stored twice and never overlaps.
+  const parts: GraphParts = {
+    nodes: draft.nodes,
+    walls: draft.walls.map(storedWall),
+    rooms: doc.rooms,
+    elements: doc.elements,
+  }
+  const laid = layWall(parts, na, nb, props, true, (prefix) => draft.newId(prefix), { cut: opts.splitHosts })
+  const first = laid.pieces[0]?.wallId ?? null
+  if (!laid.changed && !laid.g.nodes.some((n, i) => i < nodesBefore ? false : usedNodesOf(laid.g).has(n.id))) return { doc, wallId: first }
+  // A node that this call made for an end and that no wall uses (the end lies inside a wall that was
+  // reused whole) goes away.
+  const usedNodes = new Set<string>()
+  for (const w of laid.g.walls) {
+    usedNodes.add(w.a)
+    usedNodes.add(w.b)
+  }
+  draft.nodes = laid.g.nodes.filter((n, i) => i < nodesBefore || usedNodes.has(n.id))
+  draft.walls = laid.g.walls.map((w) => {
+    const out: WallDraft = { id: w.id, a: w.a, b: w.b, props: storedWallProps(w) }
+    if (w.standalone) out.standalone = true
+    return out
+  })
+  const elementsMoved = laid.g.elements !== doc.elements
+  const out = finish({ ...doc, elements: laid.g.elements }, draft, laid.g.rooms)
+  return { doc: elementsMoved ? syncElements(doc, out) : out, wallId: first }
 }
 
 /** The survey codes of the rooms whose faces use a wall, in the order of the rooms. */

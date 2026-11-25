@@ -8,7 +8,7 @@ import { isV2Doc } from '../../model/v2/targets'
 import { newEdgeCrosses, selfIntersects } from './crossing'
 import { boxOf, itemsInBox } from './boxSelect'
 import { useGuides } from './guides'
-import { deleteSelection, locked, onHoleVertexDown, onVertexDown, otherEdges, otherVertices } from './interaction'
+import { deleteSelection, graphEdges, graphVertices, locked, onHoleVertexDown, onVertexDown, otherEdges, otherVertices } from './interaction'
 import { NoticeLayer, notify } from './notice'
 import { cutDoc, makeRoom, rectPoints, sliceDoc, validOutline } from './ops'
 import { snapPoint, type SnapGuide } from './snap'
@@ -49,14 +49,18 @@ function Len({ a, b }: { a: Vec; b: Vec }) {
   )
 }
 
+// The pools hold the rooms AND the stored wall graph, so the tools snap to a standalone wall too.
 function useVertexPool() {
   const rooms = useDoc((s) => s.doc.rooms)
-  return useMemo(() => otherVertices({ rooms }), [rooms])
+  const nodes = useDoc((s) => s.doc.nodes)
+  return useMemo(() => [...otherVertices({ rooms }), ...graphVertices({ nodes })], [rooms, nodes])
 }
 
 function useEdgePool() {
   const rooms = useDoc((s) => s.doc.rooms)
-  return useMemo(() => otherEdges({ rooms }), [rooms])
+  const nodes = useDoc((s) => s.doc.nodes)
+  const walls = useDoc((s) => s.doc.walls)
+  return useMemo(() => [...otherEdges({ rooms }), ...graphEdges({ nodes, walls })], [rooms, nodes, walls])
 }
 
 const addRoom = (pts: Vec[]) => {

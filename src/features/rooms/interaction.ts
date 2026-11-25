@@ -93,6 +93,26 @@ export function otherVertices(doc: Pick<PlanDoc, 'rooms'>, skip?: (roomId: strin
   return out
 }
 
+/**
+ * The snap points of the stored wall graph (the nodes), so a tool snaps to a standalone wall that no
+ * room uses. Rooms alone would miss it.
+ */
+export function graphVertices(doc: Pick<PlanDoc, 'nodes'>): Vec[] {
+  return (doc.nodes ?? []).map((n) => ({ x: n.x, y: n.y }))
+}
+
+/** The snap segments of the stored walls [node a, node b] (walls with a missing node are left out). */
+export function graphEdges(doc: Pick<PlanDoc, 'nodes' | 'walls'>): [Vec, Vec][] {
+  const nodes = new Map((doc.nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
+  const out: [Vec, Vec][] = []
+  for (const w of doc.walls ?? []) {
+    const a = nodes.get(w.a)
+    const b = nodes.get(w.b)
+    if (a && b) out.push([a, b])
+  }
+  return out
+}
+
 /** Outline walls of a room, as segments [start, end], in vertex order. */
 export function outlineEdges(room: Pick<Room, 'vertices'>): [Vec, Vec][] {
   const n = room.vertices.length
