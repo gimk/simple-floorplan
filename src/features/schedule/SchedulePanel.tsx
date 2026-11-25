@@ -40,8 +40,10 @@ function Row({ row, selected, areaDecimals, onSelect }: {
     >
       {/* A built-in storage is a sub-row: a small left padding, under its parent room. */}
       <td className={`py-1 pr-1 text-left font-medium ${row.storage ? 'pl-3' : 'pl-1'}`} title={row.code}>{row.code}</td>
-      <td className={`max-w-24 truncate px-1 py-1 ${row.outdoor || row.storage ? MUTED : ''}`} title={row.name}>
-        {row.name === '' ? '—' : row.name}
+      {/* The name wraps onto 2 lines: in the narrow desktop sidebar a long name such as
+          "Hall Closet (Room 1)" was cut to "Hall Closet (Ro...". The full name stays in `title`. */}
+      <td className={`max-w-24 px-1 py-1 align-top ${row.outdoor || row.storage ? MUTED : ''}`} title={row.name}>
+        <span className="line-clamp-2 break-words">{row.name === '' ? '—' : row.name}</span>
         {row.outdoor && <span className="ml-1 text-[10px] uppercase">out</span>}
       </td>
       <td className={TD}>{scheduleAreaText(row.areaM2, areaDecimals)}</td>

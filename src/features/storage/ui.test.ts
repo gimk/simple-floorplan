@@ -3,6 +3,7 @@ import { emptyDoc } from '../../model/store'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../model/types'
 import { materializeRooms } from '../../model/v2/materialize'
 import { addStorage } from './actions'
+import { readStorageParams } from './geometry'
 import {
   DEFAULT_STORAGE_PARAMS, STORAGE_DOOR_OPTIONS, findFirstValidHostWall, hostWallIdForRoomWall, moveStorageToWall,
   parentWallRuns, readStorageDoor, storageHostWallStart, storageOffsetFromClick,
@@ -144,6 +145,60 @@ describe('storage UI helpers', () => {
     const runs = parentWallRuns(parent)
     expect(runs).toHaveLength(4)
     expect(storageHostWallStart(r.doc, st)).toBe(runs[0].wallStart)
+  })
+
+  it('lists each wall run once when a storage starts at offset 0 of the top wall', () => {
+    const v2 = makeV2Doc()
+    const r = addStorage(v2, 'R1', 'W1', { ...DEFAULT_STORAGE_PARAMS, offsetCm: 0 }, 'sliding')
+    if ('error' in r) throw new Error(r.error)
+    const parent = r.doc.rooms.find((x) => x.id === 'R1')!
+    const runs = parentWallRuns(parent)
+    // The top wall is now 3 collinear pieces: still ONE entry for it, and no entry for the pieces.
+    expect(parent.vertices.length).toBeGreaterThan(4)
+    expect(runs).toHaveLength(4)
+    // The label is the label of the FIRST wall of the run.
+    expect(runs.map((x) => x.label)).toEqual(['on R1-1', 'on R1-4', 'on R1-5', 'on R1-6'])
+    expect(new Set(runs.map((x) => x.wallStart)).size).toBe(4)
+  })
+
+  it('lists each wall run once with two storages on the top wall', () => {
+    const v2 = makeV2Doc()
+    const r1 = addStorage(v2, 'R1', 'W1', { ...DEFAULT_STORAGE_PARAMS, offsetCm: 0 }, 'sliding')
+    if ('error' in r1) throw new Error(r1.error)
+    const r2 = addStorage(r1.doc, 'R1', 'W1', { ...DEFAULT_STORAGE_PARAMS, offsetCm: 200 }, 'single')
+    if ('error' in r2) throw new Error(r2.error)
+    const parent = r2.doc.rooms.find((x) => x.id === 'R1')!
+    const runs = parentWallRuns(parent)
+    expect(runs).toHaveLength(4)
+    expect(runs[0].label).toBe('on R1-1')
+    expect(new Set(runs.map((x) => x.wallStart)).size).toBe(4)
+    // Both storages report the top run: the select therefore shows the top wall for each of them.
+    for (const st of r2.doc.rooms.filter((x) => x.storage)) {
+      expect(storageHostWallStart(r2.doc, st)).toBe(runs[0].wallStart)
+    }
+  })
+
+  it('selects the storage own run, and a change of run moves the storage to the run start', () => {
+    const v2 = makeV2Doc()
+    const r = addStorage(v2, 'R1', 'W1', { ...DEFAULT_STORAGE_PARAMS, offsetCm: 0 }, 'sliding')
+    if ('error' in r) throw new Error(r.error)
+    const parent = r.doc.rooms.find((x) => x.id === 'R1')!
+    const st = r.doc.rooms.find((x) => x.id === r.storageRoomId)!
+    const runs = parentWallRuns(parent)
+    // The value of the select is one of the options, and it is the run of the storage.
+    const selected = storageHostWallStart(r.doc, st)
+    expect(runs.map((x) => x.wallStart)).toContain(selected)
+    expect(selected).toBe(runs[0].wallStart)
+
+    // Selecting the right wall run moves the storage there, with the offset from its inside corner.
+    const params = { ...DEFAULT_STORAGE_PARAMS, offsetCm: 0 }
+    const moved = moveStorageToWall(r.doc, st, runs[1].wallStart, params, 'sliding')
+    if ('error' in moved) throw new Error(moved.error)
+    const stAfter = moved.doc.rooms.find((x) => x.id === st.id)!
+    expect(storageHostWallStart(moved.doc, stAfter)).toBe(runs[1].wallStart)
+    const runsAfter = parentWallRuns(moved.doc.rooms.find((x) => x.id === 'R1')!)
+    expect(runsAfter.map((x) => x.wallStart)).toContain(runs[1].wallStart)
+    expect(readStorageParams(moved.doc, stAfter)?.offsetCm).toBe(0)
   })
 })
 

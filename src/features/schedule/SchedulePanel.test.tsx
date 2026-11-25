@@ -93,6 +93,28 @@ describe('SchedulePanelView', () => {
     expect(html).toContain('Download CSV')
   })
 
+  it('wraps a long room name onto 2 lines and keeps the full name in the title', () => {
+    const parent = rect({ id: 'r1', code: 'R1', name: 'Room 1' })
+    const store = rect({
+      id: 's1', code: 'R2', name: 'Hall Closet', walkOrder: 3,
+      storage: { parentRoomId: 'r1' },
+      vertices: [
+        { id: 's1a', x: 0, y: -60 }, { id: 's1b', x: 200, y: -60 },
+        { id: 's1c', x: 200, y: -10 }, { id: 's1d', x: 0, y: -10 },
+      ],
+    })
+    const html = renderToString(<SchedulePanelView doc={doc({ rooms: [parent, store] })} />)
+    // The full name is in the tooltip of the name cell…
+    expect(html).toContain('title="Hall Closet (Room 1)"')
+    // …the cell shows it in full, and wraps onto 2 lines instead of a single-line cut.
+    expect(html).toContain('Hall Closet (Room 1)')
+    const at = html.indexOf('data-room-schedule-row="s1"')
+    const row = html.slice(at, html.indexOf('</tr>', at))
+    expect(row).toContain('line-clamp-2')
+    expect(row).toContain('break-words')
+    expect(row).not.toContain('truncate')
+  })
+
   it('warns when a room has no ceiling height (no volume in the CSV)', () => {
     const html = renderToString(<SchedulePanelView doc={doc()} />)
     expect(html).toContain('without ceiling height')

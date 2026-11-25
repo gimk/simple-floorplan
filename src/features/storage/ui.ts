@@ -1,5 +1,5 @@
 // Shared UI helpers for built-in storage in Measuring Mode and Edit Mode.
-import { projectOnSegment, roomWalls, type Wall } from '../../model/geometry'
+import { dist, projectOnSegment, roomWalls, type Wall } from '../../model/geometry'
 import type { PlanDoc, Room } from '../../model/types'
 import { addStorage, deleteStorage, type StorageDoor, type StorageParams } from './actions'
 import {
@@ -16,6 +16,9 @@ export const DEFAULT_STORAGE_PARAMS: StorageParams = {
 }
 
 export const DEFAULT_STORAGE_DOOR: StorageDoor = 'sliding'
+
+/** A wall piece shorter than this (cm) counts as zero length in the Wall select. */
+const ZERO_RUN_CM = 0.01
 
 export const STORAGE_DOOR_OPTIONS: { value: StorageDoor; label: string }[] = [
   { value: 'single', label: 'Hinged' },
@@ -48,13 +51,27 @@ export function storageHostWallStart(doc: PlanDoc, storageRoom: Room): string | 
   return parent.vertices[runStartIdx]?.id ?? host.start.id
 }
 
-/** One entry per collinear wall run of `parent` for the UI Wall select. */
+/**
+ * One entry per collinear wall run of `parent` for the UI Wall select.
+ * Storages split the host wall into several collinear pieces, so the pieces of a run MUST give one
+ * option only: the entry is the FIRST wall of the run (its corner id, value of the select, and its
+ * label, same style as before). Selecting a run moves the storage to the run start, and the offset
+ * then counts from the inside corner at that run start.
+ */
 export function parentWallRuns(parent: Room): { wallStart: string; label: string; wall: Wall }[] {
+  const walls = roomWalls(parent)
   const runs: { wallStart: string; label: string; wall: Wall }[] = []
-  for (const w of roomWalls(parent)) {
-    if (collinearRunStart(parent, w.index, w.dir) === w.index) {
-      runs.push({ wallStart: w.start.id, label: `on ${parent.code}-${w.index + 1}`, wall: w })
-    }
+  const seen = new Set<string>()
+  for (const w of walls) {
+    // A zero-length piece is not a wall (a storage front can land exactly on a corner): skip it,
+    // so it can never become an option of its own or a second entry of the same run.
+    if (dist(w.start, w.end) < ZERO_RUN_CM) continue
+    const startIdx = collinearRunStart(parent, w.index, w.dir)
+    const first = walls[startIdx] ?? w
+    const wallStart = parent.vertices[startIdx]?.id ?? w.start.id
+    if (seen.has(wallStart)) continue
+    seen.add(wallStart)
+    runs.push({ wallStart, label: `on ${parent.code}-${first.index + 1}`, wall: first })
   }
   return runs
 }
