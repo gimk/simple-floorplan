@@ -863,4 +863,36 @@ describe('commands: document solver (docs/solver-plan.md)', () => {
     }
     expect((edited.doc.solver?.changes ?? []).length).toBeLessThan(before)
   })
+
+  it('prunes deleted wall changes, baseNodes, baseThickness, and revoked on MCP delete_wall while On', () => {
+    const on = apply(measuredPlan(), { type: 'set_solver', enabled: true })
+    // Find the shared partition wall between SE and CU (SE-2) which has a recorded position change.
+    const se = on.doc.rooms.find((r) => r.code === 'SE')!
+    const sharedWallId = se.cycle![1].wallId
+    expect(on.doc.solver!.changes.some((c) => c.wallId === sharedWallId)).toBe(true)
+
+    const deleted = apply(on.doc, { type: 'delete_wall', wall: 'SE-2' })
+    expect((deleted.doc.walls ?? []).some((w) => w.id === sharedWallId)).toBe(false)
+    expect(deleted.doc.solver!.changes.some((c) => c.wallId === sharedWallId)).toBe(false)
+    expect(sharedWallId in deleted.doc.solver!.baseThickness).toBe(false)
+    expect(deleted.doc.solver!.revoked.some((h) => h.wallId === sharedWallId)).toBe(false)
+    const liveNodeIds = new Set((deleted.doc.nodes ?? []).map((n) => n.id))
+    for (const nid of Object.keys(deleted.doc.solver!.baseNodes)) {
+      expect(liveNodeIds.has(nid)).toBe(true)
+    }
+  })
+
+  it('uses "average mismatch" wording in apply_measurements CLOSING_ERROR warning', () => {
+    let doc = apply(emptyDoc(), { type: 'add_room', code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 400, h: 300 } }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'SE-1', actualCm: 400 }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'SE-2', actualCm: 300 }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'SE-3', actualCm: 460 }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'SE-4', actualCm: 300 }).doc
+    const res = apply(doc, { type: 'apply_measurements', roomCode: 'SE' })
+    const warn = res.warnings.find((w) => w.code === 'CLOSING_ERROR')
+    expect(warn).toBeDefined()
+    expect(warn!.message).toMatch(/^Room SE has an average mismatch of [\d.]+ cm\.$/)
+    expect(warn!.message).not.toContain('fit error')
+    expect(warn!.message).not.toContain('rms')
+  })
 })

@@ -240,4 +240,37 @@ describe('solver triggers', () => {
     const t2 = useDoc.getState().doc.solver!.solvedAt
     expect(t2).not.toBe(t1)
   })
+
+  it('schedules debounced re-solve on updateSilent measurement edit in Edit Mode and folds into undo', () => {
+    setSolverEnabled(true)
+    const afterOn = useDoc.getState().doc
+    const solvedAtBefore = afterOn.solver!.solvedAt
+    const pastBefore = useDoc.temporal.getState().pastStates.length
+
+    vi.advanceTimersByTime(1000)
+    // Simulate setMeasurement from StoredWallCard/WallCard (updateSilent without { undo: true }).
+    useDoc.getState().updateSilent((d) => ({
+      ...d,
+      measurements: { ...d.measurements, 'KI-2': { label: 'KI-2', actualCm: 320, updatedAt: FIXED_NOW } },
+    }))
+    // Not solved before debounce.
+    expect(useDoc.getState().doc.solver!.solvedAt).toBe(solvedAtBefore)
+
+    vi.advanceTimersByTime(SOLVER_DEBOUNCE_MS)
+    // Re-solved silently: W3 moved to match KI-2 = 320, no extra undo step created.
+    expect(useDoc.getState().doc.solver!.solvedAt).not.toBe(solvedAtBefore)
+    expect(useDoc.getState().doc.solver!.changes.some((c) => c.wallId === 'W3')).toBe(true)
+    expect(useDoc.temporal.getState().pastStates.length).toBe(pastBefore)
+
+    // In Measuring Mode, updateSilent measurement edit must NOT trigger a solve.
+    useUi.getState().setMode('measure')
+    const solvedAtInMeasure = useDoc.getState().doc.solver!.solvedAt
+    vi.advanceTimersByTime(1000)
+    useDoc.getState().updateSilent((d) => ({
+      ...d,
+      measurements: { ...d.measurements, 'KI-4': { label: 'KI-4', actualCm: 340, updatedAt: FIXED_NOW } },
+    }))
+    vi.advanceTimersByTime(SOLVER_DEBOUNCE_MS + 200)
+    expect(useDoc.getState().doc.solver!.solvedAt).toBe(solvedAtInMeasure)
+  })
 })

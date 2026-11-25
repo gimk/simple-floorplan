@@ -369,4 +369,44 @@ describe('solver engine', () => {
     expect(ruled.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W2', by: 'edit' })
     expect(ruled.solver!.revoked.some((h) => h.wallId === 'W1')).toBe(false)
   })
+
+  it('does not project a node on an unmoved wall onto a nearby moved wall (T-junction closest-wall check)', () => {
+    // Scenario A (rv2 #6): W_UNMOVED starts at N_NEAR = (200, 0.8), 0.8 cm from W1 at y = 0.
+    const roomDoc = makeSingleRoomV2({ 'KI-2': 320, 'KI-4': 320 })
+    const baseA: PlanDoc = {
+      ...roomDoc,
+      nodes: [
+        ...roomDoc.nodes!,
+        { id: 'N_NEAR', x: 200, y: 0.8 },
+        { id: 'N_FAR', x: 500, y: 0.8 },
+      ],
+      walls: [
+        ...roomDoc.walls!,
+        { id: 'W_UNMOVED', a: 'N_NEAR', b: 'N_FAR', faces: [], type: 'partition', thicknessCm: 10, standalone: true },
+      ],
+    }
+    const { doc: solvedA } = solverOn(baseA, { now: FIXED_NOW })
+    expect(solvedA.nodes!.find((n) => n.id === 'N1')!.y).not.toBeCloseTo(0, 1)
+    expect(solvedA.nodes!.find((n) => n.id === 'N_NEAR')).toEqual({ id: 'N_NEAR', x: 200, y: 0.8 })
+
+    // Scenario B: N_NEAR = (200, 0.8) lies strictly on unmoved wall W_UNMOVED = (100, 0.8) -> (500, 0.8).
+    const baseB: PlanDoc = {
+      ...roomDoc,
+      nodes: [
+        ...roomDoc.nodes!,
+        { id: 'N_U1', x: 100, y: 0.8 },
+        { id: 'N_U2', x: 500, y: 0.8 },
+        { id: 'N_NEAR', x: 200, y: 0.8 },
+        { id: 'N_BRANCH', x: 200, y: 80 },
+      ],
+      walls: [
+        ...roomDoc.walls!,
+        { id: 'W_UNMOVED', a: 'N_U1', b: 'N_U2', faces: [], type: 'partition', thicknessCm: 10, standalone: true },
+        { id: 'W_BRANCH', a: 'N_NEAR', b: 'N_BRANCH', faces: [], type: 'partition', thicknessCm: 10, standalone: true },
+      ],
+    }
+    const { doc: solvedB } = solverOn(baseB, { now: FIXED_NOW })
+    expect(solvedB.nodes!.find((n) => n.id === 'N1')!.y).not.toBeCloseTo(0, 1)
+    expect(solvedB.nodes!.find((n) => n.id === 'N_NEAR')).toEqual({ id: 'N_NEAR', x: 200, y: 0.8 })
+  })
 })

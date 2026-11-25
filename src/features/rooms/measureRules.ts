@@ -130,9 +130,3 @@ export function installMeasureRules() {
   //    stretched). Runs after the rules, on every update and at the end of a drag.
   addSettleRule(settleRelabel)
 }
-
-/** Wall label "CODE-n" -> room code, or null for a diagonal, a height or any other label. */
-export function wallLabelRoom(label: string): string | null {
-  const m = /^(.+)-(\d+)$/.exec(label)
-  return m ? m[1] : null
-}

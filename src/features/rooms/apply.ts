@@ -186,7 +186,7 @@ export function describeReport(r: ApplyReport): string {
   const parts = [`${r.code}: applied ${r.appliedWalls} measured wall${r.appliedWalls === 1 ? '' : 's'}`]
   if (r.rmsCm >= 0.3) {
     const worst = r.residuals.reduce<SolveResidual | null>((a, x) => (!a || Math.abs(x.diffCm) > Math.abs(a.diffCm) ? x : a), null)
-    let text = `fit error ${f(r.rmsCm)} cm rms`
+    let text = `average mismatch ${f(r.rmsCm)} cm`
     if (worst) {
       const label = worst.index === 'D' ? `${r.code}-D` : `${r.code}-${worst.index + 1}`
       text += `; largest: ${label} ${worst.diffCm >= 0 ? '+' : ''}${f(worst.diffCm)} cm`

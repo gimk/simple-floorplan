@@ -6,7 +6,7 @@ import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall } fro
 import { materializeRooms } from '../../model/v2/materialize'
 import { addStorage } from '../storage/actions'
 import { readStorageParams, type StorageParams } from '../storage/geometry'
-import { applyGlobal, previewGlobal } from './applyGlobal'
+import { applyGlobal } from './applyGlobal'
 
 function makeV1Doc(): PlanDoc {
   const room: Room = {
@@ -173,13 +173,6 @@ for (const [version, make] of [['v1', makeV1Doc], ['v2', makeV2Doc]] as const) {
       })
       expect(size(after).w).toBeCloseTo(size(plainAfter).w, 0)
       expect(size(after).h).toBeCloseTo(size(plainAfter).h, 0)
-    })
-
-    it('shows no corner move for the storage in the preview', () => {
-      const { storage, values, doc } = build(20)
-      const preview = previewGlobal({ ...doc, measurements: meas(values) })
-      expect(preview.moves.some((m) => m.roomId === storage.id)).toBe(false)
-      expect(preview.moves.some((m) => m.roomId === 'R1')).toBe(true)
     })
   })
 }

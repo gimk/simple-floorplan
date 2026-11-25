@@ -65,10 +65,8 @@ import {
   type StorageParams,
 } from '../features/storage/geometry'
 // Solver on/off (docs/solver-plan.md, round 5). The engine is pure: no store, no React, so the
-// server (functions/) runs the same solver as the app. `solverEditRule` from
-// features/solver/rule.ts is NOT imported here: it takes the store's `DocRule` type, so the
-// drop-on-edit rule is replicated below in `dropChangesOnEdit` (engine function `userEditedWalls`).
-import { restoreChange, revokeChange, solverOff, solverOn, userEditedWalls, type SolverOptions } from '../features/solver/engine'
+// server (functions/) runs the same solver and drop-on-edit logic (`applySolverEdit`) as the app.
+import { applySolverEdit, restoreChange, revokeChange, solverOff, solverOn, type SolverOptions } from '../features/solver/engine'
 
 const EPS = 0.05
 const BIG = 1e5
@@ -1016,55 +1014,6 @@ function solverResult(doc: PlanDoc) {
   }
 }
 
-/**
- * Drop-on-edit on the server (docs/solver-plan.md): a command that edits the geometry while the
- * solver is On drops the recorded change of every wall it touched and holds that wall at the new
- * (user) value, with `by: 'edit'`. The next solve keeps that wall where the user put it.
- *
- * This is a copy of `solverEditRule` in features/solver/rule.ts (which the app store runs); rule.ts
- * takes the store's `DocRule` type, so it is not imported here. Keep the two in step.
- * The solver itself does NOT run again: the edited wall keeps the user's value, the other walls keep
- * their solved value.
- */
-function dropChangesOnEdit(prev: PlanDoc, next: PlanDoc): PlanDoc {
-  const s = next.solver
-  if (!s?.enabled) return next
-  // A solver write (set_solver, solver_revoke, solver_restore) is not a user edit.
-  if (next.solver !== prev.solver) return next
-
-  const edited = userEditedWalls(prev, next)
-  if (!edited.position.length && !edited.thickness.length && !edited.movedNodes.length) return next
-
-  const posSet = new Set(edited.position)
-  const thickSet = new Set(edited.thickness)
-  const movedNodeSet = new Set(edited.movedNodes)
-
-  const changes = s.changes.filter(
-    (c) => !(c.kind === 'position' && posSet.has(c.wallId)) && !(c.kind === 'thickness' && thickSet.has(c.wallId)),
-  )
-
-  // The user's value is the base value now: forget the base of what the command touched.
-  const baseNodes: Record<string, { x: number; y: number }> = {}
-  for (const [nid, pt] of Object.entries(s.baseNodes)) {
-    if (!movedNodeSet.has(nid)) baseNodes[nid] = pt
-  }
-  const baseThickness: Record<string, number> = {}
-  for (const [wid, cm] of Object.entries(s.baseThickness)) {
-    if (!thickSet.has(wid)) baseThickness[wid] = cm
-  }
-
-  const revoked = [...s.revoked]
-  const addEditHold = (kind: 'position' | 'thickness', wallId: string) => {
-    const idx = revoked.findIndex((h) => h.kind === kind && h.wallId === wallId)
-    if (idx >= 0) revoked[idx] = { kind, wallId, by: 'edit' }
-    else revoked.push({ kind, wallId, by: 'edit' })
-  }
-  for (const wallId of edited.position) addEditHold('position', wallId)
-  for (const wallId of edited.thickness) addEditHold('thickness', wallId)
-
-  return { ...next, solver: { ...s, changes, revoked, baseNodes, baseThickness } }
-}
-
 // ---------- main command reducer ----------
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -1083,9 +1032,14 @@ export function apply(rawDoc: PlanDoc, rawCommand: unknown): ApplyResult {
   // A v2 document keeps its walls as the source (docs/walls-plan.md phase 5c); a v1 document keeps
   // the v1 rule of the values (the client converts it on load).
   const final = out.doc.schemaVersion === 2 ? keepWallsAndValuesV2(doc, out) : keepMeasurementsOnWalls(doc, out)
-  // Solver On: a command that moves geometry drops the recorded change of the walls it touched
-  // (docs/solver-plan.md, "A user edit of a wall that has a change ... is dropped").
-  return { ...final, doc: dropChangesOnEdit(doc, final.doc) as PlanDocV1 }
+  // Solver On: a command that edits geometry drops the recorded change of the walls it touched
+  // and prunes deleted walls/nodes (docs/solver-plan.md). Solver commands themselves are skipped;
+  // other commands (e.g. delete_wall delegating to merge_rooms + repairGraph) may have already
+  // updated `final.doc.solver` in a nested `apply`, so align `solver` ref before pruning/diffing.
+  const isSolverCmd = cmd.type === 'set_solver' || cmd.type === 'solver_revoke' || cmd.type === 'solver_restore'
+  if (isSolverCmd) return final
+  const prevForEdit = final.doc.solver === doc.solver ? doc : { ...doc, solver: final.doc.solver }
+  return { ...final, doc: applySolverEdit(prevForEdit, final.doc) as PlanDocV1 }
 }
 
 /**
@@ -1932,7 +1886,7 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
         if (res.report.mode === 'lsq' && res.report.rmsCm > 2) {
           warnings.push({
             code: 'CLOSING_ERROR',
-            message: `Room ${res.report.code} has a fit error of ${res.report.rmsCm} cm rms.`,
+            message: `Room ${res.report.code} has an average mismatch of ${res.report.rmsCm} cm.`,
           })
         }
       }

@@ -229,15 +229,17 @@ export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc
   })
 
   // Project interior T-junction nodes onto their moved host wall at the same fractional parameter.
+  // Consider ALL base walls (moved and unmoved) so a node lying closer to an unmoved wall is never
+  // pulled onto a nearby moved wall.
   const solvedPosMap = new Map(nextNodes.map((n) => [n.id, { x: n.x, y: n.y }]))
-  const tJunctionBest = new Map<string, { perp: number; pos: Vec }>()
+  const tJunctionBest = new Map<string, { perp: number; moved: boolean; pos: Vec; dx0: number; dy0: number }>()
   for (const w of base.walls) {
     const a0 = baseNodeMap.get(w.a)
     const b0 = baseNodeMap.get(w.b)
     const a1 = solvedPosMap.get(w.a)
     const b1 = solvedPosMap.get(w.b)
     if (!a0 || !b0 || !a1 || !b1) continue
-    if (Math.hypot(a1.x - a0.x, a1.y - a0.y) <= 1e-9 && Math.hypot(b1.x - b0.x, b1.y - b0.y) <= 1e-9) continue
+    const moved = Math.hypot(a1.x - a0.x, a1.y - a0.y) > 1e-9 || Math.hypot(b1.x - b0.x, b1.y - b0.y) > 1e-9
     const len0 = Math.hypot(b0.x - a0.x, b0.y - a0.y)
     const len1 = Math.hypot(b1.x - a1.x, b1.y - a1.y)
     if (len0 < 1e-6 || len1 < 1e-6) continue
@@ -252,19 +254,45 @@ export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc
       const u = rx * dx0 + ry * dy0
       if (u <= 1e-6 || u >= len0 - 1e-6) continue
       const prevBest = tJunctionBest.get(n0.id)
-      if (!prevBest || perp < prevBest.perp) {
+      const isCloser =
+        !prevBest
+        || perp < prevBest.perp - 1e-9
+        || (Math.abs(perp - prevBest.perp) <= 1e-9 && !moved && prevBest.moved)
+      if (isCloser) {
         const t = u / len0
         tJunctionBest.set(n0.id, {
           perp,
+          moved,
+          dx0,
+          dy0,
           pos: { x: snap(a1.x + (b1.x - a1.x) * t), y: snap(a1.y + (b1.y - a1.y) * t) },
         })
       }
     }
   }
   if (tJunctionBest.size) {
+    // Do not project a node that is an endpoint of an unmoved wall running parallel to the host wall.
+    const hasParallelUnmovedWall = (nid: string, hostDx: number, hostDy: number): boolean => {
+      for (const w of base.walls!) {
+        if (w.a !== nid && w.b !== nid) continue
+        const a0 = baseNodeMap.get(w.a)
+        const b0 = baseNodeMap.get(w.b)
+        const a1 = solvedPosMap.get(w.a)
+        const b1 = solvedPosMap.get(w.b)
+        if (!a0 || !b0 || !a1 || !b1) continue
+        const moved = Math.hypot(a1.x - a0.x, a1.y - a0.y) > 1e-9 || Math.hypot(b1.x - b0.x, b1.y - b0.y) > 1e-9
+        if (moved) continue
+        const len = Math.hypot(b0.x - a0.x, b0.y - a0.y)
+        if (len < 1e-6) continue
+        const align = Math.abs(((b0.x - a0.x) / len) * hostDx + ((b0.y - a0.y) / len) * hostDy)
+        if (align > 0.98) return true
+      }
+      return false
+    }
     nextNodes = nextNodes.map((n) => {
       const hit = tJunctionBest.get(n.id)
-      return hit ? { ...n, x: hit.pos.x, y: hit.pos.y } : n
+      if (!hit || !hit.moved || hasParallelUnmovedWall(n.id, hit.dx0, hit.dy0)) return n
+      return { ...n, x: hit.pos.x, y: hit.pos.y }
     })
   }
 
@@ -614,5 +642,77 @@ export function userEditedWalls(prev: PlanDoc, next: PlanDoc): EditedWalls {
     position: [...posSet],
     thickness: [...thickSet],
     movedNodes: [...movedNodeSet],
+  }
+}
+
+/**
+ * Pure drop-on-edit transition (store-free, used by both `solver/rule.ts` and `core/commands.ts`).
+ * When a user edit changes wall positions or thicknesses while the solver is On, drops the
+ * recorded changes for edited walls (perpendicular-only for positions), treats the user's new
+ * value as base (removing from `baseNodes` / `baseThickness`), holds edited walls with
+ * `by: 'edit'`, and prunes any entries referencing deleted walls or nodes.
+ * Solver writes (`next.solver !== prev.solver`) are ignored.
+ */
+export function applySolverEdit(prev: PlanDoc, next: PlanDoc): PlanDoc {
+  const s = next.solver
+  if (!s?.enabled) return next
+  if (next.solver !== prev.solver) return next
+
+  const edited = userEditedWalls(prev, next)
+  const hasGraph = next.nodes !== undefined && next.walls !== undefined
+  const liveNodeIds = hasGraph ? new Set(next.nodes!.map((n) => n.id)) : null
+  const liveWallIds = hasGraph ? new Set(next.walls!.map((w) => w.id)) : null
+  const hasDeleted =
+    liveNodeIds !== null
+    && liveWallIds !== null
+    && (
+      s.changes.some((c) => !liveWallIds.has(c.wallId))
+      || Object.keys(s.baseNodes).some((nid) => !liveNodeIds.has(nid))
+      || Object.keys(s.baseThickness).some((wid) => !liveWallIds.has(wid))
+      || s.revoked.some((h) => !liveWallIds.has(h.wallId))
+    )
+
+  if (!edited.position.length && !edited.thickness.length && !edited.movedNodes.length && !hasDeleted) return next
+
+  const posSet = new Set(edited.position)
+  const thickSet = new Set(edited.thickness)
+  const movedNodeSet = new Set(edited.movedNodes)
+
+  const changes = s.changes.filter(
+    (c) =>
+      (!liveWallIds || liveWallIds.has(c.wallId))
+      && !(c.kind === 'position' && posSet.has(c.wallId))
+      && !(c.kind === 'thickness' && thickSet.has(c.wallId)),
+  )
+
+  const baseNodes: Record<string, { x: number; y: number }> = {}
+  for (const [nid, pt] of Object.entries(s.baseNodes)) {
+    if ((!liveNodeIds || liveNodeIds.has(nid)) && !movedNodeSet.has(nid)) baseNodes[nid] = pt
+  }
+
+  const baseThickness: Record<string, number> = {}
+  for (const [wid, cm] of Object.entries(s.baseThickness)) {
+    if ((!liveWallIds || liveWallIds.has(wid)) && !thickSet.has(wid)) baseThickness[wid] = cm
+  }
+
+  const revoked: SolverHold[] = liveWallIds ? s.revoked.filter((h) => liveWallIds.has(h.wallId)) : [...s.revoked]
+  const addEditHold = (kind: 'position' | 'thickness', wallId: string) => {
+    if (liveWallIds && !liveWallIds.has(wallId)) return
+    const idx = revoked.findIndex((h) => h.kind === kind && h.wallId === wallId)
+    if (idx >= 0) revoked[idx] = { kind, wallId, by: 'edit' }
+    else revoked.push({ kind, wallId, by: 'edit' })
+  }
+  for (const wallId of edited.position) addEditHold('position', wallId)
+  for (const wallId of edited.thickness) addEditHold('thickness', wallId)
+
+  return {
+    ...next,
+    solver: {
+      ...s,
+      changes,
+      revoked,
+      baseNodes,
+      baseThickness,
+    },
   }
 }

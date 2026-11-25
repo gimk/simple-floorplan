@@ -1,4 +1,4 @@
-// "Solve whole plan": all rooms in one fit (globalSolve.ts), then the plan takes the result. Pure, cm.
+// Global solver application: all rooms in one fit (globalSolve.ts), then the plan takes the result. Pure, cm.
 import { planPrecision, roundTo } from '../../model/precision'
 import type { PlanDoc } from '../../model/types'
 import type { GraphConflict } from '../../model/wallGraph'
@@ -54,11 +54,6 @@ export function nearestUsualThickness(cm: number): number {
 
 /** A thickness change of one wall (all its room walls): from the prior to the value written. */
 export type ThicknessChange = { walls: string[]; fromCm: number; toCm: number }
-
-/** One corner move, in cm. */
-export type CornerMove = { roomId: string; code: string; vertexIndex: number; dxCm: number; dyCm: number; distCm: number }
-
-export type GlobalPreview = { moves: CornerMove[]; thicknessChanges: ThicknessChange[]; report: GlobalReport }
 
 const round1 = (v: number) => roundTo(v, 0.1)
 
@@ -171,28 +166,6 @@ function pairConflicts(doc: PlanDoc, list: GraphConflict[]): NonNullable<GlobalR
 }
 
 /**
- * Show what "Solve whole plan" would do, with no change to the document: every corner move
- * (largest first) and the thickness changes.
- */
-export function previewGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): GlobalPreview {
-  const r = applyGlobal(doc, opts)
-  const moves: CornerMove[] = []
-  const beforeOf = new Map(doc.rooms.map((room) => [room.id, room]))
-  for (const room of r.doc.rooms) {
-    const before = beforeOf.get(room.id)
-    // A built-in storage follows its host wall: it is not a corner move of a room.
-    if (!before || before.storage) continue
-    room.vertices.forEach((v, i) => {
-      const dxCm = v.x - before.vertices[i].x, dyCm = v.y - before.vertices[i].y
-      const distCm = Math.hypot(dxCm, dyCm)
-      if (distCm > 1e-9) moves.push({ roomId: room.id, code: room.code, vertexIndex: i, dxCm, dyCm, distCm })
-    })
-  }
-  moves.sort((a, b) => b.distCm - a.distCm)
-  return { moves, thicknessChanges: r.thicknessChanges, report: r.report }
-}
-
-/**
  * One line per surface reference, e.g.
  * "DPE 2023 (SE): 12,4 -> 12,9 m2, ref 13,0 m2 (-0,8 %)".
  * The difference is after − reference, in % of the reference.
@@ -206,7 +179,7 @@ export function describeSurface(s: GlobalSurface): string {
 /** One-line summary for the panel: the fit, then one line per surface reference. */
 export function describeGlobal(r: GlobalReport): string {
   const f = fmt1
-  const parts = [`Solved ${r.rooms} rooms together: fit error ${f(r.rmsCm)} cm rms`]
+  const parts = [`Solved ${r.rooms} rooms together: average mismatch ${f(r.rmsCm)} cm`]
   if (r.lockedKept) parts.push(`${r.lockedKept} locked wall${r.lockedKept === 1 ? '' : 's'} kept`)
   if (r.worst) parts.push(`largest: ${r.worst.label} ${r.worst.diffCm >= 0 ? '+' : ''}${f(r.worst.diffCm)} cm`)
   parts.push(r.foundThicknesses.length

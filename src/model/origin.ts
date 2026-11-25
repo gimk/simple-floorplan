@@ -20,6 +20,8 @@ const unplaced = (t: { a: Vec; b: Vec }) => t.a.x === 0 && t.a.y === 0 && t.b.x 
 export function translateDoc(doc: PlanDoc, d: Vec): PlanDoc {
   if (d.x === 0 && d.y === 0) return doc
   const mv = <T extends Vec>(p: T): T => ({ ...p, x: p.x + d.x, y: p.y + d.y })
+  const baseNodes = doc.solver?.baseNodes
+  const hasBaseNodes = baseNodes !== undefined && Object.keys(baseNodes).length > 0
   return {
     ...doc,
     rooms: doc.rooms.map((r) => ({ ...r, vertices: r.vertices.map(mv), holes: r.holes.map((h) => h.map(mv)) })),
@@ -27,6 +29,14 @@ export function translateDoc(doc: PlanDoc, d: Vec): PlanDoc {
     tapes: doc.tapes.map((t) => (unplaced(t) ? t : { ...t, a: mv(t.a), b: mv(t.b) })),
     ...(doc.pins ? { pins: doc.pins.map((p) => ({ ...p, at: mv(p.at) })) } : {}),
     ...(doc.background ? { background: { ...doc.background, xCm: doc.background.xCm + d.x, yCm: doc.background.yCm + d.y } } : {}),
+    ...(hasBaseNodes && doc.solver
+      ? {
+          solver: {
+            ...doc.solver,
+            baseNodes: Object.fromEntries(Object.entries(baseNodes).map(([id, pt]) => [id, mv(pt)])),
+          },
+        }
+      : {}),
   }
 }
 

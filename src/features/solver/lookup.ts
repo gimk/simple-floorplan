@@ -8,12 +8,73 @@
 //   - Stored wall outside:    "W12-E"   -> wallId 'W12',   kind 'position'
 //   - Diagonals ("KI-D"), ceiling heights ("KI-H"), and unknown labels -> undefined
 //     (not tied to one wall's position or thickness).
+import { roundTo } from '../../model/precision'
 import { labelRoomCode, parseThicknessLabel } from '../../model/survey'
 import type { PlanDoc, SolverChange, SolverKey } from '../../model/types'
 import { isV2Doc, targetOfLabel } from '../../model/v2/targets'
 import { parseWallValueLabel, storedWallOfRoomWall, wallValueLabel } from '../../model/wallValues'
 
 export type ValueState = 'measured' | 'solved' | 'estimated'
+
+/** Length change threshold (cm) matching engine.ts `MOVE_TOL_CM`. */
+const MOVE_TOL_CM = 0.05
+const round1 = (v: number) => roundTo(v, 0.1)
+
+/** Per-doc cache of stored walls whose length changed by the solve (|len1 - len0| > MOVE_TOL_CM). */
+const lengthChangesCache = new WeakMap<
+  Pick<PlanDoc, 'solver' | 'nodes' | 'walls'>,
+  Map<string, { fromCm: number; toCm: number }>
+>()
+
+function getLengthChangesMap(
+  doc: Pick<PlanDoc, 'solver' | 'nodes' | 'walls'>,
+): Map<string, { fromCm: number; toCm: number }> {
+  const cached = lengthChangesCache.get(doc)
+  if (cached) return cached
+  const map = new Map<string, { fromCm: number; toCm: number }>()
+  const s = doc.solver
+  if (s?.enabled && doc.nodes && doc.walls && Object.keys(s.baseNodes).length > 0) {
+    const nodeMap = new Map(doc.nodes.map((n) => [n.id, n]))
+    for (const w of doc.walls) {
+      const aBase = s.baseNodes[w.a]
+      const bBase = s.baseNodes[w.b]
+      if (!aBase && !bBase) continue
+      const a1 = nodeMap.get(w.a)
+      const b1 = nodeMap.get(w.b)
+      if (!a1 || !b1) continue
+      const a0 = aBase ?? a1
+      const b0 = bBase ?? b1
+      const len0 = Math.hypot(b0.x - a0.x, b0.y - a0.y)
+      const len1 = Math.hypot(b1.x - a1.x, b1.y - a1.y)
+      if (Math.abs(len1 - len0) > MOVE_TOL_CM) {
+        map.set(w.id, { fromCm: round1(len0), toCm: round1(len1) })
+      }
+    }
+  }
+  lengthChangesCache.set(doc, map)
+  return map
+}
+
+/**
+ * Length change `{ fromCm, toCm }` for a stored wall whose endpoints moved such that
+ * `|len1 - len0| > 0.05 cm`, or undefined when the solver is Off or the wall length did not change.
+ * Cached per `doc` via WeakMap.
+ */
+export function solverLengthChange(
+  doc: Pick<PlanDoc, 'solver' | 'nodes' | 'walls'>,
+  wallId: string,
+): { fromCm: number; toCm: number } | undefined {
+  if (!doc.solver?.enabled) return undefined
+  return getLengthChangesMap(doc).get(wallId)
+}
+
+/** Expand a grouped run label like "R1-3+4" into member face labels ["R1-3", "R1-4"], or null. */
+function expandGroupedLabel(label: string): string[] | null {
+  const m = /^([^-]+)-(\d+(?:\+\d+)+)$/.exec(label)
+  if (!m) return null
+  const code = m[1]
+  return m[2].split('+').map((n) => `${code}-${n}`)
+}
 
 /**
  * Recorded solver change for a stored wall, or undefined when the solver is Off or did not change
@@ -86,20 +147,38 @@ export function labelWallKey(doc: PlanDoc, label: string): SolverKey | null {
 }
 
 /**
- * Recorded solver change for a survey value label ("KI-2", "KI-2-T", "W12-C", "W12-E"),
- * or undefined when the solver is Off, the wall did not change, or the label does not map to a wall.
+ * Recorded solver change for a survey value label ("KI-2", "KI-2-T", "W12-C", "W12-E", or grouped
+ * runs like "R1-3+4"), or undefined when the solver is Off, the wall did not change, or the label
+ * does not map to a wall.
  */
 export function solverChangeForLabel(doc: PlanDoc, label: string): SolverChange | undefined {
   if (!doc.solver?.enabled) return undefined
+  const members = expandGroupedLabel(label)
+  if (members) {
+    for (const m of members) {
+      const c = solverChangeForLabel(doc, m)
+      if (c) return c
+    }
+    return undefined
+  }
   const key = labelWallKey(doc, label)
   if (!key) return undefined
   return solverChangeForWall(doc, key.wallId, key.kind)
 }
 
+function isSingleLabelSolved(doc: PlanDoc, label: string): boolean {
+  const key = labelWallKey(doc, label)
+  if (!key) return false
+  if (solverChangeForWall(doc, key.wallId, key.kind)) return true
+  if (key.kind === 'position' && solverLengthChange(doc, key.wallId)) return true
+  return false
+}
+
 /**
  * Display state of one survey value:
  *   - 'measured'  when a positive measured value exists (`measuredCm` if given, else `doc.measurements[label]`)
- *   - 'solved'    when unmeasured and the solver changed that wall's position/thickness
+ *   - 'solved'    when unmeasured and the solver changed that wall's position, length, or thickness
+ *                 (for grouped labels like "R1-3+4", solved if any member face is solved)
  *   - 'estimated' otherwise
  */
 export function valueState(
@@ -109,7 +188,10 @@ export function valueState(
 ): ValueState {
   const actual = measuredCm !== undefined ? measuredCm : doc.measurements[label]?.actualCm
   if (actual != null && Number.isFinite(actual) && actual > 0) return 'measured'
-  return solverChangeForLabel(doc, label) ? 'solved' : 'estimated'
+  if (!doc.solver?.enabled) return 'estimated'
+  const members = expandGroupedLabel(label)
+  if (members) return members.some((m) => isSingleLabelSolved(doc, m)) ? 'solved' : 'estimated'
+  return isSingleLabelSolved(doc, label) ? 'solved' : 'estimated'
 }
 
 /**

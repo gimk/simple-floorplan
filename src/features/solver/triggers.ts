@@ -1,11 +1,13 @@
 // Automatic solver triggers (docs/solver-plan.md). Installed once from main.tsx.
 //
 // 1. Leaving Measuring Mode ('measure' -> 'edit') while solver is On: `solveNow()` (one undo step).
-// 2. Edit ends in Edit Mode while solver is On: a local non-silent geometry or measurement edit
-//    (or the end of a drag via `endDrag`) schedules a debounced (~300 ms) silent re-solve
-//    (`solveNowSilent`), folding the re-solve into that edit's undo step so one Ctrl+Z undoes both.
-//    Drag previews (`updateSilent`), remote updates (`updateSilent(..., { remote: true })`),
-//    solver writes (`next.solver !== prev.solver`), `replace()`, and undo/redo never trigger it.
+// 2. Edit ends in Edit Mode while solver is On: a local geometry or measurement edit (including
+//    silent measurement writes from wall cards, or the end of a drag via `endDrag`) schedules a
+//    debounced (~300 ms) silent re-solve (`solveNowSilent`), folding the re-solve into that edit's
+//    undo step so one Ctrl+Z undoes both (and silent measurement writes do not add a stray undo
+//    step). Geometry drag previews (`updateSilent` with geometry edits), remote updates
+//    (`updateSilent(..., { remote: true })`), solver writes (`next.solver !== prev.solver`),
+//    `replace()`, and undo/redo never trigger it.
 // 3. Solver setting changed while On and in Edit Mode (`solveKeepLocked`, `solveSurfaceMode`,
 //    `solveSnapThickness`, `solveAngles`, `doc.apartment.precisionCm`): `solveNow()`.
 //
@@ -75,7 +77,13 @@ const triggerDocRule: DocRule = (prev, next) => {
 
   if (silent) {
     // Drag preview: defer until `endDrag` runs settle rules.
-    if (geomChanged) dragDirty = true
+    if (geomChanged) {
+      dragDirty = true
+    } else if (measChanged) {
+      // Silent measurement write in Edit Mode (e.g. setMeasurement from wall cards):
+      // schedule a debounced silent re-solve so it folds into the edit without a stray undo step.
+      scheduleDebouncedSolve()
+    }
     return next
   }
 

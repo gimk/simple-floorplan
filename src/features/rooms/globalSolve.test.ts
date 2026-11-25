@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Measurement, PlanDoc, Room, SurfaceReference } from '../../model/types'
-import { applyGlobal, describeGlobal, previewGlobal, type GlobalReport } from './applyGlobal'
+import { describeReport } from './apply'
+import { applyGlobal, describeGlobal, type GlobalReport } from './applyGlobal'
 import { solveGlobal, type SurfaceMode } from './globalSolve'
 
 const room = (id: string, pts: [number, number][], diagonal?: [number, number]): Room => ({
@@ -392,23 +393,21 @@ describe('applyGlobal snapThickness', () => {
   })
 })
 
-describe('previewGlobal', () => {
-  const d = fullDoc(rooms, measurements)
-  const p = previewGlobal(d, { snapThickness: true })
+describe('user-visible mismatch wording', () => {
+  it('uses "average mismatch" (no "fit error" or "rms") in describeReport and describeGlobal', () => {
+    const roomLine = describeReport({
+      roomId: 'R1', code: 'KI', mode: 'lsq', appliedWalls: 4, closingErrorCm: 1.2, rmsCm: 1.2,
+      residuals: [{ index: 0, measuredCm: 400, solvedCm: 398.5, diffCm: 1.5 }], oppositeDiffCm: 0,
+    })
+    expect(roomLine).toContain('average mismatch 1,2 cm')
+    expect(roomLine).not.toContain('fit error')
+    expect(roomLine).not.toContain('rms')
 
-  it('lists the moves, largest first, and agrees with applyGlobal', () => {
-    expect(p.moves.length).toBeGreaterThan(0)
-    for (let i = 1; i < p.moves.length; i++) expect(p.moves[i - 1].distCm).toBeGreaterThanOrEqual(p.moves[i].distCm)
-    const applied = applyGlobal(d, { snapThickness: true }).doc
-    const m = p.moves[0]
-    const ri = d.rooms.findIndex((r) => r.id === m.roomId)
-    expect(applied.rooms[ri].vertices[m.vertexIndex].x - d.rooms[ri].vertices[m.vertexIndex].x).toBeCloseTo(m.dxCm, 9)
-    expect(m.distCm).toBeCloseTo(Math.hypot(m.dxCm, m.dyCm), 9)
-  })
-
-  it('lists the thickness changes and the report, and leaves the doc alone', () => {
-    expect(p.thicknessChanges.some((t) => t.walls.includes('B-3') && Math.abs(t.toCm - 8) < 0.6)).toBe(true)
-    expect(p.report.rooms).toBe(3)
-    expect(d.rooms[0].vertices[1].x).toBe(304)
+    const globalLine = describeGlobal({
+      rooms: 3, rmsCm: 0.8, lockedKept: 0, foundThicknesses: [], surfaces: [],
+    })
+    expect(globalLine).toContain('Solved 3 rooms together: average mismatch 0,8 cm')
+    expect(globalLine).not.toContain('fit error')
+    expect(globalLine).not.toContain('rms')
   })
 })
