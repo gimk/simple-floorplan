@@ -50,8 +50,8 @@ function rowBox(
   return dimTextBox(line, text, zoom)
 }
 
-/** Margin kept between two outside texts, screen px. */
-export const OUTSIDE_TEXT_MARGIN_PX = 2
+/** Margin kept between two outside texts, screen px (4: the browser draws a text a little wider than the estimate). */
+export const OUTSIDE_TEXT_MARGIN_PX = 4
 
 /** One outside text with its box and its priority. */
 export type OutsideTextEntry = {
@@ -100,7 +100,7 @@ export function outsideTextEntries(runs: OutsideDimRun[], input: OutsideTextInpu
 
 /**
  * Greedy overlap pass over the outside texts: overall rows first, then the measured values, then the
- * longer lengths; a text is kept when its box (with a 2 px margin) hits no kept box, else it is
+ * longer lengths; a text is kept when its box (with a 4 px margin) hits no kept box, else it is
  * hidden (its line, ticks and extension lines stay). Returns the keys of the hidden texts.
  */
 export function outsideHiddenTexts(runs: OutsideDimRun[], input: OutsideTextInput): Set<string> {
