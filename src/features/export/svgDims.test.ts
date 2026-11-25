@@ -43,15 +43,23 @@ describe('faceText', () => {
   const base = { solvedCm: 412, step: 0.5, units: { unit: 'cm' as const, decimals: 1 as const } }
 
   it('writes the calculated length in the units of the plan, with no ✓', () => {
-    expect(faceText(base)).toEqual({ value: '412', label: undefined, measured: false })
+    expect(faceText(base)).toEqual({ value: '412', label: undefined, measured: false, mismatch: false })
     expect(faceText({ ...base, units: { unit: 'm', decimals: 2 } }).value).toBe('4,12')
     expect(faceText({ ...base, units: { unit: 'mm', decimals: 0 } }).value).toBe('4120')
   })
 
-  it('writes a measured length in green with ✓ (and the solved value when they differ)', () => {
-    expect(faceText({ ...base, measuredCm: 412 })).toEqual({ value: '✓ 412', label: undefined, measured: true })
-    expect(faceText({ ...base, measuredCm: 414 }).value).toBe('✓ 414 · 412')
-    expect(faceText({ ...base, measuredCm: 414, units: { unit: 'm', decimals: 2 } }).value).toBe('✓ 4,14 · 4,12')
+  it('writes a measured length with ✓ when the plan fits it, and nothing else', () => {
+    expect(faceText({ ...base, measuredCm: 412 })).toEqual({ value: '✓ 412', label: undefined, measured: true, mismatch: false })
+    // The measured value is written as it was typed, with the ✓ of a value the plan fits.
+    expect(faceText({ ...base, measuredCm: 412.4 }).value).toBe('✓ 412,4')
+  })
+
+  it('writes ONE value with ~ when the plan does not fit the measured one', () => {
+    const text = faceText({ ...base, measuredCm: 414 })
+    expect(text).toEqual({ value: '~414', label: undefined, measured: true, mismatch: true })
+    // The solved length and the difference are never on the paper.
+    expect(text.value).not.toContain('412')
+    expect(faceText({ ...base, measuredCm: 414, units: { unit: 'm', decimals: 2 } }).value).toBe('~4,14')
   })
 
   it('keeps the survey label in front of the value', () => {
@@ -62,8 +70,12 @@ describe('faceText', () => {
 describe('segmentText', () => {
   it('writes the measured value of a facade when the survey has one', () => {
     const seg = { a: { x: 0, y: 0 }, b: { x: 432, y: 0 }, lengthCm: 432, label: 'W1-E', measuredCm: 430 }
-    expect(segmentText(seg, 0.5, { unit: 'cm', decimals: 1 })).toEqual({ value: '✓ 430 · 432', measured: true })
-    expect(segmentText({ ...seg, measuredCm: null }, 0.5, { unit: 'm', decimals: 2 })).toEqual({ value: '4,32', measured: false })
+    // 430 against 432: 2 cm apart, over the step of the plan, so the value is amber with "~".
+    expect(segmentText(seg, 0.5, { unit: 'cm', decimals: 1 })).toEqual({ value: '~430', measured: true, mismatch: true })
+    // A measured value that fits its plan length: green with "✓".
+    expect(segmentText({ ...seg, measuredCm: 432 }, 0.5, { unit: 'cm', decimals: 1 }))
+      .toEqual({ value: '✓ 432', measured: true, mismatch: false })
+    expect(segmentText({ ...seg, measuredCm: null }, 0.5, { unit: 'm', decimals: 2 })).toEqual({ value: '4,32', measured: false, mismatch: false })
   })
 })
 
@@ -90,6 +102,19 @@ describe('dimSvg', () => {
     const svg = dimSvg({ line, text: { value: '✓ 412 · 410,7', label: 'SE-1', measured: true }, dimKey: 'SE-1', kind: 'wall', fs: 10, zoom })
     expect(svg).toContain('data-dim-outside')
     expect(svg).toContain('fill="#15803d" font-weight="600"')
+  })
+
+  it('writes a measured value the plan does not fit in amber (the same token as the plan)', () => {
+    const zoom = paperZoom(10)
+    const line = dimLine({ start: { x: 0, y: 0 }, end: { x: 412, y: 0 }, normal: { x: 0, y: 1 }, offsetCm: 6, zoom, text: 'SE-1 ~414' })!
+    const svg = dimSvg({
+      line, text: { value: '~414', label: 'SE-1', measured: true, mismatch: true }, dimKey: 'SE-1', kind: 'wall', fs: 10, zoom,
+    })
+    expect(svg).toContain(`fill="${PAPER.mismatch}" font-weight="600"`)
+    expect(svg).not.toContain(`fill="${PAPER.measured}"`)
+    // The value is still ONE value: no solved length, no difference on the paper.
+    expect(svg).toContain('~414')
+    expect(svg).not.toContain('·')
   })
 })
 
@@ -274,14 +299,16 @@ describe('roomWallDimEntries: the rules of the plan', () => {
   })
 
   it('a value that does not fit between its ticks keeps its line and loses its text (V-1)', () => {
-    // A narrow room: the inside faces of the short walls are 50 cm, 73 px at this size, and the
-    // measured value "SE-1 ✓ 52 · 50" is 87 px wide: it does not fit between the ticks of the top
-    // wall, so that face keeps its line and has no value any more (the plan does the same).
-    const narrow = rect('r1', 'SE', 'Living', 60, 300)
-    const ctx = dimCtx(10, { surveyLabels: true, measurements: { 'SE-1': { label: 'SE-1', actualCm: 52, updatedAt: '2026-01-01T00:00:00Z' } } })
+    // A narrow room: the inside faces of the short walls are 17 cm, 25 px at this size (over the
+    // px(24) of the shortest line drawn). The measured value of the top wall is "~55" (its plan
+    // length is 17, so it does not fit the plan), 19 px wide: it does not fit between the ticks of
+    // that wall, so the face keeps its line and has no value any more (the plan does the same). The
+    // plain value "17" of the other short wall fits.
+    const narrow = rect('r1', 'SE', 'Living', 27, 300)
+    const ctx = dimCtx(10, { measurements: { 'SE-1': { label: 'SE-1', actualCm: 55, updatedAt: '2026-01-01T00:00:00Z' } } })
     const entries = roomWallDimEntries(narrow, 'lines', ctx)
     const top = entries.find((e) => e.dimKey === 'SE-1')!
-    expect(top.wallCm).toBeCloseTo(50, 6)
+    expect(top.wallCm).toBeCloseTo(17, 6)
     expect(top.box).toBeNull()
     // The line stays, and it does not carry the text past its end.
     expect(top.line).not.toBeNull()
@@ -410,7 +437,7 @@ describe('a value the solver changed: purple on the paper', () => {
     const fs = 10
     const ctx = dimCtx(fs, {
       surveyLabels: true,
-      measurements: { 'SE-2': { label: 'SE-2', actualCm: 296, updatedAt: '2026-01-01T00:00:00Z' } },
+      measurements: { 'SE-2': { label: 'SE-2', actualCm: 302, updatedAt: '2026-01-01T00:00:00Z' } },
       valueStates: (label) => (label === 'SE-2' ? 'measured' : 'estimated'),
     })
     const entries = roomWallDimEntries(rect('r1', 'SE', 'Living', 422, 312), 'lines', ctx)

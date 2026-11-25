@@ -4,9 +4,9 @@
 import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Viewport } from '../../canvas/Viewport'
-import { emptyDoc, useDoc, useUi, type DimStyle, type Layers } from '../../model/store'
+import { emptyDoc, useDoc, useUi, type CanvasUnits, type DimStyle, type Layers } from '../../model/store'
 import type { Measurement, Mode, PlanDoc, Room, Selection, SolverState, ToolId } from '../../model/types'
-import { MEASURED_FILL, SOLVED_FILL, SOLVED_STROKE } from '../../shell/panel/styles'
+import { MEASURED_FILL, MISMATCH_FILL, SOLVED_FILL, SOLVED_STROKE } from '../../shell/panel/styles'
 import { convertToV2 } from '../../model/v2/convert'
 import { useSidebar, type SidebarTab } from '../../shell/sidebar/store'
 import { RoomsLayer } from './RoomsLayer'
@@ -56,6 +56,8 @@ type Over = {
   solver?: SolverState
   /** Survey label under the pointer in the Solve tab list (the ghost layer follows it). */
   hoverLabel?: string | null
+  /** Units of the lengths written on the plan (cm, 1 decimal by default). */
+  units?: CanvasUnits
 }
 
 /** Draw the two layers of the rooms, in the order of the app: under the walls, then above them. */
@@ -77,6 +79,7 @@ const setup = (over: Over = {}) => {
     hoverLabel: over.hoverLabel ?? null,
     hoverDiagonal: null,
     view: { x: 0, y: 0, zoom: 1 },
+    canvasUnits: over.units ?? { unit: 'cm', decimals: 1 },
   })
   applyState(useSidebar, { tab: over.tab ?? 'inspect' })
   applyState(useDoc, { doc })
@@ -290,10 +293,32 @@ describe('wall lengths as dimension lines (docs/measurements-plan.md section 1)'
     expect(html).toContain('fill-slate-600 dark:fill-slate-300')
   })
 
-  it('shows a measured face in green and bold, with the measured text', () => {
+  it('shows a measured face in green and bold when the plan fits it', () => {
+    const html = setup({ measurements: { 'A-1': { label: 'A-1', actualCm: 390, updatedAt: '' } } })
+    expect(html).toContain('✓ 390')
+    expect(html).toContain(MEASURED_FILL)
+    expect(html).not.toContain('data-dim-mismatch')
+    expect(html).not.toContain('data-dim-breakdown')
+  })
+
+  it('shows ONE amber value with ~ when the plan does not fit the measured one', () => {
     const html = setup({ measurements: { 'A-1': { label: 'A-1', actualCm: 412, updatedAt: '' } } })
-    expect(html).toContain('✓ 412 · 390')
-    expect(html).toContain('fill-emerald-700 dark:fill-emerald-400')
+    expect(html).toContain('>~412<')
+    expect(html).toContain(MISMATCH_FILL)
+    expect(html).not.toContain(MEASURED_FILL)
+    expect(html).toContain('data-dim-mismatch')
+    // The solved length and the difference are NOT on the plan: the breakdown is on demand.
+    expect(html).not.toContain('· 390')
+    expect(html).not.toContain('data-dim-breakdown')
+  })
+
+  it('shows the breakdown of a value that does not fit while its text is hovered', () => {
+    const measurements = { 'A-1': { label: 'A-1', actualCm: 412, updatedAt: '' } }
+    const hovered = setup({ measurements, hoverLabel: 'A-1' })
+    expect(hovered).toContain('data-dim-breakdown="A-1"')
+    expect(hovered).toContain('Measured 412 · Plan 390 · Δ -22')
+    // Another label under the pointer: no breakdown for A-1.
+    expect(setup({ measurements, hoverLabel: 'A-2' })).not.toContain('data-dim-breakdown')
   })
 
   it('draws the old text only with the "text" style', () => {
@@ -415,28 +440,66 @@ describe('helper dimensions of the selected stored wall', () => {
     expect(html).toContain('transform="translate(200 0)" data-helper-thickness="10"')
   })
 
-  it('shows a measured face of the wall in green', () => {
+  it('shows a measured face of the wall in green when the plan fits it', () => {
+    const html = setup({
+      selection: { kind: 'storedWall', wallId: wallId(v2()), side: 'L' },
+      measurements: { 'A-1': { label: 'A-1', actualCm: 400, updatedAt: '' } },
+    })
+    expect(html).toContain('✓ 400')
+    expect(html).toContain(MEASURED_FILL)
+    expect(html).toContain('data-dim="helper" data-dim-key="A-1"')
+    expect(html).not.toContain('data-dim-breakdown')
+  })
+
+  it('shows the breakdown of a selected face the plan does not fit, and its amber value', () => {
+    // The helper dimensions of the selected wall ARE the selection of that face: the value is amber
+    // with "~", and its breakdown is written under it.
     const html = setup({
       selection: { kind: 'storedWall', wallId: wallId(v2()), side: 'L' },
       measurements: { 'A-1': { label: 'A-1', actualCm: 390, updatedAt: '' } },
     })
-    expect(html).toContain('✓ 390')
-    expect(html).toContain('data-dim="helper" data-dim-key="A-1"')
+    expect(html).toContain('~390')
+    expect(html).toContain(MISMATCH_FILL)
+    expect(html).toContain('data-dim-breakdown="A-1"')
+    expect(html).toContain('Measured 390 · Plan 400 · Δ +10')
+  })
+
+  it('draws no breakdown of a face the plan fits', () => {
+    const html = setup({
+      selection: { kind: 'storedWall', wallId: wallId(v2()), side: 'L' },
+    })
+    expect(html).not.toContain('data-dim-breakdown')
   })
 
   it('shows a measured facade value in green and bold on the outside span too (round 2 finding 9)', () => {
     const id = wallId(v2())
-    // 'W1-E' is the outside face value of the facade side of W1 (side B here).
+    // 'W1-E' is the outside face value of the facade side of W1 (side B here), 400 cm long.
+    const label = `${id}-E`
+    const html = setup({
+      selection: { kind: 'storedWall', wallId: id, side: 'L' },
+      measurements: { [label]: { label, actualCm: 400, updatedAt: '' } },
+    })
+    const span = /<g data-helper-dim="out:R:0"[\s\S]*?<\/g>/.exec(html)![0]
+    expect(span).toContain('✓ 400')
+    expect(span).toContain(MEASURED_FILL)
+    expect(span).toContain('font-weight="600"')
+    expect(span).toContain('data-dim-state="measured"')
+  })
+
+  it('writes a measured facade the plan does not fit in amber, with its breakdown', () => {
+    const id = wallId(v2())
     const label = `${id}-E`
     const html = setup({
       selection: { kind: 'storedWall', wallId: id, side: 'L' },
       measurements: { [label]: { label, actualCm: 412, updatedAt: '' } },
     })
     const span = /<g data-helper-dim="out:R:0"[\s\S]*?<\/g>/.exec(html)![0]
-    expect(span).toContain('✓ 412')
-    expect(span).toContain(MEASURED_FILL)
-    expect(span).toContain('font-weight="600"')
-    expect(span).toContain('data-dim-state="measured"')
+    expect(span).toContain('~412')
+    expect(span).toContain(MISMATCH_FILL)
+    // The breakdown of the facade value, in its own small amber text (the drawable label of the
+    // helper face is the value of the whole facade, 'W1-E').
+    expect(html).toContain(`data-dim-breakdown="${label}"`)
+    expect(html).toContain('Measured 412 · Plan 400 · Δ -12')
   })
 
   it('draws no helper dimension without a selected stored wall', () => {
@@ -715,7 +778,7 @@ describe('the solver on the plan (docs/solver-plan.md, round 4)', () => {
   it('keeps the estimated value grey and the measured value green when the solver is On', () => {
     const html = setup({
       solver: { ...solvedDoc(), changes: [{ kind: 'position', wallId: wallId(v2()), label: 'A-1' }] },
-      measurements: { 'A-2': { label: 'A-2', actualCm: 312, updatedAt: '' } },
+      measurements: { 'A-2': { label: 'A-2', actualCm: 290, updatedAt: '' } },
     })
     // The other walls of the room have no change: white paper look, grey values.
     expect(html).toContain('data-dim-state="estimated"')

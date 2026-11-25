@@ -10,7 +10,7 @@ import { useMemo } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { dist, fmtCm, innerWallLengths, labelPoint, roomInnerRing, roomWalls } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
-import { measuredTextIn, shownLength } from '../../model/precision'
+import { fitsPlan, measuredBreakdown, measuredTextIn, shownLength } from '../../model/precision'
 import { fmtLen, unitSuffix } from '../../model/units'
 import { useDoc, useUi } from '../../model/store'
 import type { Vec } from '../../model/types'
@@ -25,6 +25,7 @@ import { isV2Doc } from '../../model/v2/targets'
 import { useIsDesktop } from '../../shell/useDesktop'
 import { DIM_STYLE, dimLine, dimLineOfSpan, worldPx, type DimLine } from './dims/dimLine'
 import { DimLineView, valueFill } from './dims/DimLineView'
+import { MISMATCH_FILL } from '../../shell/panel/styles'
 import { useValueStates } from './dims/useValueStates'
 import type { ValueState } from '../solver/lookup'
 import { SolverGhostLayer } from './SolverGhostLayer'
@@ -320,9 +321,12 @@ export function RoomsOverlay() {
           const faceState = f.kind === 'room'
             ? valueStates(f.label, f.measuredCm)
             : s.outside && s.facadeLabel ? valueStates(s.facadeLabel) : 'estimated'
+          const solvedCm = shownLength(f.lengthCm, step)
+          // A measured value that the plan does not fit: amber, "~412", and its breakdown on hover.
+          const mismatch = measuredFace && !fitsPlan(faceCm as number, solvedCm, step)
           const text = measuredFace
-            ? measuredTextIn(faceCm as number, shownLength(f.lengthCm, step), step, units)
-            : fmtLen(shownLength(f.lengthCm, step), units)
+            ? measuredTextIn(faceCm as number, solvedCm, step, units)
+            : fmtLen(solvedCm, units)
           const line = dimLineOfSpan(a, b, normal, { from: f.from, to: f.to }, helperOff, zoom, text)
           if (!line) return null
           const dimKey = f.kind === 'room' && f.label ? f.label : keys[i] ?? s.side + i
@@ -336,14 +340,27 @@ export function RoomsOverlay() {
               label: editLabel, at: line.text, plannedCm: f.lengthCm, roomCode: room.code, faces: roomWalls(room).length,
             })
           }
+          const helperEditing = !!editLabel && editLabel === dimEditing
+          // The breakdown of a value that does not fit: one small amber text, px(13) further away
+          // from the wall than the value (perpendicular to the line of the dimension).
+          const bx = line.text.x + normal.x * px(13), by = line.text.y + normal.y * px(13)
           return (
             <g key={s.side + dimKey} data-helper-dim={dimKey} data-helper-side={s.letter}>
               <DimLineView line={line} text={text} measured={measuredFace} state={faceState} kind="helper" dimKey={dimKey}
-                hideText={!!editLabel && editLabel === dimEditing}
+                mismatch={mismatch} hideText={helperEditing}
                 onTextDoubleClick={editLabel ? () => openDim(editLabel, line.text, f.lengthCm, room) : undefined}
                 onTextPointerDown={editLabel && f.kind === 'room'
                   ? (e) => onRoomDown(e, f.roomId, vp)
                   : undefined} />
+              {mismatch && !helperEditing && (
+                <text x={bx} y={by} textAnchor="middle" dominantBaseline="middle"
+                  transform={`rotate(${line.angle} ${bx} ${by})`} fontSize={px(10)}
+                  pointerEvents="none" paintOrder="stroke" strokeWidth={px(3)} strokeLinejoin="round"
+                  data-dim-breakdown={editLabel ?? dimKey}
+                  className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${MISMATCH_FILL}`}>
+                  {measuredBreakdown(faceCm as number, solvedCm, units)}
+                </text>
+              )}
             </g>
           )
         })
@@ -440,9 +457,17 @@ export function RoomsOverlay() {
     measured: boolean
     /** Green measured, purple solved, grey estimated (docs/solver-plan.md). */
     state: ValueState
+    /** Measured value that the plan does not fit: amber, and its text starts with "~". */
+    mismatch: boolean
+    /** Full value of a mismatch, shown on hover and on selection; null otherwise. */
+    breakdown: string | null
     /** Place and angle of the text when it is drawn without a line. */
     p: Vec
     angle: number
+    /** Unit normal of the face, into the room: the side the breakdown goes, past the value. */
+    normal: Vec
+    /** True when the wall face of this value is selected (the breakdown of a mismatch shows then). */
+    faceSelected: boolean
     /** Box of the text, cm; null when the pass dropped it (the line and its ticks stay). */
     box: Box | null
     /** Corners of the turned text box, cm: the wall band test of the pass. */
@@ -486,9 +511,11 @@ export function RoomsOverlay() {
         const my = (w.start.y + w.end.y) / 2 + w.inward.y * off
         let angle = (Math.atan2(w.dir.y, w.dir.x) * 180) / Math.PI
         if (angle > 90 || angle < -90) angle += 180
-        const text = measured
-          ? measuredTextIn(m.actualCm, shownLength(inner[w.index], step), step, units)
-          : fmtLen(shownLength(inner[w.index], step), units)
+        const solvedCm = shownLength(inner[w.index], step)
+        // A measured value the plan does not fit: one clean value on the plan ("~412"), amber, and
+        // the breakdown (measured, plan, difference) only on hover and on selection.
+        const mismatch = measured && !fitsPlan(m.actualCm, solvedCm, step)
+        const text = measured ? measuredTextIn(m.actualCm, solvedCm, step, units) : fmtLen(solvedCm, units)
         const key = 'd' + r.id + w.start.id
         const dimKey = `${r.code}-${w.index + 1}`
         // "Wall lengths: Lines": a dimension line along the inside face of this wall (the span the
@@ -516,6 +543,11 @@ export function RoomsOverlay() {
         const textAngle = line ? line.angle : angle
         wallValues.push({
           key, dimKey, line, text, measured, state: valueStates(labels.get(w.start.id), m?.actualCm), p, angle: textAngle,
+          mismatch, breakdown: mismatch ? measuredBreakdown(m.actualCm, solvedCm, units) : null,
+          normal: w.inward,
+          // The face is selected: a selected stored wall face ('room:r1:cu-v1'), or a v1 wall.
+          faceSelected: (selection?.kind === 'storedWall' && selection.face === `room:${r.id}:${w.start.id}`)
+            || selWalls.has(`${r.id}:${w.start.id}`),
           box: showText ? textBox(p, textAngle, text, zoom) : null,
           quad: showText ? textQuad(p, textAngle, text, zoom) : null,
           roomId: r.id, plannedCm: shownLength(inner[w.index], step), faceLabel: dimTextLabel('wall', dimKey),
@@ -638,33 +670,60 @@ export function RoomsOverlay() {
         const editing = !!editLabel && editLabel === dimEditing
         const onTextDoubleClick = editLabel ? () => openDim(editLabel, d.p, d.plannedCm, rooms.find((r) => r.id === d.roomId)) : undefined
         const onTextPointerDown = editLabel ? (e: ReactPointerEvent) => onRoomDown(e, d.roomId, vp) : undefined
+        // The pointer on the text names its face ('A-1') in the plan: the breakdown of a value that
+        // does not fit shows while it is there, and goes when it leaves (`hoverLabel`, as the
+        // survey cards of the panel do).
+        const hovered = interactive ? d.faceLabel : null
+        const onTextPointerEnter = hovered ? () => useUi.getState().set({ hoverLabel: hovered }) : undefined
+        const onTextPointerLeave = hovered
+          ? () => { if (useUi.getState().hoverLabel === hovered) useUi.getState().set({ hoverLabel: null }) }
+          : undefined
         // The declutter pass dropped this text (V-1, V-3, V-6, V-7): the line and its ticks stay,
         // and a value written without a line ("Text" style) draws nothing at all.
         if (!d.box) {
           return d.line
             ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} state={d.state} kind="wall" dimKey={d.dimKey}
-                hideText />
+                mismatch={d.mismatch} hideText />
             : null
         }
         if (editing && !d.line) return null
-        return d.line
+        // The full breakdown of a value the plan does not fit: on hover, and on the selected face
+        // (r1fix: the plan shows ONE value, the rest goes on demand).
+        const breakdown = d.breakdown && !editing && (hoverLabel === d.faceLabel || d.faceSelected)
+          ? (
+            <text key={d.key + '-bd'} x={d.p.x + d.normal.x * px(13)} y={d.p.y + d.normal.y * px(13)}
+              textAnchor="middle" dominantBaseline="middle"
+              transform={`rotate(${d.angle} ${d.p.x + d.normal.x * px(13)} ${d.p.y + d.normal.y * px(13)})`}
+              fontSize={px(10)} pointerEvents="none" paintOrder="stroke" strokeWidth={px(3)}
+              strokeLinejoin="round" data-dim-breakdown={d.faceLabel}
+              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${MISMATCH_FILL}`}>
+              {d.breakdown}
+            </text>
+          )
+          : null
+        const value = d.line
           ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} state={d.state} kind="wall" dimKey={d.dimKey}
-              hideText={editing} onTextDoubleClick={onTextDoubleClick} onTextPointerDown={onTextPointerDown} />
+              mismatch={d.mismatch} hideText={editing} onTextDoubleClick={onTextDoubleClick} onTextPointerDown={onTextPointerDown}
+              onTextPointerEnter={onTextPointerEnter} onTextPointerLeave={onTextPointerLeave} />
           : (
             // The dimensions layer set to "Text", or a wall shorter than px(12) on screen: the text
             // alone, as before (the lengths of the walls of a dragged vertex stay readable, 7.2 #22).
             <text key={d.key} x={d.p.x} y={d.p.y} textAnchor="middle" dominantBaseline="middle"
               transform={`rotate(${d.angle} ${d.p.x} ${d.p.y})`} fontSize={px(11)}
-              pointerEvents={editLabel ? 'auto' : 'none'} style={editLabel ? { cursor: 'text' } : undefined}
+              pointerEvents={editLabel || onTextPointerEnter ? 'auto' : 'none'}
+              style={editLabel ? { cursor: 'text' } : undefined}
               onDoubleClick={onTextDoubleClick && ((e) => { e.stopPropagation(); onTextDoubleClick() })}
               onPointerDown={onTextPointerDown}
+              onPointerEnter={onTextPointerEnter} onPointerLeave={onTextPointerLeave}
               data-dim-text={editLabel ?? undefined} data-dim-state={d.state}
+              data-dim-mismatch={d.mismatch ? '' : undefined}
               paintOrder="stroke"
               strokeWidth={px(3)} strokeLinejoin="round" fontWeight={d.measured ? 600 : undefined}
-              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${valueFill(d.state)}`}>
+              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${valueFill(d.state, d.mismatch)}`}>
               {d.text}
             </text>
           )
+        return breakdown ? [value, breakdown] : value
       })}
 
       {/* wall numbers: a small badge with the number of the wall ("6" = wall CU-6 of room CU),

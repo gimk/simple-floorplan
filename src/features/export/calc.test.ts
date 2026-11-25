@@ -137,7 +137,7 @@ describe('csv', () => {
 })
 
 describe('svg', () => {
-  it('contains legend, scale bar, title, labels and verified dims in green', () => {
+  it('contains legend, scale bar, title, labels and a measured dim the plan does not fit', () => {
     const d = mkDoc()
     d.measurements = { 'SE-1': { label: 'SE-1', actualCm: 405, updatedAt: now } }
     const { svg } = buildPlanSvg(d, { date: '2026-02-03' })
@@ -151,8 +151,20 @@ describe('svg', () => {
     expect(svg).toContain('Test, &quot;flat&quot;')
     expect(svg).toContain('2026-02-03')
     expect(svg).toContain('11,31 m²') // inside area 390 x 290
+    // 405 cm on a 390 cm face: the plan does not fit the measured value, so it is amber with "~",
+    // and the solved length and the difference stay off the paper.
+    expect(svg).toMatch(/fill="#b45309"[^>]*data-dim="SE-1"/)
+    expect(svg).toContain('~405')
+    expect(svg).not.toContain('405 · 390')
+  })
+
+  it('writes a measured dim in green when the plan fits it', () => {
+    const d = mkDoc()
+    d.measurements = { 'SE-1': { label: 'SE-1', actualCm: 390, updatedAt: now } }
+    const { svg } = buildPlanSvg(d)
     expect(svg).toMatch(/fill="#15803d"[^>]*data-dim="SE-1"/)
-    expect(svg).toContain('405')
+    expect(svg).toContain('✓ 390')
+    expect(svg).not.toContain('#b45309')
   })
   it('handles an empty doc', () => {
     const d = mkDoc(); d.rooms = []; d.elements = []

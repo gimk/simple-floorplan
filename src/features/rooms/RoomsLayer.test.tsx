@@ -8,7 +8,7 @@ import type { PlanDoc, Room } from '../../model/types'
 import { useSidebar, type SidebarTab } from '../../shell/sidebar/store'
 import { RoomsLayer } from './RoomsLayer'
 import { RoomsOverlay } from './RoomsOverlay'
-import { measuredText } from '../../model/precision'
+import { fitsPlan, measuredBreakdown, measuredText } from '../../model/precision'
 import { convertToV2 } from '../../model/v2/convert'
 
 const BASE_LAYERS: Layers = {
@@ -204,11 +204,17 @@ describe('wall numbers on the plan (layer auto)', () => {
 })
 
 describe('measuredText', () => {
-  it('shows the measured value alone when the plan agrees within its precision', () => {
+  it('shows the measured value alone, with ✓, when the plan agrees within its precision', () => {
     expect(measuredText(412, 412.5, 0.5)).toBe('✓ 412')
+    expect(fitsPlan(412, 412.5, 0.5)).toBe(true)
   })
-  it('shows the measured and the solved value when they differ', () => {
-    expect(measuredText(412, 410.5, 0.5)).toBe('✓ 412 · 410,5')
+
+  it('keeps ONE value, with ~, when the plan does not fit it', () => {
+    // The solved length is not on the plan any more: it is in measuredBreakdown, on demand.
+    expect(measuredText(412, 410.5, 0.5)).toBe('~412')
+    expect(fitsPlan(412, 410.5, 0.5)).toBe(false)
+    expect(measuredBreakdown(412, 410.5, { unit: 'cm', decimals: 1 }))
+      .toBe('Measured 412 · Plan 410,5 · Δ -1,5')
   })
 })
 

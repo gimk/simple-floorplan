@@ -8,7 +8,7 @@ import { emptyDoc, useDoc, useUi, type Layers } from '../../../model/store'
 import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall, ToolId } from '../../../model/types'
 import { convertToV2 } from '../../../model/v2/convert'
 import { OutsideDimsLayer } from './OutsideDimsLayer'
-import { ESTIMATED_FILL, MEASURED_FILL, SOLVED_FILL } from '../../../shell/panel/styles'
+import { ESTIMATED_FILL, MEASURED_FILL, MISMATCH_FILL, SOLVED_FILL } from '../../../shell/panel/styles'
 
 // The overlap pass can be forced for one test: the pure pass has its own tests.
 const forced = vi.hoisted(() => ({ hide: null as null | ((keys: string[]) => Set<string>) }))
@@ -150,11 +150,34 @@ describe('OutsideDimsLayer', () => {
     expect(html).toContain('data-outside-overall=""><g data-outside-seg="W1-E"')
   })
 
-  it('shows a measured facade value in green, past the plan length', () => {
+  it('shows a measured facade value in green when the plan fits it', () => {
+    const html = setup({ measurements: { 'W1-E': { label: 'W1-E', actualCm: 410, updatedAt: '2026-01-01' } } })
+    expect(html).toContain('data-outside-seg="W1-E"')
+    expect(html).toContain(MEASURED_FILL)
+    expect(html).toContain('✓ 410')
+  })
+
+  it('shows ONE amber value with ~ when the plan does not fit the measured facade', () => {
     const html = setup({ measurements: { 'W1-E': { label: 'W1-E', actualCm: 412, updatedAt: '2026-01-01' } } })
     expect(html).toContain('data-outside-seg="W1-E"')
-    expect(html).toContain('fill-emerald-700 dark:fill-emerald-400')
-    expect(html).toContain('✓ 412')
+    expect(html).toContain(MISMATCH_FILL)
+    expect(html).not.toContain(MEASURED_FILL)
+    expect(html).toContain('>~412<')
+    // The solved length and the difference are not on the plan: the breakdown is on demand.
+    expect(html).not.toContain('· 410')
+    expect(html).not.toContain('data-dim-breakdown')
+  })
+
+  it('shows the breakdown of a facade value that does not fit while its text is hovered', () => {
+    const measurements = { 'W1-E': { label: 'W1-E', actualCm: 412, updatedAt: '2026-01-01' } }
+    applyState(useUi, { hoverLabel: 'W1-E' })
+    const hovered = setup({ measurements })
+    expect(hovered).toContain('data-dim-breakdown="W1-E"')
+    expect(hovered).toContain('Measured 412 · Plan 410 · Δ -2')
+    // Another label under the pointer: no breakdown for this one.
+    applyState(useUi, { hoverLabel: 'W2-E' })
+    expect(setup({ measurements })).not.toContain('data-dim-breakdown')
+    applyState(useUi, { hoverLabel: null })
   })
 
   it('draws nothing when the outside dimensions layer or the dimensions layer is off', () => {
@@ -289,7 +312,7 @@ describe('OutsideDimsLayer: a facade the solver changed (round 4)', () => {
   it('keeps a measured facade green, never purple', () => {
     const doc = solved()
     const html = setup({
-      doc: { ...doc, measurements: { 'W1-E': { label: 'W1-E', actualCm: 412, updatedAt: '' } } },
+      doc: { ...doc, measurements: { 'W1-E': { label: 'W1-E', actualCm: 410, updatedAt: '' } } },
     })
     expect(html).toContain(MEASURED_FILL)
     expect(html).not.toContain(SOLVED_FILL)

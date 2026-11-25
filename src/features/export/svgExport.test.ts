@@ -88,12 +88,24 @@ describe('buildPlanSvg: wall lengths', () => {
     expect(svg).not.toContain('dark:')
   })
 
-  it('writes a measured wall in green and bold with ✓', () => {
+  it('writes a measured wall in green and bold with ✓ when the plan fits it', () => {
+    const d = square()
+    d.measurements = { 'SE-1': { label: 'SE-1', actualCm: 412, updatedAt: now } }
+    const { svg } = buildPlanSvg(d)
+    expect(svg).toMatch(/fill="#15803d" font-weight="600"/)
+    expect(svg).toContain('✓ 412')
+    expect(svg).not.toContain('#b45309')
+  })
+
+  it('writes ONE amber value with ~ when the plan does not fit the measured one', () => {
     const d = square()
     d.measurements = { 'SE-1': { label: 'SE-1', actualCm: 414, updatedAt: now } }
     const { svg } = buildPlanSvg(d)
-    expect(svg).toMatch(/fill="#15803d" font-weight="600"/)
-    expect(svg).toContain('✓ 414 · 412')
+    // Amber (PAPER.mismatch), still bold: the value is measured, the plan does not fit it.
+    expect(svg).toMatch(/fill="#b45309" font-weight="600"/)
+    expect(svg).toContain('~414')
+    // The solved length and the difference stay off the paper: one clean value.
+    expect(svg).not.toContain('414 · 412')
   })
 
   it('the Text style keeps the old output: a text only, no line and no tick', () => {

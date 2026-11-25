@@ -67,6 +67,10 @@ export const CHIP_IDLE = 'hover:bg-black/5 dark:hover:bg-white/10'
 /** Value state colours: grey estimated, green measured, purple solved. */
 export const MEASURED_TEXT = 'text-emerald-700 dark:text-emerald-400'
 export const MEASURED_FILL = 'fill-emerald-700 dark:fill-emerald-400'
+/** A measured value the plan does not fit: amber, with the "~" of the text (docs/measurements-plan.md). */
+export const MISMATCH_TEXT = 'text-amber-700 dark:text-amber-400'
+export const MISMATCH_FILL = 'fill-amber-600 dark:fill-amber-400'
+export const MISMATCH_HEX = '#b45309'
 export const ESTIMATED_TEXT = 'text-slate-500 dark:text-slate-400'
 export const ESTIMATED_FILL = 'fill-slate-600 dark:fill-slate-300'
 export const SOLVED_TEXT = 'text-violet-700 dark:text-violet-400'

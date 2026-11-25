@@ -23,7 +23,7 @@
 // Light colours only (the export is always on white paper): no dark mode.
 import { surveyIds } from '../../model/survey'
 import { fmtLen, type LengthUnits } from '../../model/units'
-import { measuredTextIn, shownLength } from '../../model/precision'
+import { fitsPlan, measuredTextIn, shownLength } from '../../model/precision'
 import { dist, roomAreaM2, labelPoint, roomWalls, roomInnerRing, innerWallLengths } from '../../model/geometry'
 import type { Measurement, PlanDoc, Room, Vec } from '../../model/types'
 import type { DimStyle, RoomTagFields } from '../../model/store'
@@ -34,7 +34,7 @@ import { outsideDimTextBoxes, outsideHiddenTexts } from '../rooms/dims/outsideTe
 import { roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from '../rooms/roomTag'
 import type { ValueStates } from '../rooms/dims/valueStates'
 import type { ValueState } from '../solver/lookup'
-import { SOLVED_HEX } from '../../shell/panel/styles'
+import { MISMATCH_HEX, SOLVED_HEX } from '../../shell/panel/styles'
 import { OUTSIDE_EXT_GAP_PX, OUTSIDE_ROWS_PX, outsideDims, outsideRowLine, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
 
 // ---- text of the paper ----
@@ -53,6 +53,8 @@ export const PAPER = {
   measured: '#15803d',
   /** Value the solver changed to (docs/solver-plan.md): purple, the token of the app. */
   solved: SOLVED_HEX,
+  /** Measured value the plan does not fit: amber, with the "~" of the text (as on the plan). */
+  mismatch: MISMATCH_HEX,
   /** Halo behind the text, so it stays readable over a wall. */
   halo: '#ffffff',
 }
@@ -82,14 +84,18 @@ export type DimText = {
   measured: boolean
   /** The solver changed the wall of this value: purple, not measured. */
   solved?: boolean
+  /** The value is measured but the plan does not fit it (`fitsPlan`): amber, not green. */
+  mismatch?: boolean
 }
 
 /** The text of a dimension as `dimLine` measures it (label included, since it is drawn). */
 export const fullDimText = (t: DimText) => (t.label ? `${t.label} ${t.value}` : t.value)
 
 /**
- * The value of one face of a room, in the units of the plan: the measured value (green, with ✓)
- * when the survey has one, else the calculated length rounded to the plan precision.
+ * The value of one face of a room, in the units of the plan: the measured value (green with ✓ when
+ * the plan fits it, amber with ~ when it does not) when the survey has one, else the calculated
+ * length rounded to the plan precision. One value only: the solved length and the difference stay
+ * on the plan (a hover or a selection), never on the paper.
  */
 export function faceText(input: {
   /** Survey label of the face, when the labels are on. */
@@ -102,18 +108,22 @@ export function faceText(input: {
   units: LengthUnits
 }): DimText {
   const measured = (input.measuredCm ?? 0) > 0
+  const solvedCm = shownLength(input.solvedCm, input.step)
+  const mismatch = measured && !fitsPlan(input.measuredCm!, solvedCm, input.step)
   const value = measured
-    ? measuredTextIn(input.measuredCm!, shownLength(input.solvedCm, input.step), input.step, input.units)
-    : fmtLen(shownLength(input.solvedCm, input.step), input.units)
-  return { value, label: input.label, measured }
+    ? measuredTextIn(input.measuredCm!, solvedCm, input.step, input.units)
+    : fmtLen(solvedCm, input.units)
+  return { value, label: input.label, measured, mismatch }
 }
 
 /** The value of one segment of an outside chain (OutsideDimsLayer.tsx, `segmentText`). */
 export function segmentText(seg: OutsideDimSegment, step: number, units: LengthUnits): DimText {
   const measured = (seg.measuredCm ?? 0) > 0
+  const mismatch = measured && !fitsPlan(seg.measuredCm!, seg.lengthCm, step)
   return {
     value: measured && seg.measuredCm !== null ? measuredTextIn(seg.measuredCm, seg.lengthCm, step, units) : fmtLen(seg.lengthCm, units),
     measured,
+    mismatch,
   }
 }
 
@@ -157,7 +167,7 @@ export function dimSvg({ line, text, dimKey, kind, fs, zoom, hideText }: DimSvgI
       ? ''
       : `<text x="${num(line.text.x)}" y="${num(line.text.y)}" text-anchor="middle" dominant-baseline="middle" ` +
         `transform="rotate(${num(line.angle)} ${num(line.text.x)} ${num(line.text.y)})" font-size="${num(fs * 0.75)}" ` +
-        `fill="${text.measured ? PAPER.measured : text.solved ? PAPER.solved : PAPER.text}" font-weight="${text.measured ? 600 : 400}" ` +
+        `fill="${text.measured ? (text.mismatch ? PAPER.mismatch : PAPER.measured) : text.solved ? PAPER.solved : PAPER.text}" font-weight="${text.measured ? 600 : 400}" ` +
         `paint-order="stroke" stroke="${PAPER.halo}" stroke-width="${num(p(3))}" stroke-linejoin="round" ` +
         `data-dim="${esc(dimKey)}"${line.outside ? ' data-dim-outside=""' : ''}>${body}</text>`)
   )
@@ -311,7 +321,7 @@ export function roomWallDimsSvg(entries: WallDimEntry[], ctx: { fs: number; zoom
     parts.push(
       `<text x="${num(at.x)}" y="${num(at.y)}" text-anchor="middle" dominant-baseline="middle" ` +
       `transform="rotate(${num(angle)} ${num(at.x)} ${num(at.y)})" font-size="${num(fs * 0.75)}" ` +
-      `fill="${e.measured ? PAPER.measured : e.text.solved ? PAPER.solved : PAPER.line}" font-weight="${e.measured ? 700 : 400}" ` +
+      `fill="${e.measured ? (e.text.mismatch ? PAPER.mismatch : PAPER.measured) : e.text.solved ? PAPER.solved : PAPER.line}" font-weight="${e.measured ? 700 : 400}" ` +
       `paint-order="stroke" stroke="${PAPER.halo}" stroke-width="${num(fs * 0.25)}" stroke-linejoin="round" ` +
       `data-dim="${esc(e.dimKey)}">${body}${esc(e.text.value)}</text>`,
     )

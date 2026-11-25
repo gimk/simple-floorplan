@@ -1,7 +1,7 @@
 // Units of the lengths on the plan (docs/measurements-plan.md section 5).
 import { describe, expect, it } from 'vitest'
 import { fmtCm } from './geometry'
-import { measuredText, measuredTextIn } from './precision'
+import { fitsPlan, measuredBreakdown, measuredText, measuredTextIn } from './precision'
 import { DEFAULT_UNITS, fmtLen, unitDecimals, unitSuffix, unitValue, type LengthUnits } from './units'
 
 const cm = (decimals: number): LengthUnits => ({ unit: 'cm', decimals })
@@ -118,6 +118,26 @@ describe('fmtLen: zero and negative values', () => {
   })
 })
 
+describe('fitsPlan', () => {
+  it('accepts a measured value within the step of the plan', () => {
+    // The tolerance is the step of the plan: 0.5 cm here, so 412 fits 412,5 but not 410,7.
+    expect(fitsPlan(412, 412.5, 0.5)).toBe(true)
+    expect(fitsPlan(412, 410.7, 0.5)).toBe(false)
+    expect(fitsPlan(412, 412, 0.5)).toBe(true)
+    // Float noise does not break an exact fit (the 1e-9 of the rule).
+    expect(fitsPlan(0.1 + 0.2, 0.3, 0.5)).toBe(true)
+  })
+
+  it('never goes under 1 mm, and uses 1 mm when rounding is off', () => {
+    // Step 0 = rounding off: the tolerance is 1 mm.
+    expect(fitsPlan(412, 412.1, 0)).toBe(true)
+    expect(fitsPlan(412, 412.2, 0)).toBe(false)
+    // A step under 0.1 cm does not make the rule stricter than 1 mm.
+    expect(fitsPlan(412, 412.09, 0.01)).toBe(true)
+    expect(fitsPlan(412, 412.2, 0.1)).toBe(false)
+  })
+})
+
 describe('measuredTextIn', () => {
   it('gives exactly measuredText with the default units', () => {
     for (const [measured, solved, step] of [[412, 412, 0.5], [412, 410.7, 0.5], [412, 412.2, 0.1], [0, 3, 0]]) {
@@ -125,10 +145,29 @@ describe('measuredTextIn', () => {
     }
   })
 
-  it('writes both values in the units of the plan', () => {
+  it('writes ONE value: ✓ when the plan fits it, ~ when it does not', () => {
     expect(measuredTextIn(412, 412, 0.5, m(2))).toBe('✓ 4,12')
-    expect(measuredTextIn(412, 410.7, 0.5, m(2))).toBe('✓ 4,12 · 4,11')
-    expect(measuredTextIn(412, 410.7, 0.5, mm(0))).toBe('✓ 4120 · 4107')
+    expect(measuredTextIn(412, 412.4, 0.5, m(2))).toBe('✓ 4,12')
+    expect(measuredTextIn(412, 410.7, 0.5, m(2))).toBe('~4,12')
+    expect(measuredTextIn(412, 410.7, 0.5, mm(0))).toBe('~4120')
     expect(measuredTextIn(412, 412, 0.5, cm(0))).toBe('✓ 412')
+    // Never the solved length on the plan: it goes in the breakdown.
+    expect(measuredTextIn(412, 410.7, 0.5, m(2))).not.toContain('4,11')
+  })
+})
+
+describe('measuredBreakdown', () => {
+  it('writes the measured value, the plan and the difference, in the units of the plan', () => {
+    expect(measuredBreakdown(412, 410.5, cm(1))).toBe('Measured 412 · Plan 410,5 · Δ -1,5')
+    expect(measuredBreakdown(412, 410.5, m(2))).toBe('Measured 4,12 · Plan 4,11 · Δ -0,02')
+  })
+
+  it('keeps the sign of the difference, and has none when the two agree', () => {
+    expect(measuredBreakdown(410, 412, cm(1))).toBe('Measured 410 · Plan 412 · Δ +2')
+    expect(measuredBreakdown(412, 412, cm(1))).toBe('Measured 412 · Plan 412 · Δ 0')
+  })
+
+  it('reads no -0 on a difference that rounds to zero', () => {
+    expect(measuredBreakdown(412, 412.04, cm(1))).toBe('Measured 412 · Plan 412 · Δ +0')
   })
 })
