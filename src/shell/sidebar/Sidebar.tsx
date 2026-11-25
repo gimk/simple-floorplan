@@ -17,6 +17,7 @@ import { SolvePanel } from '../../features/solve'
 import { ElementsPanel } from '../../features/elements'
 import { TapePanel, PinPanel } from '../../features/annotations'
 import { BackgroundPanel } from '../../features/background'
+import { LayersPanel } from '../../features/layers'
 import { SchedulePanel } from '../../features/schedule'
 import { CalculatorsPanel, ExportPanel } from '../../features/export'
 import { SharePanel } from '../../features/share/SharePanel'
@@ -29,6 +30,7 @@ import { scrollToTop } from './scroll'
 const TABS: { id: SidebarTab; label: string }[] = [
   { id: 'inspect', label: 'Inspect' },
   { id: 'solve', label: 'Solve' },
+  { id: 'layers', label: 'Layers' },
   { id: 'plan', label: 'Plan' },
 ]
 
@@ -49,6 +51,8 @@ export function Sidebar() {
   useEffect(() => {
     if (lastSignature.current === signature) return
     lastSignature.current = signature
+    // Clicking a row of the Layers tab selects an item: stay on that tab.
+    if (useSidebar.getState().tab === 'layers') return
     setTab('inspect')
     // The card of the new selection sits at the top: bring it into view in the scrolling <aside>.
     scrollToTop(inspectRef.current)
@@ -133,6 +137,15 @@ export function Sidebar() {
       >
         {/* Whole-plan tools: progress, precision, keep locked, apply / solve (docs/sidebar-plan-3.md). */}
         <SolvePanel />
+      </div>
+
+      <div
+        id={`${baseId}-panel-layers`}
+        role="tabpanel"
+        aria-labelledby={`${baseId}-tab-layers`}
+        className={tab === 'layers' ? 'flex flex-col gap-3' : 'hidden'}
+      >
+        <LayersPanel />
       </div>
 
       <div
