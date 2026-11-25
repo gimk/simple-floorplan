@@ -125,3 +125,23 @@ it('shows Old values (n) in the room card, and the old values of deleted rooms',
   expect(panel).toContain('ZZ-1')
   expect(panel).not.toContain('SE-2')
 })
+
+it('does not crash when a room has an element of an unknown legacy kind (e.g. cupboard)', () => {
+  const rooms = demoRooms()
+  const dg = rooms.find((r) => r.code === 'DG')!
+  const legacyCupboard = {
+    id: 'el-legacy-cupboard',
+    roomId: dg.id,
+    wallStart: dg.vertices[0].id,
+    kind: 'cupboard' as WallElement['kind'],
+    offsetCm: 10,
+    widthCm: 100,
+    depthCm: 60,
+    createdAt: '2026-11-22T00:00:00.000Z',
+    updatedAt: '2026-11-22T00:00:00.000Z',
+  }
+  const doc: PlanDoc = { ...emptyDoc(), rooms, elements: [legacyCupboard] }
+  const html = renderToString(<RoomCard doc={doc} room={dg} allLabels={[]} />)
+  expect(html).toContain('Dégagement')
+  expect(html).toContain('cupboard')
+})

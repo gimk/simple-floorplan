@@ -19,7 +19,7 @@ type Props = {
 }
 
 export function ElementSymbol({ kind, variant, w, t, depth, hinge = 'start', swing = 'in', hair }: Props) {
-  const c = COLORS[kind]
+  const c = COLORS[kind] ?? COLORS.other
   const h = t / 2
   const thin = Math.max(hair * 1.2, 1)
   const leaf = Math.max(hair * 2.2, 3)

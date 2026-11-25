@@ -25,7 +25,7 @@ export const VARIANT_LABEL: Record<ElementVariant, string> = {
   fixed: 'Fixed',
 }
 
-export const defaultVariant = (kind: ElementKind): ElementVariant | undefined => VARIANTS[kind][0]
+export const defaultVariant = (kind: ElementKind): ElementVariant | undefined => VARIANTS[kind]?.[0]
 
 /** Wall thickness: explicit value, else by wall type (bearing 25, exterior 30, partition 10). */
 export function wallThickness(room: Room, wallStart: string): number {
@@ -118,7 +118,7 @@ export const flipHinge = (hinge: 'start' | 'end' | undefined): 'start' | 'end' =
 export type NewElementSpec = Pick<WallElement, 'kind' | 'variant' | 'widthCm' | 'heightCm' | 'sillCm' | 'depthCm' | 'hinge' | 'swing'>
 
 export function defaultElement(kind: ElementKind, variant?: ElementVariant): NewElementSpec {
-  const v = variant && VARIANTS[kind].includes(variant) ? variant : defaultVariant(kind)
+  const v = variant && VARIANTS[kind]?.includes(variant) ? variant : defaultVariant(kind)
   switch (kind) {
     case 'door': return { kind, variant: v, widthCm: v === 'double' ? 140 : 80, heightCm: 204, hinge: 'start', swing: 'in' }
     case 'window': return { kind, variant: v, widthCm: 120, heightCm: 135, sillCm: 90 }

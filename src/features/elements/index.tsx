@@ -176,7 +176,7 @@ export function ElementsLayer() {
             style={{ cursor: interactive ? 'grab' : undefined }}
             data-element-id={el.id}
             data-element-kind={el.kind}
-            aria-label={`${KIND_LABEL[el.kind]} on wall ${room.code}-${ft.wall.index + 1}`}
+            aria-label={`${KIND_LABEL[el.kind] ?? el.kind} on wall ${room.code}-${ft.wall.index + 1}`}
             onPointerDown={(e) => onDown(e, el, room)}
             onPointerMove={(e) => onMove(e, el, room)}
             onPointerUp={onUp}
@@ -302,7 +302,7 @@ function KindPicker() {
   const hinges = usePlaceOpts((s) => s.hinges)
   const repeat = usePlaceOpts((s) => s.repeat)
   const setRepeat = usePlaceOpts((s) => s.setRepeat)
-  const opts = VARIANTS[kind]
+  const opts = VARIANTS[kind] ?? []
   const current = variants[kind] ?? defaultVariant(kind)
   const hinge = hingeOf(hinges, kind)
   const chip = (active: boolean) =>
@@ -382,10 +382,12 @@ export function ElementCard({ el, room, onPatch: patch, onDelete: deleteElement 
   const wall = room ? wallByStart(room, el.wallStart) : undefined
   const wallLabel = room && wall ? `${room.code}-${wall.index + 1}` : '?'
   const L = wall?.length ?? 0
-  const variants = VARIANTS[el.kind]
+  const variants = VARIANTS[el.kind] ?? []
   // widthCm may be absent (Measuring Mode can leave it empty): treat as 0 here.
   const eff = { ...el, widthCm: el.widthCm ?? 0 }
-  const kindOptions = KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))
+  const kindOptions = KIND_LABEL[el.kind]
+    ? KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))
+    : [{ value: el.kind, label: el.kind }, ...KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] }))]
   const variantOptions = variants.map((v) => ({ value: v, label: VARIANT_LABEL[v] }))
   const over = wall ? overflows(eff, L) : false
 

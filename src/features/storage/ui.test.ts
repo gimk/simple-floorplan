@@ -203,3 +203,28 @@ describe('storage UI helpers', () => {
 })
 
 const DEFAULT_PARAMS_OFFSET50 = { ...DEFAULT_STORAGE_PARAMS, offsetCm: 50 }
+
+describe('backup doc storage helpers', async () => {
+  type Fs = { existsSync: (p: unknown) => boolean; readFileSync: (p: unknown, enc: string) => string }
+  const fs = (await import('node:fs' as string)) as Fs
+  const backupUrl = new URL('../../../backups/joinville-v279-snapshot.json', import.meta.url)
+  it.skipIf(!fs.existsSync(backupUrl))('runs storage helpers on every room in the backup doc without throwing', () => {
+    const raw = JSON.parse(fs.readFileSync(backupUrl, 'utf8')) as { results?: { data_json?: string }[] }[]
+    const json = raw[0]?.results?.[0]?.data_json
+    expect(json).toBeTruthy()
+    const parsed = JSON.parse(json!) as PlanDoc
+    const doc: PlanDoc = { ...parsed, rooms: materializeRooms(parsed) }
+    expect(doc.rooms.length).toBeGreaterThan(0)
+    for (const room of doc.rooms) {
+      const runs = parentWallRuns(room)
+      expect(Array.isArray(runs)).toBe(true)
+      const storages = doc.rooms.filter((r) => r.storage?.parentRoomId === room.id)
+      expect(Array.isArray(storages)).toBe(true)
+      if (room.storage) {
+        readStorageParams(doc, room)
+        readStorageDoor(doc, room)
+        storageHostWallStart(doc, room)
+      }
+    }
+  })
+})

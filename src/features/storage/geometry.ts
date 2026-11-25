@@ -30,6 +30,7 @@ export const isV2Doc = (doc: Pick<PlanDoc, 'rooms' | 'schemaVersion'>): boolean 
  */
 export function collinearRunStart(parent: Room, idx: number, dir: Vec): number {
   const n = parent.vertices.length
+  if (n < 2) return idx
   let start = idx
   for (let step = 0; step < n - 1; step++) {
     const prevIdx = (start - 1 + n) % n
@@ -46,6 +47,7 @@ export function collinearRunStart(parent: Room, idx: number, dir: Vec): number {
 /** Index of the last face of the run of collinear faces of `parent` that holds face `idx`. */
 export function collinearRunEnd(parent: Room, idx: number, dir: Vec): number {
   const n = parent.vertices.length
+  if (n < 2) return idx
   let end = idx
   for (let step = 0; step < n - 1; step++) {
     const nextIdx = (end + 1) % n
@@ -86,6 +88,7 @@ export function wallRunMetrics(parent: Room, wallIdx: number): WallRunMetrics | 
   const inner = roomInnerRing(parent)
   const innerStart = inner[startIdx]
   const innerEnd = inner[(endIdx + 1) % n]
+  if (!innerStart || !innerEnd) return null
   const cornerInset = dot(sub(innerStart, startCentre), dir)
   const innerLength = dot(sub(innerEnd, innerStart), dir)
   const centreLength = dot(sub(endCentre, startCentre), dir)
@@ -137,11 +140,11 @@ export function readStorageParams(
   if (!parent || parent.vertices.length < 3) return null
 
   const [A, B, C, D] = storageRoom.vertices
-  const h = storageRoom.walls[A.id]?.thicknessCm ?? DEFAULT_WALL_CM
-  const sideRight = storageRoom.walls[B.id]?.thicknessCm ?? DEFAULT_STORAGE_SIDE_CM
-  const sideLeft = storageRoom.walls[D.id]?.thicknessCm ?? DEFAULT_STORAGE_SIDE_CM
+  const h = storageRoom.walls?.[A.id]?.thicknessCm ?? DEFAULT_WALL_CM
+  const sideRight = storageRoom.walls?.[B.id]?.thicknessCm ?? DEFAULT_STORAGE_SIDE_CM
+  const sideLeft = storageRoom.walls?.[D.id]?.thicknessCm ?? DEFAULT_STORAGE_SIDE_CM
   const sideCm = round3((sideRight + sideLeft) / 2)
-  const backCm = round3(storageRoom.walls[C.id]?.thicknessCm ?? DEFAULT_STORAGE_BACK_CM)
+  const backCm = round3(storageRoom.walls?.[C.id]?.thicknessCm ?? DEFAULT_STORAGE_BACK_CM)
   const widthCm = round3(dist(A, B) - sideCm)
   const depthCm = round3(dist(B, C) - h / 2 - backCm / 2)
 

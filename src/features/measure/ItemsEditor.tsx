@@ -85,7 +85,7 @@ function Item({ room, el, onMoved }: { room: Room; el: WallElement; onMoved: (no
   useEffect(() => () => window.clearTimeout(timer.current), [])
   const doc = useDoc((s) => s.doc)
   const walls = roomWalls(room)
-  const fields = KIND_FIELDS[el.kind]
+  const fields = KIND_FIELDS[el.kind] ?? KIND_FIELDS.other
   // One patch = one store update; a re-hosted door is reported to the room card.
   const push = (p: Partial<WallElement>) => report(patchElement(el.id, p), onMoved)
   const pushField = (key: string, n: number | null) => report(setField(el.id, key, n), onMoved)
@@ -102,8 +102,9 @@ function Item({ room, el, onMoved }: { room: Room; el: WallElement; onMoved: (no
   return (
     <div className="flex flex-col gap-2.5 rounded-lg border border-slate-300 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-[#12161b]" data-item={el.id}>
       <div className="flex flex-wrap items-center gap-2">
-        <span aria-hidden className={`size-3 flex-none rounded-[3px] ${DOT[el.kind]}`} />
+        <span aria-hidden className={`size-3 flex-none rounded-[3px] ${DOT[el.kind] ?? DOT.other}`} />
         <select name="itemKind" aria-label="Type" className={sel} value={el.kind} onChange={(e) => pushKind(e.target.value as ElementKind)}>
+          {!KIND_LABEL[el.kind] && <option value={el.kind} disabled>{el.kind}</option>}
           {KINDS.map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
         </select>
         <select name="itemWall" aria-label="Wall" className={sel} value={el.wallStart} onChange={(e) => push({ wallStart: e.target.value })}>

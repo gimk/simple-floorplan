@@ -52,7 +52,7 @@ function wallElements(doc: Pick<PlanDoc, 'elements'>, wallId: string): ElementRo
     .sort((a, b) => (a.alongCm ?? a.offsetCm) - (b.alongCm ?? b.offsetCm))
     .map((e) => ({
       id: e.id,
-      kindLabel: KIND_LABEL[e.kind],
+      kindLabel: KIND_LABEL[e.kind] ?? e.kind,
       variantLabel: e.variant ? VARIANT_LABEL[e.variant] ?? null : null,
       wallStart: e.wallStart,
       wallLabel: null,

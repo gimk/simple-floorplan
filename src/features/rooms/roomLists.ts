@@ -80,7 +80,7 @@ export type ElementRow = {
 
 const toRow = (room: Room, el: WallElement): ElementRow => ({
   id: el.id,
-  kindLabel: KIND_LABEL[el.kind],
+  kindLabel: KIND_LABEL[el.kind] ?? el.kind,
   variantLabel: el.variant ? VARIANT_LABEL[el.variant] ?? null : null,
   wallStart: el.wallStart,
   wallLabel: wallLabel(room, el.wallStart),

@@ -211,7 +211,7 @@ const SIZE_KEYS = ['widthCm', 'heightCm', 'sillCm', 'depthCm'] as const
  * old default) take the new default. Values the user typed stay. A missing value is removed, never stored as 0.
  */
 export function sizesForKind(el: ItemSizes, from: ElementKind | null, to: ElementKind): ItemSizes {
-  const oldD = from ? ITEM_DEFAULTS[from] : {}, newD = ITEM_DEFAULTS[to]
+  const oldD = from ? (ITEM_DEFAULTS[from] ?? {}) : {}, newD = ITEM_DEFAULTS[to] ?? {}
   const out: ItemSizes = {}
   for (const k of SIZE_KEYS) {
     const cur = el[k]
