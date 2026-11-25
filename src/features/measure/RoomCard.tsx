@@ -5,6 +5,7 @@ import { useDoc, useUi } from '../../model/store'
 import { parseThicknessLabel, surveyIds, thicknessIds, type SurveyId } from '../../model/survey'
 import type { PlanDoc, Room } from '../../model/types'
 import { ItemsEditor } from './ItemsEditor'
+import { StorageEditor } from './StorageEditor'
 import { discrepancy, fmtDiff, nextLabel, oppositeWallNotes, roomProgress, squarenessCheck } from './logic'
 import { inputId, setMeasurement } from './actions'
 import { flushAutoApply, wallLabelRoom } from '../rooms/measureRules'
@@ -147,6 +148,8 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
       ))}
 
       <ItemsEditor room={room} elements={doc.elements} />
+
+      <StorageEditor doc={doc} room={room} />
 
       <PinsSection doc={doc} room={room} />
 

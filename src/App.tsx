@@ -14,6 +14,7 @@ import { WallsLayer } from './features/rooms/WallsLayer'
 import { RoomsOverlay } from './features/rooms/RoomsOverlay'
 import { OutsideDimsLayer } from './features/rooms/outside/OutsideDimsLayer'
 import { ElementsLayer, PlaceElementTool } from './features/elements'
+import { PlaceStorageTool } from './features/storage/PlaceStorageTool'
 import { MeasureMode, MeasurePanel } from './features/measure'
 import { ProjectTitleButton, UpdateToast } from './features/projects'
 import { AnnotationsLayer, PinTool, TapeTool } from './features/annotations'
@@ -49,6 +50,7 @@ function ToolOverlay() {
     case 'wall': return <WallTool />
     case 'make-room': return <MakeRoomTool />
     case 'place-element': return <PlaceElementTool />
+    case 'place-storage': return <PlaceStorageTool />
     case 'calibrate': return <CalibrateTool />
     case 'tape': return <TapeTool />
     case 'pin': return <PinTool />

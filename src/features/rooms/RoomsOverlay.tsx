@@ -133,15 +133,17 @@ export function RoomsOverlay() {
     const lines = info.lines
     // Room code in front of the name, so the survey IDs of the Solve tab are found on the plan.
     const code = lines.title.code ?? ''
+    const isStorage = !d.merged && rooms.some((r) => r.id === d.id && r.storage)
     if (info.small) {
-      // No room for the name: the code alone, small, is better than nothing.
-      if (!code) return null
+      // No room for the full tag: storage rooms show their name ("Storage") small; other rooms show their code.
+      const smallText = isStorage ? d.name : code
+      if (!smallText) return null
       const p = info.place.p
       return (
         <text key={d.id} x={p.x} y={p.y} textAnchor="middle" dominantBaseline="middle" fontSize={px(10)}
-          fontWeight={700} pointerEvents="none" data-room-code-only={d.id}
-          className="fill-slate-500 font-mono dark:fill-slate-400">
-          {code}
+          fontWeight={isStorage ? 600 : 700} pointerEvents="none" data-room-code-only={d.id}
+          className={isStorage ? 'fill-slate-600 dark:fill-slate-300' : 'fill-slate-500 font-mono dark:fill-slate-400'}>
+          {smallText}
         </text>
       )
     }

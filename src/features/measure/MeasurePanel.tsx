@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDownCircle, ChevronRight, Eye } from 'lucide-react'
 import { useDoc, useUi } from '../../model/store'
-import { allRequiredSurveyIds, labelRoomCode, roomsInWalkOrder } from '../../model/survey'
+import { allRequiredSurveyIds, labelRoomCode } from '../../model/survey'
 import type { Room } from '../../model/types'
-import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged, roomProgress } from './logic'
+import { docProgress, measureRooms, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged, roomProgress } from './logic'
 import { jumpToMeasureField, selectionRoomId, startLabel, useLastFocusedLabel } from './focusField'
 import { FilterGroup, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
 import { FacadeSection } from './FacadeCard'
@@ -27,8 +27,9 @@ export function currentRoomId(
 export function MeasurePanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
-  const allRooms = roomsInWalkOrder(doc)
-  const labels = allRequiredSurveyIds(doc).map((s) => s.label)
+  const allRooms = measureRooms(doc)
+  const storageIds = new Set(doc.rooms.filter((r) => r.storage).map((r) => r.id))
+  const labels = allRequiredSurveyIds(doc).filter((s) => !storageIds.has(s.roomId)).map((s) => s.label)
   const { done, total } = docProgress(doc)
 
   const lastFocused = useLastFocusedLabel()
@@ -38,7 +39,10 @@ export function MeasurePanel() {
   useNormalizeDoorHosts()
 
   // The last room that was open: kept when the selection is cleared.
-  const selectedId = selectionRoomId(selection)
+  // If a storage room is selected on the canvas, open its parent room card.
+  const rawSelectedId = selectionRoomId(selection)
+  const selectedRoom = rawSelectedId ? doc.rooms.find((r) => r.id === rawSelectedId) : undefined
+  const selectedId = selectedRoom?.storage?.parentRoomId ?? rawSelectedId
   const [lastId, setLastId] = useState<string | null>(null)
   useEffect(() => { if (selectedId) setLastId(selectedId) }, [selectedId])
   const currentId = currentRoomId(allRooms, selectedId, lastId, (r) => roomHasMissing(doc, r))

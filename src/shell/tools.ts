@@ -1,7 +1,7 @@
 // The tools of the left tool bar, in display order. Moved out of App.tsx so that the
 // command palette (docs/measurements-plan.md section 7) can list them without importing the shell.
 import {
-  BrickWall, Crosshair, DoorOpen, Hand, MapPin, MousePointer2, PenTool, Ruler, Scissors,
+  Archive, BrickWall, Crosshair, DoorOpen, Hand, MapPin, MousePointer2, PenTool, Ruler, Scissors,
   Square, SquareDashed, SquareDashedMousePointer,
 } from 'lucide-react'
 import type { ToolId } from '../model/types'
@@ -24,6 +24,7 @@ export const TOOLS: ToolSpec[] = [
   { id: 'slice', label: 'Slice room', key: 's', icon: Scissors },
   { id: 'cutout', label: 'Cutout', key: 'x', icon: SquareDashed },
   { id: 'place-element', label: 'Door / window', key: 'd', icon: DoorOpen },
+  { id: 'place-storage', label: 'Built-in storage', key: 'g', icon: Archive },
   { id: 'calibrate', label: 'Calibrate scale', key: 'c', icon: Crosshair },
   { id: 'tape', label: 'Tape measure', key: 't', icon: Ruler },
   { id: 'pin', label: 'Note / photo pin', key: 'n', icon: MapPin },

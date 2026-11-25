@@ -226,6 +226,11 @@ export function RoomsLayer() {
           <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
             className="stroke-slate-400 dark:stroke-slate-500" strokeOpacity={0.7} strokeWidth={px(1)} />
         </pattern>
+        {/* Built-in storage rooms: light warm diagonal hatch so they read as storage. */}
+        <pattern id="rooms-storage-hatch" patternUnits="userSpaceOnUse" width={stripeTile} height={stripeTile} patternTransform="rotate(45)">
+          <line x1={stripeTile / 2} y1={0} x2={stripeTile / 2} y2={stripeTile}
+            className="stroke-amber-600/35 dark:stroke-amber-400/30" strokeWidth={px(1)} />
+        </pattern>
       </defs>
 
       {gapPath && (
@@ -236,22 +241,34 @@ export function RoomsLayer() {
       )}
 
       {/* fills (holes via evenodd); rooms merged by a demolished wall are drawn as one */}
-      {display.map((d) => (
-        <path
-          key={d.id}
-          d={piecesPath(d.pieces)}
-          fillRule="evenodd"
-          className={d.outdoor ? 'fill-emerald-100/80 dark:fill-emerald-900/40' : 'fill-sky-50/90 dark:fill-slate-800/90'}
-          pointerEvents={interactive || measuring ? 'auto' : 'none'}
-          style={interactive ? { cursor: 'move' } : measuring ? { cursor: 'pointer' } : undefined}
-          data-room-id={d.id}
-          data-room-ids={d.roomIds.join(' ')}
-          data-room-code={d.codes[0]}
-          data-renovation-merged={d.merged ? 'true' : undefined}
-          aria-label={d.merged ? `${d.name} (merged: ${d.codes.join(', ')})` : `${d.name} (${d.codes[0]})`}
-          onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : measuring && !d.merged ? (e) => selectRoomOnly(e, d.id) : undefined}
-        />
-      ))}
+      {display.map((d) => {
+        const isStorage = !d.merged && rooms.some((r) => r.id === d.id && r.storage)
+        const fillCls = isStorage
+          ? 'fill-amber-50/90 dark:fill-amber-950/40'
+          : d.outdoor
+            ? 'fill-emerald-100/80 dark:fill-emerald-900/40'
+            : 'fill-sky-50/90 dark:fill-slate-800/90'
+        const pathD = piecesPath(d.pieces)
+        return (
+          <g key={d.id}>
+            <path
+              d={pathD}
+              fillRule="evenodd"
+              className={fillCls}
+              pointerEvents={interactive || measuring ? 'auto' : 'none'}
+              style={interactive ? { cursor: 'move' } : measuring ? { cursor: 'pointer' } : undefined}
+              data-room-id={d.id}
+              data-room-ids={d.roomIds.join(' ')}
+              data-room-code={d.codes[0]}
+              data-room-storage={isStorage ? 'true' : undefined}
+              data-renovation-merged={d.merged ? 'true' : undefined}
+              aria-label={d.merged ? `${d.name} (merged: ${d.codes.join(', ')})` : `${d.name} (${d.codes[0]})`}
+              onPointerDown={interactive ? (e) => onRoomDown(e, d.id, vp) : measuring && !d.merged ? (e) => selectRoomOnly(e, d.id) : undefined}
+            />
+            {isStorage && <path d={pathD} fillRule="evenodd" fill="url(#rooms-storage-hatch)" pointerEvents="none" />}
+          </g>
+        )
+      })}
 
       {/* hole outlines */}
       {rooms.map((r) => r.holes.map((h, i) => (

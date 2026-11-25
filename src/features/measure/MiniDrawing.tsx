@@ -1,4 +1,4 @@
-import { fmtCm, roomWalls } from '../../model/geometry'
+import { fmtCm, roomInnerRing, roomWalls } from '../../model/geometry'
 import type { PlanDoc, Room, Vec } from '../../model/types'
 import { inputId } from './actions'
 import { adjacentItems, itemSpan } from './logic'
@@ -23,7 +23,13 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
 }) {
   const v = room.vertices
   if (v.length < 3) return null
-  const xs = v.map((p) => p.x), ys = v.map((p) => p.y)
+  const storages = doc.rooms.filter((r) => r.storage?.parentRoomId === room.id && r.vertices.length >= 3)
+  const storageRings = storages.map((s) => {
+    const inner = roomInnerRing(s)
+    return { id: s.id, pts: inner.length >= 3 ? inner : s.vertices }
+  })
+  const allPts = [...v, ...storages.flatMap((s) => s.vertices)]
+  const xs = allPts.map((p) => p.x), ys = allPts.map((p) => p.y)
   const minx = Math.min(...xs), miny = Math.min(...ys)
   const w = Math.max(1, Math.max(...xs) - minx), h = Math.max(1, Math.max(...ys) - miny)
   const s = Math.min((W - 2 * PAD) / w, 220 / h)
@@ -50,6 +56,15 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
 
   return (
     <svg viewBox={`0 0 ${W} ${H.toFixed(0)}`} role="img" aria-label={`${room.name} with wall IDs`} className="mx-auto block h-auto w-full max-w-[360px]">
+      {storageRings.map((sr) => (
+        <polygon
+          key={`st-${sr.id}`}
+          data-mini-storage={sr.id}
+          points={sr.pts.map((p) => { const q = T(p); return `${f(q.x)},${f(q.y)}` }).join(' ')}
+          className="fill-amber-50/90 stroke-slate-600 dark:fill-amber-950/30 dark:stroke-slate-400"
+          strokeWidth={1.5}
+        />
+      ))}
       <polygon
         points={P.map((p) => `${f(p.x)},${f(p.y)}`).join(' ')}
         className="fill-slate-100 stroke-slate-800 dark:fill-slate-800 dark:stroke-slate-200"

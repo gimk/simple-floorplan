@@ -34,6 +34,7 @@ import { elementRows, wallRows, WALL_TYPE_CHIP } from './roomLists'
 import { isV2Doc } from '../../model/v2/targets'
 import { roomWallLinks } from './wallSides'
 import { HoleCard } from './VertexCard'
+import { StoragePanelSection } from './StoragePanelSection'
 import { defaultDiagonal, nextDiagonal, setRoomDiagonal } from './diagonal'
 import { setMeasurement } from '../measure/actions'
 import { targetOfLabel } from '../../model/v2/targets'
@@ -259,6 +260,8 @@ export function RoomCard({ doc, room, selection, activeHole }: {
             : <EmptyHint>No door, window or fixture in this room yet.</EmptyHint>
         })()}
       </PanelSection>
+
+      <StoragePanelSection doc={doc} room={room} />
 
       <PanelSection id="room-measured" title="Measured lengths" collapsible>
         <button className={BTN} disabled={!verified.length} onClick={runApply}>Apply measured lengths</button>

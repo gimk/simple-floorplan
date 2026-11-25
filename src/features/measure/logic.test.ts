@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { adjacentItems, discrepancy, fmtDiff, itemSpan, nextLabel, nextUnmeasuredLabel, oppositeWallNotes, parseCm, roomHasMissing, roomIsFlagged, squarenessCheck } from './logic'
+import { adjacentItems, discrepancy, docProgress, fmtDiff, itemSpan, measureRooms, nextLabel, nextUnmeasuredLabel, oppositeWallNotes, parseCm, roomHasMissing, roomIsFlagged, squarenessCheck } from './logic'
 import type { PlanDoc, Room, WallElement } from '../../model/types'
 
 const rect = (id: string, code: string, x: number, y: number, w: number, h: number, extra: Partial<Room> = {}): Room => ({
@@ -155,5 +155,16 @@ describe('item defaults', () => {
   it('never stores 0 or empty', () => {
     const out = sizesForKind({ widthCm: 0 }, 'other', 'other')
     expect('widthCm' in out).toBe(false)
+  })
+})
+
+describe('measureRooms and docProgress with storage', () => {
+  it('excludes storage rooms from measureRooms and docProgress', () => {
+    const parent = rect('a', 'A', 0, 0, 400, 300, { walkOrder: 2 })
+    const other = rect('b', 'B', 500, 0, 200, 200, { walkOrder: 1 })
+    const storage = rect('s', 'S', 0, -65, 100, 65, { walkOrder: 3, storage: { parentRoomId: 'a' } })
+    const d = doc([parent, other, storage], { 'A-1': 400 })
+    expect(measureRooms(d).map((r) => r.id)).toEqual(['b', 'a'])
+    expect(docProgress(d)).toEqual({ done: 1, total: 12 })
   })
 })

@@ -2,9 +2,9 @@
 import { useEffect, useState } from 'react'
 import { ArrowDownCircle, Eye, Monitor, Sun } from 'lucide-react'
 import { useDoc, useUi } from '../../model/store'
-import { allRequiredSurveyIds, labelRoomCode, roomsInWalkOrder } from '../../model/survey'
+import { allRequiredSurveyIds, labelRoomCode } from '../../model/survey'
 import { loadDemoApartment } from './demo'
-import { docProgress, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
+import { docProgress, measureRooms, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
 import { jumpToMeasureField, startLabel, useLastFocusedLabel } from './focusField'
 import { Overview } from './Overview'
 import { FacadeSection } from './FacadeCard'
@@ -18,8 +18,9 @@ export { MeasurePanel } from './MeasurePanel'
 /** Full-screen Measuring Mode (mobile-first). Rendered instead of the editor when ui.mode === 'measure'. */
 export function MeasureMode() {
   const doc = useDoc((s) => s.doc)
-  const allRooms = roomsInWalkOrder(doc)
-  const labels = allRequiredSurveyIds(doc).map((s) => s.label)
+  const allRooms = measureRooms(doc)
+  const storageIds = new Set(doc.rooms.filter((r) => r.storage).map((r) => r.id))
+  const labels = allRequiredSurveyIds(doc).filter((s) => !storageIds.has(s.roomId)).map((s) => s.label)
   const { done, total } = docProgress(doc)
   const hasRooms = allRooms.length > 0
 

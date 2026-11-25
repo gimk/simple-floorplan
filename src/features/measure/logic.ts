@@ -1,7 +1,7 @@
 // Pure logic for Measuring Mode. No React here, so it is easy to test.
 import { lerp, roomWalls } from '../../model/geometry'
 import type { Wall } from '../../model/geometry'
-import { allRequiredSurveyIds, requiredSurveyIds } from '../../model/survey'
+import { allRequiredSurveyIds, requiredSurveyIds, roomsInWalkOrder } from '../../model/survey'
 import type { ElementKind, PlanDoc, Room, Vec, WallElement } from '../../model/types'
 
 /** Parse a length typed by the user. Comma or dot. null = empty, NaN = invalid. */
@@ -108,8 +108,13 @@ export function roomProgress(doc: PlanDoc, room: Room) {
   return { done, total, state: (done === 0 ? 'none' : done === total ? 'full' : 'part') as 'none' | 'part' | 'full' }
 }
 
+/** Rooms shown in Measuring Mode: storage rooms live inside their parent room card. */
+export const measureRooms = (doc: Pick<PlanDoc, 'rooms'>): Room[] =>
+  roomsInWalkOrder(doc as PlanDoc).filter((r) => !r.storage)
+
 export function docProgress(doc: PlanDoc) {
-  const ids = allRequiredSurveyIds(doc)
+  const storageIds = new Set(doc.rooms.filter((r) => r.storage).map((r) => r.id))
+  const ids = allRequiredSurveyIds(doc).filter((s) => !storageIds.has(s.roomId))
   const done = ids.filter((s) => doc.measurements[s.label] != null).length
   return { done, total: ids.length }
 }

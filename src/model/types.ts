@@ -387,6 +387,7 @@ export type ToolId =
   | 'slice'
   | 'cutout'
   | 'place-element'
+  | 'place-storage'
   | 'tape'
   | 'pin'
 
