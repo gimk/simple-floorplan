@@ -35,7 +35,7 @@
 // by solveGlobal and by solveGlobalWithModel. The second one keeps the model: the final x, the
 // normal matrix at that x, and the gradient of any value that a new measurement could add. That is
 // what `suggest.ts` scores (docs/walls-plan.md phase 2b).
-import { DEFAULT_WALL_CM, innerWallLengths } from '../../model/geometry'
+import { innerWallLengths } from '../../model/geometry'
 import { buildWallGraph, type GraphConflict } from '../../model/wallGraph'
 import type { PlanDoc, Room, StoredNode, StoredWall, SurfaceReference, Vec, WallAlign } from '../../model/types'
 import { thicknessLabel } from '../../model/survey'
@@ -701,8 +701,8 @@ function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
         const off = (pt.x - wa.x) * -wd.y + (pt.y - wa.y) * wd.x
         const along = (pt.x - wa.x) * wd.x + (pt.y - wa.y) * wd.y
         const gap = Math.max(-along, along - wl, 0)
-        if (gap > (w.thicknessCm ?? DEFAULT_WALL_CM)) continue
-        const half = (w.thicknessCm ?? DEFAULT_WALL_CM) / 2
+        if (gap > w.thicknessCm!) continue
+        const half = w.thicknessCm! / 2
         const kind = Math.abs(off) <= 0.5 ? 0 : Math.abs(Math.abs(off) - half) <= 0.5 ? (off > 0 ? 1 : -1) : null
         if (kind === null) continue
         // The line of the group has its own normal: flip the face when the normals are opposed.
@@ -757,7 +757,7 @@ function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
             if (!ws) continue
             const wn = ws === 'L' ? wl : { x: -wl.x, y: -wl.y }
             const sameFace = wn.x * outsideNormal.x + wn.y * outsideNormal.y > 0.5
-              && Math.abs((w.thicknessCm ?? DEFAULT_WALL_CM) - (wall.thicknessCm ?? DEFAULT_WALL_CM)) <= 1
+              && Math.abs(w.thicknessCm! - wall.thicknessCm!) <= 1
             const away = (w.a === nodeId ? wd.x : -wd.x) * (nodeId === wall.a ? -ux : ux)
               + (w.a === nodeId ? wd.y : -wd.y) * (nodeId === wall.a ? -uy : uy)
             if (sameFace && away > 0.5) return 'centre'
