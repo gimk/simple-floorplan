@@ -1,5 +1,7 @@
 // Pure geometry helpers for built-in storage rooms (docs/storage-plan.md). Units: cm, y down.
-import { DEFAULT_WALL_CM, add, cross, dist, dot, mul, norm, projectOnSegment, roomWalls, sub, type Wall } from '../../model/geometry'
+import {
+  DEFAULT_WALL_CM, add, cross, dist, dot, mul, norm, projectOnSegment, roomInnerRing, roomWalls, sub, type Wall,
+} from '../../model/geometry'
 import type { PlanDoc, Room, Vec, WallElement } from '../../model/types'
 
 export const DEFAULT_STORAGE_SIDE_CM = 5
@@ -17,10 +19,91 @@ export type StorageDoor = 'single' | 'double' | 'sliding' | 'pocket' | 'bifold' 
 
 const round3 = (v: number) => Math.round(v * 1000) / 1000
 
+/** True when the document uses the v2 node/wall graph. */
+export const isV2Doc = (doc: Pick<PlanDoc, 'rooms' | 'schemaVersion'>): boolean =>
+  doc.schemaVersion === 2 || doc.rooms.some((r) => (r.cycle?.length ?? 0) > 0)
+
+/**
+ * Index of the first face of the run of collinear faces of the parent room that holds face `idx`.
+ * A v2 room is split where another room meets it, so the host wall of a storage is one piece of a
+ * longer wall: the text form and `readStorageParams` measure the offset from the START of that wall.
+ */
+export function collinearRunStart(parent: Room, idx: number, dir: Vec): number {
+  const n = parent.vertices.length
+  let start = idx
+  for (let step = 0; step < n - 1; step++) {
+    const prevIdx = (start - 1 + n) % n
+    const p0 = parent.vertices[prevIdx]
+    const p1 = parent.vertices[start]
+    if (dist(p0, p1) < 1e-6) break
+    const prevDir = norm(sub(p1, p0))
+    if (Math.abs(cross(prevDir, dir)) < 1e-3 && dot(prevDir, dir) > 0.99) start = prevIdx
+    else break
+  }
+  return start
+}
+
+/** Index of the last face of the run of collinear faces of `parent` that holds face `idx`. */
+export function collinearRunEnd(parent: Room, idx: number, dir: Vec): number {
+  const n = parent.vertices.length
+  let end = idx
+  for (let step = 0; step < n - 1; step++) {
+    const nextIdx = (end + 1) % n
+    const p0 = parent.vertices[nextIdx]
+    const p1 = parent.vertices[(nextIdx + 1) % n]
+    if (dist(p0, p1) < 1e-6) break
+    const nextDir = norm(sub(p1, p0))
+    if (Math.abs(cross(nextDir, dir)) < 1e-3 && dot(nextDir, dir) > 0.99) end = nextIdx
+    else break
+  }
+  return end
+}
+
+export type WallRunMetrics = {
+  startIdx: number
+  endIdx: number
+  startCentre: Vec
+  endCentre: Vec
+  dir: Vec
+  cornerInset: number
+  innerLength: number
+  centreLength: number
+  faceIndices: number[]
+}
+
+/** Geometry of the full collinear wall run of `parent` containing wall `wallIdx`. */
+export function wallRunMetrics(parent: Room, wallIdx: number): WallRunMetrics | null {
+  const n = parent.vertices.length
+  if (n < 3 || wallIdx < 0 || wallIdx >= n) return null
+  const a = parent.vertices[wallIdx]
+  const b = parent.vertices[(wallIdx + 1) % n]
+  if (dist(a, b) < 1e-6) return null
+  const dir = norm(sub(b, a))
+  const startIdx = collinearRunStart(parent, wallIdx, dir)
+  const endIdx = collinearRunEnd(parent, wallIdx, dir)
+  const startCentre = parent.vertices[startIdx]
+  const endCentre = parent.vertices[(endIdx + 1) % n]
+  const inner = roomInnerRing(parent)
+  const innerStart = inner[startIdx]
+  const innerEnd = inner[(endIdx + 1) % n]
+  const cornerInset = dot(sub(innerStart, startCentre), dir)
+  const innerLength = dot(sub(innerEnd, innerStart), dir)
+  const centreLength = dot(sub(endCentre, startCentre), dir)
+  const faceIndices: number[] = []
+  let cur = startIdx
+  for (let step = 0; step < n; step++) {
+    faceIndices.push(cur)
+    if (cur === endIdx) break
+    cur = (cur + 1) % n
+  }
+  return { startIdx, endIdx, startCentre, endCentre, dir, cornerInset, innerLength, centreLength, faceIndices }
+}
+
 /**
  * Compute the 4 centre-line corners A, B, C, D of a built-in storage room attached to the OUTER
  * side of a parent room's host wall.
  *   A, B lie on the host wall centre line; C, D lie on the back wall centre line.
+ *   `p.offsetCm` is measured from the parent room's inside corner (`cornerInsetCm` from `hostStartCentre`).
  */
 export function storageCorners(
   hostStartCentre: Vec,
@@ -28,12 +111,14 @@ export function storageCorners(
   inward: Vec,
   hostThicknessCm: number,
   p: StorageParams,
+  cornerInsetCm = 0,
 ): { A: Vec; B: Vec; C: Vec; D: Vec } {
   const dir = norm(sub(hostEndCentre, hostStartCentre))
   const out = mul(inward, -1)
   const depthOut = hostThicknessCm / 2 + p.depthCm + p.backCm / 2
-  const A = add(hostStartCentre, mul(dir, p.offsetCm - p.sideCm / 2))
-  const B = add(hostStartCentre, mul(dir, p.offsetCm + p.widthCm + p.sideCm / 2))
+  const centreOffset = cornerInsetCm + p.offsetCm
+  const A = add(hostStartCentre, mul(dir, centreOffset - p.sideCm / 2))
+  const B = add(hostStartCentre, mul(dir, centreOffset + p.widthCm + p.sideCm / 2))
   const C = add(B, mul(out, depthOut))
   const D = add(A, mul(out, depthOut))
   return { A, B, C, D }
@@ -59,44 +144,13 @@ export function readStorageParams(
   const backCm = round3(storageRoom.walls[C.id]?.thicknessCm ?? DEFAULT_STORAGE_BACK_CM)
   const widthCm = round3(dist(A, B) - sideCm)
   const depthCm = round3(dist(B, C) - h / 2 - backCm / 2)
-  const dir = norm(sub(B, A))
 
-  let offsetCm = 0
-  if (storageRoom.cycle?.length && parent.cycle?.length && parent.vertices.length === parent.cycle.length) {
-    const frontWallId = storageRoom.cycle[0].wallId
-    const frontIdx = parent.cycle.findIndex((f) => f.wallId === frontWallId)
-    if (frontIdx >= 0) {
-      const n = parent.cycle.length
-      let startIdx = frontIdx
-      for (let step = 0; step < n - 1; step++) {
-        const prevIdx = (startIdx - 1 + n) % n
-        const p0 = parent.vertices[prevIdx]
-        const p1 = parent.vertices[startIdx]
-        if (dist(p0, p1) < 1e-6) break
-        const prevDir = norm(sub(p1, p0))
-        if (Math.abs(cross(prevDir, dir)) < 1e-3 && dot(prevDir, dir) > 0.99) {
-          startIdx = prevIdx
-        } else {
-          break
-        }
-      }
-      const s = parent.vertices[startIdx]
-      offsetCm = round3(dot(sub(A, s), dir) + sideCm / 2)
-      return { offsetCm, widthCm, depthCm, sideCm, backCm }
-    }
-  }
+  const host = storageHostWall(doc, storageRoom)
+  if (!host) return { offsetCm: 0, widthCm, depthCm, sideCm, backCm }
+  const metrics = wallRunMetrics(parent, host.index)
+  if (!metrics) return { offsetCm: 0, widthCm, depthCm, sideCm, backCm }
 
-  // v1 (or fallback): find the parent wall that A..B lies on.
-  for (const w of roomWalls(parent)) {
-    if (dot(w.dir, dir) < 0.99) continue
-    const dA = projectOnSegment(A, w.start, w.end).distance
-    const dB = projectOnSegment(B, w.start, w.end).distance
-    if (dA < 1 && dB < 1) {
-      offsetCm = round3(dot(sub(A, w.start), w.dir) + sideCm / 2)
-      break
-    }
-  }
-
+  const offsetCm = round3(dot(sub(A, metrics.startCentre), metrics.dir) + sideCm / 2 - metrics.cornerInset)
   return { offsetCm, widthCm, depthCm, sideCm, backCm }
 }
 
@@ -112,13 +166,16 @@ export function storageFrontDoor(
     (e) => e.roomId === parentId && (e.kind === 'door' || e.kind === 'opening'),
   )
   if (frontWallId !== undefined) return doors.find((e) => e.wallId === frontWallId)
+  const parent = doc.rooms.find((r) => r.id === parentId)
   const params = readStorageParams(doc, storageRoom)
   const host = storageHostWall(doc, storageRoom)
-  if (!params || !host) return undefined
+  if (!parent || !params || !host) return undefined
+  const metrics = wallRunMetrics(parent, host.index)
+  const centreOffset = (metrics?.cornerInset ?? 0) + params.offsetCm
   return doors.find(
     (e) =>
       e.wallStart === host.start.id &&
-      Math.abs(e.offsetCm - params.offsetCm) < 1 &&
+      Math.abs(e.offsetCm - centreOffset) < 1 &&
       Math.abs(e.widthCm - params.widthCm) < 1,
   )
 }
@@ -167,26 +224,6 @@ export type StoragePlacement = StorageParams & {
   /** 1-based index of the host wall in the parent room polygon order. */
   wallIndex: number
   door: StorageDoor
-}
-
-/**
- * Index of the first face of the run of collinear faces of the parent room that holds face `idx`.
- * A v2 room is split where another room meets it, so the host wall of a storage is one piece of a
- * longer wall: the text form and `readStorageParams` measure the offset from the START of that wall.
- */
-function collinearRunStart(parent: Room, idx: number, dir: Vec): number {
-  const n = parent.vertices.length
-  let start = idx
-  for (let step = 0; step < n - 1; step++) {
-    const prevIdx = (start - 1 + n) % n
-    const p0 = parent.vertices[prevIdx]
-    const p1 = parent.vertices[start]
-    if (dist(p0, p1) < 1e-6) break
-    const prevDir = norm(sub(p1, p0))
-    if (Math.abs(cross(prevDir, dir)) < 1e-3 && dot(prevDir, dir) > 0.99) start = prevIdx
-    else break
-  }
-  return start
 }
 
 /**

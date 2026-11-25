@@ -1,11 +1,14 @@
 // Shared UI helpers for built-in storage in Measuring Mode and Edit Mode.
-import { dot, norm, projectOnSegment, roomWalls, sub } from '../../model/geometry'
+import { projectOnSegment, roomWalls, type Wall } from '../../model/geometry'
 import type { PlanDoc, Room } from '../../model/types'
 import { addStorage, deleteStorage, type StorageDoor, type StorageParams } from './actions'
-import { DEFAULT_STORAGE_BACK_CM, DEFAULT_STORAGE_SIDE_CM, readStorageParams } from './geometry'
+import {
+  collinearRunStart, DEFAULT_STORAGE_BACK_CM, DEFAULT_STORAGE_SIDE_CM, isV2Doc,
+  storageDoorType, storageFrontDoor, storageHostWall,
+} from './geometry'
 
 export const DEFAULT_STORAGE_PARAMS: StorageParams = {
-  offsetCm: DEFAULT_STORAGE_SIDE_CM / 2,
+  offsetCm: 0,
   widthCm: 100,
   depthCm: 60,
   sideCm: DEFAULT_STORAGE_SIDE_CM,
@@ -23,86 +26,57 @@ export const STORAGE_DOOR_OPTIONS: { value: StorageDoor; label: string }[] = [
   { value: 'none', label: 'No door' },
 ]
 
-export const isV2DocOrRooms = (doc: Pick<PlanDoc, 'rooms' | 'schemaVersion'>): boolean =>
-  doc.schemaVersion === 2 || doc.rooms.some((r) => (r.cycle?.length ?? 0) > 0)
-
 /** Return the `hostWall` argument expected by `addStorage` for a room wall starting at `wallStart`. */
 export function hostWallIdForRoomWall(
   doc: Pick<PlanDoc, 'rooms' | 'schemaVersion'>,
   room: Room,
   wallStart: string,
 ): string {
-  if (isV2DocOrRooms(doc)) {
+  if (isV2Doc(doc)) {
     const face = room.cycle?.find((f) => f.cornerId === wallStart)
     if (face) return face.wallId
   }
   return wallStart
 }
 
-/** Find the `wallStart` (cornerId) on the parent room where `storageRoom` is hosted. */
+/** Find the `wallStart` (cornerId) of the collinear wall run on the parent room where `storageRoom` is hosted. */
 export function storageHostWallStart(doc: PlanDoc, storageRoom: Room): string | null {
   const parent = doc.rooms.find((r) => r.id === storageRoom.storage?.parentRoomId)
-  if (!parent || storageRoom.vertices.length < 2) return null
+  const host = storageHostWall(doc, storageRoom)
+  if (!parent || !host) return null
+  const runStartIdx = collinearRunStart(parent, host.index, host.dir)
+  return parent.vertices[runStartIdx]?.id ?? host.start.id
+}
 
-  if (isV2DocOrRooms(doc) && storageRoom.cycle?.length && parent.cycle?.length) {
-    const frontWallId = storageRoom.cycle[0].wallId
-    const face = parent.cycle.find((f) => f.wallId === frontWallId)
-    if (face) return face.cornerId
-  }
-
-  const [A, B] = storageRoom.vertices
-  const dir = norm(sub(B, A))
+/** One entry per collinear wall run of `parent` for the UI Wall select. */
+export function parentWallRuns(parent: Room): { wallStart: string; label: string; wall: Wall }[] {
+  const runs: { wallStart: string; label: string; wall: Wall }[] = []
   for (const w of roomWalls(parent)) {
-    if (dot(w.dir, dir) < 0.99) continue
-    if (projectOnSegment(A, w.start, w.end).distance < 1 && projectOnSegment(B, w.start, w.end).distance < 1) {
-      return w.start.id
+    if (collinearRunStart(parent, w.index, w.dir) === w.index) {
+      runs.push({ wallStart: w.start.id, label: `on ${parent.code}-${w.index + 1}`, wall: w })
     }
   }
-  return null
+  return runs
 }
 
 /** Read the current `StorageDoor` of a storage room from its front door element. */
 export function readStorageDoor(doc: PlanDoc, storageRoom: Room): StorageDoor {
-  const parentId = storageRoom.storage?.parentRoomId
-  if (!parentId) return DEFAULT_STORAGE_DOOR
-
-  if (isV2DocOrRooms(doc) && storageRoom.cycle?.length) {
-    const frontWallId = storageRoom.cycle[0].wallId
-    const el = doc.elements.find(
-      (e) => e.roomId === parentId && e.wallId === frontWallId && (e.kind === 'door' || e.kind === 'opening'),
-    )
-    if (el) return el.kind === 'opening' ? 'none' : ((el.variant as StorageDoor) ?? 'single')
-  }
-
-  const wallStart = storageHostWallStart(doc, storageRoom)
-  const params = readStorageParams(doc, storageRoom)
-  if (!wallStart || !params) return DEFAULT_STORAGE_DOOR
-  const el = doc.elements.find(
-    (e) =>
-      e.roomId === parentId &&
-      e.wallStart === wallStart &&
-      (e.kind === 'door' || e.kind === 'opening') &&
-      Math.abs(e.offsetCm - params.offsetCm) < 1 &&
-      Math.abs(e.widthCm - params.widthCm) < 1,
-  )
-  if (!el) return DEFAULT_STORAGE_DOOR
-  return el.kind === 'opening' ? 'none' : ((el.variant as StorageDoor) ?? 'single')
+  if (!storageFrontDoor(doc, storageRoom)) return DEFAULT_STORAGE_DOOR
+  return storageDoorType(doc, storageRoom)
 }
 
 /**
- * Compute storage `offsetCm` from a click distance `alongCm` along a wall of length `wallLengthCm`.
- * Centers the storage at `alongCm` and clamps so `A..B` stays within `[0, wallLengthCm]`.
+ * Compute storage `offsetCm` (from the inside corner) from a click distance `alongFromInsideCm`
+ * along an inside wall length `innerLengthCm`. Centers the storage and clamps to `[0, max]`.
  */
 export function storageOffsetFromClick(
-  alongCm: number,
+  alongFromInsideCm: number,
   widthCm: number,
-  wallLengthCm: number,
-  sideCm: number = DEFAULT_STORAGE_SIDE_CM,
+  innerLengthCm: number,
 ): number {
-  const minOff = sideCm / 2
-  const maxOff = Math.max(minOff, wallLengthCm - widthCm - sideCm / 2)
-  const raw = alongCm - widthCm / 2
-  return Math.round(Math.max(minOff, Math.min(maxOff, raw)) * 10) / 10
+  const maxOff = Math.max(0, innerLengthCm - widthCm)
+  const raw = alongFromInsideCm - widthCm / 2
+  return Math.round(Math.max(0, Math.min(maxOff, raw)) * 10) / 10
 }
 
 /** Find the first wall of `room` that can hold a storage with `params` and `door`. */
@@ -126,6 +100,7 @@ export function findFirstValidHostWall(
 
 /**
  * Move an existing storage room to a different wall (`targetWallStart` on the parent room).
+ * Keeps `id`, `code`, `name`, and `walkOrder`.
  * Returns `{ doc }` on success or `{ error }` without modifying the original document.
  */
 export function moveStorageToWall(
@@ -162,7 +137,12 @@ export function moveStorageToWall(
   if (!bestWall) return { error: 'Host wall not found' }
 
   const hostWall = hostWallIdForRoomWall(without, nextParent, bestWall.start.id)
-  const res = addStorage(without, nextParent.id, hostWall, params, door)
+  const res = addStorage(without, nextParent.id, hostWall, params, door, {
+    id: storageRoom.id,
+    code: storageRoom.code,
+    name: storageRoom.name,
+    walkOrder: storageRoom.walkOrder,
+  })
   if ('error' in res) return res
   return { doc: res.doc }
 }

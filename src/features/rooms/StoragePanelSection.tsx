@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { Archive, Trash2 } from 'lucide-react'
-import { fmtCm, roomWalls } from '../../model/geometry'
+import { fmtCm } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room } from '../../model/types'
 import { EmptyHint, ERROR, FieldRow, IconButton, NumberField, PanelSection, SelectField } from '../../shell/panel'
 import { readStorageParams, type StorageDoor, type StorageParams } from '../storage/geometry'
 import {
-  moveStorageToWall, readStorageDoor, STORAGE_DOOR_OPTIONS, storageHostWallStart,
+  moveStorageToWall, parentWallRuns, readStorageDoor, STORAGE_DOOR_OPTIONS, storageHostWallStart,
 } from '../storage/ui'
 import { undoToast } from '../toast'
 
@@ -25,7 +25,7 @@ function StorageInspector({ doc, room }: { doc: PlanDoc; room: Room }) {
   const params = readStorageParams(doc, room)
   const door = readStorageDoor(doc, room)
   const hostWallStart = storageHostWallStart(doc, room)
-  const parentWalls = parent ? roomWalls(parent) : []
+  const wallRuns = parent ? parentWallRuns(parent) : []
 
   const applyParams = (nextParams: StorageParams, nextDoor: StorageDoor = door) => {
     const res = useDoc.getState().updateStorage(room.id, nextParams, nextDoor)
@@ -77,7 +77,7 @@ function StorageInspector({ doc, room }: { doc: PlanDoc; room: Room }) {
               id="storage-wall"
               name="storage-wall"
               value={hostWallStart ?? ''}
-              options={parentWalls.map((w) => ({ value: w.start.id, label: `on ${parent.code}-${w.index + 1}` }))}
+              options={wallRuns.map((r) => ({ value: r.wallStart, label: r.label }))}
               onChange={onWallChange}
             />
           </FieldRow>

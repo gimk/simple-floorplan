@@ -97,6 +97,7 @@ export function insertVertex(doc: PlanDoc, roomId: string, wallStart: string, po
 }
 
 export function deleteRoom(doc: PlanDoc, roomId: string): PlanDoc {
+  if (doc.rooms.find((r) => r.id === roomId)?.storage) return deleteStorage(doc, roomId)
   let next = doc
   for (const r of doc.rooms) {
     if (r.storage?.parentRoomId === roomId) {

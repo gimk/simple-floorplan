@@ -248,7 +248,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
         room: { type: 'string', minLength: 1, description: 'Parent room ID or code (the room the storage opens into).' },
         wall: WALL_REF_SCHEMA,
-        offsetCm: { type: 'number', minimum: 0, description: 'Distance along the host wall from its start to the near inside face of the storage, cm.' },
+        offsetCm: { type: 'number', minimum: 0, description: 'Distance from the inside corner at the host wall start, along the inside face, to the near inside face of the storage, cm.' },
         widthCm: { type: 'number', exclusiveMinimum: 0, description: 'Inside clear width of the storage, cm.' },
         depthCm: { type: 'number', exclusiveMinimum: 0, description: 'Inside clear depth, from the outer face of the host wall, cm.' },
         sideCm: { type: 'number', exclusiveMinimum: 0, description: 'Side wall thickness in cm (default 5).' },
@@ -273,7 +273,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
       properties: {
         projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
         storage: { type: 'string', minLength: 1, description: 'Storage room ID or code.' },
-        offsetCm: { type: 'number', minimum: 0, description: 'New distance along the host wall, cm.' },
+        offsetCm: { type: 'number', minimum: 0, description: 'New distance from the inside corner along the host wall, cm.' },
         widthCm: { type: 'number', exclusiveMinimum: 0, description: 'New inside clear width, cm.' },
         depthCm: { type: 'number', exclusiveMinimum: 0, description: 'New inside clear depth, cm.' },
         sideCm: { type: 'number', exclusiveMinimum: 0, description: 'New side wall thickness, cm.' },

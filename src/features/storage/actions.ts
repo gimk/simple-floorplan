@@ -2,13 +2,16 @@
 // Works for both v1 (room polygons as source) and v2 (nodes, walls, room.cycle as source).
 import polygonClipping from 'polygon-clipping'
 import {
-  DEFAULT_WALL_CM, area, cross, dist, dot, norm, projectOnSegment, roomWalls, signedArea, sub, wallByStart,
+  DEFAULT_WALL_CM, add, area, cross, dist, dot, mul, norm, projectOnSegment, roomWalls, signedArea, sub, wallByStart,
 } from '../../model/geometry'
 import { nextRoomCode } from '../../model/survey'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall, Vec, WallElement, WallProps } from '../../model/types'
 import { syncElements } from '../../model/v2/elements'
 import { deriveWallFaces, materializeRooms, roomFaceForward, roundStored, storedWallProps } from '../../model/v2/materialize'
-import { readStorageParams, storageCorners, type StorageDoor, type StorageParams } from './geometry'
+import {
+  isV2Doc, storageCorners, storageDoorType, storageFrontDoor, storageHostWall, wallRunMetrics,
+  type StorageDoor, type StorageParams,
+} from './geometry'
 
 export type { StorageDoor, StorageParams }
 
@@ -21,9 +24,6 @@ const maxWalkOrder = (d: PlanDoc) => d.rooms.reduce((m, r) => Math.max(m, r.walk
 const FIT_TOL_CM = 0.01
 const NODE_SNAP_CM = 0.5
 const OVERLAP_AREA_TOL_CM2 = 1
-
-const isV2 = (doc: Pick<PlanDoc, 'rooms' | 'schemaVersion'>) =>
-  doc.schemaVersion === 2 || doc.rooms.some((r) => (r.cycle?.length ?? 0) > 0)
 
 function validateParams(p: StorageParams): string | null {
   if (
@@ -95,47 +95,210 @@ function remapDiagonal(old: Room, newIds: string[], oldCornerIds: string[]): [nu
   return na >= 0 && nb >= 0 && na !== nb ? [na, nb] : undefined
 }
 
-function findV1HostWall(doc: PlanDoc, storageRoom: Room): string | null {
-  const parent = doc.rooms.find((r) => r.id === storageRoom.storage?.parentRoomId)
-  if (!parent || storageRoom.vertices.length < 2) return null
-  const [A, B] = storageRoom.vertices
-  const dir = norm(sub(B, A))
-  for (const w of roomWalls(parent)) {
-    if (dot(w.dir, dir) < 0.99) continue
-    if (projectOnSegment(A, w.start, w.end).distance < 1 && projectOnSegment(B, w.start, w.end).distance < 1) {
-      return w.start.id
-    }
-  }
-  return null
-}
-
-function findFrontDoor(doc: PlanDoc, storageRoom: Room): WallElement | undefined {
-  const parentId = storageRoom.storage?.parentRoomId
-  if (!parentId) return undefined
-  if (isV2(doc) && storageRoom.cycle?.length) {
-    const frontWallId = storageRoom.cycle[0].wallId
-    return doc.elements.find(
-      (e) => e.roomId === parentId && e.wallId === frontWallId && (e.kind === 'door' || e.kind === 'opening'),
-    )
-  }
-  const wallStart = findV1HostWall(doc, storageRoom)
-  const params = readStorageParams(doc, storageRoom)
-  if (!wallStart || !params) return undefined
-  return doc.elements.find(
-    (e) =>
-      e.roomId === parentId &&
-      e.wallStart === wallStart &&
-      (e.kind === 'door' || e.kind === 'opening') &&
-      Math.abs(e.offsetCm - params.offsetCm) < 1 &&
-      Math.abs(e.widthCm - params.widthCm) < 1,
-  )
-}
-
-type PreserveMeta = {
+export type PreserveMeta = {
   id: string
   code: string
   name: string
   walkOrder: number
+}
+
+type GraphState = {
+  nodes: StoredNode[]
+  walls: StoredWall[]
+  rooms: Room[]
+  elements: WallElement[]
+}
+
+type SplitPiece = { id: string; a: string; b: string; from: number; to: number }
+
+function splitStoredWall(
+  state: GraphState,
+  w: StoredWall,
+  rawLo: number,
+  rawHi: number,
+  newId: (prefix: string) => string,
+  trackRoomId?: string,
+): {
+  state: GraphState
+  pieces: SplitPiece[]
+  midPieceId: string
+  nLoId: string
+  nHiId: string
+  loPos: Vec
+  hiPos: Vec
+  uLo: number
+  uHi: number
+  trackedCornerId?: string
+} {
+  const na = state.nodes.find((n) => n.id === w.a)!
+  const nb = state.nodes.find((n) => n.id === w.b)!
+  const wallLen = dist(na, nb)
+  const unitW = norm(sub(nb, na))
+
+  let uLo = roundStored(Math.max(0, Math.min(rawLo, rawHi)))
+  let uHi = roundStored(Math.min(wallLen, Math.max(rawLo, rawHi)))
+  const atStart = uLo <= NODE_SNAP_CM
+  const atEnd = uHi >= wallLen - NODE_SNAP_CM
+  if (atStart) uLo = 0
+  if (atEnd) uHi = roundStored(wallLen)
+
+  const nextNodes: StoredNode[] = [...state.nodes]
+  let nLoId = w.a
+  let loPos: Vec = na
+  if (!atStart) {
+    nLoId = newId('N')
+    loPos = { x: roundStored(na.x + unitW.x * uLo), y: roundStored(na.y + unitW.y * uLo) }
+    nextNodes.push({ id: nLoId, ...loPos })
+  }
+  let nHiId = w.b
+  let hiPos: Vec = nb
+  if (!atEnd) {
+    nHiId = newId('N')
+    hiPos = { x: roundStored(na.x + unitW.x * uHi), y: roundStored(na.y + unitW.y * uHi) }
+    nextNodes.push({ id: nHiId, ...hiPos })
+  }
+
+  const pieces: SplitPiece[] = []
+  if (!atStart) {
+    pieces.push({ id: w.id, a: w.a, b: nLoId, from: 0, to: uLo })
+  }
+  const midPieceId = atStart ? w.id : newId('W')
+  pieces.push({ id: midPieceId, a: nLoId, b: nHiId, from: uLo, to: uHi })
+  if (!atEnd) {
+    pieces.push({ id: newId('W'), a: nHiId, b: w.b, from: uHi, to: roundStored(wallLen) })
+  }
+
+  const splitWalls: StoredWall[] = pieces.map((pc) => ({ ...w, id: pc.id, a: pc.a, b: pc.b, faces: [] }))
+  const nextWalls: StoredWall[] = state.walls.flatMap((x) => (x.id === w.id ? splitWalls : [x]))
+
+  let trackedCornerId: string | undefined
+  const nextRooms: Room[] = state.rooms.map((r) => {
+    if (!r.cycle?.some((f) => f.wallId === w.id)) return r
+    const oldCorners = r.cycle.map((f) => f.cornerId)
+    const newCycle: RoomFace[] = []
+    for (const f of r.cycle) {
+      if (f.wallId !== w.id) {
+        newCycle.push(f)
+        continue
+      }
+      const fFrom = Math.min(f.from, f.to)
+      const fTo = Math.max(f.from, f.to)
+      const fwd = roomFaceForward(r, f)
+      const overlapping = pieces.filter((pc) => Math.min(fTo, pc.to) - Math.max(fFrom, pc.from) > 1e-4)
+      const ordered = fwd > 0 ? overlapping : [...overlapping].reverse()
+      ordered.forEach((pc, idx) => {
+        const cornerId = idx === 0 ? f.cornerId : newId('v')
+        if (r.id === trackRoomId && pc.id === midPieceId) trackedCornerId = cornerId
+        newCycle.push({
+          wallId: pc.id,
+          side: f.side,
+          from: roundStored(Math.max(fFrom, pc.from) - pc.from),
+          to: roundStored(Math.min(fTo, pc.to) - pc.from),
+          cornerId,
+        })
+      })
+    }
+    return {
+      ...r,
+      cycle: newCycle,
+      diagonal: remapDiagonal(r, newCycle.map((f) => f.cornerId), oldCorners),
+    }
+  })
+
+  const nextElements: WallElement[] = state.elements.map((el) => {
+    if (el.wallId !== w.id || el.alongCm === undefined) return el
+    const mid = el.alongCm + el.widthCm / 2
+    const pc =
+      pieces.find((x) => mid >= x.from - 1e-4 && mid <= x.to + 1e-4) ??
+      pieces.reduce((best, x) =>
+        Math.abs(mid - (x.from + x.to) / 2) < Math.abs(mid - (best.from + best.to) / 2) ? x : best,
+      )
+    return {
+      ...el,
+      wallId: pc.id,
+      alongCm: roundStored(Math.max(0, el.alongCm - pc.from)),
+    }
+  })
+
+  return {
+    state: { nodes: nextNodes, walls: nextWalls, rooms: nextRooms, elements: nextElements },
+    pieces,
+    midPieceId,
+    nLoId,
+    nHiId,
+    loPos,
+    hiPos,
+    uLo,
+    uHi,
+    trackedCornerId,
+  }
+}
+
+/**
+ * Resolve a storage side wall (B->C or D->A): if an existing collinear wall in the graph already
+ * covers the segment, split/reuse it instead of creating a duplicate overlapping wall.
+ */
+function resolveSideWall(
+  state: GraphState,
+  fixedNodeId: string,
+  fixedPos: Vec,
+  freePos: Vec,
+  isFixedStart: boolean,
+  thicknessCm: number,
+  newWallSide: 'L' | 'R',
+  newId: (prefix: string) => string,
+): { state: GraphState; wallId: string; side: 'L' | 'R'; freeNodeId: string; freePos: Vec } {
+  const segDir = isFixedStart ? norm(sub(freePos, fixedPos)) : norm(sub(fixedPos, freePos))
+  for (const ew of state.walls) {
+    const ea = state.nodes.find((n) => n.id === ew.a)
+    const eb = state.nodes.find((n) => n.id === ew.b)
+    if (!ea || !eb) continue
+    const ewLen = dist(ea, eb)
+    if (ewLen < 1e-6) continue
+    const ewDir = norm(sub(eb, ea))
+    if (Math.abs(cross(ewDir, segDir)) > 1e-3) continue
+
+    const dFixed = Math.abs(cross(sub(fixedPos, ea), ewDir))
+    const dFree = Math.abs(cross(sub(freePos, ea), ewDir))
+    if (dFixed > NODE_SNAP_CM || dFree > NODE_SNAP_CM) continue
+
+    const tFixed = dot(sub(fixedPos, ea), ewDir)
+    const tFree = dot(sub(freePos, ea), ewDir)
+    const minT = Math.min(tFixed, tFree)
+    const maxT = Math.max(tFixed, tFree)
+    const overlap = Math.min(ewLen, maxT) - Math.max(0, minT)
+    if (overlap > 1e-3 && minT >= -NODE_SNAP_CM && maxT <= ewLen + NODE_SNAP_CM) {
+      const split = splitStoredWall(state, ew, Math.max(0, minT), Math.min(ewLen, maxT), newId)
+      const freeIsHi = tFree > tFixed
+      const freeNodeId = freeIsHi ? split.nHiId : split.nLoId
+      const snappedFreePos = freeIsHi ? split.hiPos : split.loPos
+      const side: 'L' | 'R' = dot(segDir, ewDir) > 0 ? newWallSide : newWallSide === 'L' ? 'R' : 'L'
+      return { state: split.state, wallId: split.midPieceId, side, freeNodeId, freePos: snappedFreePos }
+    }
+  }
+
+  const freeNodeId = newId('N')
+  const snappedFreePos = { x: roundStored(freePos.x), y: roundStored(freePos.y) }
+  const wallId = newId('W')
+  const newWall: StoredWall = {
+    id: wallId,
+    a: isFixedStart ? fixedNodeId : freeNodeId,
+    b: isFixedStart ? freeNodeId : fixedNodeId,
+    faces: [],
+    type: 'partition',
+    thicknessCm,
+  }
+  return {
+    state: {
+      ...state,
+      nodes: [...state.nodes, { id: freeNodeId, ...snappedFreePos }],
+      walls: [...state.walls, newWall],
+    },
+    wallId,
+    side: newWallSide,
+    freeNodeId,
+    freePos: snappedFreePos,
+  }
 }
 
 function addStorageImpl(
@@ -152,7 +315,7 @@ function addStorageImpl(
   const parent = doc.rooms.find((r) => r.id === parentRoomId)
   if (!parent) return { error: 'Parent room not found' }
 
-  if (!isV2(doc)) {
+  if (!isV2Doc(doc)) {
     return addStorageV1(doc, parent, hostWall, params, door, preserve)
   }
   return addStorageV2(doc, parent, hostWall, params, door, preserve)
@@ -169,14 +332,28 @@ function addStorageV1(
   const w = wallByStart(parent, hostWall)
   if (!w) return { error: 'Host wall not found' }
 
-  const tA = p.offsetCm - p.sideCm / 2
-  const tB = p.offsetCm + p.widthCm + p.sideCm / 2
-  if (tA < -FIT_TOL_CM || tB > w.length + FIT_TOL_CM) {
+  const metrics = wallRunMetrics(parent, w.index)
+  if (!metrics) return { error: 'Host wall not found' }
+
+  if (p.offsetCm < -FIT_TOL_CM || p.offsetCm + p.widthCm > metrics.innerLength + FIT_TOL_CM) {
+    return { error: 'Storage does not fit on the host wall' }
+  }
+  const centreOffset = metrics.cornerInset + p.offsetCm
+  const tA = centreOffset - p.sideCm / 2
+  const tB = centreOffset + p.widthCm + p.sideCm / 2
+  if (tA < -FIT_TOL_CM || tB > metrics.centreLength + FIT_TOL_CM) {
     return { error: 'Storage does not fit on the host wall' }
   }
 
   const hostProps: WallProps = parent.walls[hostWall] ?? { type: 'partition', thicknessCm: DEFAULT_WALL_CM }
-  const { A, B, C, D } = storageCorners(w.start, w.end, w.inward, hostProps.thicknessCm, p)
+  const { A, B, C, D } = storageCorners(
+    metrics.startCentre,
+    metrics.endCentre,
+    w.inward,
+    hostProps.thicknessCm,
+    p,
+    metrics.cornerInset,
+  )
   if (overlapsAnyRoom(doc, [A, B, C, D])) {
     return { error: 'Storage overlaps another room' }
   }
@@ -213,7 +390,7 @@ function addStorageV1(
     wallStart: hostWall,
     kind: door === 'none' ? 'opening' : 'door',
     ...(door === 'none' ? {} : { variant: door }),
-    offsetCm: roundStored(p.offsetCm),
+    offsetCm: roundStored(centreOffset),
     widthCm: roundStored(p.widthCm),
     swing: 'in',
     createdAt: ts,
@@ -240,11 +417,46 @@ function addStorageV2(
 ): { doc: PlanDoc; storageRoomId: string } | { error: string } {
   const walls = doc.walls ?? []
   const nodes = doc.nodes ?? []
-  const w = walls.find((x) => x.id === hostWall)
-  if (!w) return { error: 'Host wall not found' }
-  const parentFace = parent.cycle?.find((f) => f.wallId === hostWall)
-  if (!parentFace) return { error: 'Host wall does not belong to parent room' }
+  const parentFaceIdx = parent.cycle?.findIndex((f) => f.wallId === hostWall) ?? -1
+  if (parentFaceIdx < 0) return { error: 'Host wall does not belong to parent room' }
 
+  const metrics = wallRunMetrics(parent, parentFaceIdx)
+  if (!metrics) return { error: 'Host wall geometry missing' }
+
+  if (p.offsetCm < -FIT_TOL_CM || p.offsetCm + p.widthCm > metrics.innerLength + FIT_TOL_CM) {
+    return { error: 'Storage does not fit on the host wall' }
+  }
+  const centreOffset = metrics.cornerInset + p.offsetCm
+  const tA_run = centreOffset - p.sideCm / 2
+  const tB_run = centreOffset + p.widthCm + p.sideCm / 2
+  if (tA_run < -FIT_TOL_CM || tB_run > metrics.centreLength + FIT_TOL_CM) {
+    return { error: 'Storage does not fit on the host wall' }
+  }
+
+  // Locate the face in the collinear run that contains [tA_run, tB_run]
+  const pWalls = roomWalls(parent)
+  let targetFace: RoomFace | null = null
+  let targetPw = pWalls[parentFaceIdx]
+  let tA_face = 0
+  let tB_face = 0
+  for (const fi of metrics.faceIndices) {
+    const f = parent.cycle![fi]
+    const pw = pWalls[fi]
+    if (!pw) continue
+    const fStart = dot(sub(pw.start, metrics.startCentre), metrics.dir)
+    const fEnd = dot(sub(pw.end, metrics.startCentre), metrics.dir)
+    if (tA_run >= fStart - FIT_TOL_CM && tB_run <= fEnd + FIT_TOL_CM) {
+      targetFace = f
+      targetPw = pw
+      tA_face = tA_run - fStart
+      tB_face = tB_run - fStart
+      break
+    }
+  }
+  if (!targetFace || !targetPw) return { error: 'Storage does not fit on the host wall' }
+
+  const w = walls.find((x) => x.id === targetFace.wallId)
+  if (!w) return { error: 'Host wall not found' }
   const na = nodes.find((n) => n.id === w.a)
   const nb = nodes.find((n) => n.id === w.b)
   if (!na || !nb) return { error: 'Host wall nodes missing' }
@@ -252,146 +464,79 @@ function addStorageV2(
   const wallLen = dist(na, nb)
   if (wallLen < 1e-6) return { error: 'Host wall has zero length' }
 
-  const pw = wallByStart(parent, parentFace.cornerId)
-  if (!pw) return { error: 'Host wall geometry missing' }
-
-  const faceFrom = Math.min(parentFace.from, parentFace.to)
-  const faceTo = Math.max(parentFace.from, parentFace.to)
+  const faceFrom = Math.min(targetFace.from, targetFace.to)
+  const faceTo = Math.max(targetFace.from, targetFace.to)
   const faceLen = faceTo - faceFrom
-
-  const tA_face = p.offsetCm - p.sideCm / 2
-  const tB_face = p.offsetCm + p.widthCm + p.sideCm / 2
-  if (tA_face < -FIT_TOL_CM || tB_face > faceLen + FIT_TOL_CM) {
-    return { error: 'Storage does not fit on the host wall' }
-  }
   const clampedA = Math.max(0, tA_face)
   const clampedB = Math.min(faceLen, tB_face)
 
   const h = w.thicknessCm ?? DEFAULT_WALL_CM
-  const { A, B, C, D } = storageCorners(pw.start, pw.end, pw.inward, h, p)
+  const { A, B, C, D } = storageCorners(
+    metrics.startCentre,
+    metrics.endCentre,
+    targetPw.inward,
+    h,
+    p,
+    metrics.cornerInset,
+  )
   if (overlapsAnyRoom(doc, [A, B, C, D])) {
     return { error: 'Storage overlaps another room' }
   }
 
   const newId = makeIdGenerator(doc)
-  const forward = roomFaceForward(parent, parentFace)
+  const forward = roomFaceForward(parent, targetFace)
   const faceStart = forward > 0 ? faceFrom : faceTo
   const uA = faceStart + forward * clampedA
   const uB = faceStart + forward * clampedB
-  let uLo = roundStored(Math.max(0, Math.min(uA, uB)))
-  let uHi = roundStored(Math.min(wallLen, Math.max(uA, uB)))
+  const uLoRaw = Math.min(uA, uB)
+  const uHiRaw = Math.max(uA, uB)
 
-  const unitW = norm(sub(nb, na))
-  const atStart = uLo <= NODE_SNAP_CM
-  const atEnd = uHi >= wallLen - NODE_SNAP_CM
-  if (atStart) uLo = 0
-  if (atEnd) uHi = roundStored(wallLen)
-
-  const nextNodes: StoredNode[] = [...nodes]
-  let nLoId = w.a
-  if (!atStart) {
-    nLoId = newId('N')
-    nextNodes.push({ id: nLoId, x: roundStored(na.x + unitW.x * uLo), y: roundStored(na.y + unitW.y * uLo) })
-  }
-  let nHiId = w.b
-  if (!atEnd) {
-    nHiId = newId('N')
-    nextNodes.push({ id: nHiId, x: roundStored(na.x + unitW.x * uHi), y: roundStored(na.y + unitW.y * uHi) })
-  }
-
-  type Piece = { id: string; a: string; b: string; from: number; to: number }
-  const pieces: Piece[] = []
-  if (!atStart) {
-    pieces.push({ id: w.id, a: w.a, b: nLoId, from: 0, to: uLo })
-  }
-  const frontWallId = atStart ? w.id : newId('W')
-  pieces.push({ id: frontWallId, a: nLoId, b: nHiId, from: uLo, to: uHi })
-  if (!atEnd) {
-    pieces.push({ id: newId('W'), a: nHiId, b: w.b, from: uHi, to: roundStored(wallLen) })
-  }
-
-  const splitWalls: StoredWall[] = pieces.map((pc) => ({ ...w, id: pc.id, a: pc.a, b: pc.b, faces: [] }))
-  const nextWalls: StoredWall[] = walls.flatMap((x) => (x.id === w.id ? splitWalls : [x]))
-
-  // Add outer nodes C, D and the 3 storage walls B-C, C-D, D-A
-  const nCId = newId('N')
-  const nDId = newId('N')
-  nextNodes.push(
-    { id: nCId, x: roundStored(C.x), y: roundStored(C.y) },
-    { id: nDId, x: roundStored(D.x), y: roundStored(D.y) },
+  const hostSplit = splitStoredWall(
+    { nodes, walls, rooms: doc.rooms, elements: doc.elements },
+    w,
+    uLoRaw,
+    uHiRaw,
+    newId,
+    parent.id,
   )
-  const nAId = forward > 0 ? nLoId : nHiId
-  const nBId = forward > 0 ? nHiId : nLoId
-  const wRightId = newId('W')
+
+  const nAId = forward > 0 ? hostSplit.nLoId : hostSplit.nHiId
+  const nBId = forward > 0 ? hostSplit.nHiId : hostSplit.nLoId
+  const snappedA = forward > 0 ? hostSplit.loPos : hostSplit.hiPos
+  const snappedB = forward > 0 ? hostSplit.hiPos : hostSplit.loPos
+  const out = mul(targetPw.inward, -1)
+  const depthOut = h / 2 + p.depthCm + p.backCm / 2
+  const snappedC = add(snappedB, mul(out, depthOut))
+  const snappedD = add(snappedA, mul(out, depthOut))
+
+  const newWallSide: 'L' | 'R' = signedArea([snappedA, snappedB, snappedC, snappedD]) >= 0 ? 'L' : 'R'
+  const right = resolveSideWall(hostSplit.state, nBId, snappedB, snappedC, true, p.sideCm, newWallSide, newId)
+  const left = resolveSideWall(right.state, nAId, snappedA, snappedD, false, p.sideCm, newWallSide, newId)
+
   const wBackId = newId('W')
-  const wLeftId = newId('W')
-  nextWalls.push(
-    { id: wRightId, a: nBId, b: nCId, faces: [], type: 'partition', thicknessCm: p.sideCm },
-    { id: wBackId, a: nCId, b: nDId, faces: [], type: 'partition', thicknessCm: p.backCm },
-    { id: wLeftId, a: nDId, b: nAId, faces: [], type: 'partition', thicknessCm: p.sideCm },
-  )
-
-  // Update every room cycle that referenced the split wall
-  let frontCornerId = parentFace.cornerId
-  const nextRooms: Room[] = doc.rooms.map((r) => {
-    if (!r.cycle?.some((f) => f.wallId === w.id)) return r
-    const oldCorners = r.cycle.map((f) => f.cornerId)
-    const newCycle: RoomFace[] = []
-    for (const f of r.cycle) {
-      if (f.wallId !== w.id) {
-        newCycle.push(f)
-        continue
-      }
-      const fFrom = Math.min(f.from, f.to)
-      const fTo = Math.max(f.from, f.to)
-      const fwd = roomFaceForward(r, f)
-      const overlapping = pieces.filter((pc) => Math.min(fTo, pc.to) - Math.max(fFrom, pc.from) > 1e-4)
-      const ordered = fwd > 0 ? overlapping : [...overlapping].reverse()
-      ordered.forEach((pc, idx) => {
-        const cornerId = idx === 0 ? f.cornerId : newId('v')
-        if (r.id === parent.id && pc.id === frontWallId) frontCornerId = cornerId
-        newCycle.push({
-          wallId: pc.id,
-          side: f.side,
-          from: roundStored(Math.max(fFrom, pc.from) - pc.from),
-          to: roundStored(Math.min(fTo, pc.to) - pc.from),
-          cornerId,
-        })
-      })
-    }
-    return {
-      ...r,
-      cycle: newCycle,
-      diagonal: remapDiagonal(r, newCycle.map((f) => f.cornerId), oldCorners),
-    }
-  })
-
-  // Update existing elements on the split wall so they keep their real position
-  const nextElements: WallElement[] = doc.elements.map((el) => {
-    if (el.wallId !== w.id || el.alongCm === undefined) return el
-    const mid = el.alongCm + el.widthCm / 2
-    const pc =
-      pieces.find((x) => mid >= x.from - 1e-4 && mid <= x.to + 1e-4) ??
-      pieces.reduce((best, x) =>
-        Math.abs(mid - (x.from + x.to) / 2) < Math.abs(mid - (best.from + best.to) / 2) ? x : best,
-      )
-    return {
-      ...el,
-      wallId: pc.id,
-      alongCm: roundStored(Math.max(0, el.alongCm - pc.from)),
-    }
-  })
+  const finalState: GraphState = {
+    ...left.state,
+    walls: [
+      ...left.state.walls,
+      { id: wBackId, a: right.freeNodeId, b: left.freeNodeId, faces: [], type: 'partition', thicknessCm: p.backCm },
+    ],
+  }
 
   // Build storage room cycle A-B-C-D
   const storageRoomId = preserve?.id ?? uid('room')
   const code = preserve?.code ?? nextRoomCode(doc)
-  const storageFrontSide: 'L' | 'R' = parentFace.side === 'L' ? 'R' : 'L'
-  const newWallSide: 'L' | 'R' = signedArea([A, B, C, D]) >= 0 ? 'L' : 'R'
+  const storageFrontSide: 'L' | 'R' = targetFace.side === 'L' ? 'R' : 'L'
   const storageCycle: RoomFace[] = [
-    { wallId: frontWallId, side: storageFrontSide, from: 0, to: roundStored(uHi - uLo), cornerId: newId('v') },
-    { wallId: wRightId, side: newWallSide, from: 0, to: roundStored(dist(B, C)), cornerId: newId('v') },
-    { wallId: wBackId, side: newWallSide, from: 0, to: roundStored(dist(C, D)), cornerId: newId('v') },
-    { wallId: wLeftId, side: newWallSide, from: 0, to: roundStored(dist(D, A)), cornerId: newId('v') },
+    {
+      wallId: hostSplit.midPieceId,
+      side: storageFrontSide,
+      from: 0,
+      to: roundStored(hostSplit.uHi - hostSplit.uLo),
+      cornerId: newId('v'),
+    },
+    { wallId: right.wallId, side: right.side, from: 0, to: roundStored(dist(snappedB, right.freePos)), cornerId: newId('v') },
+    { wallId: wBackId, side: newWallSide, from: 0, to: roundStored(dist(right.freePos, left.freePos)), cornerId: newId('v') },
+    { wallId: left.wallId, side: left.side, from: 0, to: roundStored(dist(left.freePos, snappedA)), cornerId: newId('v') },
   ]
   const storageRoom: Room = {
     id: storageRoomId,
@@ -406,16 +551,21 @@ function addStorageV2(
     storage: { parentRoomId: parent.id },
   }
 
+  const uDoorStart = uLoRaw + p.sideCm / 2
+  const doorAlongCm = roundStored(Math.max(0, uDoorStart - hostSplit.uLo))
+  const frontLen = hostSplit.uHi - hostSplit.uLo
+  const doorOffsetCm = forward > 0 ? doorAlongCm : roundStored(Math.max(0, frontLen - doorAlongCm - p.widthCm))
+
   const ts = nowIso()
   const frontDoor: WallElement = {
     id: uid('el'),
     roomId: parent.id,
-    wallStart: frontCornerId,
-    wallId: frontWallId,
-    alongCm: roundStored(p.sideCm / 2),
+    wallStart: hostSplit.trackedCornerId ?? targetFace.cornerId,
+    wallId: hostSplit.midPieceId,
+    alongCm: doorAlongCm,
     kind: door === 'none' ? 'opening' : 'door',
     ...(door === 'none' ? {} : { variant: door }),
-    offsetCm: roundStored(p.sideCm / 2),
+    offsetCm: doorOffsetCm,
     widthCm: roundStored(p.widthCm),
     swing: 'in',
     createdAt: ts,
@@ -424,10 +574,10 @@ function addStorageV2(
 
   const draftDoc: PlanDoc = {
     ...doc,
-    nodes: nextNodes,
-    walls: nextWalls,
-    rooms: [...nextRooms, storageRoom],
-    elements: [...nextElements, frontDoor],
+    nodes: finalState.nodes,
+    walls: finalState.walls,
+    rooms: [...finalState.rooms, storageRoom],
+    elements: [...finalState.elements, frontDoor],
   }
   const withFaces: PlanDoc = { ...draftDoc, walls: deriveWallFaces(draftDoc) }
   const materialized: PlanDoc = { ...withFaces, rooms: materializeRooms(withFaces) }
@@ -444,8 +594,9 @@ export function addStorage(
   hostWall: string,
   params: StorageParams,
   door: StorageDoor,
+  preserve?: PreserveMeta,
 ): { doc: PlanDoc; storageRoomId: string } | { error: string } {
-  return addStorageImpl(doc, parentRoomId, hostWall, params, door)
+  return addStorageImpl(doc, parentRoomId, hostWall, params, door, preserve)
 }
 
 function sameWallProps(a: StoredWall, b: StoredWall): boolean {
@@ -564,19 +715,25 @@ export function deleteStorage(doc: PlanDoc, storageRoomId: string): PlanDoc {
   const storageRoom = doc.rooms.find((r) => r.id === storageRoomId)
   if (!storageRoom || !storageRoom.storage) return doc
 
-  const frontDoor = findFrontDoor(doc, storageRoom)
+  const frontDoor = storageFrontDoor(doc, storageRoom)
   const nextElements = doc.elements.filter((e) => e.roomId !== storageRoomId && e.id !== frontDoor?.id)
   const nextRooms = doc.rooms.filter((r) => r.id !== storageRoomId)
 
-  if (!isV2(doc)) {
+  if (!isV2Doc(doc)) {
     return { ...doc, rooms: nextRooms, elements: nextElements }
   }
 
   const usedWalls = new Set<string>()
   for (const r of nextRooms) for (const f of r.cycle ?? []) usedWalls.add(f.wallId)
 
-  const frontWallId = storageRoom.cycle?.[0]?.wallId
-  const frontWall = frontWallId ? (doc.walls ?? []).find((w) => w.id === frontWallId) : undefined
+  const mergeNodeIds = new Set<string>()
+  for (const f of storageRoom.cycle ?? []) {
+    const sw = (doc.walls ?? []).find((w) => w.id === f.wallId)
+    if (sw) {
+      mergeNodeIds.add(sw.a)
+      mergeNodeIds.add(sw.b)
+    }
+  }
 
   const nextWalls = (doc.walls ?? []).filter((w) => usedWalls.has(w.id) || w.standalone === true)
   const usedNodes = new Set<string>()
@@ -594,9 +751,8 @@ export function deleteStorage(doc: PlanDoc, storageRoomId: string): PlanDoc {
     elements: nextElements,
   }
 
-  if (frontWall) {
-    nextDoc = mergeInlineNode(nextDoc, frontWall.a)
-    nextDoc = mergeInlineNode(nextDoc, frontWall.b)
+  for (const nodeId of mergeNodeIds) {
+    nextDoc = mergeInlineNode(nextDoc, nodeId)
   }
 
   const withFaces: PlanDoc = { ...nextDoc, walls: deriveWallFaces(nextDoc) }
@@ -621,9 +777,7 @@ export function updateStorage(
   if (!storageRoom || !storageRoom.storage) return { error: 'Storage room not found' }
 
   const parentId = storageRoom.storage.parentRoomId
-  const existingDoor = findFrontDoor(doc, storageRoom)
-  const doorToUse: StorageDoor =
-    door ?? (existingDoor ? (existingDoor.kind === 'opening' ? 'none' : ((existingDoor.variant as StorageDoor) ?? 'single')) : 'single')
+  const doorToUse: StorageDoor = door ?? storageDoorType(doc, storageRoom)
 
   // Find the host wall before deleting
   let v1WallStart: string | null = null
@@ -634,15 +788,15 @@ export function updateStorage(
       y: (storageRoom.vertices[0].y + storageRoom.vertices[1].y) / 2,
     }
   }
-  if (!isV2(doc)) {
-    v1WallStart = findV1HostWall(doc, storageRoom)
+  if (!isV2Doc(doc)) {
+    v1WallStart = storageHostWall(doc, storageRoom)?.start.id ?? null
     if (!v1WallStart) return { error: 'Host wall not found' }
   }
 
   const without = deleteStorage(doc, storageRoomId)
 
   let hostWall: string | null = v1WallStart
-  if (isV2(without) && frontMid) {
+  if (isV2Doc(without) && frontMid) {
     const parent = without.rooms.find((r) => r.id === parentId)
     if (parent && parent.cycle?.length) {
       let bestDist = Infinity

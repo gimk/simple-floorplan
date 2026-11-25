@@ -51,7 +51,7 @@ describe('survey rows and built-in storage', () => {
     const items = itemRows(doc).filter((r) => r.roomCode === 'SE')
     expect(items).toHaveLength(1)
     expect(items[0].type).toContain('Door')
-    expect(items[0].fromStartCm).toBe(100)
+    expect(items[0].fromStartCm).toBe(105)
     expect(items[0].widthCm).toBe(60)
     // The storage itself has no item: its front door is the door above.
     const storageCode = doc.rooms.find((r) => r.storage)!.code

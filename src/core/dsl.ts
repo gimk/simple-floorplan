@@ -53,8 +53,9 @@
 // Built-in storage (docs/storage-plan.md): a storage room (`room.storage`) is NOT written as a room.
 // Its parent room holds one "storage" line, which names the host wall and the dimensions; the parser
 // rebuilds the storage room, its walls and its front door with `addStorage` (features/storage). The
-// offset and the width follow `WallElement.offsetCm`: the offset is the distance along the host wall,
-// measured on the whole wall (a v2 wall split by a storage is one wall again in the text).
+// offset (`from`) is the distance from the inside corner at the host wall start, along the inside
+// face, to the near inside face of the storage, measured on the whole wall (a v2 wall split by a
+// storage is one wall again in the text).
 //
 // Example:
 //   plan "Apartment 4B" version=1 unit=cm

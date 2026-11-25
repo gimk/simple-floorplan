@@ -1,11 +1,10 @@
 import { useState } from 'react'
-import { roomWalls } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { PlanDoc, Room } from '../../model/types'
 import { readStorageParams, type StorageDoor, type StorageParams } from '../storage/geometry'
 import {
   DEFAULT_STORAGE_DOOR, DEFAULT_STORAGE_PARAMS, STORAGE_DOOR_OPTIONS, findFirstValidHostWall, moveStorageToWall,
-  readStorageDoor, storageHostWallStart,
+  parentWallRuns, readStorageDoor, storageHostWallStart,
 } from '../storage/ui'
 import { NumField } from './NumField'
 
@@ -23,7 +22,7 @@ const PARAM_FIELDS: [ParamKey, string][] = [
 
 function StorageRow({ doc, parent, storage }: { doc: PlanDoc; parent: Room; storage: Room }) {
   const [error, setError] = useState<string | null>(null)
-  const walls = roomWalls(parent)
+  const wallRuns = parentWallRuns(parent)
   const params = readStorageParams(doc, storage)
   const door = readStorageDoor(doc, storage)
   const hostWallStart = storageHostWallStart(doc, storage)
@@ -58,9 +57,9 @@ function StorageRow({ doc, parent, storage }: { doc: PlanDoc; parent: Room; stor
           value={hostWallStart ?? ''}
           onChange={(e) => onWallChange(e.target.value)}
         >
-          {walls.map((w) => (
-            <option key={w.start.id} value={w.start.id}>
-              on {parent.code}-{w.index + 1}
+          {wallRuns.map((r) => (
+            <option key={r.wallStart} value={r.wallStart}>
+              {r.label}
             </option>
           ))}
         </select>

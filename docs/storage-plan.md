@@ -34,16 +34,19 @@ storage?: RoomStorage
   - The door width = the storage inside width. The door swings into the parent room.
 
 ## Geometry (centre-line model, units cm)
-Inputs: parent room, host wall of the parent room, `offsetCm` (distance along the host wall from its start
-to the near INSIDE face of the storage, the same rule as `WallElement.offsetCm`), `widthCm` (inside
-clear width), `depthCm` (inside clear depth, from the OUTER face of the host wall to the inner face of the
-back wall), `sideCm` (side wall thickness, default 5), `backCm` (back wall thickness, default 5).
+Inputs: parent room, host wall of the parent room, `offsetCm` (distance from the parent room's INSIDE
+corner at the host wall start — the inside face of the previous wall — along the inside face, to the
+near INSIDE face of the storage), `widthCm` (inside clear width), `depthCm` (inside clear depth, from
+the OUTER face of the host wall to the inner face of the back wall), `sideCm` (side wall thickness,
+default 5), `backCm` (back wall thickness, default 5).
 
 Let `s` = host wall start (centre line), `dir` = unit vector of the host wall, `out` = minus the host wall
-`inward` vector (the outer side of the parent room), `h` = host wall thickness.
+`inward` vector (the outer side of the parent room), `h` = host wall thickness,
+`cornerInset` = `dot(roomInnerRing(parent)[hostStartIdx] - s, dir)` (half the previous wall thickness at
+a 90-degree corner), and `centreOffset = cornerInset + offsetCm`.
 
-- A = s + dir * (offsetCm - sideCm/2)
-- B = s + dir * (offsetCm + widthCm + sideCm/2)
+- A = s + dir * (centreOffset - sideCm/2)
+- B = s + dir * (centreOffset + widthCm + sideCm/2)
 - C = B + out * (h/2 + depthCm + backCm/2)
 - D = A + out * (h/2 + depthCm + backCm/2)
 - Storage walls (centre lines): A-B (front, it IS the host wall section, thickness h), B-C (side,

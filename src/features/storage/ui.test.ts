@@ -5,7 +5,7 @@ import { materializeRooms } from '../../model/v2/materialize'
 import { addStorage } from './actions'
 import {
   DEFAULT_STORAGE_PARAMS, STORAGE_DOOR_OPTIONS, findFirstValidHostWall, hostWallIdForRoomWall, moveStorageToWall,
-  readStorageDoor, storageHostWallStart, storageOffsetFromClick,
+  parentWallRuns, readStorageDoor, storageHostWallStart, storageOffsetFromClick,
 } from './ui'
 
 function makeV1Doc(w = 400, h = 300): PlanDoc {
@@ -72,11 +72,11 @@ describe('storage UI helpers', () => {
     ])
   })
 
-  it('computes offset from click centered and clamped to the wall', () => {
-    expect(storageOffsetFromClick(200, 100, 400, 5)).toBe(150)
-    expect(storageOffsetFromClick(10, 100, 400, 5)).toBe(2.5)
-    expect(storageOffsetFromClick(395, 100, 400, 5)).toBe(297.5)
-    expect(storageOffsetFromClick(30, 100, 80, 5)).toBe(2.5)
+  it('computes offset from click centered and clamped to the inside wall length', () => {
+    expect(storageOffsetFromClick(200, 100, 400)).toBe(150)
+    expect(storageOffsetFromClick(10, 100, 400)).toBe(0)
+    expect(storageOffsetFromClick(395, 100, 400)).toBe(300)
+    expect(storageOffsetFromClick(30, 100, 80)).toBe(0)
   })
 
   it('finds the first wall that can hold a storage, or returns an error', () => {
@@ -109,16 +109,42 @@ describe('storage UI helpers', () => {
     expect(readStorageDoor(r2.doc, st2)).toBe('none')
   })
 
-  it('moves storage to another wall in v2', () => {
+  it('moves storage to another wall in v2 and keeps id, code, name, and walkOrder', () => {
     const v2 = makeV2Doc()
-    const r = addStorage(v2, 'R1', 'W1', { ...DEFAULT_STORAGE_PARAMS, offsetCm: 50 }, 'sliding')
+    const r = addStorage(v2, 'R1', 'W1', { ...DEFAULT_PARAMS_OFFSET50 }, 'sliding')
     expect('error' in r).toBe(false)
     if ('error' in r) return
-    const st = r.doc.rooms.find((x) => x.id === r.storageRoomId)!
-    const moved = moveStorageToWall(r.doc, st, 'v2', { ...DEFAULT_STORAGE_PARAMS, offsetCm: 50 }, 'pocket')
+    const st = {
+      ...r.doc.rooms.find((x) => x.id === r.storageRoomId)!,
+      name: 'Coat Closet',
+    }
+    const docWithName = {
+      ...r.doc,
+      rooms: r.doc.rooms.map((rm) => (rm.id === st.id ? st : rm)),
+    }
+    const moved = moveStorageToWall(docWithName, st, 'v2', { ...DEFAULT_PARAMS_OFFSET50 }, 'pocket')
     expect('error' in moved).toBe(false)
     if ('error' in moved) return
-    const stAfter = moved.doc.rooms.find((x) => x.storage?.parentRoomId === 'R1')!
+    const stAfter = moved.doc.rooms.find((x) => x.id === st.id)!
+    expect(stAfter).toBeDefined()
+    expect(stAfter.code).toBe(st.code)
+    expect(stAfter.name).toBe('Coat Closet')
+    expect(stAfter.walkOrder).toBe(st.walkOrder)
     expect(readStorageDoor(moved.doc, stAfter)).toBe('pocket')
   })
+
+  it('finding 12: parentWallRuns groups split collinear faces into one entry per wall run', () => {
+    const v2 = makeV2Doc()
+    const r = addStorage(v2, 'R1', 'W1', { ...DEFAULT_STORAGE_PARAMS, offsetCm: 50 }, 'sliding')
+    if ('error' in r) throw new Error(r.error)
+    const parent = r.doc.rooms.find((x) => x.id === 'R1')!
+    const st = r.doc.rooms.find((x) => x.id === r.storageRoomId)!
+    // W1 was split into 3 collinear pieces, so parent.vertices has 6 vertices, but only 4 wall runs
+    expect(parent.vertices).toHaveLength(6)
+    const runs = parentWallRuns(parent)
+    expect(runs).toHaveLength(4)
+    expect(storageHostWallStart(r.doc, st)).toBe(runs[0].wallStart)
+  })
 })
+
+const DEFAULT_PARAMS_OFFSET50 = { ...DEFAULT_STORAGE_PARAMS, offsetCm: 50 }

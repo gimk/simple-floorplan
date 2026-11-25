@@ -1,16 +1,17 @@
 import { useState } from 'react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
-import type { Wall } from '../../model/geometry'
+import { dot, sub, type Wall } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
 import type { Room } from '../../model/types'
 import { nearestWall, wallThickness } from '../elements/geometry'
 import { toast } from '../toast'
-import { storageCorners } from './geometry'
+import { storageCorners, wallRunMetrics, type WallRunMetrics } from './geometry'
 import { DEFAULT_STORAGE_DOOR, DEFAULT_STORAGE_PARAMS, hostWallIdForRoomWall, storageOffsetFromClick } from './ui'
 
 type StorageHover = {
   room: Room
   wall: Wall
+  metrics: WallRunMetrics
   offsetCm: number
 }
 
@@ -24,13 +25,15 @@ export function PlaceStorageTool() {
     const rooms = useDoc.getState().doc.rooms.filter((r) => !r.storage)
     const hit = nearestWall(rooms, p, px(30))
     if (!hit) return null
+    const metrics = wallRunMetrics(hit.room, hit.wall.index)
+    if (!metrics) return null
+    const alongFromRun = dot(sub(hit.wall.start, metrics.startCentre), metrics.dir) + hit.along
     const offsetCm = storageOffsetFromClick(
-      hit.along,
+      alongFromRun - metrics.cornerInset,
       DEFAULT_STORAGE_PARAMS.widthCm,
-      hit.wall.length,
-      DEFAULT_STORAGE_PARAMS.sideCm,
+      metrics.innerLength,
     )
-    return { room: hit.room, wall: hit.wall, offsetCm }
+    return { room: hit.room, wall: hit.wall, metrics, offsetCm }
   }
 
   const onMove = (e: React.PointerEvent) => setHover(compute(e.clientX, e.clientY))
@@ -53,11 +56,12 @@ export function PlaceStorageTool() {
 
   const preview = hover
     ? storageCorners(
-        hover.wall.start,
-        hover.wall.end,
+        hover.metrics.startCentre,
+        hover.metrics.endCentre,
         hover.wall.inward,
         wallThickness(hover.room, hover.wall.start.id),
         { ...DEFAULT_STORAGE_PARAMS, offsetCm: hover.offsetCm },
+        hover.metrics.cornerInset,
       )
     : null
 
