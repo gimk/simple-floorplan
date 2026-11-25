@@ -63,3 +63,16 @@ export const ERROR = 'text-xs text-red-600 dark:text-red-400'
 /** Soft chip (used by Segmented when it is not a bordered group). */
 export const CHIP_ACTIVE = 'bg-orange-700 text-white'
 export const CHIP_IDLE = 'hover:bg-black/5 dark:hover:bg-white/10'
+
+/** Value state colours: grey estimated, green measured, purple solved. */
+export const MEASURED_TEXT = 'text-emerald-700 dark:text-emerald-400'
+export const MEASURED_FILL = 'fill-emerald-700 dark:fill-emerald-400'
+export const ESTIMATED_TEXT = 'text-slate-500 dark:text-slate-400'
+export const ESTIMATED_FILL = 'fill-slate-600 dark:fill-slate-300'
+export const SOLVED_TEXT = 'text-violet-700 dark:text-violet-400'
+export const SOLVED_FILL = 'fill-violet-700 dark:fill-violet-400'
+export const SOLVED_STROKE = 'stroke-violet-600 dark:stroke-violet-400'
+export const SOLVED_BG = 'bg-violet-100 dark:bg-violet-950'
+export const SOLVED_BORDER = 'border-violet-600 dark:border-violet-400'
+export const SOLVED_ACCENT = 'accent-violet-600'
+export const SOLVED_HEX = '#6d28d9'

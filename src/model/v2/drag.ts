@@ -206,6 +206,15 @@ function rebuild(
   return materializeElements({ ...withFaces, rooms: materializeRooms(withFaces) })
 }
 
+/**
+ * Apply updated nodes and/or walls to a v2 document in place (keeping all ids):
+ * spans follow moved nodes, wall faces derive, and rooms and elements materialize.
+ */
+export function applyGraphUpdate(doc: PlanDoc, nodes: StoredNode[], walls: StoredWall[]): PlanDoc {
+  const before = beforeMove(doc)
+  return rebuild(doc, doc.rooms, nodes, walls, before)
+}
+
 /** A copy of a wall with the same properties, under another id and on other nodes. */
 function copyWall(wall: StoredWall, id: string, a: string, b: string): StoredWall {
   const out: StoredWall = { id, a, b, faces: [], type: wall.type, thicknessCm: wall.thicknessCm }

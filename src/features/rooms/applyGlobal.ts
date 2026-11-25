@@ -5,7 +5,7 @@ import type { GraphConflict } from '../../model/wallGraph'
 import { v2SyncRule } from '../../model/v2/syncRule'
 import { updateStorage } from '../storage/actions'
 import { readStorageParams, type StorageParams } from '../storage/geometry'
-import { solveGlobal, type GlobalSolved, type GlobalSurface, type OutOfSquare, type RoomAngles, type SurfaceMode } from './globalSolve'
+import { solveGlobal, type GlobalHold, type GlobalSolved, type GlobalSurface, type OutOfSquare, type RoomAngles, type SurfaceMode } from './globalSolve'
 import { wallProps } from './walls'
 
 export type GlobalReport = {
@@ -40,6 +40,8 @@ export type GlobalApplyOptions = {
   snapThickness?: boolean
   /** 'square' (default) keeps walls drawn horizontal or vertical at their drawn angle; 'free' lets them turn. */
   angles?: RoomAngles
+  /** Stored wall ids held at their current (base) position and/or thickness. */
+  hold?: GlobalHold
 }
 
 /** Usual wall thicknesses (cm) for the snap option. */
@@ -84,6 +86,7 @@ export function applyGlobal(doc: PlanDoc, opts: GlobalApplyOptions = {}): { doc:
     surfaceMode: opts.surfaceMode ?? 'off',
     ...(opts.angles !== undefined ? { angles: opts.angles } : {}),
     ...(opts.surfaceSigmaPct !== undefined ? { surfaceSigmaPct: opts.surfaceSigmaPct } : {}),
+    ...(opts.hold !== undefined ? { hold: opts.hold } : {}),
     references: doc.apartment?.references ?? [],
   })
   // Corners and thicknesses take the precision of the plan; 0.1 cm when the user turned it off.

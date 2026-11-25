@@ -322,6 +322,41 @@ export type Apartment = {
   precisionCm?: 0 | 0.5 | 1
 }
 
+/** Identity of one solver change or hold: a stored wall's position or thickness. */
+export type SolverKey = { kind: 'position' | 'thickness'; wallId: string }
+
+/** A wall held at its base value: revoked by the user, or edited by hand while the solver is On. */
+export type SolverHold = SolverKey & { by: 'revoke' | 'edit' }
+
+/** One recorded change made by the solver on a stored wall. */
+export type SolverChange = SolverKey & {
+  /** Best readable wall label, e.g. "KI-2" or "KI-2 / LI-4" or the wall id. */
+  label: string
+  moveCm?: number
+  dir?: 'N' | 'S' | 'E' | 'W'
+  lengthFromCm?: number
+  lengthToCm?: number
+  fromCm?: number
+  toCm?: number
+}
+
+/** Document-level solver state (docs/solver-plan.md). Absent = Off. */
+export type SolverState = {
+  enabled: boolean
+  /** ISO time of the last solve. */
+  solvedAt?: string
+  /** Average mismatch of the last solve (cm rms). */
+  rmsCm?: number
+  /** What the last solve changed. */
+  changes: SolverChange[]
+  /** Walls held at their base value. */
+  revoked: SolverHold[]
+  /** Base position of every node the solve moved. */
+  baseNodes: Record<string, { x: number; y: number }>
+  /** Base thicknessCm of every stored wall whose thickness the solve changed. */
+  baseThickness: Record<string, number>
+}
+
 export type PlanDoc = {
   projectId: string
   title: string
@@ -348,6 +383,8 @@ export type PlanDoc = {
   traces?: TraceWall[]
   /** Conversion to walls as the source (docs/walls-plan.md phase 5c): when, and what was merged. */
   conversion?: { at: string; report: ConversionReport; seen?: boolean }
+  /** Solver on/off state and recorded changes (docs/solver-plan.md). Absent = Off. */
+  solver?: SolverState
 }
 
 /**

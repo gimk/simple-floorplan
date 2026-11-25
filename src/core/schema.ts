@@ -326,6 +326,37 @@ export const ConversionSchema = z.object({
   seen: z.boolean().optional(),
 })
 
+/** Identity of one solver change or hold: a stored wall's position or thickness. */
+export const SolverKeySchema = z.object({
+  kind: z.enum(['position', 'thickness']),
+  wallId: z.string().min(1),
+})
+
+export const SolverHoldSchema = SolverKeySchema.extend({
+  by: z.enum(['revoke', 'edit']),
+})
+
+export const SolverChangeSchema = SolverKeySchema.extend({
+  label: z.string(),
+  moveCm: z.number().finite().optional(),
+  dir: z.enum(['N', 'S', 'E', 'W']).optional(),
+  lengthFromCm: z.number().finite().optional(),
+  lengthToCm: z.number().finite().optional(),
+  fromCm: z.number().finite().optional(),
+  toCm: z.number().finite().optional(),
+})
+
+/** Document-level solver state (docs/solver-plan.md). Absent = Off. */
+export const SolverStateSchema = z.object({
+  enabled: z.boolean(),
+  solvedAt: z.string().optional(),
+  rmsCm: z.number().finite().optional(),
+  changes: z.array(SolverChangeSchema).default([]),
+  revoked: z.array(SolverHoldSchema).default([]),
+  baseNodes: z.record(z.string(), VecSchema).default({}),
+  baseThickness: z.record(z.string(), z.number().finite().positive()).default({}),
+})
+
 export const PlanDocV1Schema = z.object({
   schemaVersion: SchemaVersionSchema.optional().default(1),
   projectId: z.string().min(1).default('local'),
@@ -345,6 +376,8 @@ export const PlanDocV1Schema = z.object({
   traces: z.array(TraceWallSchema).optional(),
   // Conversion to walls as the source (phase 5c). Optional: a document never converted has none.
   conversion: ConversionSchema.optional(),
+  // Solver on/off state (docs/solver-plan.md). Optional: absent = Off.
+  solver: SolverStateSchema.optional(),
 })
 
 /**
@@ -375,6 +408,8 @@ export const SnapshotPutBodySchema = z.object({
   traces: z.array(TraceWallSchema).optional(),
   // Conversion report (phase 5c): kept with the snapshot, so it is shown once per project.
   conversion: ConversionSchema.optional(),
+  // Solver state (docs/solver-plan.md): kept with the snapshot.
+  solver: SolverStateSchema.optional(),
 })
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>

@@ -155,6 +155,8 @@ export async function loadProjectDoc(db: D1Database, id: string): Promise<Loaded
     ...(Array.isArray(base.traces) ? { traces: base.traces } : {}),
     // Conversion report (phase 5c): kept, so the app shows it once and can hide it.
     ...(base.conversion ? { conversion: base.conversion } : {}),
+    // Solver state (docs/solver-plan.md): kept with the snapshot.
+    ...(base.solver ? { solver: base.solver } : {}),
     measurements,
     roomNotes,
   })

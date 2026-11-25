@@ -62,6 +62,12 @@ export type SolveDoc = Pick<PlanDoc, 'rooms' | 'measurements'> & {
   walls?: StoredWall[]
 }
 
+/** Stored wall ids held at their drawn position (line offset + angle) and/or thickness. */
+export type GlobalHold = {
+  position?: string[]
+  thickness?: string[]
+}
+
 export type GlobalOptions = {
   /** Two opposite walls of two rooms closer than this (cm) are the same wall. */
   pairTolCm?: number
@@ -96,6 +102,8 @@ export type GlobalOptions = {
   angleSigmaDeg?: number
   /** Accuracy of the right-angle rule of two walls met at a corner, in degrees (default 0.5). */
   squareSigmaDeg?: number
+  /** Stored wall ids held at their current (base) position and/or thickness. */
+  hold?: GlobalHold
 }
 
 const DEFAULTS: Required<GlobalOptions> = {
@@ -114,6 +122,7 @@ const DEFAULTS: Required<GlobalOptions> = {
   angles: 'square',
   angleSigmaDeg: 3,
   squareSigmaDeg: 0.5,
+  hold: {},
 }
 
 /** Radians per degree. */
@@ -319,6 +328,8 @@ type Built = {
   x0: number[]
   label: (e: Edge) => string
   conflicts: GraphConflict[]
+  /** Group ids whose thickness is held at its prior value (must not be reported as determined). */
+  heldThicknessGroups: Set<number>
 }
 
 /** Exact unit normal of an angle that is a multiple of 90 degrees (no float noise), else cos/sin. */
@@ -910,9 +921,58 @@ function buildModel(doc: SolveDoc, options: GlobalOptions = {}): Built {
     })
   }
 
+  // ---- holds (stored wall ids kept at their base position and/or thickness) ----
+  // Very strong priors (not measurement rows, so rmsCm and residuals stay clean) keep a held
+  // wall's centre line (offset + angle) and/or thickness at its drawn value.
+  const HOLD_POS_SIGMA_CM = 0.002
+  const HOLD_ANGLE_SIGMA_RAD = 0.005 * DEG
+  const HOLD_THICK_SIGMA_CM = 0.002
+  const heldPosIds = new Set(o.hold?.position ?? [])
+  const heldThickIds = new Set(o.hold?.thickness ?? [])
+  const heldPositionGroups = new Set<number>()
+  const heldThicknessGroups = new Set<number>()
+  if (heldPosIds.size || heldThickIds.size) {
+    // 1. Map via v2 room cycles (wallId -> room edge -> wall group).
+    rooms.forEach((r, ri) => {
+      if (!r.cycle?.length) return
+      r.cycle.forEach((f, k) => {
+        const e = edgeOf[ri]?.[k]
+        if (!e || e.group < 0) return
+        if (heldPosIds.has(f.wallId)) heldPositionGroups.add(e.group)
+        if (heldThickIds.has(f.wallId)) heldThicknessGroups.add(e.group)
+      })
+    })
+    // 2. Also map via storedWalls.faces (covers v1 docs with a stored graph).
+    for (const w of storedWalls) {
+      const holdPos = heldPosIds.has(w.id)
+      const holdThick = heldThickIds.has(w.id)
+      if (!holdPos && !holdThick) continue
+      for (const f of w.faces) {
+        if (f.roomId === undefined || f.wallStart === undefined) continue
+        const ri = rooms.findIndex((r) => r.id === f.roomId)
+        const k = ri < 0 ? -1 : rooms[ri].vertices.findIndex((v) => v.id === f.wallStart)
+        const e = k < 0 ? undefined : edgeOf[ri]?.[k]
+        if (!e || e.group < 0) continue
+        if (holdPos) heldPositionGroups.add(e.group)
+        if (holdThick) heldThicknessGroups.add(e.group)
+      }
+    }
+    for (const gi of heldPositionGroups) {
+      const g = groupVars[gi]
+      priors.push({ label: `#hold-d-${gi}`, kind: 'align', target: g.drawn, sigma: HOLD_POS_SIGMA_CM, value: (c) => c.d[gi] })
+      if (g.theta >= 0) {
+        priors.push({ label: `#hold-a-${gi}`, kind: 'align', target: g.drawnTheta, sigma: HOLD_ANGLE_SIGMA_RAD, value: (c) => variable(g.theta, c.xs[g.theta]) })
+      }
+    }
+    for (const gi of heldThicknessGroups) {
+      const g = groupVars[gi]
+      priors.push({ label: `#hold-t-${gi}`, kind: 'align', target: g.prior, sigma: HOLD_THICK_SIGMA_CM, value: (c) => c.t[gi] })
+    }
+  }
+
   return {
     o, rooms, edgeOf, groupVars, cornerSetups, rows, priors, skipped, surfaceEntries, wallLins, x0, label,
-    conflicts: graph.conflicts,
+    conflicts: graph.conflicts, heldThicknessGroups,
   }
 }
 
@@ -1037,7 +1097,7 @@ function reportModel(b: Built, fitted: { x: number[]; chol: number[][] | null; i
       angleDeg: (g.theta < 0 ? g.fixedTheta : x[g.theta]) / DEG,
       angleSdDeg: angleSd,
       priorThicknessCm: g.prior, thicknessCm: x[g.t], thicknessSdCm: sd,
-      determined: sd < o.thicknessSigmaCm * 0.5,
+      determined: b.heldThicknessGroups.has(id) ? false : sd < o.thicknessSigmaCm * 0.5,
       rooms: new Set(g.edges.map((e) => e.room)).size,
     }
   })

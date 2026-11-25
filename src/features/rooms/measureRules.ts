@@ -17,6 +17,7 @@ import { removedWallValues } from '../../model/wallValues'
 import { addDocRule, addSettleRule, isSilentEdit, nowIso, useDoc, type DocRule, type SettleRule } from '../../model/store'
 import type { OldMeasurement, PlanDoc } from '../../model/types'
 import { toast } from '../toast'
+import { solverEditRule } from '../solver/rule'
 import { applyMeasuredNear, describeReport } from './apply'
 
 /** Toast text for the walls that must be measured again, e.g. 'Measure again: SE-2 (wall split). The old value is kept in the room card.' */
@@ -124,6 +125,8 @@ export function installMeasureRules() {
   addDocRule(relabelRule)
   // 4. The values of a wall that the new graph does not have any more (after the graph rule).
   addDocRule(wallValueRule)
+  // 4b. A user edit of a wall while the solver is On drops its recorded change and holds its new value as base.
+  addDocRule(solverEditRule)
   // 5. The end of an edit: a drag preview that is over (a value whose face is gone, a wall that was
   //    stretched). Runs after the rules, on every update and at the end of a drag.
   addSettleRule(settleRelabel)
