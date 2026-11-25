@@ -8,12 +8,19 @@
 // (select or drag the room), so a click does not stop working when the text becomes clickable.
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../../canvas/Viewport'
+import { ESTIMATED_FILL, MEASURED_FILL, SOLVED_FILL } from '../../../shell/panel/styles'
+import type { ValueState } from '../../solver/lookup'
 import type { DimLine } from './dimLine'
 
 const lineClass = 'stroke-slate-500 dark:stroke-slate-400'
 const haloClass = 'stroke-[#f6f7f5] dark:stroke-[#12161b]'
-const calculatedText = 'fill-slate-600 dark:fill-slate-300'
-const measuredTextClass = 'fill-emerald-700 dark:fill-emerald-400'
+
+/**
+ * Colour of a value, from its state (docs/solver-plan.md): green = measured, purple = solved,
+ * grey = estimated. One token set for the whole app (shell/panel/styles.ts).
+ */
+export const valueFill = (state: ValueState): string =>
+  state === 'measured' ? MEASURED_FILL : state === 'solved' ? SOLVED_FILL : ESTIMATED_FILL
 
 export type DimLineViewProps = {
   /** Layout of the line, from dimLine() / dimLineOfSpan(). */
@@ -22,6 +29,11 @@ export type DimLineViewProps = {
   text: string
   /** Measured value: green and bold (the common dimension style). */
   measured: boolean
+  /**
+   * State of the value (docs/solver-plan.md): green measured, purple solved, grey estimated. Absent:
+   * the state follows `measured` (green when measured, grey otherwise).
+   */
+  state?: ValueState
   /** What the line belongs to: a wall length, the helper dimensions, or an outside chain row. */
   kind: 'wall' | 'helper' | 'outside'
   /** The wall or the face the line measures, for a test. */
@@ -35,11 +47,13 @@ export type DimLineViewProps = {
 }
 
 export function DimLineView({
-  line, text, measured, kind, dimKey, onTextDoubleClick, onTextPointerDown, hideText,
+  line, text, measured, state, kind, dimKey, onTextDoubleClick, onTextPointerDown, hideText,
 }: DimLineViewProps) {
   const { px } = useViewport()
   // The text is a pointer target only when it does something (nothing by default: read only).
   const target = !!(onTextDoubleClick || onTextPointerDown)
+  // Green measured, purple solved, grey estimated (docs/solver-plan.md).
+  const shown: ValueState = state ?? (measured ? 'measured' : 'estimated')
   return (
     <g pointerEvents="none" data-dim={kind} data-dim-key={dimKey} data-dim-outside={line.outside ? '' : undefined}>
       <line x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} strokeWidth={px(1)} className={lineClass} />
@@ -52,9 +66,9 @@ export function DimLineView({
           pointerEvents={target ? 'auto' : 'none'} style={target ? { cursor: 'text' } : undefined}
           onPointerDown={onTextPointerDown}
           onDoubleClick={onTextDoubleClick && ((e) => { e.stopPropagation(); onTextDoubleClick() })}
-          data-dim-text={target ? dimKey : undefined}
+          data-dim-text={target ? dimKey : undefined} data-dim-state={shown}
           paintOrder="stroke" strokeWidth={px(3)} strokeLinejoin="round" fontWeight={measured ? 600 : undefined}
-          className={`${haloClass} ${measured ? measuredTextClass : calculatedText}`}>
+          className={`${haloClass} ${valueFill(shown)}`}>
           {text}
         </text>
       )}

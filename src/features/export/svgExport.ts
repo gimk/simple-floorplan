@@ -12,7 +12,9 @@ import type { PlanDoc, Room, Vec, WallType } from '../../model/types'
 import { elementFrame, wallThickness } from '../elements/geometry'
 import { COLORS, ElementSymbol } from '../elements/Symbol'
 import { STORAGE_NAME, scheduleRows, scheduleSvgTable, scheduleTableHeight } from '../schedule/rows'
+import { makeValueStates } from '../rooms/dims/valueStates'
 import {
+  PAPER,
   esc,
   exportOutsideRuns,
   num,
@@ -35,6 +37,11 @@ export type SvgMeasureOptions = {
   units?: CanvasUnits
   /** Outside (facade) chains and overall lengths. v2 documents only. Default: off. */
   outside?: boolean
+  /**
+   * Write the values the solver changed in purple (docs/solver-plan.md). Default: on, the state of
+   * the document decides (no `doc.solver`, or the solver Off, means no purple).
+   */
+  solver?: boolean
   /** Write the survey label of a value ("SE-2") in front of it. Default: on, as the old export. */
   surveyLabels?: boolean
   /** Room schedule table under the legend (docs/measurements-plan.md section 6). Default: off. */
@@ -109,6 +116,12 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
   const step = planPrecision(doc)
   // Outside chains: a v2 document has stored walls, and the option can be off.
   const runs = exportOutsideRuns(doc, opts.outside === true)
+  /**
+   * State of every value of the paper: green measured, purple solved, grey estimated
+   * (docs/solver-plan.md). One lookup for the whole export, as on the plan. A document without a
+   * solver, or with the solver Off, has no solved value at all (`doc.solver.changes` is empty then).
+   */
+  const valueStates = makeValueStates(opts.solver === false ? { ...doc, solver: undefined } : doc)
 
   // ----- bounds -----
   // The outside rows and their texts go OUTSIDE the wall band, so the box grows by what they reach
@@ -160,6 +173,8 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
     { label: 'Window', draw: (x, y) => swatchLine(x, y, fs, COLORS.window, false) },
     { label: 'Radiator', draw: (x, y) => `<rect x="${num(x)}" y="${num(y - fs * 0.25)}" width="${num(fs * 2)}" height="${num(fs * 0.5)}" fill="#dc262622" stroke="${COLORS.radiator}" stroke-width="${num(fs * 0.08)}"/>` },
     { label: 'Verified on site', draw: (x, y) => `<text x="${num(x)}" y="${num(y + fs * 0.3)}" fill="${VERIFIED}" font-size="${num(fs * 0.9)}">123</text>` },
+    // A value the solver changed: purple, as on the plan (docs/solver-plan.md, round 4).
+    { label: 'Solved', draw: (x, y) => `<text x="${num(x)}" y="${num(y + fs * 0.3)}" fill="${PAPER.solved}" font-size="${num(fs * 0.9)}">123</text>` },
   ]
   // The legend entry of built-in storage appears only when the plan has one (docs/storage-plan.md).
   if (doc.rooms.some((r) => r.storage)) {
@@ -251,7 +266,7 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
   // no other value, no room tag and no outside row text (the rules of the plan, V-1..V-7): a dropped
   // value keeps its line and its ticks, and nothing goes past the end of a line any more.
   const layout = planDimsLayout({
-    doc, style: dimStyle, tagFields, zoom, fs, step, units, surveyLabels, runs,
+    doc, style: dimStyle, tagFields, zoom, fs, step, units, surveyLabels, runs, valueStates,
     // Thickness of the wall that starts at a vertex: the same defaults as the drawing.
     thicknessOf: (r: Room, startId: string) => wallInfo(r, startId).t,
     defaultCeilingCm: doc.apartment?.defaultCeilingCm,
@@ -266,7 +281,7 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
 
   // ----- outside dimension chains (v2 documents, when the option is on) -----
   const hidden = outsideExportHidden(runs, zoom, step, units, surveyLabels)
-  for (const run of runs) parts.push(outsideRunSvg(run, { zoom, fs, step, units, surveyLabels, hidden }))
+  for (const run of runs) parts.push(outsideRunSvg(run, { zoom, fs, step, units, surveyLabels, hidden, valueStates }))
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${num(x0)} ${num(y0)} ${num(W)} ${num(H)}" width="${num(W)}" height="${num(H)}">${style}${defs}<rect x="${num(x0)}" y="${num(y0)}" width="${num(W)}" height="${num(H)}" fill="#fff"/>${parts.join('')}${bar.join('')}${leg.join('')}${schedSvg}</svg>`
   return { svg, width: W, height: H, fontSize: fs, layout }

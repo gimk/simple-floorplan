@@ -24,7 +24,10 @@ import { wallAlignOffsetCm, sideFaceKeys, storedWallView } from './wallSides'
 import { isV2Doc } from '../../model/v2/targets'
 import { useIsDesktop } from '../../shell/useDesktop'
 import { DIM_STYLE, dimLine, dimLineOfSpan, worldPx, type DimLine } from './dims/dimLine'
-import { DimLineView } from './dims/DimLineView'
+import { DimLineView, valueFill } from './dims/DimLineView'
+import { useValueStates } from './dims/useValueStates'
+import type { ValueState } from '../solver/lookup'
+import { SolverGhostLayer } from './SolverGhostLayer'
 import { fittingRows, pickWallBadge, ringBox, tagBox, textBox, textQuad, wallBadgePlaces, type Box } from './dims/dimBoxes'
 import { storageLabelCentre, storageLabelFits, storageLabelSize } from './dims/storageLabel'
 import { DECLUTTER, keepDimTexts, smallRoomDims } from './dims/declutter'
@@ -56,6 +59,11 @@ export function RoomsOverlay() {
 
   /** Wall lengths: dimension lines (default) or the old text only (docs/measurements-plan.md). */
   const dimStyle = useUi((s) => s.dimStyle)
+  /**
+   * State of every length text of the plan, green measured / purple solved / grey estimated
+   * (docs/solver-plan.md): one memoized lookup per document, not one pass per text node.
+   */
+  const valueStates = useValueStates()
   /** Units of the lengths written on the plan (docs/measurements-plan.md section 5). */
   const units = useUi((s) => s.canvasUnits)
   /** Only Edit mode with the Select tool types a length on the plan (section 4). */
@@ -303,6 +311,11 @@ export function RoomsOverlay() {
         const keys = sideFaceKeys(s)
         return s.faces.map((f, i) => {
           const measuredFace = f.kind === 'room' && !!f.measuredCm
+          // A room face is a survey value ('EN-3'); an outside span has no value of its own, except
+          // the facade value 'W12-E' of a side that is outside along its whole length.
+          const faceState = f.kind === 'room'
+            ? valueStates(f.label, f.measuredCm)
+            : s.outside && s.facadeLabel ? valueStates(s.facadeLabel) : 'estimated'
           const text = f.kind === 'room' && f.measuredCm
             ? measuredTextIn(f.measuredCm, shownLength(f.lengthCm, step), step, units)
             : fmtLen(shownLength(f.lengthCm, step), units)
@@ -321,7 +334,7 @@ export function RoomsOverlay() {
           }
           return (
             <g key={s.side + dimKey} data-helper-dim={dimKey} data-helper-side={s.letter}>
-              <DimLineView line={line} text={text} measured={measuredFace} kind="helper" dimKey={dimKey}
+              <DimLineView line={line} text={text} measured={measuredFace} state={faceState} kind="helper" dimKey={dimKey}
                 hideText={!!editLabel && editLabel === dimEditing}
                 onTextDoubleClick={editLabel ? () => openDim(editLabel, line.text, f.lengthCm, room) : undefined}
                 onTextPointerDown={editLabel && f.kind === 'room'
@@ -421,6 +434,8 @@ export function RoomsOverlay() {
     line: DimLine | null
     text: string
     measured: boolean
+    /** Green measured, purple solved, grey estimated (docs/solver-plan.md). */
+    state: ValueState
     /** Place and angle of the text when it is drawn without a line. */
     p: Vec
     angle: number
@@ -496,7 +511,7 @@ export function RoomsOverlay() {
         const p = line ? line.text : { x: mx, y: my }
         const textAngle = line ? line.angle : angle
         wallValues.push({
-          key, dimKey, line, text, measured, p, angle: textAngle,
+          key, dimKey, line, text, measured, state: valueStates(labels.get(w.start.id), m?.actualCm), p, angle: textAngle,
           box: showText ? textBox(p, textAngle, text, zoom) : null,
           quad: showText ? textQuad(p, textAngle, text, zoom) : null,
           roomId: r.id, plannedCm: shownLength(inner[w.index], step), faceLabel: dimTextLabel('wall', dimKey),
@@ -548,6 +563,10 @@ export function RoomsOverlay() {
       ))}
 
       {selectedWallSide}
+
+      {/* Solver On: the BASE position of the hovered (or selected) wall that the solver moved, as a
+          thin dashed purple line (docs/solver-plan.md, "Purple everywhere"). Nothing when Off. */}
+      <SolverGhostLayer />
 
       {/* hover highlight: the element of the survey label under the pointer in the Solve tab list
           (and in Measuring Mode). It takes no pointer event. */}
@@ -619,13 +638,13 @@ export function RoomsOverlay() {
         // and a value written without a line ("Text" style) draws nothing at all.
         if (!d.box) {
           return d.line
-            ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} kind="wall" dimKey={d.dimKey}
+            ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} state={d.state} kind="wall" dimKey={d.dimKey}
                 hideText />
             : null
         }
         if (editing && !d.line) return null
         return d.line
-          ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} kind="wall" dimKey={d.dimKey}
+          ? <DimLineView key={d.key} line={d.line} text={d.text} measured={d.measured} state={d.state} kind="wall" dimKey={d.dimKey}
               hideText={editing} onTextDoubleClick={onTextDoubleClick} onTextPointerDown={onTextPointerDown} />
           : (
             // The dimensions layer set to "Text", or a wall shorter than px(12) on screen: the text
@@ -635,10 +654,10 @@ export function RoomsOverlay() {
               pointerEvents={editLabel ? 'auto' : 'none'} style={editLabel ? { cursor: 'text' } : undefined}
               onDoubleClick={onTextDoubleClick && ((e) => { e.stopPropagation(); onTextDoubleClick() })}
               onPointerDown={onTextPointerDown}
-              data-dim-text={editLabel ?? undefined}
+              data-dim-text={editLabel ?? undefined} data-dim-state={d.state}
               paintOrder="stroke"
               strokeWidth={px(3)} strokeLinejoin="round" fontWeight={d.measured ? 600 : undefined}
-              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${d.measured ? 'fill-emerald-700 dark:fill-emerald-400' : 'fill-slate-600 dark:fill-slate-300'}`}>
+              className={`stroke-[#f6f7f5] dark:stroke-[#12161b] ${valueFill(d.state)}`}>
               {d.text}
             </text>
           )

@@ -8,6 +8,7 @@ import { emptyDoc, useDoc, useUi, type Layers } from '../../../model/store'
 import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall, ToolId } from '../../../model/types'
 import { convertToV2 } from '../../../model/v2/convert'
 import { OutsideDimsLayer } from './OutsideDimsLayer'
+import { ESTIMATED_FILL, MEASURED_FILL, SOLVED_FILL } from '../../../shell/panel/styles'
 
 // The overlap pass can be forced for one test: the pure pass has its own tests.
 const forced = vi.hoisted(() => ({ hide: null as null | ((keys: string[]) => Set<string>) }))
@@ -251,5 +252,46 @@ describe('typing a length on an outside chain (docs/measurements-plan.md section
     } finally {
       forced.hide = null
     }
+  })
+})
+
+describe('OutsideDimsLayer: a facade the solver changed (round 4)', () => {
+  /** The square plan, with a recorded position change on the wall W1 (its top facade is 'W1-E'). */
+  const solved = (enabled = true) => {
+    const base = v2()
+    const wall = base.walls!.find((w) => w.faces.some((f) => f.wallStart === 'A-v0' || f.wallStart === 'A-v1'))!
+    return {
+      ...base,
+      solver: {
+        enabled,
+        changes: [{ kind: 'position' as const, wallId: wall.id, label: 'W1', moveCm: 1.2, dir: 'N' as const }],
+        revoked: [],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+  }
+
+  it('writes a whole outside face in purple when the solver changed that wall', () => {
+    const html = setup({ doc: solved() })
+    expect(html).toContain('data-outside-seg="W1-E"')
+    expect(html).toContain(SOLVED_FILL)
+    // The facades of the other walls are still the plan: grey.
+    expect(html).toContain(ESTIMATED_FILL)
+  })
+
+  it('keeps every facade grey when the solver is Off', () => {
+    const html = setup({ doc: solved(false) })
+    expect(html).not.toContain(SOLVED_FILL)
+    expect(html).toContain(ESTIMATED_FILL)
+  })
+
+  it('keeps a measured facade green, never purple', () => {
+    const doc = solved()
+    const html = setup({
+      doc: { ...doc, measurements: { 'W1-E': { label: 'W1-E', actualCm: 412, updatedAt: '' } } },
+    })
+    expect(html).toContain(MEASURED_FILL)
+    expect(html).not.toContain(SOLVED_FILL)
   })
 })

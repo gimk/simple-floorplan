@@ -5,7 +5,8 @@ import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { Viewport } from '../../canvas/Viewport'
 import { emptyDoc, useDoc, useUi, type DimStyle, type Layers } from '../../model/store'
-import type { Measurement, Mode, PlanDoc, Room, Selection, ToolId } from '../../model/types'
+import type { Measurement, Mode, PlanDoc, Room, Selection, SolverState, ToolId } from '../../model/types'
+import { MEASURED_FILL, SOLVED_FILL, SOLVED_STROKE } from '../../shell/panel/styles'
 import { convertToV2 } from '../../model/v2/convert'
 import { useSidebar, type SidebarTab } from '../../shell/sidebar/store'
 import { RoomsLayer } from './RoomsLayer'
@@ -51,6 +52,10 @@ type Over = {
   /** Mode and tool of the app: Edit mode with the Select tool types a length on the plan. */
   mode?: Mode
   tool?: ToolId
+  /** Solver On with its recorded changes (docs/solver-plan.md): purple values, the base ghost. */
+  solver?: SolverState
+  /** Survey label under the pointer in the Solve tab list (the ghost layer follows it). */
+  hoverLabel?: string | null
 }
 
 /** Draw the two layers of the rooms, in the order of the app: under the walls, then above them. */
@@ -60,6 +65,7 @@ const setup = (over: Over = {}) => {
     ...base,
     walls: over.align ? (base.walls ?? []).map((w) => ({ ...w, align: over.align })) : base.walls,
     measurements: { ...base.measurements, ...over.measurements },
+    ...(over.solver ? { solver: over.solver } : {}),
   }
   applyState(useUi, {
     layers: { ...BASE_LAYERS, ...over.walls },
@@ -68,7 +74,7 @@ const setup = (over: Over = {}) => {
     selection: over.selection ?? null,
     multi: [],
     dimStyle: over.dimStyle ?? 'lines',
-    hoverLabel: null,
+    hoverLabel: over.hoverLabel ?? null,
     hoverDiagonal: null,
     view: { x: 0, y: 0, zoom: 1 },
   })
@@ -667,5 +673,70 @@ describe('the label of a built-in storage (UI test report docs/ui-test-report-st
     // The storage itself stays: its walls and its hatch come from the other layers.
     expect(html).toContain('data-room-storage="true"')
     expect(html).toContain('url(#rooms-storage-hatch)')
+  })
+})
+
+describe('the solver on the plan (docs/solver-plan.md, round 4)', () => {
+  /** Solver On, one position change on the wall W1 (the room wall 'A-1' of the square room). */
+  const solvedDoc = (): SolverState => {
+    const doc = v2()
+    return {
+      enabled: true,
+      changes: [{ kind: 'position', wallId: wallId(doc), label: 'A-1', moveCm: 1.2, dir: 'N' }],
+      revoked: [],
+      // The nodes of W1 were 1.2 cm further south before the solve.
+      baseNodes: { [doc.walls![0].a]: { x: 0, y: -1.2 }, [doc.walls![0].b]: { x: 400, y: -1.2 } },
+      baseThickness: {},
+    }
+  }
+
+  it('writes the value of a solved wall in purple, not green', () => {
+    const html = setup({ solver: solvedDoc() })
+    expect(html).toContain('data-dim-state="solved"')
+    expect(html).toContain(SOLVED_FILL)
+    expect(html).not.toContain(MEASURED_FILL)
+  })
+
+  it('keeps the estimated value grey and the measured value green when the solver is On', () => {
+    const html = setup({
+      solver: { ...solvedDoc(), changes: [{ kind: 'position', wallId: wallId(v2()), label: 'A-1' }] },
+      measurements: { 'A-2': { label: 'A-2', actualCm: 312, updatedAt: '' } },
+    })
+    // The other walls of the room have no change: white paper look, grey values.
+    expect(html).toContain('data-dim-state="estimated"')
+    expect(html).toContain('data-dim-state="measured"')
+    expect(html).toContain(MEASURED_FILL)
+  })
+
+  it('writes a solved value in purple again when the solver is turned Off', () => {
+    // Off: no change is recorded, so nothing is purple.
+    const html = setup({ solver: { ...solvedDoc(), enabled: false } })
+    expect(html).not.toContain(SOLVED_FILL)
+    expect(html).not.toContain('data-dim-state="solved"')
+  })
+
+  it('draws the base position of the hovered changed wall as a dashed purple line', () => {
+    const doc = v2()
+    const html = setup({ solver: solvedDoc(), hoverLabel: `${wallId(doc)}-C` })
+    expect(html).toContain(`data-solver-ghost="${wallId(doc)}"`)
+    expect(html).toContain(SOLVED_STROKE)
+    expect(html).toContain('stroke-dasharray')
+    // The base line of W1: from (0,-1.2) to (400,-1.2), the position before the solve.
+    expect(html).toContain('x1="0" y1="-1.2" x2="400" y2="-1.2"')
+  })
+
+  it('draws no ghost when the solver is Off, when nothing is hovered, or for an unchanged wall', () => {
+    const doc = v2()
+    expect(setup({ solver: { ...solvedDoc(), enabled: false }, hoverLabel: `${wallId(doc)}-C` }))
+      .not.toContain('data-solver-ghost')
+    expect(setup({ solver: solvedDoc() })).not.toContain('data-solver-ghost')
+    // W2 was not changed by the solver: no ghost, even when it is hovered.
+    expect(setup({ solver: solvedDoc(), hoverLabel: `${doc.walls![1].id}-C` })).not.toContain('data-solver-ghost')
+  })
+
+  it('draws the ghost of the selected wall too', () => {
+    const doc = v2()
+    const html = setup({ solver: solvedDoc(), selection: { kind: 'storedWall', wallId: wallId(doc) } })
+    expect(html).toContain(`data-solver-ghost="${wallId(doc)}"`)
   })
 })

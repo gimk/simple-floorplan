@@ -1,7 +1,7 @@
 // Inspect card for one room: name, code, walk order, ceiling, stats, the walls list with the
 // fit check, the elements list, and the measured values of this room
 // (docs/sidebar-plan-3.md step 4). Whole-plan tools live in the Solve tab.
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Check, DoorOpen, Lock, Plus, Repeat2, Ruler, Square, Trash2, X } from 'lucide-react'
 import { dist, fmtCm, innerWallLengths, roomAreaM2 } from '../../model/geometry'
 import { planPrecision, shownLength } from '../../model/precision'
@@ -32,6 +32,8 @@ import { fitCheck } from './fit'
 import { deleteRoom, setRoomCode } from './ops'
 import { elementRows, wallRows, WALL_TYPE_CHIP } from './roomLists'
 import { isV2Doc } from '../../model/v2/targets'
+import { MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
+import { makeValueStates } from './dims/valueStates'
 import { roomWallLinks } from './wallSides'
 import { HoleCard } from './VertexCard'
 import { StoragePanelSection } from './StoragePanelSection'
@@ -52,6 +54,11 @@ export function RoomCard({ doc, room, selection, activeHole }: {
   // Report of the last "Apply measured lengths" run for this room; local, so it goes away
   // with the room card instead of following the selection.
   const [note, setNote] = useState<string | null>(null)
+  /**
+   * State of each wall value (docs/solver-plan.md): green measured, purple solved, grey estimated.
+   * One memoized lookup per document, not one pass per row on every render.
+   */
+  const valueStates = useMemo(() => makeValueStates(doc), [doc])
 
   const select = useUi.getState().select
   // A click on a wall row opens another card: no pointer leave, so the highlight goes here.
@@ -179,6 +186,9 @@ export function RoomCard({ doc, room, selection, activeHole }: {
             <ul className="flex flex-col gap-1">
               {rows.map((row) => {
                 const link = links?.get(row.wallStart) ?? null
+                // A measured value is green and keeps its ✓; an unmeasured one is purple when the
+                // solver changed that wall's position or thickness, grey when it is just the plan.
+                const state = valueStates(row.label, row.verifiedCm)
                 const current = link
                   ? selection.kind === 'storedWall' && selection.wallId === link.wallId
                   : selection.kind === 'wall' && selection.wallStart === row.wallStart
@@ -209,9 +219,11 @@ export function RoomCard({ doc, room, selection, activeHole }: {
                         <span className={`shrink-0 rounded px-1 text-[11px] ${WALL_TYPE_CHIP[row.type]}`}>{row.typeLabel}</span>
                         <span className="ml-auto flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
                           {row.verifiedCm === null ? (
-                            <span className={MUTED}>{fmtCm(shownLength(row.lengthCm, planPrecision(doc)))}</span>
+                            <span className={state === 'solved' ? SOLVED_TEXT : MUTED} data-wall-value-state={state}>
+                              {fmtCm(shownLength(row.lengthCm, planPrecision(doc)))}
+                            </span>
                           ) : (
-                            <span className="text-emerald-700 dark:text-emerald-400">
+                            <span className={MEASURED_TEXT} data-wall-value-state={state}>
                               {fmtCm(row.verifiedCm)}
                               <Check size={11} role="img" aria-label="measured" className="ml-0.5 inline align-[-1px]" />
                             </span>
@@ -244,9 +256,10 @@ export function RoomCard({ doc, room, selection, activeHole }: {
           const fit = fitCheck(doc, room)
           if (!fit) return null
           return (
-            <p data-fit-rms className={`text-xs ${fit.rmsCm >= 2 ? 'font-semibold text-orange-700 dark:text-orange-300' : MUTED}`}>
+            <p data-fit-rms className={`text-xs ${fit.rmsCm >= 2 ? 'font-semibold text-orange-700 dark:text-orange-300' : MUTED}`}
+              title="How far the plan is from your measured values, on average (root mean square).">
               {fit.diagonal && <>Diagonal {room.code}-D: measured {fmtCm(fit.diagonal.measuredCm)}, plan {fmtCm(fit.diagonal.planCm)} ({fmtDiffCm(fit.diagonal.measuredCm - fit.diagonal.planCm)}). </>}
-              Fit error {fmtCm(fit.rmsCm)} cm rms over {fit.count} measured value{fit.count === 1 ? '' : 's'}.
+              Average mismatch {fmtCm(fit.rmsCm)} cm over {fit.count} measured value{fit.count === 1 ? '' : 's'}.
             </p>
           )
         })()}

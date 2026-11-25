@@ -7,9 +7,11 @@ import { outsideDims, OUTSIDE_ROWS_PX, type OutsideDimRun } from '../rooms/outsi
 import { ensureV2 } from '../../model/v2/ensure'
 import { emptyDoc } from '../../model/store'
 import {
+  PAPER,
   faceText, paperZoom, roomTagLayout, segmentText, outsideExtentPoints, outsideRunSvg, dimSvg,
   planDimsLayout, roomWallDimEntries, roomWallDimsSvg,
 } from './svgDims'
+import { SOLVED_HEX } from '../../shell/panel/styles'
 import { dimLine } from '../rooms/dims/dimLine'
 import { boxHit } from '../rooms/dims/dimBoxes'
 import type { DimStyle, RoomTagFields } from '../../model/store'
@@ -360,5 +362,71 @@ describe('planDimsLayout: one pass over the whole plan', () => {
     for (const e of layout.rooms[0].entries.filter((x) => x.box)) {
       for (const b of outside) expect(boxHit(e.box!, b)).toBe(false)
     }
+  })
+})
+
+// ---- the solver on the paper (docs/solver-plan.md, round 4) ----
+
+describe('a value the solver changed: purple on the paper', () => {
+  it('keeps the purple of the app in the colours of the paper', () => {
+    expect(PAPER.solved).toBe(SOLVED_HEX)
+    expect(PAPER.solved).toBe('#6d28d9')
+  })
+
+  it('writes a solved value in purple, and a measured one in green', () => {
+    const zoom = paperZoom(10)
+    const solvedLine = dimLine({
+      start: { x: 0, y: 0 }, end: { x: 400, y: 0 }, normal: { x: 0, y: 1 }, offsetCm: 10, zoom, text: '412',
+    })!
+    const solved = dimSvg({
+      line: solvedLine, text: { value: '412', measured: false, solved: true }, dimKey: 'SE-2', kind: 'wall', fs: 10, zoom,
+    })
+    expect(solved).toContain(`fill="${PAPER.solved}"`)
+    expect(solved).not.toContain(`fill="${PAPER.measured}"`)
+    const measured = dimSvg({
+      line: solvedLine, text: { value: '412', measured: true }, dimKey: 'SE-2', kind: 'wall', fs: 10, zoom,
+    })
+    expect(measured).toContain(`fill="${PAPER.measured}"`)
+    const estimated = dimSvg({
+      line: solvedLine, text: { value: '412', measured: false }, dimKey: 'SE-2', kind: 'wall', fs: 10, zoom,
+    })
+    expect(estimated).toContain(`fill="${PAPER.text}"`)
+  })
+
+  it('gives the value of a solved wall of a room the purple, and leaves the other values grey', () => {
+    const fs = 10
+    const ctx = dimCtx(fs, { valueStates: (label) => (label === 'SE-2' ? 'solved' : 'estimated') })
+    const entries = roomWallDimEntries(rect('r1', 'SE', 'Living', 422, 312), 'lines', ctx)
+    const solved = entries.find((e) => e.dimKey === 'SE-2')!
+    expect(solved.text.solved).toBe(true)
+    expect(entries.find((e) => e.dimKey === 'SE-1')!.text.solved).toBeUndefined()
+    const svg = roomWallDimsSvg(entries, { fs, zoom: paperZoom(fs) })
+    expect(svg).toContain(`fill="${PAPER.solved}"`)
+    // One purple value only: the three other values keep the grey of the paper.
+    expect(svg.split(`fill="${PAPER.solved}"`).length - 1).toBe(1)
+  })
+
+  it('never writes a measured value in purple, even when the solver changed its wall', () => {
+    const fs = 10
+    const ctx = dimCtx(fs, {
+      surveyLabels: true,
+      measurements: { 'SE-2': { label: 'SE-2', actualCm: 296, updatedAt: '2026-01-01T00:00:00Z' } },
+      valueStates: (label) => (label === 'SE-2' ? 'measured' : 'estimated'),
+    })
+    const entries = roomWallDimEntries(rect('r1', 'SE', 'Living', 422, 312), 'lines', ctx)
+    const svg = roomWallDimsSvg(entries, { fs, zoom: paperZoom(fs) })
+    expect(svg).toContain(`fill="${PAPER.measured}"`)
+    expect(svg).not.toContain(`fill="${PAPER.solved}"`)
+  })
+
+  it('writes nothing purple when the doc has no solver state (every value is measured or estimated)', () => {
+    const fs = 10
+    const layout = planDimsLayout({
+      doc: { ...emptyDoc(), rooms: [rect('r1', 'SE', 'Living', 422, 312)] },
+      style: 'lines', tagFields: TAG, zoom: paperZoom(fs), fs, step: 0.5,
+      units: { unit: 'cm', decimals: 1 }, surveyLabels: true, thicknessOf: () => 10, runs: [],
+    })
+    const svg = roomWallDimsSvg(layout.rooms[0].entries, { fs, zoom: paperZoom(fs) })
+    expect(svg).not.toContain(`fill="${PAPER.solved}"`)
   })
 })

@@ -32,6 +32,9 @@ import { fittingRows, ringBox, textBox, textQuad, type Box } from '../rooms/dims
 import { DECLUTTER, keepDimTexts, smallRoomDims, type DimTextCandidate } from '../rooms/dims/declutter'
 import { outsideDimTextBoxes, outsideHiddenTexts } from '../rooms/dims/outsideTextBoxes'
 import { roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from '../rooms/roomTag'
+import type { ValueStates } from '../rooms/dims/valueStates'
+import type { ValueState } from '../solver/lookup'
+import { SOLVED_HEX } from '../../shell/panel/styles'
 import { OUTSIDE_EXT_GAP_PX, OUTSIDE_ROWS_PX, outsideDims, outsideRowLine, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
 
 // ---- text of the paper ----
@@ -48,6 +51,8 @@ export const PAPER = {
   label: '#94a3b8',
   /** Measured value: green and bold. */
   measured: '#15803d',
+  /** Value the solver changed to (docs/solver-plan.md): purple, the token of the app. */
+  solved: SOLVED_HEX,
   /** Halo behind the text, so it stays readable over a wall. */
   halo: '#ffffff',
 }
@@ -75,6 +80,8 @@ export type DimText = {
   label?: string
   /** The value is measured on site: green and bold. */
   measured: boolean
+  /** The solver changed the wall of this value: purple, not measured. */
+  solved?: boolean
 }
 
 /** The text of a dimension as `dimLine` measures it (label included, since it is drawn). */
@@ -150,7 +157,7 @@ export function dimSvg({ line, text, dimKey, kind, fs, zoom, hideText }: DimSvgI
       ? ''
       : `<text x="${num(line.text.x)}" y="${num(line.text.y)}" text-anchor="middle" dominant-baseline="middle" ` +
         `transform="rotate(${num(line.angle)} ${num(line.text.x)} ${num(line.text.y)})" font-size="${num(fs * 0.75)}" ` +
-        `fill="${text.measured ? PAPER.measured : PAPER.text}" font-weight="${text.measured ? 600 : 400}" ` +
+        `fill="${text.measured ? PAPER.measured : text.solved ? PAPER.solved : PAPER.text}" font-weight="${text.measured ? 600 : 400}" ` +
         `paint-order="stroke" stroke="${PAPER.halo}" stroke-width="${num(p(3))}" stroke-linejoin="round" ` +
         `data-dim="${esc(dimKey)}"${line.outside ? ' data-dim-outside=""' : ''}>${body}</text>`)
   )
@@ -168,6 +175,11 @@ export type WallDimCtx = {
   measurements: Record<string, Measurement>
   /** Thickness of the wall that starts at a vertex, cm (with the defaults of the plan). */
   thicknessOf: (r: Room, wallStart: string) => number
+  /**
+   * State of a value, by survey label ('SE-2'): green measured, purple solved, grey estimated
+   * (docs/solver-plan.md). Absent: a value is measured or estimated only (no solver state).
+   */
+  valueStates?: ValueStates
 }
 
 /**
@@ -179,7 +191,7 @@ export type WallDimEntry = {
   key: string
   /** Face of the value, for the `data-dim` attribute (the survey label, or "SE-1"). */
   dimKey: string
-  /** The value, with its survey label. */
+  /** The value, with its survey label; `solved` when the solver changed the wall of the value. */
   text: DimText
   /** A value measured on site: it keeps its text before a calculated one. */
   measured: boolean
@@ -230,6 +242,11 @@ export function roomWallDimEntries(r: Room, style: DimStyle, ctx: WallDimCtx): W
       step: style === 'lines' ? ctx.step : 0,
       units: ctx.units,
     })
+    // The state of the value: green measured, purple solved by the solver, grey estimated.
+    const state: ValueState = ctx.valueStates
+      ? ctx.valueStates(label, ctx.measurements[label ?? '']?.actualCm)
+      : text.measured ? 'measured' : 'estimated'
+    if (state === 'solved') text.solved = true
     const key = 'd' + r.id + w.start.id
     if (style === 'lines') {
       const start = ring[w.index]
@@ -294,7 +311,7 @@ export function roomWallDimsSvg(entries: WallDimEntry[], ctx: { fs: number; zoom
     parts.push(
       `<text x="${num(at.x)}" y="${num(at.y)}" text-anchor="middle" dominant-baseline="middle" ` +
       `transform="rotate(${num(angle)} ${num(at.x)} ${num(at.y)})" font-size="${num(fs * 0.75)}" ` +
-      `fill="${e.measured ? PAPER.measured : PAPER.line}" font-weight="${e.measured ? 700 : 400}" ` +
+      `fill="${e.measured ? PAPER.measured : e.text.solved ? PAPER.solved : PAPER.line}" font-weight="${e.measured ? 700 : 400}" ` +
       `paint-order="stroke" stroke="${PAPER.halo}" stroke-width="${num(fs * 0.25)}" stroke-linejoin="round" ` +
       `data-dim="${esc(e.dimKey)}">${body}${esc(e.text.value)}</text>`,
     )
@@ -421,6 +438,8 @@ export type PlanDimsInput = {
   surveyLabels: boolean
   thicknessOf: (r: Room, wallStart: string) => number
   defaultCeilingCm?: number
+  /** State of a value by survey label; absent: the plan has no solver state (round 4). */
+  valueStates?: ValueStates
   /** The outside runs that are drawn; empty when the outside rows are off or the doc is v1. */
   runs: OutsideDimRun[]
 }
@@ -451,6 +470,7 @@ export function planDimsLayout(input: PlanDimsInput): PlanDimsLayout {
     zoom, fs, step, units, surveyLabels,
     measurements: doc.measurements ?? {},
     thicknessOf,
+    valueStates: input.valueStates,
   }
   const tagCtx: TagCtx = { zoom, fs, measurements: doc.measurements ?? {}, defaultCeilingCm: input.defaultCeilingCm }
   const rooms: RoomDims[] = doc.rooms.map((r) => ({
@@ -494,6 +514,8 @@ export type OutsideCtx = {
   surveyLabels: boolean
   /** Keys of the outside texts that the overlap pass hides ('<run.key>:seg:<i>', '<run.key>:overall'). */
   hidden?: ReadonlySet<string>
+  /** State of a facade value by label ('W12-E'): a segment that maps to one wall can be solved. */
+  valueStates?: ValueStates
 }
 
 /** The text rule of the export rows, for the overlap pass (shared with `planDimsLayout`). */
@@ -549,6 +571,7 @@ export function outsideRunSvg(run: OutsideDimRun, ctx: OutsideCtx): string {
       const withLabel: DimText = {
         ...text,
         label: ctx.surveyLabels && seg.label ? seg.label : undefined,
+        ...(ctx.valueStates?.(seg.label, seg.measuredCm) === 'solved' ? { solved: true } : {}),
       }
       // Past the end of the segment on the side of the outer end of the run.
       row(seg.a, seg.b, CHAIN_ROW_PX, withLabel, i * 2 < run.segments.length ? 'start' : 'end', seg.label ?? `${run.key}:${i}`, !!ctx.hidden?.has(`${run.key}:seg:${i}`))
@@ -559,7 +582,11 @@ export function outsideRunSvg(run: OutsideDimRun, ctx: OutsideCtx): string {
   if (single) {
     const seg = run.segments[0]
     const text = segmentText(seg, ctx.step, ctx.units)
-    const withLabel: DimText = { ...text, label: ctx.surveyLabels && seg.label ? seg.label : undefined }
+    const withLabel: DimText = {
+      ...text,
+      label: ctx.surveyLabels && seg.label ? seg.label : undefined,
+      ...(ctx.valueStates?.(seg.label, seg.measuredCm) === 'solved' ? { solved: true } : {}),
+    }
     row(seg.a, seg.b, OVERALL_ROW_PX, withLabel, 'end', seg.label ?? 'overall', overallHidden)
   } else {
     row(run.a, run.b, OVERALL_ROW_PX, { value: fmtLen(run.overallCm, ctx.units), measured: false }, 'end', `overall:${run.key}`, overallHidden)

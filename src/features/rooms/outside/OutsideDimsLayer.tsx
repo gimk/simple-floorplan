@@ -15,6 +15,9 @@ import { isV2Doc } from '../../../model/v2/targets'
 import { useIsDesktop } from '../../../shell/useDesktop'
 import { outsideHiddenTexts } from '../dims/outsideTextBoxes'
 import { DimLineView } from '../dims/DimLineView'
+import { useValueStates } from '../dims/useValueStates'
+import type { ValueStates } from '../dims/valueStates'
+import type { ValueState } from '../../solver/lookup'
 import { dimEditAllowed, dimTextLabel, useDimEdit } from '../dims/dimEdit'
 import { OUTSIDE_EXT_GAP_PX, OUTSIDE_ROWS_PX, outsideDims, outsideDimsLod, outsideRowLine, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
 
@@ -36,6 +39,8 @@ type RowProps = {
   text: string
   /** Measured value: bold green text instead of the calculated grey one. */
   measured: boolean
+  /** Green measured, purple solved, grey estimated (docs/solver-plan.md). */
+  state: ValueState
   /** Which end the text goes past when it does not fit between the ticks. */
   outsideEnd: 'start' | 'end'
   dimKey: string
@@ -60,20 +65,24 @@ type RowProps = {
  * text of the neighbouring segment stays readable, and never on a tick or an extension line
  * (round 1 suggestion 4).
  */
-function RowDim({ a, b, normal, offset, text, measured, outsideEnd, dimKey, zoom, editLabel, plannedCm, editing, hidden }: RowProps) {
+function RowDim({ a, b, normal, offset, text, measured, state, outsideEnd, dimKey, zoom, editLabel, plannedCm, editing, hidden }: RowProps) {
   const line = outsideRowLine({ start: a, end: b, normal, offsetCm: offset, zoom, text, outsideEnd })
   if (!line) return null
   return (
-    <DimLineView line={line} text={text} measured={measured} kind="outside" dimKey={dimKey} hideText={editing || hidden}
+    <DimLineView line={line} text={text} measured={measured} state={state} kind="outside" dimKey={dimKey} hideText={editing || hidden}
       onTextDoubleClick={editLabel ? () => useDimEdit.getState().open({ label: editLabel, at: line.text, plannedCm: plannedCm ?? 0 }) : undefined} />
   )
 }
 
-/** Text and measured state of one segment of a chain row. */
-const segmentText = (seg: OutsideDimSegment, step: number, units: LengthUnits) => {
+/**
+ * Text and state of one segment of a chain row. A chain segment that measures one whole outside face
+ * ('W12-E') maps to one stored wall, so the solver can have solved it: purple (docs/solver-plan.md).
+ */
+const segmentText = (seg: OutsideDimSegment, step: number, units: LengthUnits, valueStates?: ValueStates) => {
   const measured = (seg.measuredCm ?? 0) > 0
   return {
     measured,
+    state: valueStates ? valueStates(seg.label, seg.measuredCm) : measured ? 'measured' as const : 'estimated' as const,
     text: measured && seg.measuredCm !== null ? measuredTextIn(seg.measuredCm, seg.lengthCm, step, units) : fmtLen(seg.lengthCm, units),
   }
 }
@@ -102,6 +111,8 @@ export function OutsideDimsLayer() {
   const dimEditing = useDimEdit((s) => s.edit?.label ?? null)
   const isDesktop = useIsDesktop()
   const { px, zoom } = useViewport()
+  /** Green measured, purple solved, grey estimated: one memoized lookup per document. */
+  const valueStates = useValueStates()
   const runs = useMemo(
     () => (v2 ? outsideDims({ rooms, nodes, walls, measurements }) : []),
     [v2, rooms, nodes, walls, measurements],
@@ -115,9 +126,9 @@ export function OutsideDimsLayer() {
   // mask and the export).
   const hiddenTexts = outsideHiddenTexts(shown, {
     zoom,
-    segmentText: (seg) => segmentText(seg, step, units).text,
+    segmentText: (seg) => segmentText(seg, step, units, valueStates).text,
     overallText: (run) => fmtLen(run.overallCm, units),
-    segmentMeasured: (seg) => segmentText(seg, step, units).measured,
+    segmentMeasured: (seg) => segmentText(seg, step, units, valueStates).measured,
   })
   /** Edit mode with the Select tool: a double-click on a facade text types its length (section 4). */
   const canEdit = dimEditAllowed(mode, tool)
@@ -141,7 +152,7 @@ export function OutsideDimsLayer() {
           )
         })}
         {!single && run.segments.map((seg, i) => {
-          const { measured, text } = segmentText(seg, step, units)
+          const { measured, state, text } = segmentText(seg, step, units, valueStates)
           // Past the end of the segment on the side of the outer end of the run: the start end for
           // the first half of the row, the end of the run for the second half.
           const outsideEnd = i * 2 < run.segments.length ? 'start' : 'end'
@@ -150,7 +161,7 @@ export function OutsideDimsLayer() {
           return (
             <g key={i} data-outside-seg={seg.label ?? String(i)}>
               <RowDim a={seg.a} b={seg.b} normal={run.normal} offset={px(ROW_CHAIN_PX)} text={text}
-                measured={measured} outsideEnd={outsideEnd} hidden={hiddenTexts.has(`${run.key}:seg:${i}`)} dimKey={seg.label ?? String(i)} px={px} zoom={zoom}
+                measured={measured} state={state} outsideEnd={outsideEnd} hidden={hiddenTexts.has(`${run.key}:seg:${i}`)} dimKey={seg.label ?? String(i)} px={px} zoom={zoom}
                 editLabel={editLabel} plannedCm={seg.lengthCm} editing={!!editLabel && editLabel === dimEditing} />
             </g>
           )
@@ -161,8 +172,9 @@ export function OutsideDimsLayer() {
             // measured value (a second row would repeat the same text between the same ends).
             <g data-outside-seg={run.segments[0].label ?? '0'}>
               <RowDim a={run.segments[0].a} b={run.segments[0].b} normal={run.normal}
-                offset={px(ROW_OVERALL_PX)} text={segmentText(run.segments[0], step, units).text}
-                measured={segmentText(run.segments[0], step, units).measured} outsideEnd="end" hidden={overallHidden}
+                offset={px(ROW_OVERALL_PX)} text={segmentText(run.segments[0], step, units, valueStates).text}
+                measured={segmentText(run.segments[0], step, units, valueStates).measured}
+                state={segmentText(run.segments[0], step, units, valueStates).state} outsideEnd="end" hidden={overallHidden}
                 dimKey={run.segments[0].label ?? '0'} px={px} zoom={zoom}
                 editLabel={canEdit ? dimTextLabel('outside', run.segments[0].label ?? '0') : null}
                 plannedCm={run.segments[0].lengthCm}
@@ -170,7 +182,7 @@ export function OutsideDimsLayer() {
             </g>
           ) : (
             <RowDim a={run.a} b={run.b} normal={run.normal} offset={px(ROW_OVERALL_PX)}
-              text={fmtLen(run.overallCm, units)} measured={false} outsideEnd="end" hidden={overallHidden} dimKey="overall" px={px} zoom={zoom} />
+              text={fmtLen(run.overallCm, units)} measured={false} state="estimated" outsideEnd="end" hidden={overallHidden} dimKey="overall" px={px} zoom={zoom} />
           )}
         </g>
       </>

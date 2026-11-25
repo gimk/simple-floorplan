@@ -7,6 +7,8 @@ import { ensureV2 } from '../../model/v2/ensure'
 import { loadDemoApartment } from '../measure/demo'
 import { boxHit } from '../rooms/dims/dimBoxes'
 import { buildPlanSvg, DEFAULT_TAG_FIELDS } from './svgExport'
+import { PAPER } from './svgDims'
+import { syncStoredGraph } from '../../model/storedGraph'
 
 const now = '2026-01-01T00:00:00Z'
 
@@ -316,5 +318,50 @@ describe('buildPlanSvg: the declutter rules of the plan', () => {
     // ... and the big room keeps its four values.
     expect(layout.rooms.find((x) => x.room.id === 'r1')!.entries.filter((e) => e.box)).toHaveLength(4)
     expect(res.svg).toContain('data-dim="SE-1"')
+  })
+})
+
+describe('the solver on the exported plan (docs/solver-plan.md, round 4)', () => {
+  /** The square room with its stored walls, and a recorded change on the wall of 'SE-2'. */
+  const solvedDoc = (enabled = true): PlanDoc => {
+    const base = square()
+    const g = syncStoredGraph(undefined, base.rooms)
+    const wall = g.walls.find((w) => w.faces.some((f) => f.roomId === 'r1' && f.wallStart === 'v2'))!
+    return {
+      ...base,
+      nodes: g.nodes,
+      walls: g.walls,
+      solver: {
+        enabled,
+        changes: [{ kind: 'position', wallId: wall.id, label: 'SE-2', moveCm: 1.2, dir: 'E' }],
+        revoked: [],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+  }
+
+  /** The value of the wall SE-2: a dimension text, so it carries a font weight (the legend does not). */
+  const purpleValue = `fill="${PAPER.solved}" font-weight="400"`
+
+  it('writes the value of the solved wall in purple, and the others in the grey of the paper', () => {
+    const { svg } = buildPlanSvg(solvedDoc())
+    // The legend row of "Solved" is purple too, so the value is found by its font weight.
+    expect(count(svg, `fill="${PAPER.solved}" font-weight`)).toBe(1)
+    expect(svg).toMatch(new RegExp(`${purpleValue}[^>]*data-dim="SE-2"`))
+    expect(svg).toContain(`fill="${PAPER.text}"`)
+  })
+
+  it('writes no purple when the solver is Off', () => {
+    const { svg } = buildPlanSvg(solvedDoc(false))
+    expect(count(svg, `fill="${PAPER.solved}" font-weight`)).toBe(0)
+    // The legend keeps its row: it is the key of the colours, not a value of the plan.
+    expect(svg).toContain('>Solved</text>')
+  })
+
+  it('has a purple "Solved" row in its legend', () => {
+    const { svg } = buildPlanSvg(solvedDoc())
+    expect(svg).toContain('>Solved</text>')
+    expect(svg).toContain(`fill="${PAPER.solved}" font-size`)
   })
 })
