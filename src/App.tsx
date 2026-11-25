@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 import {
-  Keyboard, MoreVertical, PanelRightClose, PanelRightOpen, Search,
+  Keyboard, MoreVertical, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Search,
   Undo2, Redo2, Smartphone, Monitor, Cloud, CloudOff, KeyRound,
 } from 'lucide-react'
 import { getSyncState, setPasscode, startSync, useSyncState, useSyncStatusText } from './sync/sync'
@@ -33,6 +33,8 @@ import { CommandPalette } from './shell/CommandPalette'
 import { toggleAllSnap } from './shell/commands'
 import { TOOLS } from './shell/tools'
 import { Sidebar } from './shell/sidebar/Sidebar'
+import { LayersPanel } from './features/layers'
+import { useLayersPanel } from './shell/layersPanel'
 import { parentSelection } from './shell/sidebar/trail'
 import { installBridge } from './shell/bridge'
 import { fitToDoc } from './shell/fit'
@@ -97,6 +99,8 @@ function useShortcuts(onHelp: () => void, onPalette: () => void) {
       // Shift+P: every snapping off, or back to the set before (docs/measurements-plan.md 7).
       if (!mod && !e.altKey && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); toggleAllSnap(); return }
       if (e.key === '0') { e.preventDefault(); fitToDoc(); return }
+      // [ = show / hide the Layers panel (L is taken by the Door / window tool).
+      if (e.key === '[' && !mod && !e.altKey) { e.preventDefault(); useLayersPanel.getState().toggle(); return }
       if (mod || e.altKey) return
       const tool = TOOLS.find((x) => x.key === e.key.toLowerCase())
       if (tool) ui.setTool(tool.id)
@@ -231,6 +235,8 @@ export default function App() {
   const canUndo = useStore(useDoc.temporal, (s) => s.pastStates.length > 0)
   const canRedo = useStore(useDoc.temporal, (s) => s.futureStates.length > 0)
   // #11: sidebar open by default on wide screens; an overlay drawer below 768 px.
+  const layersOpen = useLayersPanel((s) => s.open)
+  const setLayersOpen = useLayersPanel((s) => s.setOpen)
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 768)
   const inspectorOpenTick = useUi((s) => s.inspectorOpenTick)
   useEffect(() => {
@@ -239,10 +245,11 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return
     const mq = window.matchMedia('(min-width: 768px)')
-    const onChange = (e: MediaQueryListEvent) => setSidebarOpen(e.matches)
+    // The Layers panel follows the same limit, without overwriting the remembered choice.
+    const onChange = (e: MediaQueryListEvent) => { setSidebarOpen(e.matches); setLayersOpen(e.matches, false) }
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
-  }, [])
+  }, [setLayersOpen])
   useEffect(() => {
     if (!moreOpen) return
     const onDown = (e: MouseEvent) => {
@@ -319,6 +326,14 @@ export default function App() {
               </div>
             )}
           </div>
+          {!measureDesktop && (
+            <button
+              className={btn} title="Toggle layers" aria-label="Toggle layers" aria-pressed={layersOpen}
+              onClick={() => setLayersOpen(!layersOpen)}
+            >
+              {layersOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+            </button>
+          )}
           <button
             className={btn} title="Toggle sidebar" aria-label="Toggle sidebar" aria-pressed={sidebarOpen}
             onClick={() => setSidebarOpen((o) => !o)}
@@ -341,22 +356,25 @@ export default function App() {
         <div className="min-h-0 flex-1 overflow-auto"><MeasureMode /></div>
       ) : (
         <div className="flex min-h-0 flex-1">
+          {layersOpen && !measureDesktop && (
+            <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden="true" onClick={() => setLayersOpen(false)} />
+          )}
           {!measureDesktop && (
-          <nav className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-black/10 bg-white py-2 max-md:w-13 dark:border-white/10 dark:bg-[#1b2128]" aria-label="Tools">
-            {TOOLS.map(({ id, label, key, icon: Icon }) => (
-              <button
-                key={id}
-                title={`${label} (${key.toUpperCase()})`}
-                aria-label={label}
-                aria-pressed={tool === id}
-                data-tool={id}
-                onClick={() => setTool(id)}
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md max-md:h-11 max-md:w-11 ${tool === id ? 'bg-orange-700 text-white' : 'hover:bg-black/5 dark:hover:bg-white/10'}`}
-              >
-                <Icon size={18} />
-              </button>
-            ))}
-          </nav>
+            <aside
+              className={`${layersOpen ? 'flex' : 'hidden'} w-[260px] shrink-0 flex-col gap-3 overflow-y-auto border-r border-black/10 bg-white p-3 dark:border-white/10 dark:bg-[#1b2128] max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:max-w-[85vw] max-md:shadow-2xl`}
+              aria-label="Layers panel"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold">Layers</h2>
+                <button
+                  type="button" title="Hide layers panel ([)" aria-label="Collapse layers panel"
+                  className={btn} onClick={() => setLayersOpen(false)}
+                >
+                  <PanelLeftClose size={16} />
+                </button>
+              </div>
+              <LayersPanel />
+            </aside>
           )}
           <main className="relative min-w-0 flex-1">
             <Viewport overlay={measureDesktop ? null : <ToolOverlay />}>
@@ -377,11 +395,37 @@ export default function App() {
               {layers.notes && <AnnotationsLayer />}
             </Viewport>
             <EmptyState />
-            <div className="pointer-events-none absolute inset-x-3 bottom-3 z-10 flex flex-wrap-reverse items-end gap-2 max-md:inset-x-2">
+            {/* Zoom pill and View menu: bottom-right. Above the tool bar on a phone and on a narrow
+                canvas, on the same line at 2xl. The hints sit above them, centred. */}
+            <div className={`pointer-events-none absolute right-3 z-10 flex flex-wrap-reverse items-end justify-end gap-2 max-md:left-2 max-md:right-2 ${measureDesktop ? 'bottom-3' : 'bottom-[calc(4.5rem+env(safe-area-inset-bottom))] 2xl:bottom-3'}`}>
               <ZoomControls />
               <ViewMenu />
+            </div>
+            <div className={`pointer-events-none absolute inset-x-3 z-10 flex justify-center max-md:inset-x-2 ${measureDesktop ? 'bottom-3' : 'bottom-[calc(8rem+env(safe-area-inset-bottom))] 2xl:bottom-[calc(4.5rem+env(safe-area-inset-bottom))]'}`}>
               <ToolHints />
             </div>
+            {!measureDesktop && (
+              <div className="pointer-events-none absolute inset-x-2 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 flex justify-center">
+                <nav
+                  className="pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-full border border-black/10 bg-white p-1 shadow-lg dark:border-white/10 dark:bg-[#1b2128]"
+                  aria-label="Tools"
+                >
+                  {TOOLS.map(({ id, label, key, icon: Icon }) => (
+                    <button
+                      key={id}
+                      title={`${label} (${key.toUpperCase()})`}
+                      aria-label={label}
+                      aria-pressed={tool === id}
+                      data-tool={id}
+                      onClick={() => setTool(id)}
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full max-md:h-11 max-md:w-11 ${tool === id ? 'bg-orange-700 text-white' : 'hover:bg-black/5 dark:hover:bg-white/10'}`}
+                    >
+                      <Icon size={18} />
+                    </button>
+                  ))}
+                </nav>
+              </div>
+            )}
           </main>
           {sidebarOpen && !measureDesktop && (
             <div className="fixed inset-0 z-30 bg-black/40 md:hidden" aria-hidden="true" onClick={() => setSidebarOpen(false)} />

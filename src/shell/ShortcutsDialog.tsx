@@ -8,6 +8,7 @@ const ROWS: [string, string][] = [
   ['Ctrl/Cmd+Z · Ctrl/Cmd+Shift+Z (or Ctrl+Y)', 'Undo · Redo'],
   ['Esc', 'Cancel in-progress points, then up one level, clear'],
   ['0', 'Fit plan to view'],
+  ['[', 'Show / hide the Layers panel'],
   ['Ctrl/Cmd+K', 'Command palette: every tool, layer, unit, snap and export'],
   ['Shift+P', 'Snapping off (grid, angles, vertices), or back on again'],
   ['Double-click a dimension', 'Type the measured value of that length (Enter saves, Tab next wall)'],

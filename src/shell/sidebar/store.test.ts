@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseSections, parseTab } from './store'
+import { parseOpen } from '../layersPanel'
 
 describe('parseTab', () => {
   it('reads the three known tabs', () => {
@@ -12,6 +13,10 @@ describe('parseTab', () => {
     expect(parseTab(null)).toBe('inspect')
     expect(parseTab('')).toBe('inspect')
     expect(parseTab('other')).toBe('inspect')
+  })
+
+  it('has no Layers tab: an old stored "layers" value gives the default', () => {
+    expect(parseTab('layers')).toBe('inspect')
   })
 })
 
@@ -34,5 +39,14 @@ describe('parseSections', () => {
     expect(parseSections('[true,false]')).toEqual({})
     expect(parseSections('42')).toEqual({})
     expect(parseSections('null')).toEqual({})
+  })
+})
+
+describe('layers panel memory', () => {
+  it('reads only true / false', () => {
+    expect(parseOpen('true')).toBe(true)
+    expect(parseOpen('false')).toBe(false)
+    expect(parseOpen(null)).toBeNull()
+    expect(parseOpen('x')).toBeNull()
   })
 })

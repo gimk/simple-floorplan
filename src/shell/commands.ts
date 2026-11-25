@@ -11,6 +11,7 @@ import {
   BOOLEAN_LAYER_KEYS, MODE_LAYER_KEYS, layerModeOf, setLayerMode, toggleLayer,
 } from './view/layers'
 import { fitToDoc } from './fit'
+import { useLayersPanel } from './layersPanel'
 import { toast } from '../features/toast'
 import { repairGraph } from '../model/v2/repair'
 
@@ -319,6 +320,17 @@ export function commandList(ctx: CommandCtx = {}): Command[] {
     shortcut: 'Shift+P',
     enabled: true,
     run: () => { toggleAllSnap() },
+  })
+
+  // --- layers panel ---
+  out.push({
+    id: 'view:layers-panel',
+    title: 'Toggle layers panel',
+    group: 'View',
+    keywords: 'layers tree panel left sidebar show hide',
+    shortcut: '[',
+    enabled: true,
+    run: () => useLayersPanel.getState().toggle(),
   })
 
   // --- layers ---
