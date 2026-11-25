@@ -133,6 +133,9 @@ describe('MCP JSON-RPC dispatcher', () => {
       'set_wall_props',
       'delete_wall',
       'apply_measurements',
+      'set_solver',
+      'solver_revoke',
+      'solver_restore',
       'render_svg',
       'get_events',
     ])
@@ -301,6 +304,89 @@ describe('MCP JSON-RPC dispatcher', () => {
     expect((promptRes.messages as { content: { text: string } }[])[0].content.text).toContain('find_shared_walls')
   })
 
+  it('runs the plan solver: set_solver on, revoke/restore a change, set_solver off', async () => {
+    const store = createFakeStore()
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const out = await dispatchRpc(store, {
+        jsonrpc: '2.0',
+        id: name,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      })
+      return asResult(out.body as JsonRpcResponse) as unknown as McpToolResult
+    }
+
+    const created = await call('create_project', { name: 'Solver apt' })
+    const projectId = (created.structuredContent?.project as { id?: string } | undefined)?.id ?? ''
+    // First command result of a tool call (no indexing on an optional chain).
+    const first = (r: McpToolResult) => ((r.structuredContent?.results as Record<string, unknown>[] | undefined) ?? [])[0] ?? {}
+    await call('add_room', { projectId, code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 400, h: 300 } })
+    await call('add_room', { projectId, code: 'CU', name: 'Kitchen', rect: { x: 400, y: 0, w: 300, h: 300 } })
+    await call('set_measurement', { projectId, label: 'SE-1', cm: 412 })
+    await call('set_measurement', { projectId, label: 'SE-2', cm: 292 })
+    await call('set_measurement', { projectId, label: 'CU-1', cm: 308 })
+    await call('set_measurement', { projectId, label: 'CU-2', cm: 296 })
+
+    const on = await call('set_solver', { projectId, enabled: true })
+    expect(on.isError).toBeUndefined()
+    const onResult = first(on)
+    expect(onResult.enabled).toBe(true)
+    expect(onResult.changeCount as number).toBeGreaterThan(0)
+    expect((on.content[0] as { text: string }).text).toContain('Solver on: ')
+    expect((on.content[0] as { text: string }).text).toContain('average mismatch')
+
+    // The read of the plan reports the solver state and the change list.
+    const summary = await call('get_plan', { projectId })
+    const solver = summary.structuredContent?.solver as {
+      enabled: boolean
+      changeCount: number
+      changes: { kind: string; wallId: string; label: string }[]
+    }
+    expect(solver.enabled).toBe(true)
+    expect(solver.changes.length).toBe(solver.changeCount)
+    expect(solver.changes[0].wallId).toBeTruthy()
+    expect(solver.changes[0].label).toBeTruthy()
+    expect((summary.content[0] as { text: string }).text).toContain('solver on:')
+
+    // Revoke one change, then restore it.
+    const change = solver.changes[0]
+    const revoked = await call('solver_revoke', { projectId, wallId: change.wallId, kind: change.kind })
+    expect(revoked.isError).toBeUndefined()
+    const revResult = first(revoked)
+    expect(revResult.revoked as unknown[]).toEqual(
+      expect.arrayContaining([{ kind: change.kind, wallId: change.wallId, by: 'revoke' }]),
+    )
+    const restored = await call('solver_restore', { projectId, wallId: change.wallId, kind: change.kind })
+    expect(restored.isError).toBeUndefined()
+    const resResult = first(restored)
+    expect(
+      (resResult.revoked as { kind: string; wallId: string }[]).some(
+        (h) => h.kind === change.kind && h.wallId === change.wallId,
+      ),
+    ).toBe(false)
+
+    // An unknown wall is a command error, not a crash.
+    const badWall = await call('solver_revoke', { projectId, wallId: 'W-NOPE', kind: 'position' })
+    expect(badWall.isError).toBe(true)
+    expect(badWall.structuredContent?.error).toMatchObject({ code: 'WALL_NOT_FOUND' })
+
+    // Missing enabled -> INVALID_PARAMS.
+    const noEnabled = await call('set_solver', { projectId })
+    expect(noEnabled.isError).toBe(true)
+    expect(noEnabled.structuredContent?.error).toMatchObject({ code: 'INVALID_PARAMS' })
+
+    // Off: the base geometry is back and there are no changes.
+    const off = await call('set_solver', { projectId, enabled: false })
+    expect(off.isError).toBeUndefined()
+    expect((off.content[0] as { text: string }).text).toContain('Solver off: plan back to estimated and measured values')
+    const after = (await call('get_plan', { projectId })).structuredContent?.solver as {
+      enabled: boolean
+      changeCount: number
+    }
+    expect(after.enabled).toBe(false)
+    expect(after.changeCount).toBe(0)
+  })
+
   it('supports JSON-RPC batch arrays and returns proper error codes', async () => {
     const store = createFakeStore()
 
@@ -402,6 +488,13 @@ describe('MCP JSON-RPC dispatcher', () => {
     // measure token can set_measurement but not add_room (edit)
     const measOk = await call(measureCtx, 'set_measurement', { projectId, label: 'SE-1', cm: 400 })
     expect(measOk.isError).toBeUndefined()
+    const solverDenied = await call(measureCtx, 'set_solver', { projectId, enabled: true })
+    expect(solverDenied.isError).toBe(true)
+    expect(solverDenied.structuredContent?.error).toMatchObject({ code: 'FORBIDDEN', requiredScope: 'edit' })
+    const revokeDenied = await call(readCtx, 'solver_revoke', { projectId, wallId: 'W1', kind: 'position' })
+    expect(revokeDenied.isError).toBe(true)
+    expect(revokeDenied.structuredContent?.error).toMatchObject({ code: 'FORBIDDEN', requiredScope: 'edit' })
+
     const editDenied = await call(measureCtx, 'add_room', { projectId, code: 'SE', rect: { x: 0, y: 0, w: 100, h: 100 } })
     expect(editDenied.isError).toBe(true)
     expect(editDenied.structuredContent?.error).toMatchObject({ code: 'FORBIDDEN', requiredScope: 'edit' })

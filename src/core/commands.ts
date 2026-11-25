@@ -34,7 +34,7 @@ import { defaultElement, overflows } from '../features/elements/geometry'
 import { wallProps } from '../features/rooms/walls'
 import { hasVerifiedWalls, solveRoom, twinValues } from '../features/rooms/solve'
 import { applyThicknessLabel } from '../features/rooms/thickness'
-import { planPrecision, roundVec } from '../model/precision'
+import { planPrecision, roundTo, roundVec } from '../model/precision'
 import {
   ElementKindSchema,
   ElementVariantSchema,
@@ -64,6 +64,11 @@ import {
   type StorageDoor,
   type StorageParams,
 } from '../features/storage/geometry'
+// Solver on/off (docs/solver-plan.md, round 5). The engine is pure: no store, no React, so the
+// server (functions/) runs the same solver as the app. `solverEditRule` from
+// features/solver/rule.ts is NOT imported here: it takes the store's `DocRule` type, so the
+// drop-on-edit rule is replicated below in `dropChangesOnEdit` (engine function `userEditedWalls`).
+import { restoreChange, revokeChange, solverOff, solverOn, userEditedWalls, type SolverOptions } from '../features/solver/engine'
 
 const EPS = 0.05
 const BIG = 1e5
@@ -333,6 +338,42 @@ const ApplyMeasurementsSchema = z.object({
   lockVerifiedWalls: z.boolean().optional().default(true),
 })
 
+/**
+ * Turn the document solver On or Off, or solve again with other options (docs/solver-plan.md).
+ * The options have the same defaults as the Solve tab of the app (`useUi` in model/store.ts):
+ * keepLocked true, surfaceMode 'off', snapThickness false, angles 'square'.
+ */
+const SetSolverSchema = z.object({
+  type: z.literal('set_solver'),
+  /** true = solve the whole plan from the base geometry; false = write the base geometry back. */
+  enabled: z.boolean(),
+  /** A locked wall keeps its length. Default true. */
+  keepLocked: z.boolean().optional(),
+  /** How the surface references of `doc.apartment` are used: 'off' (default), 'guide' or 'match'. */
+  surfaceMode: z.enum(['off', 'guide', 'match']).optional(),
+  /** A wall the values do not determine, but that moved, gets a usual thickness. Default false. */
+  snapThickness: z.boolean().optional(),
+  /** 'square' (default) keeps drawn horizontal or vertical walls at their angle; 'free' turns them. */
+  angles: z.enum(['square', 'free']).optional(),
+})
+
+/**
+ * Hold ONE solver change at its base value (`solver_revoke`) or let the solver move that wall again
+ * (`solver_restore`). One revoke unit = one wall position or one wall thickness.
+ */
+const SolverRevokeSchema = z.object({
+  type: z.literal('solver_revoke'),
+  /** Stored wall id (e.g. "W12") or a wall label (e.g. "KI-2"). */
+  wallId: z.string().min(1),
+  kind: z.enum(['position', 'thickness']),
+})
+
+const SolverRestoreSchema = z.object({
+  type: z.literal('solver_restore'),
+  wallId: z.string().min(1),
+  kind: z.enum(['position', 'thickness']),
+})
+
 const SetRoomNoteSchema = z
   .object({
     type: z.literal('set_room_note'),
@@ -426,6 +467,9 @@ export const CommandSchema = z.discriminatedUnion('type', [
   AddStorageSchema,
   UpdateStorageSchema,
   DeleteStorageSchema,
+  SetSolverSchema,
+  SolverRevokeSchema,
+  SolverRestoreSchema,
 ])
 
 export type Command = z.infer<typeof CommandSchema>
@@ -922,6 +966,105 @@ function applyMeasurementsForRoom(doc: PlanDocV1, roomId: string, lockVerifiedWa
   }
 }
 
+// ---------- document solver (docs/solver-plan.md, round 5: MCP commands) ----------
+
+/** Solver options of a command, with the defaults of the Solve tab (`useUi`, model/store.ts). */
+function solverOptionsFrom(cmd: {
+  keepLocked?: boolean
+  surfaceMode?: 'off' | 'guide' | 'match'
+  snapThickness?: boolean
+  angles?: 'square' | 'free'
+}): SolverOptions {
+  return {
+    keepLocked: cmd.keepLocked ?? true,
+    surfaceMode: cmd.surfaceMode ?? 'off',
+    snapThickness: cmd.snapThickness ?? false,
+    angles: cmd.angles ?? 'square',
+  }
+}
+
+/**
+ * Stored wall id of a solver change: `id` is a stored wall id ("W12"); a wall label ("KI-2") is
+ * accepted too, because the change list shows labels. An unknown id is an error.
+ */
+function resolveStoredWallId(doc: PlanDoc, id: string): string {
+  const walls = doc.walls ?? []
+  if (walls.some((w) => w.id === id)) return id
+  for (const r of doc.rooms) {
+    const cycle = r.cycle ?? []
+    for (let i = 0; i < cycle.length; i++) {
+      if (`${r.code}-${i + 1}` === id.trim()) {
+        const wallId = cycle[i].wallId
+        if (walls.some((w) => w.id === wallId)) return wallId
+        throw new CommandError('WALL_NOT_FOUND', `Wall "${id}" has no stored wall.`)
+      }
+    }
+  }
+  throw new CommandError('WALL_NOT_FOUND', `Wall "${id}" not found.`)
+}
+
+/** Result payload of the solver state after a command: what the agent needs to describe it. */
+function solverResult(doc: PlanDoc) {
+  const s = doc.solver
+  return {
+    enabled: Boolean(s?.enabled),
+    solvedAt: s?.solvedAt ?? null,
+    rmsCm: s?.rmsCm !== undefined ? round2(s.rmsCm) : null,
+    changeCount: s?.changes.length ?? 0,
+    changes: (s?.changes ?? []).map((c) => ({ ...c })),
+    revoked: (s?.revoked ?? []).map((h) => ({ ...h })),
+  }
+}
+
+/**
+ * Drop-on-edit on the server (docs/solver-plan.md): a command that edits the geometry while the
+ * solver is On drops the recorded change of every wall it touched and holds that wall at the new
+ * (user) value, with `by: 'edit'`. The next solve keeps that wall where the user put it.
+ *
+ * This is a copy of `solverEditRule` in features/solver/rule.ts (which the app store runs); rule.ts
+ * takes the store's `DocRule` type, so it is not imported here. Keep the two in step.
+ * The solver itself does NOT run again: the edited wall keeps the user's value, the other walls keep
+ * their solved value.
+ */
+function dropChangesOnEdit(prev: PlanDoc, next: PlanDoc): PlanDoc {
+  const s = next.solver
+  if (!s?.enabled) return next
+  // A solver write (set_solver, solver_revoke, solver_restore) is not a user edit.
+  if (next.solver !== prev.solver) return next
+
+  const edited = userEditedWalls(prev, next)
+  if (!edited.position.length && !edited.thickness.length && !edited.movedNodes.length) return next
+
+  const posSet = new Set(edited.position)
+  const thickSet = new Set(edited.thickness)
+  const movedNodeSet = new Set(edited.movedNodes)
+
+  const changes = s.changes.filter(
+    (c) => !(c.kind === 'position' && posSet.has(c.wallId)) && !(c.kind === 'thickness' && thickSet.has(c.wallId)),
+  )
+
+  // The user's value is the base value now: forget the base of what the command touched.
+  const baseNodes: Record<string, { x: number; y: number }> = {}
+  for (const [nid, pt] of Object.entries(s.baseNodes)) {
+    if (!movedNodeSet.has(nid)) baseNodes[nid] = pt
+  }
+  const baseThickness: Record<string, number> = {}
+  for (const [wid, cm] of Object.entries(s.baseThickness)) {
+    if (!thickSet.has(wid)) baseThickness[wid] = cm
+  }
+
+  const revoked = [...s.revoked]
+  const addEditHold = (kind: 'position' | 'thickness', wallId: string) => {
+    const idx = revoked.findIndex((h) => h.kind === kind && h.wallId === wallId)
+    if (idx >= 0) revoked[idx] = { kind, wallId, by: 'edit' }
+    else revoked.push({ kind, wallId, by: 'edit' })
+  }
+  for (const wallId of edited.position) addEditHold('position', wallId)
+  for (const wallId of edited.thickness) addEditHold('thickness', wallId)
+
+  return { ...next, solver: { ...s, changes, revoked, baseNodes, baseThickness } }
+}
+
 // ---------- main command reducer ----------
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -939,7 +1082,10 @@ export function apply(rawDoc: PlanDoc, rawCommand: unknown): ApplyResult {
   const out = adoptDoorHosts(runCommand(doc, cmd, warnings), warnings)
   // A v2 document keeps its walls as the source (docs/walls-plan.md phase 5c); a v1 document keeps
   // the v1 rule of the values (the client converts it on load).
-  return out.doc.schemaVersion === 2 ? keepWallsAndValuesV2(doc, out) : keepMeasurementsOnWalls(doc, out)
+  const final = out.doc.schemaVersion === 2 ? keepWallsAndValuesV2(doc, out) : keepMeasurementsOnWalls(doc, out)
+  // Solver On: a command that moves geometry drops the recorded change of the walls it touched
+  // (docs/solver-plan.md, "A user edit of a wall that has a change ... is dropped").
+  return { ...final, doc: dropChangesOnEdit(doc, final.doc) as PlanDocV1 }
 }
 
 /**
@@ -1915,6 +2061,66 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
           precisionCm: planPrecision({ apartment }),
           references,
           referenceCount: references.length,
+        },
+        warnings,
+      }
+    }
+
+    case 'set_solver': {
+      if (!cmd.enabled) {
+        const next = solverOff(doc) as PlanDocV1
+        return {
+          doc: next,
+          result: {
+            ...solverResult(next),
+            changeCount: 0,
+            changes: [],
+            message: 'Solver off: plan back to estimated and measured values.',
+          },
+          warnings,
+        }
+      }
+      const res = solverOn(doc, solverOptionsFrom(cmd))
+      const next = res.doc as PlanDocV1
+      const count = next.solver?.changes.length ?? 0
+      const rmsCm = roundTo(res.report.rmsCm, 0.1)
+      return {
+        doc: next,
+        result: {
+          ...solverResult(next),
+          message: `Solver on: ${count} changes, average mismatch ${rmsCm} cm.`,
+        },
+        warnings,
+      }
+    }
+
+    case 'solver_revoke': {
+      const wallId = resolveStoredWallId(doc, cmd.wallId)
+      const res = revokeChange(doc, { kind: cmd.kind, wallId }, solverOptionsFrom({}))
+      const next = res.doc as PlanDocV1
+      return {
+        doc: next,
+        result: {
+          ...solverResult(next),
+          wallId,
+          kind: cmd.kind,
+          message: `Revoked: wall ${wallId} ${cmd.kind} stays at its base value.`,
+        },
+        warnings,
+      }
+    }
+
+    case 'solver_restore': {
+      const wallId = resolveStoredWallId(doc, cmd.wallId)
+      const res = restoreChange(doc, { kind: cmd.kind, wallId }, solverOptionsFrom({}))
+      const next = res.doc as PlanDocV1
+      return {
+        doc: next,
+        result: {
+          ...solverResult(next),
+          wallId,
+          kind: cmd.kind,
+          message: `Restored: wall ${wallId} ${cmd.kind} can move again.`,
         },
         warnings,
       }

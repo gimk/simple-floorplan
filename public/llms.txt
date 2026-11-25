@@ -157,6 +157,24 @@ Send `{ "commands": [ ... ], "dryRun": false, "baseVersion": 1 }`. Walls can be 
 { "type": "set_apartment", "addReference": { "source": "dpe", "label": "DPE 2023", "surfaceM2": 62.4, "date": "2023-04-01" } }
 ```
 
+20. `set_solver` — turn the plan solver On or Off (the whole plan at once). On: fit the plan to the measured values, record every change. Off: write the base geometry back, so the plan shows the estimated and measured values again. Options have the defaults of the Solve tab (`keepLocked` true, `surfaceMode` off, `snapThickness` false, `angles` square):
+```json
+{ "type": "set_solver", "enabled": true }
+{ "type": "set_solver", "enabled": false }
+{ "type": "set_solver", "enabled": true, "keepLocked": false, "snapThickness": true, "angles": "free" }
+```
+
+21. `solver_revoke` — keep ONE wall at its base value: hold a wall position or a wall thickness, so the next solves do not move it. Use a stored wall id or a wall label:
+```json
+{ "type": "solver_revoke", "wallId": "W12", "kind": "position" }
+{ "type": "solver_revoke", "wallId": "CU-2", "kind": "thickness" }
+```
+
+22. `solver_restore` — remove that hold, so the solver may move the wall again:
+```json
+{ "type": "solver_restore", "wallId": "W12", "kind": "position" }
+```
+
 ## Agent access with API tokens
 
 In addition to the `x-passcode` header (full admin, used by the web app), agents can send a scoped bearer token:
@@ -262,7 +280,10 @@ Simple Floorplan exposes a stateless MCP Streamable HTTP endpoint at `/api/mcp` 
 - `slice_room` — Split a room along a line `(a, b)`.
 - `merge_rooms` — Merge two adjacent rooms (blocks bearing walls unless `allowBearingRemoval: true`; supports `dryRun`).
 - `set_wall_props` — Set wall type (`partition | bearing | exterior`), thickness, or lock.
-- `apply_measurements` — Re-solve room polygons from verified wall lengths.
+- `apply_measurements` — Re-solve the geometry of single rooms from verified wall lengths (a base edit; with the solver On, prefer `set_solver`).
+- `set_solver` — Turn the plan solver On or Off: it fits the WHOLE plan to the measured values, records each change, and Off writes the estimated + measured geometry back (`{ projectId, enabled, keepLocked?, surfaceMode?, snapThickness?, angles? }`).
+- `solver_revoke` — Hold one wall position or wall thickness at its base value (`{ projectId, wallId, kind }`).
+- `solver_restore` — Remove that hold (`{ projectId, wallId, kind }`).
 - `render_svg` — Render a standalone SVG (returned as text + `image/svg+xml` resource link).
 - `get_events` — Read the project event log (`{ projectId, since?, limit? }`; default limit 100, max 1000).
 

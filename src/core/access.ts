@@ -192,6 +192,9 @@ export const MCP_WRITE_TOOLS = new Set([
   'merge_rooms',
   'set_wall_props',
   'apply_measurements',
+  'set_solver',
+  'solver_revoke',
+  'solver_restore',
 ])
 
 /**
@@ -277,6 +280,12 @@ export function summarizeCommand(cmd: CommandLike): string {
       return `clear_measurement ${s(cmd.label)}`
     case 'apply_measurements':
       return `apply_measurements ${s(cmd.roomCode) || s(cmd.roomId) || ''}`
+    case 'set_solver':
+      return `set_solver ${cmd.enabled === true ? 'on' : 'off'}`
+    case 'solver_revoke':
+      return `solver_revoke ${s(cmd.wallId)} ${s(cmd.kind)}`
+    case 'solver_restore':
+      return `solver_restore ${s(cmd.wallId)} ${s(cmd.kind)}`
     case 'set_room_note':
       return `set_room_note ${s(cmd.roomCode) || s(cmd.roomId)}`
     case 'add_pin':

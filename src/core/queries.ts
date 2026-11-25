@@ -137,6 +137,69 @@ export function roomStorages(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 's
     })
 }
 
+// ---------- document solver (docs/solver-plan.md) ----------
+
+/** One change that the last solve made to a stored wall. */
+export type SolverChangeInfo = {
+  kind: 'position' | 'thickness'
+  wallId: string
+  /** Readable wall label, e.g. "KI-2" or "KI-2 / LI-4". */
+  label: string
+  /** How far the wall moved, cm (position changes). */
+  moveCm: number | null
+  /** Direction of the move. */
+  dir: 'N' | 'S' | 'E' | 'W' | null
+  /** Wall length before and after the solve, cm (position changes). */
+  lengthFromCm: number | null
+  lengthToCm: number | null
+  /** Wall thickness before and after the solve, cm (thickness changes). */
+  fromCm: number | null
+  toCm: number | null
+}
+
+/** A wall held at its base value: revoked by the user, or edited by hand while the solver is On. */
+export type SolverHoldInfo = {
+  kind: 'position' | 'thickness'
+  wallId: string
+  by: 'revoke' | 'edit'
+}
+
+/** State of the document solver, as the plan readers report it. Absent solver state = Off. */
+export type SolverInfo = {
+  enabled: boolean
+  /** ISO time of the last solve. */
+  solvedAt: string | null
+  /** Average mismatch of the last solve, cm rms. */
+  rmsCm: number | null
+  changeCount: number
+  changes: SolverChangeInfo[]
+  revokedHolds: SolverHoldInfo[]
+}
+
+/** Solver state of a document, with the numbers rounded for a report (cm, 1 decimal). */
+export function solverSummary(doc: PlanDoc): SolverInfo {
+  const s = doc.solver
+  const num = (v: number | undefined) => (v === undefined ? null : round1(v))
+  return {
+    enabled: Boolean(s?.enabled),
+    solvedAt: s?.solvedAt ?? null,
+    rmsCm: s?.rmsCm !== undefined ? round1(s.rmsCm) : null,
+    changeCount: s?.changes.length ?? 0,
+    changes: (s?.changes ?? []).map((c) => ({
+      kind: c.kind,
+      wallId: c.wallId,
+      label: c.label,
+      moveCm: num(c.moveCm),
+      dir: c.dir ?? null,
+      lengthFromCm: num(c.lengthFromCm),
+      lengthToCm: num(c.lengthToCm),
+      fromCm: num(c.fromCm),
+      toCm: num(c.toCm),
+    })),
+    revokedHolds: (s?.revoked ?? []).map((h) => ({ kind: h.kind, wallId: h.wallId, by: h.by })),
+  }
+}
+
 // ---------- 1. summary ----------
 
 export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSchema>) {
@@ -193,6 +256,10 @@ export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSche
     roomCount: listed.length,
     elementCount: (doc.elements ?? []).length,
     progress,
+    // The document solver (docs/solver-plan.md): Off = the plan shows estimated + measured values,
+    // On = it shows the solved geometry. `changes` says what the last solve moved, `revoked` lists
+    // the walls the user keeps at their base value.
+    solver: solverSummary(doc),
     rooms,
     takeoff: {
       inputs: inp,

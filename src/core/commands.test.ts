@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { roomAreaM2, roomWalls } from '../model/geometry'
 import { parsePlan, type PlanDocV1 } from './schema'
 import { apply, applyBatch, CommandError, CommandsBatchRequestSchema } from './commands'
-import { requiredScopeForCommands } from './access'
+import { commandScope, requiredScopeForCommands, summarizeCommand } from './access'
 
 const emptyDoc = (): PlanDocV1 =>
   parsePlan({
@@ -743,5 +743,124 @@ describe('commands: renovation wall status (7.4)', () => {
 
   it('rejects an unknown status', () => {
     expect(() => apply(flat(), { type: 'set_wall_props', wall: 'SE-1', status: 'remove' })).toThrow()
+  })
+})
+
+describe('commands: document solver (docs/solver-plan.md)', () => {
+  /** Two adjacent rooms with on-site values that the drawn plan does not match, so the solve moves walls. */
+  const measuredPlan = (): PlanDocV1 => {
+    let doc = apply(emptyDoc(), { type: 'add_room', code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 400, h: 300 } }).doc
+    doc = apply(doc, { type: 'add_room', code: 'CU', name: 'Kitchen', rect: { x: 400, y: 0, w: 300, h: 300 } }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'SE-1', actualCm: 412 }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'SE-2', actualCm: 292 }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'CU-1', actualCm: 308 }).doc
+    doc = apply(doc, { type: 'set_measurement', label: 'CU-2', actualCm: 296 }).doc
+    return doc
+  }
+
+  it('set_solver on solves the plan, and off restores the base geometry', () => {
+    const on = apply(measuredPlan(), { type: 'set_solver', enabled: true })
+    expect(on.doc.solver?.enabled).toBe(true)
+    expect(on.result.changeCount).toBeGreaterThan(0)
+    expect(on.result.message).toMatch(/^Solver on: \d+ changes, average mismatch [\d.]+ cm\.$/)
+    expect(on.result.message).toContain(`Solver on: ${on.result.changeCount} changes, average mismatch `)
+
+    const base = on.doc.solver?.baseNodes ?? {}
+    expect(Object.keys(base).length).toBeGreaterThan(0)
+    const solvedNodes = new Map((on.doc.nodes ?? []).map((n) => [n.id, n]))
+    // The solve moved the walls away from the drawn plan.
+    const moved = Object.entries(base).filter(([id, p]) => {
+      const n = solvedNodes.get(id)
+      return !!n && Math.hypot(n.x - p.x, n.y - p.y) > 0.01
+    })
+    expect(moved.length).toBeGreaterThan(0)
+
+    const off = apply(on.doc, { type: 'set_solver', enabled: false })
+    expect(off.doc.solver?.enabled).toBe(false)
+    expect(off.doc.solver?.changes).toEqual([])
+    expect(off.result.message).toBe('Solver off: plan back to estimated and measured values.')
+    // Round trip: every node the solve moved is back at its base position.
+    const offNodes = new Map((off.doc.nodes ?? []).map((n) => [n.id, n]))
+    for (const [id, p] of Object.entries(base)) {
+      const n = offNodes.get(id)
+      expect(n?.x).toBeCloseTo(p.x, 6)
+      expect(n?.y).toBeCloseTo(p.y, 6)
+    }
+  })
+
+  it('set_solver takes the same options as the Solve tab', () => {
+    const on = apply(measuredPlan(), { type: 'set_solver', enabled: true, keepLocked: false, snapThickness: true, angles: 'free' })
+    expect(on.doc.solver?.enabled).toBe(true)
+    expect(on.result.changeCount).toBeGreaterThan(0)
+    // An unknown option value is rejected by the schema.
+    expect(() => apply(measuredPlan(), { type: 'set_solver', enabled: true, angles: 'any' })).toThrow()
+  })
+
+  it('solver_revoke holds one change and solver_restore lets that wall move again', () => {
+    const on = apply(measuredPlan(), { type: 'set_solver', enabled: true })
+    const change = on.doc.solver!.changes[0]
+    expect(change).toBeDefined()
+
+    const rev = apply(on.doc, { type: 'solver_revoke', wallId: change.wallId, kind: change.kind })
+    expect(rev.doc.solver?.revoked).toEqual(
+      expect.arrayContaining([{ kind: change.kind, wallId: change.wallId, by: 'revoke' }]),
+    )
+    // A revoked change leaves the change list: the wall stays at its base value.
+    expect(
+      (rev.doc.solver?.changes ?? []).some((c) => c.kind === change.kind && c.wallId === change.wallId),
+    ).toBe(false)
+    expect(rev.result.message).toBe(`Revoked: wall ${change.wallId} ${change.kind} stays at its base value.`)
+
+    const res = apply(rev.doc, { type: 'solver_restore', wallId: change.wallId, kind: change.kind })
+    expect(
+      (res.doc.solver?.revoked ?? []).some((h) => h.kind === change.kind && h.wallId === change.wallId),
+    ).toBe(false)
+    expect(res.result.message).toBe(`Restored: wall ${change.wallId} ${change.kind} can move again.`)
+  })
+
+  it('solver_revoke accepts a wall label and refuses an unknown wall', () => {
+    const on = apply(measuredPlan(), { type: 'set_solver', enabled: true })
+    const byLabel = apply(on.doc, { type: 'solver_revoke', wallId: 'SE-1', kind: 'position' })
+    const wallId = byLabel.result.wallId as string
+    expect((on.doc.walls ?? []).some((w) => w.id === wallId)).toBe(true)
+    expect((byLabel.doc.solver?.revoked ?? []).some((h) => h.wallId === wallId && h.kind === 'position')).toBe(true)
+
+    expect(() => apply(on.doc, { type: 'solver_revoke', wallId: 'W-NOPE', kind: 'position' })).toThrow(CommandError)
+    expect(() => apply(on.doc, { type: 'solver_restore', wallId: 'W-NOPE', kind: 'thickness' })).toThrow(CommandError)
+  })
+
+  it('is an edit command with a short event-log summary', () => {
+    expect(commandScope('set_solver')).toBe('edit')
+    expect(commandScope('solver_revoke')).toBe('edit')
+    expect(commandScope('solver_restore')).toBe('edit')
+    expect(requiredScopeForCommands(['set_solver'])).toBe('edit')
+    expect(summarizeCommand({ type: 'set_solver', enabled: true })).toBe('set_solver on')
+    expect(summarizeCommand({ type: 'set_solver', enabled: false })).toBe('set_solver off')
+    expect(summarizeCommand({ type: 'solver_revoke', wallId: 'W12', kind: 'position' })).toBe(
+      'solver_revoke W12 position',
+    )
+    expect(summarizeCommand({ type: 'solver_restore', wallId: 'W12', kind: 'thickness' })).toBe(
+      'solver_restore W12 thickness',
+    )
+  })
+
+  it('drops the change of a wall that a command edits while the solver is On', () => {
+    const on = apply(measuredPlan(), { type: 'set_solver', enabled: true })
+    const before = on.doc.solver!.changes.length
+    expect(before).toBeGreaterThan(0)
+
+    // A user command that moves geometry. The vertex stays on the line of its wall, so the wall
+    // graph keeps its nodes and the walls win on a v2 document.
+    const edited = apply(on.doc, { type: 'move_vertex', roomCode: 'SE', vertexIndex: 1, x: 409, y: 0 })
+    expect(edited.doc.solver?.enabled).toBe(true)
+    const holds = (edited.doc.solver?.revoked ?? []).filter((h) => h.by === 'edit')
+    expect(holds.length).toBeGreaterThan(0)
+    // The edited walls are base now: they have no recorded change any more.
+    for (const h of holds) {
+      expect(
+        (edited.doc.solver?.changes ?? []).some((c) => c.kind === h.kind && c.wallId === h.wallId),
+      ).toBe(false)
+    }
+    expect((edited.doc.solver?.changes ?? []).length).toBeLessThan(before)
   })
 })

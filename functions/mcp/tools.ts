@@ -80,7 +80,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'get_plan',
     description:
-      'Read a floorplan project. Use format="summary" (default) for a compact overview of rooms, areas, survey progress, and takeoff, or format="json" for the full PlanDoc v1 document.',
+      'Read a floorplan project. Use format="summary" (default) for a compact overview of rooms, areas, survey progress, takeoff and the solver state (On/Off, last solve time, average mismatch, the change list with wall ids, labels and sizes, and the held walls), or format="json" for the full PlanDoc v1 document.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -150,7 +150,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'run_commands',
     description:
-      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, delete_wall, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_room_note, add_pin, add_tape, set_apartment, add_storage, update_storage, delete_storage). Supports dryRun preview and baseVersion optimistic concurrency.',
+      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, delete_wall, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_solver, solver_revoke, solver_restore, set_room_note, add_pin, add_tape, set_apartment, add_storage, update_storage, delete_storage). Supports dryRun preview and baseVersion optimistic concurrency.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -419,7 +419,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'apply_measurements',
     description:
-      'Re-solve room polygons from verified on-site wall measurements and optionally lock verified walls. Use dryRun=true to preview area and residual changes.',
+      'Re-solve the geometry of single rooms from verified on-site wall measurements (a BASE edit: it changes the estimated values the solver reads). It optionally locks the walls that match. When the solver is On, prefer set_solver: it fits the WHOLE plan to the measured values. Use dryRun=true to preview area and residual changes.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -433,6 +433,61 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
       },
       required: ['projectId'],
+    },
+  },
+  {
+    name: 'set_solver',
+    description:
+      'Turn the plan solver On or Off. The solver fits the WHOLE plan to the measured values at once: it moves walls a little, changes some wall thicknesses, and records every change (a wall that moved, with the size and the direction, or a wall thickness that changed). enabled=true: solve the plan now from the base geometry (the estimated values plus the measured values you applied) and record the changes. enabled=false: turn it Off and write the base geometry back, so the plan shows the estimated and measured values again. Off is the state of every project that was never solved. Optional settings, same defaults as the Solve tab of the app: keepLocked (default true, a locked wall keeps its length), surfaceMode off|guide|match (default off), snapThickness (default false), angles square|free (default square). The read of the plan (get_plan) returns the solver state and the change list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
+        enabled: { type: 'boolean', description: 'true = solve the whole plan now; false = turn Off and restore the estimated and measured geometry.' },
+        keepLocked: { type: 'boolean', description: 'A locked wall keeps its length (default true).' },
+        surfaceMode: {
+          type: 'string',
+          enum: ['off', 'guide', 'match'],
+          description: 'How the reference surfaces (DPE, Carrez...) are used: off (default), guide or match.',
+        },
+        snapThickness: { type: 'boolean', description: 'A wall the values do not determine, but that moved, gets a usual thickness (default false).' },
+        angles: { type: 'string', enum: ['square', 'free'], description: 'square (default) keeps drawn horizontal and vertical walls at their angle; free lets them turn.' },
+        dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
+        baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
+      },
+      required: ['projectId', 'enabled'],
+    },
+  },
+  {
+    name: 'solver_revoke',
+    description:
+      'Keep ONE wall at its base value while the solver is On: the solver writes that wall position or that wall thickness back to the estimated and measured value and holds it there on the next solves. Use the wallId and kind of a row of the change list (get_plan returns it). When the solver is On the plan is solved again immediately. Important: this is a document rule, so a later edit of the same wall (a drag, a typed length, a command) drops the hold and the new value becomes the base value. When the solver is Off the hold is only recorded.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
+        wallId: { type: 'string', minLength: 1, description: 'Stored wall id of a change (for example "W12"), or a wall label (for example "KI-2").' },
+        kind: { type: 'string', enum: ['position', 'thickness'], description: 'What to hold: the wall position or the wall thickness.' },
+        dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
+        baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
+      },
+      required: ['projectId', 'wallId', 'kind'],
+    },
+  },
+  {
+    name: 'solver_restore',
+    description:
+      'Remove a hold on one wall (kind + wallId) so the solver may move that wall position or change that wall thickness again. It removes a revoked change and also a hold that an edit made. When the solver is On the plan is solved again immediately; the change comes back in the change list when the values need it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
+        wallId: { type: 'string', minLength: 1, description: 'Stored wall id (for example "W12"), or a wall label (for example "KI-2").' },
+        kind: { type: 'string', enum: ['position', 'thickness'], description: 'What to release: the wall position or the wall thickness.' },
+        dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
+        baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
+      },
+      required: ['projectId', 'wallId', 'kind'],
     },
   },
   {
@@ -611,8 +666,12 @@ export async function callTool(
       const roomList = summary.rooms
         .map((r) => `${r.code} (${r.name}): ${r.areaM2} m², ${r.measured.done}/${r.measured.total} measured`)
         .join('; ')
+      const solver = summary.solver
+      const solverText = !solver.enabled
+        ? 'solver off'
+        : `solver on: ${solver.changeCount} changes, average mismatch ${solver.rmsCm ?? '?'} cm${solver.revokedHolds.length ? `, ${solver.revokedHolds.length} held` : ''}${solver.solvedAt ? `, solved ${solver.solvedAt}` : ''}`
       return okResult(
-        `${loaded.project.name} (v${loaded.version}): ${summary.roomCount} rooms, ${summary.totalIndoorAreaM2} m² indoor, ${summary.totalOutdoorAreaM2} m² outdoor, survey ${summary.progress.done}/${summary.progress.total}. ${roomList}`,
+        `${loaded.project.name} (v${loaded.version}): ${summary.roomCount} rooms, ${summary.totalIndoorAreaM2} m² indoor, ${summary.totalOutdoorAreaM2} m² outdoor, survey ${summary.progress.done}/${summary.progress.total}, ${solverText}. ${roomList}`,
         { ...summary, version: loaded.version },
       )
     }
@@ -967,6 +1026,58 @@ export async function callTool(
           baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,
         },
         ({ version, dryRun }) => `${dryRun ? '[dryRun] ' : ''}Applied verified measurements (version ${version}).`,
+        ctx,
+      )
+    }
+
+    case 'set_solver': {
+      const projectId = asString(args.projectId)
+      if (!projectId) return errResult('INVALID_PARAMS', 'projectId is required.')
+      if (typeof args.enabled !== 'boolean') {
+        return errResult('INVALID_PARAMS', 'enabled is required and must be a boolean.')
+      }
+      const cmd: Record<string, unknown> = { type: 'set_solver', enabled: args.enabled }
+      for (const k of ['keepLocked', 'surfaceMode', 'snapThickness', 'angles'] as const) {
+        if (args[k] !== undefined) cmd[k] = args[k]
+      }
+      return executeCommandsTool(
+        store,
+        projectId,
+        [cmd],
+        {
+          dryRun: Boolean(args.dryRun),
+          baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,
+        },
+        ({ version, dryRun, results }) => {
+          const msg = (results[0] as { message?: string } | undefined)?.message
+            ?? `Solver ${args.enabled ? 'on' : 'off'}.`
+          return `${dryRun ? '[dryRun] ' : ''}${msg.replace(/\.$/, '')} (version ${version}).`
+        },
+        ctx,
+      )
+    }
+
+    case 'solver_revoke':
+    case 'solver_restore': {
+      const projectId = asString(args.projectId)
+      const wallId = asString(args.wallId) ?? asString(args.wall)
+      const kind = asString(args.kind)
+      if (!projectId || !wallId || !kind) {
+        return errResult('INVALID_PARAMS', 'projectId, wallId and kind are required.')
+      }
+      return executeCommandsTool(
+        store,
+        projectId,
+        [{ type: name, wallId, kind }],
+        {
+          dryRun: Boolean(args.dryRun),
+          baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,
+        },
+        ({ version, dryRun, results }) => {
+          const msg = (results[0] as { message?: string } | undefined)?.message
+            ?? `${name} ${wallId} ${kind}.`
+          return `${dryRun ? '[dryRun] ' : ''}${msg.replace(/\.$/, '')} (version ${version}).`
+        },
         ctx,
       )
     }
