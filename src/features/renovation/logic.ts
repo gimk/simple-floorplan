@@ -254,7 +254,10 @@ export type RenovationTotals = { areaM2: number; rooms: number }
 export function renovationTotals(doc: Pick<PlanDoc, 'rooms'>, view: RenovationView): RenovationTotals {
   const rooms = renovationRooms(doc, view).filter((d) => !d.outdoor)
   const areaM2 = Math.round(rooms.reduce((s, d) => s + d.areaM2, 0) * 100) / 100
-  return { areaM2, rooms: rooms.length }
+  // A built-in storage counts in the area but not as a room (docs/storage-plan.md).
+  const storageIds = new Set((doc.rooms ?? []).filter((r) => r.storage).map((r) => r.id))
+  const roomCount = rooms.filter((d) => !d.roomIds.every((id) => storageIds.has(id))).length
+  return { areaM2, rooms: roomCount }
 }
 
 /** Before / after totals, or null when no wall has a renovation status. */

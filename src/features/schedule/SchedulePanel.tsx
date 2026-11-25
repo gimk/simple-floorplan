@@ -24,6 +24,7 @@ function Row({ row, selected, areaDecimals, onSelect }: {
   return (
     <tr
       data-room-schedule-row={row.roomId}
+      {...(row.storage ? { 'data-room-schedule-storage': 'yes' } : {})}
       aria-selected={selected}
       tabIndex={0}
       onClick={onSelect}
@@ -37,8 +38,9 @@ function Row({ row, selected, areaDecimals, onSelect }: {
         selected ? 'bg-orange-500/15' : 'hover:bg-black/5 dark:hover:bg-white/10'
       }`}
     >
-      <td className="px-1 py-1 text-left font-medium" title={row.code}>{row.code}</td>
-      <td className={`max-w-24 truncate px-1 py-1 ${row.outdoor ? MUTED : ''}`} title={row.name}>
+      {/* A built-in storage is a sub-row: a small left padding, under its parent room. */}
+      <td className={`py-1 pr-1 text-left font-medium ${row.storage ? 'pl-3' : 'pl-1'}`} title={row.code}>{row.code}</td>
+      <td className={`max-w-24 truncate px-1 py-1 ${row.outdoor || row.storage ? MUTED : ''}`} title={row.name}>
         {row.name === '' ? '—' : row.name}
         {row.outdoor && <span className="ml-1 text-[10px] uppercase">out</span>}
       </td>

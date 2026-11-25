@@ -23,8 +23,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 export const totalAreaM2 = (rooms: Room[]): number => rooms.reduce((s, r) => s + roomAreaM2(r), 0)
 
 export type ApartmentTotals = {
-  /** All rooms, outdoor included. */
+  /** Rooms of the apartment, built-in storage excluded (it is not a room of its own). */
   roomCount: number
+  /** Indoor rooms, built-in storage excluded. */
   indoorRoomCount: number
   outdoorRoomCount: number
   /** Sum of the indoor floor areas, m² (outdoor rooms excluded). */
@@ -58,8 +59,10 @@ export function apartmentTotals(doc: PlanDoc): ApartmentTotals {
     volumeM3 += roomAreaM2(r) * (cm / 100)
   }
   return {
-    roomCount: doc.rooms.length,
-    indoorRoomCount: indoor.length,
+    // A built-in storage is shown inside its parent room (docs/storage-plan.md), so the ROOM
+    // count leaves it out. Its area stays in the areas below.
+    roomCount: doc.rooms.filter((r) => !r.storage).length,
+    indoorRoomCount: indoor.filter((r) => !r.storage).length,
     outdoorRoomCount: outdoor.length,
     indoorAreaM2: round2(totalAreaM2(indoor)),
     outdoorAreaM2: round2(totalAreaM2(outdoor)),

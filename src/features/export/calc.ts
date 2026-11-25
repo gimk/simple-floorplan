@@ -60,12 +60,15 @@ export function calcRoom(doc: PlanDoc, room: Room, inp: CalcInputs): RoomCalc {
   const floorM2 = roomAreaM2(room)
   const ceilingCm = effectiveCeilingCm(doc, room)
   const wallM2 = ceilingCm === null ? null : Math.max(0, (perimeterCm * ceilingCm) / 10000 - openingAreaM2)
+  // A built-in storage gets no baseboard (docs/storage-plan.md): a closet has no skirting. Its
+  // walls, paint and floor stay in the takeoff.
+  const baseboardM = room.storage ? 0 : Math.max(0, perimeterCm - doorWidthCm) / 100
   return {
     roomId: room.id, code: room.code, name: room.name,
     floorM2,
     flooringM2: floorM2 * (1 + inp.wastePct / 100),
     perimeterM: perimeterCm / 100,
-    baseboardM: Math.max(0, perimeterCm - doorWidthCm) / 100,
+    baseboardM,
     ceilingCm,
     wallM2,
     paintL: wallM2 === null || inp.coverage <= 0 ? null : (wallM2 * inp.coats) / inp.coverage,

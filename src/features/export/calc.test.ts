@@ -57,6 +57,22 @@ describe('calc', () => {
   it('excludes outdoor rooms', () => {
     expect(calcAll(mkDoc(mkRoom({ outdoor: true })), DEFAULT_INPUTS).rows).toHaveLength(0)
   })
+  it('gives no baseboard to a built-in storage, and keeps its walls and paint', () => {
+    // A storage room: same shape, flagged with its parent room (docs/storage-plan.md).
+    const store = mkRoom({ id: 's1', code: 'ST', name: 'Storage', storage: { parentRoomId: 'r1' } })
+    const d = mkDoc(mkRoom())
+    d.rooms = [mkRoom(), store]
+    const { rows, totals } = calcAll(d, DEFAULT_INPUTS)
+    const row = rows.find((r) => r.roomId === 's1')
+    expect(row?.baseboardM).toBe(0)
+    // Its walls, floor and paint stay in the takeoff.
+    expect(row?.perimeterM).toBeCloseTo(13.6)
+    expect(row?.floorM2).toBeCloseTo(11.31)
+    expect(row?.wallM2).toBeCloseTo(13.6 * 2.5)
+    expect(row?.paintL).toBeCloseTo((13.6 * 2.5 * 2) / 10)
+    // The baseboard total only holds the baseboard of the normal room.
+    expect(totals.baseboardM).toBeCloseTo(12.7)
+  })
 })
 
 describe('calc: effectiveCeilingCm', () => {

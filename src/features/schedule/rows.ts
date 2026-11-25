@@ -12,9 +12,20 @@ export type ScheduleRow = {
   roomId: string
   /** Survey code, e.g. "CU". */
   code: string
+  /**
+   * Name of the line. For a built-in storage it is "Storage (Bedroom 1)", or "<name> (Bedroom 1)"
+   * when the storage has its own name (docs/storage-plan.md).
+   */
   name: string
   /** True for a balcony or a terrace: the room is a row but stays out of the totals. */
   outdoor: boolean
+  /**
+   * True for a built-in storage room: it has its own line, just under the room it opens into, and
+   * it is shown indented. Its area is in the totals but it does not count as a room.
+   */
+  storage: boolean
+  /** Parent room of a storage line, when the parent is in the document. */
+  parentRoomId?: string
   /** Floor area, m² (holes subtracted). */
   areaM2: number
   /** Perimeter on the inside faces, cm. */
@@ -67,19 +78,66 @@ export const volumeM3 = (areaM2: number, ceilingCm: number | undefined): number 
   return h === undefined ? undefined : (areaM2 * h) / 100
 }
 
+/** Default name of a built-in storage room (features/storage/actions.ts). */
+export const STORAGE_NAME = 'Storage'
+
+/**
+ * Name of a schedule line. A normal room keeps its own name. A built-in storage reads
+ * "Storage (Bedroom 1)", or "<name> (Bedroom 1)" when the user gave it another name. Without a
+ * parent room (deleted parent) the name stands alone.
+ */
+export function scheduleRowName(room: Room, parent?: Room): string {
+  if (!room.storage) return room.name
+  const own = room.name.trim() === '' ? STORAGE_NAME : room.name.trim()
+  const parentName = parent?.name.trim() ?? ''
+  return parentName === '' ? own : `${own} (${parentName})`
+}
+
 /** One row per room, in the order of the measuring walk-through, plus the totals. */
 export function scheduleRows(doc: ScheduleDoc): Schedule {
   // The same order as the survey list: roomsInWalkOrder() of model/survey.ts.
   const rooms = roomsInWalkOrder(doc as PlanDoc)
-  const rows = rooms.map((room): ScheduleRow => {
+  const roomIds = new Set(rooms.map((r) => r.id))
+  const byId = new Map(rooms.map((r) => [r.id, r]))
+  // Built-in storages, grouped by parent room: each one gets its own line under its parent.
+  const storagesOf = new Map<string, Room[]>()
+  for (const r of rooms) {
+    const parentId = r.storage?.parentRoomId
+    if (!parentId || parentId === r.id) continue
+    const list = storagesOf.get(parentId) ?? []
+    list.push(r)
+    storagesOf.set(parentId, list)
+  }
+  const lines: { room: Room; parent?: Room }[] = []
+  const placed = new Set<string>()
+  for (const room of rooms) {
+    if (room.storage) {
+      // A storage with a parent in the document comes with that parent (just below).
+      const parent = room.storage.parentRoomId ? byId.get(room.storage.parentRoomId) : undefined
+      if (parent && roomIds.has(parent.id) && parent.id !== room.id) continue
+      lines.push({ room }) // orphan: its own line, without a parent name
+      placed.add(room.id)
+      continue
+    }
+    lines.push({ room })
+    placed.add(room.id)
+    for (const storage of storagesOf.get(room.id) ?? []) {
+      if (placed.has(storage.id)) continue
+      lines.push({ room: storage, parent: room })
+      placed.add(storage.id)
+    }
+  }
+  const rows = lines.map(({ room, parent }): ScheduleRow => {
     const areaM2 = roomAreaM2(room)
     const ceilingCm = roomCeilingCm(room, doc.apartment?.defaultCeilingCm)
     const progress = wallProgress([room], doc.measurements)
     return {
       roomId: room.id,
       code: room.code,
-      name: room.name,
+      name: scheduleRowName(room, parent),
       outdoor: !!room.outdoor,
+      storage: !!room.storage,
+      ...(parent ? { parentRoomId: parent.id } : {}),
       areaM2,
       perimeterCm: roomPerimeterCm(room),
       ceilingCm,
@@ -96,7 +154,8 @@ export function totalsOf(rows: readonly ScheduleRow[]): ScheduleTotals {
   const t: ScheduleTotals = { rooms: 0, areaM2: 0, volumeM3: 0, missingCeiling: 0, measuredWalls: 0, walls: 0 }
   for (const r of rows) {
     if (r.outdoor) continue
-    t.rooms += 1
+    // A built-in storage counts in the areas, its walls and the volume, but not as a room.
+    if (!r.storage) t.rooms += 1
     t.areaM2 += r.areaM2
     if (r.volumeM3 === undefined) t.missingCeiling += 1
     else t.volumeM3 += r.volumeM3

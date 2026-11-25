@@ -97,4 +97,23 @@ describe('SchedulePanelView', () => {
     const html = renderToString(<SchedulePanelView doc={doc()} />)
     expect(html).toContain('without ceiling height')
   })
+
+  it('shows a built-in storage as an indented sub-row, its area in the total', () => {
+    const store = rect({
+      id: 's1', code: 'ST', name: 'Storage', walkOrder: 3,
+      storage: { parentRoomId: 'r1' },
+      vertices: [
+        { id: 's1a', x: 0, y: -60 }, { id: 's1b', x: 200, y: -60 },
+        { id: 's1c', x: 200, y: -10 }, { id: 's1d', x: 0, y: -10 },
+      ],
+    })
+    const html = renderToString(<SchedulePanelView doc={doc({ rooms: [rect(), store] })} />)
+    expect(html).toContain('Storage (Cuisine)')
+    expect(html).toContain('data-room-schedule-storage="yes"')
+    // The storage row comes after its parent row, in the markup.
+    expect(html.indexOf('data-room-schedule-row="r1"')).toBeLessThan(html.indexOf('data-room-schedule-row="s1"'))
+    // Its area is in the total (11,31 + 0,76 = 12,07) but it is not a room of the count.
+    expect(html).toContain('12,07')
+    expect(html).toContain('(1)')
+  })
 })

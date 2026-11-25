@@ -124,6 +124,62 @@ describe('scheduleRows: the totals', () => {
   })
 })
 
+describe('scheduleRows: built-in storage (docs/storage-plan.md)', () => {
+  /** 200 x 50 cm storage: inside faces 190 x 40 = 0,76 m² (10 cm walls). */
+  const storage = (over: Partial<Room> = {}): Room =>
+    rect({
+      id: 's1', code: 'ST', name: 'Storage', walkOrder: 5,
+      storage: { parentRoomId: 'r1' },
+      vertices: [
+        { id: 's1a', x: 0, y: -60 }, { id: 's1b', x: 200, y: -60 },
+        { id: 's1c', x: 200, y: -10 }, { id: 's1d', x: 0, y: -10 },
+      ],
+      ...over,
+    })
+
+  it('gives the storage its own row just after its parent, with the parent name', () => {
+    const { rows } = scheduleRows(doc({ rooms: [rect(), storage()] }))
+    expect(rows.map((r) => r.roomId)).toEqual(['r1', 's1'])
+    expect(rows[1].name).toBe('Storage (Cuisine)')
+    expect(rows[1].storage).toBe(true)
+    expect(rows[1].parentRoomId).toBe('r1')
+    expect(rows[0].storage).toBe(false)
+    expect(rows[0].name).toBe('Cuisine')
+  })
+
+  it('keeps the storage under its parent even when the walk order says otherwise', () => {
+    const { rows } = scheduleRows(doc({ rooms: [storage({ walkOrder: 0 }), rect({ walkOrder: 1 })] }))
+    expect(rows.map((r) => r.roomId)).toEqual(['r1', 's1'])
+  })
+
+  it('uses the own name of a storage that the user renamed', () => {
+    const { rows } = scheduleRows(doc({ rooms: [rect(), storage({ name: 'Cave' })] }))
+    expect(rows[1].name).toBe('Cave (Cuisine)')
+    // An unnamed storage falls back to "Storage".
+    const unnamed = scheduleRows(doc({ rooms: [rect(), storage({ name: '  ' })] }))
+    expect(unnamed.rows[1].name).toBe('Storage (Cuisine)')
+  })
+
+  it('keeps a storage whose parent is gone, without a parent name', () => {
+    const { rows } = scheduleRows(doc({ rooms: [storage({ storage: { parentRoomId: 'gone' } })] }))
+    expect(rows).toHaveLength(1)
+    expect(rows[0].name).toBe('Storage')
+    expect(rows[0].parentRoomId).toBeUndefined()
+  })
+
+  it('counts the storage area in the totals but not as a room', () => {
+    const { rows, totals } = scheduleRows(doc({ rooms: [rect({ ceilingCm: 250 }), storage({ ceilingCm: 250 })] }))
+    expect(rows[1].areaM2).toBeCloseTo(0.76, 6)
+    expect(totals.rooms).toBe(1)
+    expect(totals.areaM2).toBeCloseTo(11.31 + 0.76, 6)
+    expect(totals.volumeM3).toBeCloseTo((11.31 + 0.76) * 2.5, 6)
+    // The storage walls stay in the wall totals (they have survey IDs).
+    expect(totals.walls).toBe(8)
+    // The storage keeps its walls out of the outdoor filter only: it is an indoor row.
+    expect(rows[1].outdoor).toBe(false)
+  })
+})
+
 describe('scheduleCsv: French Excel', () => {
   const d = doc({
     rooms: [rect({ ceilingCm: 250, name: 'Cuisine; coin repas' }), living({ name: 'Séjour', walkOrder: 1 }), rect({ id: 'r3', code: 'BA', name: 'Balcon', outdoor: true, walkOrder: 2 })],
