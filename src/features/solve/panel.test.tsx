@@ -243,6 +243,36 @@ describe('SolvePanel changes & kept walls', () => {
     expect(html).toContain('kept at plan value')
     expect(html).toContain('(you edited it)')
   })
+
+  it('says which value is kept: the position or the thickness (round 2 finding 8)', () => {
+    // The same wall held twice: its position and its thickness. Two rows must not read the same.
+    const d: PlanDoc = {
+      ...makeV2Doc(),
+      solver: {
+        enabled: true,
+        solvedAt: FIXED_NOW,
+        rmsCm: 0,
+        changes: [],
+        revoked: [
+          { kind: 'position', wallId: 'W2', by: 'revoke' },
+          { kind: 'thickness', wallId: 'W2', by: 'edit' },
+        ],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+    const html = render(d)
+    expect(html).toContain('data-solver-kept="position:W2"')
+    expect(html).toContain('data-solver-kept="thickness:W2"')
+    // react-dom/server separates interpolated text nodes with <!-- -->: read each row's text only.
+    const rowText = (key: string) =>
+      new RegExp(`<li data-solver-kept="${key}"[\\s\\S]*?</li>`).exec(html)![0].replace(/<!-- -->/g, '')
+    expect(rowText('position:W2')).toContain('position: kept at plan value')
+    expect(rowText('position:W2')).not.toContain('thickness:')
+    expect(rowText('position:W2')).toContain('(revoked)')
+    expect(rowText('thickness:W2')).toContain('thickness: kept at plan value')
+    expect(rowText('thickness:W2')).toContain('(you edited it)')
+  })
 })
 
 describe('SolvePanel progress', () => {

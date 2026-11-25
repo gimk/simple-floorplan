@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { syncStoredGraph } from '../../model/storedGraph'
 import { emptyDoc, useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room } from '../../model/types'
-import { APPLY_HINT, APPLY_LABEL, APPLY_NONE_TEXT, ApplyMeasuredButton, applyMeasuredToPlan, hasMeasuredValue } from './ApplyMeasuredButton'
+import { APPLY_HINT, APPLY_LABEL, APPLY_NONE_TEXT, ApplyMeasuredButton, applyMeasuredToPlan, hasMeasuredValue, measuredThicknesses } from './ApplyMeasuredButton'
 import { measureRows } from './logic'
 
 const room = (id: string, pts: [number, number][]): Room => ({
@@ -68,6 +68,60 @@ describe('applyMeasuredToPlan', () => {
     expect(Math.round(top * 10) / 10).toBe(Math.round((planned + 20) * 10) / 10)
     expect(after).not.toBe(before)
     // One undo step, which puts the plan back.
+    expect(useDoc.temporal.getState().pastStates.length).toBe(1)
+    useDoc.temporal.getState().undo()
+    expect(useDoc.getState().doc).toBe(before)
+  })
+})
+
+describe('applyMeasuredToPlan and wall thicknesses (round 2 finding 2)', () => {
+  it('lists only the thickness values of the plan, with their cm', () => {
+    const measurements = {
+      'A-1': { label: 'A-1', actualCm: 310, updatedAt: '' },
+      'A-1-T': { label: 'A-1-T', actualCm: 24, updatedAt: '' },
+      'A-2-T': { label: 'A-2-T', actualCm: 0, updatedAt: '' },
+    }
+    expect(measuredThicknesses({ measurements })).toEqual([{ label: 'A-1-T', cm: 24 }])
+  })
+
+  it('puts a measured thickness on its wall, in the same single undo step, and counts it', () => {
+    const base = plan()
+    useDoc.setState({ doc: { ...base, measurements: { 'A-1-T': { label: 'A-1-T', actualCm: 24, updatedAt: '' } } } })
+    useDoc.temporal.getState().clear()
+    const before = useDoc.getState().doc
+
+    // No measured length, only a thickness: the toast says what it applied.
+    expect(applyMeasuredToPlan()).toBe('Applied to 1 wall thickness.')
+    const after = useDoc.getState().doc
+    expect(after.rooms.find((r) => r.code === 'A')!.walls['Av0'].thicknessCm).toBe(24)
+    // One undo step, which puts the plan back.
+    expect(useDoc.temporal.getState().pastStates.length).toBe(1)
+    useDoc.temporal.getState().undo()
+    expect(useDoc.getState().doc).toBe(before)
+  })
+
+  it('applies lengths and thicknesses together, in one step, and counts both', () => {
+    const base = plan()
+    const planned = measureRows(base.rooms[0]).find((r) => r.label === 'A-1')!.plannedCm!
+    useDoc.setState({
+      doc: {
+        ...base,
+        measurements: {
+          'A-1': { label: 'A-1', actualCm: planned + 20, updatedAt: '' },
+          'A-1-T': { label: 'A-1-T', actualCm: 24, updatedAt: '' },
+        },
+      },
+    })
+    useDoc.temporal.getState().clear()
+    const before = useDoc.getState().doc
+
+    expect(applyMeasuredToPlan()).toBe('Applied to 1 room and 1 wall thickness.')
+    const after = useDoc.getState().doc
+    const room = after.rooms.find((r) => r.code === 'A')!
+    expect(room.walls['Av0'].thicknessCm).toBe(24)
+    expect(Math.round(measureRows(room).find((r) => r.label === 'A-1')!.plannedCm! * 10) / 10)
+      .toBe(Math.round((planned + 20) * 10) / 10)
+    // Still one undo step for the whole apply.
     expect(useDoc.temporal.getState().pastStates.length).toBe(1)
     useDoc.temporal.getState().undo()
     expect(useDoc.getState().doc).toBe(before)

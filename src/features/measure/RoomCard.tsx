@@ -70,7 +70,11 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
       : sid.kind === 'thickness' ? `${sid.label} · thickness`
       : sid.text
     // The plan changed this wall: the solved length comes after the fit (docs/solver-plan.md).
-    const change = verified ? solverChangeForLabel(doc, sid.label) : undefined
+    // A grouped row (one visible wall stored as 2+ faces) is solved when the solver changed ANY of its
+    // faces: its first face alone is not the whole row.
+    const change = verified
+      ? sid.labels.map((l) => solverChangeForLabel(doc, l)).find((c) => c !== undefined)
+      : undefined
     const line = verified && sid.plannedCm != null && dis
       ? fieldLine(sid.plannedCm, value as number, !!change, flagged)
       : null

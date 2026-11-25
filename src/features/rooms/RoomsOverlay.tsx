@@ -310,14 +310,18 @@ export function RoomsOverlay() {
         const normal = { x: -uy * k, y: ux * k }
         const keys = sideFaceKeys(s)
         return s.faces.map((f, i) => {
-          const measuredFace = f.kind === 'room' && !!f.measuredCm
-          // A room face is a survey value ('EN-3'); an outside span has no value of its own, except
-          // the facade value 'W12-E' of a side that is outside along its whole length.
+          // A room face carries its own value ('EN-3'); an outside span has no value of its own,
+          // except the facade value 'W12-E' of a side that is outside along its whole length. That
+          // value then wins, green and bold, as in OutsideDimsLayer (round 2 finding 9).
+          const faceCm = f.kind === 'room'
+            ? f.measuredCm
+            : s.outside && s.facadeLabel ? measurements[s.facadeLabel]?.actualCm : undefined
+          const measuredFace = (faceCm ?? 0) > 0
           const faceState = f.kind === 'room'
             ? valueStates(f.label, f.measuredCm)
             : s.outside && s.facadeLabel ? valueStates(s.facadeLabel) : 'estimated'
-          const text = f.kind === 'room' && f.measuredCm
-            ? measuredTextIn(f.measuredCm, shownLength(f.lengthCm, step), step, units)
+          const text = measuredFace
+            ? measuredTextIn(faceCm as number, shownLength(f.lengthCm, step), step, units)
             : fmtLen(shownLength(f.lengthCm, step), units)
           const line = dimLineOfSpan(a, b, normal, { from: f.from, to: f.to }, helperOff, zoom, text)
           if (!line) return null

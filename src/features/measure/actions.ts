@@ -1,5 +1,5 @@
 // Small side-effect helpers for Measuring Mode (store writes, DOM navigation).
-import { nowIso, useDoc } from '../../model/store'
+import { nowIso, useDoc, useUi } from '../../model/store'
 import type { MeasureSource, MeasureTarget } from '../../model/types'
 import { splitRunTotal, type MeasureRow } from './logic'
 import { applyThicknessLabel } from '../rooms/thickness'
@@ -15,6 +15,9 @@ export const inputId = (label: string) => `m-${label}`
  * A value NEVER moves the plan (docs/solver-plan.md): the plan changes only when the user
  * presses "Apply measured values to the plan", or when the solver runs on leaving this mode.
  * `opts.undo`: the write is one undo step (a value typed on the plan, docs/measurements-plan.md 4).
+ * A thickness value (CODE-n-T) is the thickness of the wall only in Edit Mode, where a typed value is
+ * a direct edit of the plan. In Measuring Mode it stays a value: the plan follows it on Apply, or
+ * when the solver runs on leaving the mode (docs/solver-plan.md, "nothing moves the plan").
  */
 export function setMeasurement(
   label: string, cm: number | null, source?: MeasureSource, target?: MeasureTarget, opts: { undo?: boolean } = {},
@@ -22,6 +25,8 @@ export function setMeasurement(
   // The schema needs actualCm > 0: a value of 0 (or less, or NaN) is never stored.
   if (cm != null && !(cm > 0)) return
   const write = opts.undo ? useDoc.getState().update : useDoc.getState().updateSilent
+  /** A thickness typed in Measuring Mode never moves the plan (Apply does, see ApplyMeasuredButton). */
+  const setThickness = cm != null && useUi.getState().mode !== 'measure'
   write((d) => {
     const measurements = { ...d.measurements }
     if (cm == null) delete measurements[label]
@@ -35,8 +40,8 @@ export function setMeasurement(
         ...(kept ? { target: kept } : {}),
       }
     }
-    // A thickness (CODE-n-T) becomes the thickness of the wall, on both sides of it.
-    return cm == null ? { ...d, measurements } : applyThicknessLabel({ ...d, measurements }, label, cm)
+    // A thickness (CODE-n-T) becomes the thickness of the wall, on both sides of it (Edit Mode only).
+    return !setThickness ? { ...d, measurements } : applyThicknessLabel({ ...d, measurements }, label, cm!)
   })
 }
 

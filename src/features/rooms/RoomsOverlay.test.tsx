@@ -424,6 +424,21 @@ describe('helper dimensions of the selected stored wall', () => {
     expect(html).toContain('data-dim="helper" data-dim-key="A-1"')
   })
 
+  it('shows a measured facade value in green and bold on the outside span too (round 2 finding 9)', () => {
+    const id = wallId(v2())
+    // 'W1-E' is the outside face value of the facade side of W1 (side B here).
+    const label = `${id}-E`
+    const html = setup({
+      selection: { kind: 'storedWall', wallId: id, side: 'L' },
+      measurements: { [label]: { label, actualCm: 412, updatedAt: '' } },
+    })
+    const span = /<g data-helper-dim="out:R:0"[\s\S]*?<\/g>/.exec(html)![0]
+    expect(span).toContain('✓ 412')
+    expect(span).toContain(MEASURED_FILL)
+    expect(span).toContain('font-weight="600"')
+    expect(span).toContain('data-dim-state="measured"')
+  })
+
   it('draws no helper dimension without a selected stored wall', () => {
     expect(setup()).not.toContain('data-helper-dim')
     expect(setup({ selection: { kind: 'room', roomId: 'A' } })).not.toContain('data-helper-dim')

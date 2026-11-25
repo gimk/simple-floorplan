@@ -45,9 +45,10 @@ export function SolverGhostLayer() {
   const selection = useUi((s) => (s.selection?.kind === 'storedWall' ? s.selection.wallId : null))
   const { px } = useViewport()
   if (!doc.solver?.enabled) return null
-  // The selected wall first, then the hovered element (a stored wall value 'W12-C' / 'W12-E', or a
-  // room wall value 'KI-2' that names one stored wall). A wall with no change of its own is skipped.
-  const wallId = [selection, ghostWallOfLabel(doc, hoverLabel)].find((id) => !!id && !!wallBaseLine(doc, id)) ?? null
+  // The hovered element first, then the selected wall (a stored wall value 'W12-C' / 'W12-E', or a
+  // room wall value 'KI-2' that names one stored wall): the row the user points at wins over the
+  // selection. A wall with no change of its own is skipped.
+  const wallId = [ghostWallOfLabel(doc, hoverLabel), selection].find((id) => !!id && !!wallBaseLine(doc, id)) ?? null
   if (!wallId) return null
   const line = wallBaseLine(doc, wallId)
   if (!line) return null

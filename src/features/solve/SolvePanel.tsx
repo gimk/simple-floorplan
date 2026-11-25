@@ -328,6 +328,8 @@ function KeptWallRow({ doc, hold, onRestore }: {
   const hoverLabel = hoverLabelForWall(doc, hold.wallId)
   const hover = useRowHover(hoverLabel)
   const reason = hold.by === 'edit' ? '(you edited it)' : '(revoked)'
+  // A wall can be held twice: its position and its thickness. The row says which one.
+  const kind = hold.kind === 'thickness' ? 'thickness' : 'position'
   return (
     <li
       data-solver-kept={`${hold.kind}:${hold.wallId}`}
@@ -337,7 +339,7 @@ function KeptWallRow({ doc, hold, onRestore }: {
       className="flex min-h-9 items-center gap-2 py-1 pointer-coarse:min-h-11"
     >
       <span className="flex min-w-0 flex-1 flex-col text-xs leading-snug">
-        <span>{label}: kept at plan value</span>
+        <span>{label} {kind}: kept at plan value</span>
         <span className={MUTED}>{reason}</span>
       </span>
       <button

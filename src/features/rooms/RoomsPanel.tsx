@@ -24,7 +24,7 @@ import { WallCard } from './WallCard'
 import { StoredWallCard } from './StoredWallCard'
 import { StoredWallGroupCard } from './StoredWallGroupCard'
 
-// The whole-plan tools (apply to all rooms, solve whole plan, precision, keep locked) live
+// The whole-plan tools (apply to all rooms, solver switch, precision, keep locked) live
 // in the Solve tab (features/solve). `fitCheck` moved to ./fit; re-exported for old imports.
 export { fitCheck } from './fit'
 export type { FitCheck } from './fit'

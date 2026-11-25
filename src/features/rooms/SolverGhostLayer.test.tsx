@@ -105,6 +105,20 @@ describe('SolverGhostLayer', () => {
     expect(html).toContain('data-solver-ghost="W1"')
   })
 
+  it('lets the hovered change row win over the selected wall (round 2 finding 7)', () => {
+    // Both walls moved, W1 is selected and W2 is hovered in the Solve tab: the ghost follows the row.
+    const both = doc(solver({
+      changes: [
+        { kind: 'position', wallId: 'W1', label: 'SE-1', moveCm: 3, dir: 'S' },
+        { kind: 'position', wallId: 'W2', label: 'SE-2', moveCm: 3, dir: 'E' },
+      ],
+      baseNodes: { N1: { x: 0, y: 0 }, N2: { x: 400, y: 0 }, N3: { x: 400, y: 297 } },
+    }))
+    const html = setup({ doc: both, hoverLabel: 'W2-C', selection: { kind: 'storedWall', wallId: 'W1' } })
+    expect(html).toContain('data-solver-ghost="W2"')
+    expect(html).not.toContain('data-solver-ghost="W1"')
+  })
+
   it('draws nothing when the solver is Off', () => {
     expect(setup({ doc: doc({ ...solver(), enabled: false }), hoverLabel: 'W1-C' })).not.toContain('data-solver-ghost')
   })
