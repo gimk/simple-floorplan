@@ -15,10 +15,18 @@
 // the run there), so a chain segment measures from outside corner to outside corner, like the
 // facade value 'W12-E'. A chain point closer to the previous one than the thickness of the wall is
 // a sliver of that join, not a span: it is merged, so the chain always adds up to the overall.
+//
+// Only the real facade of the building is measured. A face that looks into a GAP between rooms (a
+// shaft, a duct, the hatched space between two rooms, see gaps.ts) is not a facade: its span is
+// dropped. Three test points on the span (quarters and middle) are moved 3 cm along the span
+// normal, and the span goes when at least two of them fall inside the gaps. When gapAreas fails,
+// every span stays.
+import type { MultiPolygon, Pair, Polygon } from 'polygon-clipping'
 import { dist } from '../../../model/geometry'
-import type { PlanDoc, StoredNode, StoredWall, Vec } from '../../../model/types'
+import type { PlanDoc, Room, StoredNode, StoredWall, Vec } from '../../../model/types'
 import { deriveWallFaces, storedWallProps } from '../../../model/v2/materialize'
 import { outsideFaceSide, wallValueLabel } from '../../../model/wallValues'
+import { gapAreas } from '../gaps'
 
 /** Two spans are in line when their directions differ by less than this (0.5 degree). */
 const PARALLEL_SIN = Math.sin((0.5 * Math.PI) / 180)
@@ -26,6 +34,8 @@ const PARALLEL_SIN = Math.sin((0.5 * Math.PI) / 180)
 const TOL_CM = 1
 /** Longest move of a run end to an outside corner (cm): keeps a bad join from stretching a row. */
 const MAX_EXTEND_CM = 30
+/** Distance (cm) a test point of a span moves along its normal to look for a gap in front of it. */
+const GAP_PROBE_CM = 3
 
 const SIDES: readonly ('L' | 'R')[] = ['L', 'R']
 
@@ -93,10 +103,60 @@ const unit = (v: Vec): Vec => {
 
 const nodeMap = (nodes: StoredNode[] | undefined) => new Map((nodes ?? []).map((n) => [n.id, { x: n.x, y: n.y }]))
 
+/** Even-odd ray cast (a ray to +x) against one closed ring of [x, y] pairs. */
+function ringHasPoint(rg: Pair[], p: Vec): boolean {
+  let inside = false
+  for (let i = 0, j = rg.length - 1; i < rg.length; j = i++) {
+    const [xi, yi] = rg[i]
+    const [xj, yj] = rg[j]
+    if (yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+/** True when `p` is inside one polygon [outer, ...holes]; a point in a hole is outside. */
+function polygonHasPoint(poly: Polygon, p: Vec): boolean {
+  if (!ringHasPoint(poly[0], p)) return false
+  return !poly.slice(1).some((hole) => ringHasPoint(hole, p))
+}
+
+/** True when `p` is inside the multipolygon (one of its polygons holds it). */
+function multiPolygonHasPoint(m: MultiPolygon, p: Vec): boolean {
+  return m.some((poly) => polygonHasPoint(poly, p))
+}
+
+/**
+ * The spans that do not look into a gap between rooms (a shaft, a duct, the hatched space between
+ * two rooms). Three test points on the span (quarters and middle) are moved GAP_PROBE_CM along the
+ * span normal; when at least two of them fall inside the gaps, the face is not a facade and its
+ * span goes. A gap failure keeps every span.
+ */
+function withoutGapFaces(spans: OutsideSpan[], rooms: Room[]): OutsideSpan[] {
+  let gaps: MultiPolygon
+  try {
+    gaps = gapAreas(rooms)
+  } catch {
+    return spans
+  }
+  if (!gaps.length) return spans
+  return spans.filter((s) => {
+    let hits = 0
+    for (const t of [0.25, 0.5, 0.75]) {
+      const p = {
+        x: s.a.x + (s.b.x - s.a.x) * t + s.normal.x * GAP_PROBE_CM,
+        y: s.a.y + (s.b.y - s.a.y) * t + s.normal.y * GAP_PROBE_CM,
+      }
+      if (multiPolygonHasPoint(gaps, p)) hits++
+    }
+    return hits < 2
+  })
+}
+
 /**
  * Outside face spans of the document, on their outer face lines.
  * A side that a room covers on its whole length has no span; a side covered only in part gives the
- * spans that no room covers (a recess, the free side of a wall).
+ * spans that no room covers (a recess, the free side of a wall). A span that looks into a gap
+ * between rooms is dropped: only the facade of the building is measured.
  */
 export function outsideSpans(doc: OutsideSpanDoc): OutsideSpan[] {
   const walls = deriveWallFaces(doc)
@@ -158,7 +218,7 @@ export function outsideSpans(doc: OutsideSpanDoc): OutsideSpan[] {
       }
     }
   }
-  return out
+  return withoutGapFaces(out, doc.rooms)
 }
 
 /** Sides of `w` that are outside (no room) and that reach `node`. */

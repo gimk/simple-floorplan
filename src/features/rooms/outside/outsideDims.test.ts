@@ -69,6 +69,37 @@ const withPartition = (): PlanDoc => {
   return { ...base, nodes, walls, rooms: [...base.rooms, partition] }
 }
 
+/**
+ * The four walls and the room of a rectangle of 600 x 400 at (x0, 0), all faces of the room on
+ * side L (interior), so side R of each wall is outside. The room also has its polygon (vertices),
+ * because the gaps between rooms are found from the room polygons.
+ */
+const box = (id: string, x0: number, order: number): { nodes: StoredNode[]; walls: StoredWall[]; room: Room } => {
+  const n = [`${id}1`, `${id}2`, `${id}3`, `${id}4`]
+  const nodes: StoredNode[] = [
+    { id: n[0], x: x0, y: 0 }, { id: n[1], x: x0 + 600, y: 0 },
+    { id: n[2], x: x0 + 600, y: 400 }, { id: n[3], x: x0, y: 400 },
+  ]
+  const walls = nodes.map((v, i) => wall(`${id}W${i + 1}`, v.id, nodes[(i + 1) % 4].id))
+  const cycle = [
+    face(walls[0].id, 'L', 0, 600, `${id}c1`), face(walls[1].id, 'L', 0, 400, `${id}c2`),
+    face(walls[2].id, 'L', 0, 600, `${id}c3`), face(walls[3].id, 'L', 0, 400, `${id}c4`),
+  ]
+  const vertices = nodes.map((v) => ({ id: `v${v.id}`, x: v.x, y: v.y }))
+  return { nodes, walls, room: { ...room(id, cycle, order), vertices } }
+}
+
+/**
+ * Two rooms side by side with a 20 cm gap between them (a shaft, a duct): each room has its own
+ * walls, so the two faces that look into the gap are outside faces of walls.
+ */
+const twoRoomsWithGap = (): PlanDoc => {
+  const a = box('A', 0, 1)
+  // Room B starts 20 cm to the right of room A.
+  const b = box('B', 620, 2)
+  return doc([...a.nodes, ...b.nodes], [...a.walls, ...b.walls], [a.room, b.room])
+}
+
 describe('outsideSpans', () => {
   it('finds the outside side of each wall of a rectangle room, on the outer face line', () => {
     const spans = outsideSpans(rectangle())
@@ -89,6 +120,21 @@ describe('outsideSpans', () => {
   it('cuts a span at the point where another wall meets the wall (T junction)', () => {
     const top = outsideSpans(withPartition()).find((s) => s.wallId === 'W1')!
     expect(top.cuts).toEqual([{ x: 300, y: -5 }])
+  })
+
+  it('gives no span on the faces that look into a gap between two rooms (a shaft, a duct)', () => {
+    // 8 outside faces, minus the 2 that look into the 20 cm gap between the two rooms.
+    const spans = outsideSpans(twoRoomsWithGap())
+    expect(spans).toHaveLength(6)
+    expect(spans.some((s) => s.wallId === 'AW2' || s.wallId === 'BW4')).toBe(false)
+    // The facades of the building stay: the 2 outer end walls, at the outer face line of each room.
+    const ends = spans.filter((s) => Math.abs(s.normal.x) > 0.5)
+    expect(ends.map((s) => Math.round(s.a.x)).sort((x, y) => x - y)).toEqual([-5, 1225])
+    // Same for the rows: 6 runs, and no run in the gap.
+    const runs = outsideDims(twoRoomsWithGap())
+    expect(runs).toHaveLength(6)
+    expect(runs.filter((r) => Math.abs(r.normal.x) > 0.5)).toHaveLength(2)
+    for (const run of runs) expect(sumOf(run)).toBeCloseTo(run.overallCm, 6)
   })
 })
 
