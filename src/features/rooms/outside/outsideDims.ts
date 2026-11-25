@@ -338,3 +338,33 @@ export const OUTSIDE_ROWS_PX = { chain: 28, overall: 52 }
 export const OUTSIDE_EXT_GAP_PX = 4
 /** Extra distance from the row of a text that does not fit between its ticks, screen px. */
 export const OUTSIDE_EXTRA_PX = 6
+
+/**
+ * Level of detail of the outside rows, screen px. When the plan is zoomed out, the rows of the
+ * small runs (recesses, shafts, wall ends) fill the plan with texts that no one can read:
+ *   - a run shorter than MIN_RUN on screen is not drawn (no row, no extension line);
+ *   - a run with a chain segment shorter than MIN_SEGMENT on screen keeps its overall row only.
+ * The plan layer and the badge mask apply the same rule (outsideDimsLod); the export does not
+ * (it has a fixed scale).
+ */
+export const OUTSIDE_LOD_PX = { minRun: 64, minSegment: 40 }
+
+/** The runs that the plan draws at this zoom (px per cm), after the level-of-detail rule. */
+export function outsideDimsLod(runs: OutsideDimRun[], zoom: number): OutsideDimRun[] {
+  const out: OutsideDimRun[] = []
+  for (const run of runs) {
+    if (run.overallCm * zoom < OUTSIDE_LOD_PX.minRun) continue
+    const tooShort = run.segments.length > 1 && run.segments.some((s) => s.lengthCm * zoom < OUTSIDE_LOD_PX.minSegment)
+    if (!tooShort) {
+      out.push(run)
+      continue
+    }
+    // The chain row goes: the run becomes one segment, drawn once on the overall row.
+    out.push({
+      ...run,
+      points: [run.a, run.b],
+      segments: [{ a: run.a, b: run.b, lengthCm: run.overallCm, label: null, measuredCm: null }],
+    })
+  }
+  return out
+}

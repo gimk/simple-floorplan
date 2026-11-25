@@ -51,10 +51,10 @@ const bare = (id: string, cycle: RoomFace[], walkOrder = 1): Room =>
  * A rectangle 600 x 400 whose top facade is cut 15 cm from the left corner: the first segment of
  * that chain is 20 cm long, too short for its text between the ticks (round 1 suggestion 4).
  */
-const v2short = (): PlanDoc => ({
+const v2short = (tx = 15): PlanDoc => ({
   ...emptyDoc(),
   schemaVersion: 2,
-  nodes: [node('N1', 0, 0), node('N2', 600, 0), node('N3', 600, 400), node('N4', 0, 400), node('T', 15, 0), node('U', 15, 200)],
+  nodes: [node('N1', 0, 0), node('N2', 600, 0), node('N3', 600, 400), node('N4', 0, 400), node('T', tx, 0), node('U', tx, 200)],
   walls: [wall('W1', 'N1', 'N2'), wall('W2', 'N2', 'N3'), wall('W3', 'N3', 'N4'), wall('W4', 'N4', 'N1'), wall('W5', 'T', 'U')],
   rooms: [
     bare('SE', [face('W1', 'L', 0, 600, 'v1'), face('W2', 'L', 0, 400, 'v2'), face('W3', 'L', 0, 600, 'v3'), face('W4', 'L', 0, 400, 'v4')]),
@@ -68,6 +68,8 @@ type Over = {
   doc?: PlanDoc
   mode?: 'edit' | 'measure'
   tool?: ToolId
+  zoom?: number
+  units?: { unit: 'cm' | 'm' | 'mm'; decimals: number }
 }
 
 const setup = (over: Over = {}) => {
@@ -78,7 +80,8 @@ const setup = (over: Over = {}) => {
     tool: over.tool ?? 'select',
     selection: null,
     multi: [],
-    view: { x: 0, y: 0, zoom: 1 },
+    view: { x: 0, y: 0, zoom: over.zoom ?? 1 },
+    canvasUnits: over.units ?? { unit: 'cm', decimals: 1 },
   })
   applyState(useDoc, { doc: { ...base, measurements: { ...base.measurements, ...over.measurements } } })
   return renderToString(<Viewport><OutsideDimsLayer /></Viewport>)
@@ -157,18 +160,37 @@ describe('OutsideDimsLayer', () => {
   })
 
   it('puts the text of a short segment past the outer end of its row, clear of the ticks (suggestion 4)', () => {
-    const html = setup({ doc: v2short() })
-    // The first segment of the top run is 20 cm: its text does not fit between the ticks, so it
-    // goes past its START end (the first half of the row), one step further from the row.
+    // The first segment is 20,555 cm, written '205,55' (mm, 2 decimals): 6 characters, 37 px.
+    // Zoom 2: the segment is 41 px on screen, over the 40 px of the level of detail, so the
+    // chain row is drawn, but the text does not fit between the ticks.
+    const zoom = 2
+    const html = setup({ doc: v2short(15.555), zoom, units: { unit: 'mm', decimals: 2 } })
+    // The text goes past the START end of the segment (the first half of the row), one step
+    // further from the row.
     const first = /<g data-outside-seg="0">([\s\S]*?)<\/g>/.exec(html)![1]
     expect(first).toContain('data-dim-outside=""')
     const t = /<text x="([-\d.]+)" y="([-\d.]+)"/.exec(first)!
-    // Past the outside corner at x = -5, and 13 px instead of 7 px off the chain row at y = -33.
+    // Past the outside corner at x = -5, and 13 px instead of 7 px off the chain row at
+    // y = -5 - 28 px (all px divided by the zoom).
+    const row = -5 - 28 / zoom
     expect(Number(t[1])).toBeLessThan(-5)
-    expect(Number(t[2])).toBeCloseTo(-33 - 13, 6)
+    expect(Number(t[2])).toBeCloseTo(row - 13 / zoom, 6)
     // A segment that holds its text keeps it centred between the ticks.
     const second = /<g data-outside-seg="1">([\s\S]*?)<\/g>/.exec(html)![1]
-    expect(Number(/<text x="[-\d.]+" y="([-\d.]+)"/.exec(second)![1])).toBeCloseTo(-33 - 7, 6)
+    expect(Number(/<text x="[-\d.]+" y="([-\d.]+)"/.exec(second)![1])).toBeCloseTo(row - 7 / zoom, 6)
+  })
+
+  it('level of detail: zoomed out, a run with a short segment keeps its overall row only', () => {
+    // Zoom 1: the 20 cm segment is 20 px on screen, so the top run has no chain row.
+    const html = setup({ doc: v2short() })
+    expect(count(html, 'data-outside-run=')).toBe(4)
+    expect(html).not.toContain('data-outside-seg="1"')
+  })
+
+  it('level of detail: zoomed far out, the short runs are not drawn', () => {
+    // Zoom 0.1: the 410 cm and 310 cm runs are 41 px and 31 px on screen, under 64 px.
+    const html = setup({ zoom: 0.1 })
+    expect(count(html, 'data-outside-run=')).toBe(0)
   })
 })
 

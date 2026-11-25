@@ -1,7 +1,7 @@
 // Inspect card for one room: name, code, walk order, ceiling, stats, the walls list with the
 // fit check, the elements list, and the measured values of this room
 // (docs/sidebar-plan-3.md step 4). Whole-plan tools live in the Solve tab.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, DoorOpen, Lock, Plus, Repeat2, Ruler, Square, Trash2, X } from 'lucide-react'
 import { dist, fmtCm, innerWallLengths, roomAreaM2 } from '../../model/geometry'
 import { planPrecision, shownLength } from '../../model/precision'
@@ -38,6 +38,12 @@ import { defaultDiagonal, nextDiagonal, setRoomDiagonal } from './diagonal'
 import { setMeasurement } from '../measure/actions'
 import { targetOfLabel } from '../../model/v2/targets'
 
+/** Highlight the wall of a survey label on the plan (RoomsOverlay draws it). */
+const setHover = (label: string) => useUi.getState().set({ hoverLabel: label })
+const clearHover = (label: string) => {
+  if (useUi.getState().hoverLabel === label) useUi.getState().set({ hoverLabel: null })
+}
+
 export function RoomCard({ doc, room, selection, activeHole }: {
   doc: PlanDoc; room: Room; selection: NonNullable<Selection>; activeHole: ActiveHole
 }) {
@@ -47,6 +53,12 @@ export function RoomCard({ doc, room, selection, activeHole }: {
   const [note, setNote] = useState<string | null>(null)
 
   const select = useUi.getState().select
+  // A click on a wall row opens another card: no pointer leave, so the highlight goes here.
+  const code = room.code
+  useEffect(() => () => {
+    const h = useUi.getState().hoverLabel
+    if (h && h.startsWith(`${code}-`)) useUi.getState().set({ hoverLabel: null })
+  }, [code])
   const verified = verifiedWalls({ measurements: doc.measurements }, room)
   const allLocked = verifiedAllLocked({ measurements: doc.measurements }, room)
   // Same rule as hasOwnCeiling(): a room height of 0 does not count as its own.
@@ -175,6 +187,11 @@ export function RoomCard({ doc, room, selection, activeHole }: {
                       type="button"
                       aria-label={`Select wall ${row.label}${link ? ` (${link.wallId})` : ''}`}
                       aria-current={current ? 'true' : undefined}
+                      // Hover (or keyboard focus) of a row: the wall is highlighted on the plan.
+                      onPointerEnter={() => setHover(row.label)}
+                      onPointerLeave={() => clearHover(row.label)}
+                      onFocus={() => setHover(row.label)}
+                      onBlur={() => clearHover(row.label)}
                       onClick={() =>
                         link
                           // A click opens the wall card, with the side this room is on.

@@ -16,7 +16,7 @@ import { useIsDesktop } from '../../../shell/useDesktop'
 import { DIM_STYLE, dimLine } from '../dims/dimLine'
 import { DimLineView } from '../dims/DimLineView'
 import { dimEditAllowed, dimTextLabel, useDimEdit } from '../dims/dimEdit'
-import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
+import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, outsideDimsLod, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
 
 /** Row distances from the outer face line, screen px (shared with the badge mask and the export). */
 const ROW_CHAIN_PX = OUTSIDE_ROWS_PX.chain
@@ -110,7 +110,9 @@ export function OutsideDimsLayer() {
   )
   if (!v2 || !dimensions || !outside) return null
   if (mode === 'measure' && !isDesktop) return null
-  if (!runs.length) return null
+  // Level of detail: no row for the small runs, no chain row for a run with small segments.
+  const shown = outsideDimsLod(runs, zoom)
+  if (!shown.length) return null
   /** Edit mode with the Select tool: a double-click on a facade text types its length (section 4). */
   const canEdit = dimEditAllowed(mode, tool)
 
@@ -170,7 +172,7 @@ export function OutsideDimsLayer() {
 
   return (
     <g data-outside-dims="" pointerEvents="none">
-      {runs.map((run) => (
+      {shown.map((run) => (
         <g key={run.key} data-outside-run={run.key}>
           {rowsOf(run)}
         </g>

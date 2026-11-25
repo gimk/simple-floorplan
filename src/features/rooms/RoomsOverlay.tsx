@@ -28,7 +28,7 @@ import { DimLineView } from './dims/DimLineView'
 import { fittingRows, pickWallBadge, ringBox, tagBox, textBox, textQuad, wallBadgePlaces, type Box } from './dims/dimBoxes'
 import { DECLUTTER, keepDimTexts, smallRoomDims } from './dims/declutter'
 import { outsideDimTextBoxes } from './dims/outsideTextBoxes'
-import { outsideDims } from './outside/outsideDims'
+import { outsideDims, outsideDimsLod } from './outside/outsideDims'
 import { DimEditor } from './dims/DimEditor'
 import { dimEditAllowed, dimTextLabel, parseRoomWallLabel, stepRoomWallLabel, useDimEdit, type DimEditOpen, type DimEditorStep } from './dims/dimEdit'
 
@@ -362,7 +362,8 @@ export function RoomsOverlay() {
   const outsideTextBoxes = useMemo(() => {
     if (!isV2 || !layers.dimensions || !layers.outsideDims) return []
     if (mode === 'measure' && !isDesktop) return []
-    const runs = outsideDims({ rooms, nodes: storedNodes, walls: storedWalls, measurements })
+    // The same level-of-detail rule as the layer: only the rows it draws at this zoom.
+    const runs = outsideDimsLod(outsideDims({ rooms, nodes: storedNodes, walls: storedWalls, measurements }), zoom)
     return outsideDimTextBoxes(runs, {
       zoom,
       // The same text rule as the rows of outside/OutsideDimsLayer.tsx: a measured face shows its
