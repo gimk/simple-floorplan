@@ -14,6 +14,7 @@ import type { Vec } from '../../../model/types'
 import { isV2Doc } from '../../../model/v2/targets'
 import { useIsDesktop } from '../../../shell/useDesktop'
 import { DIM_STYLE, dimLine } from '../dims/dimLine'
+import { outsideHiddenTexts } from '../dims/outsideTextBoxes'
 import { DimLineView } from '../dims/DimLineView'
 import { dimEditAllowed, dimTextLabel, useDimEdit } from '../dims/dimEdit'
 import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, outsideDimsLod, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
@@ -50,6 +51,8 @@ type RowProps = {
   plannedCm?: number
   /** True while the field of that text is open: the field replaces the text. */
   editing?: boolean
+  /** The overlap pass hid this text: the line and the ticks stay. */
+  hidden?: boolean
 }
 
 /**
@@ -58,7 +61,7 @@ type RowProps = {
  * text of the neighbouring segment stays readable, and never on a tick or an extension line
  * (round 1 suggestion 4).
  */
-function RowDim({ a, b, normal, offset, text, measured, outsideEnd, dimKey, zoom, editLabel, plannedCm, editing }: RowProps) {
+function RowDim({ a, b, normal, offset, text, measured, outsideEnd, dimKey, zoom, editLabel, plannedCm, editing, hidden }: RowProps) {
   const base = { start: a, end: b, normal, offsetCm: offset, zoom, text }
   const first = dimLine(base)
   if (!first) return null
@@ -66,7 +69,7 @@ function RowDim({ a, b, normal, offset, text, measured, outsideEnd, dimKey, zoom
     ? dimLine({ ...base, textPlace: 'outside', outsideEnd, textGapPx: DIM_STYLE.textGap + OUTSIDE_EXTRA_PX }) ?? first
     : first
   return (
-    <DimLineView line={line} text={text} measured={measured} kind="outside" dimKey={dimKey} hideText={editing}
+    <DimLineView line={line} text={text} measured={measured} kind="outside" dimKey={dimKey} hideText={editing || hidden}
       onTextDoubleClick={editLabel ? () => useDimEdit.getState().open({ label: editLabel, at: line.text, plannedCm: plannedCm ?? 0 }) : undefined} />
   )
 }
@@ -113,11 +116,20 @@ export function OutsideDimsLayer() {
   // Level of detail: no row for the small runs, no chain row for a run with small segments.
   const shown = outsideDimsLod(runs, zoom)
   if (!shown.length) return null
+  // Greedy overlap pass: a text that hits a stronger outside text is hidden (same pass as the badge
+  // mask and the export).
+  const hiddenTexts = outsideHiddenTexts(shown, {
+    zoom,
+    segmentText: (seg) => segmentText(seg, step, units).text,
+    overallText: (run) => fmtLen(run.overallCm, units),
+    segmentMeasured: (seg) => segmentText(seg, step, units).measured,
+  })
   /** Edit mode with the Select tool: a double-click on a facade text types its length (section 4). */
   const canEdit = dimEditAllowed(mode, tool)
 
   /** The rows of one run: the chain row (only with several segments) and the overall row. */
   const rowsOf = (run: OutsideDimRun) => {
+    const overallHidden = hiddenTexts.has(`${run.key}:overall`)
     const last = run.points.length - 1
     const single = run.segments.length === 1
     return (
@@ -143,7 +155,7 @@ export function OutsideDimsLayer() {
           return (
             <g key={i} data-outside-seg={seg.label ?? String(i)}>
               <RowDim a={seg.a} b={seg.b} normal={run.normal} offset={px(ROW_CHAIN_PX)} text={text}
-                measured={measured} outsideEnd={outsideEnd} dimKey={seg.label ?? String(i)} px={px} zoom={zoom}
+                measured={measured} outsideEnd={outsideEnd} hidden={hiddenTexts.has(`${run.key}:seg:${i}`)} dimKey={seg.label ?? String(i)} px={px} zoom={zoom}
                 editLabel={editLabel} plannedCm={seg.lengthCm} editing={!!editLabel && editLabel === dimEditing} />
             </g>
           )
@@ -155,7 +167,7 @@ export function OutsideDimsLayer() {
             <g data-outside-seg={run.segments[0].label ?? '0'}>
               <RowDim a={run.segments[0].a} b={run.segments[0].b} normal={run.normal}
                 offset={px(ROW_OVERALL_PX)} text={segmentText(run.segments[0], step, units).text}
-                measured={segmentText(run.segments[0], step, units).measured} outsideEnd="end"
+                measured={segmentText(run.segments[0], step, units).measured} outsideEnd="end" hidden={overallHidden}
                 dimKey={run.segments[0].label ?? '0'} px={px} zoom={zoom}
                 editLabel={canEdit ? dimTextLabel('outside', run.segments[0].label ?? '0') : null}
                 plannedCm={run.segments[0].lengthCm}
@@ -163,7 +175,7 @@ export function OutsideDimsLayer() {
             </g>
           ) : (
             <RowDim a={run.a} b={run.b} normal={run.normal} offset={px(ROW_OVERALL_PX)}
-              text={fmtLen(run.overallCm, units)} measured={false} outsideEnd="end" dimKey="overall" px={px} zoom={zoom} />
+              text={fmtLen(run.overallCm, units)} measured={false} outsideEnd="end" hidden={overallHidden} dimKey="overall" px={px} zoom={zoom} />
           )}
         </g>
       </>

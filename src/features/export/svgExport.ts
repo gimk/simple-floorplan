@@ -17,6 +17,7 @@ import {
   exportOutsideRuns,
   num,
   outsideExtentPoints,
+  outsideExportHidden,
   outsideRunSvg,
   paperZoom,
   planDimsLayout,
@@ -242,7 +243,8 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
   }
 
   // ----- outside dimension chains (v2 documents, when the option is on) -----
-  for (const run of runs) parts.push(outsideRunSvg(run, { zoom, fs, step, units, surveyLabels }))
+  const hidden = outsideExportHidden(runs, zoom, step, units, surveyLabels)
+  for (const run of runs) parts.push(outsideRunSvg(run, { zoom, fs, step, units, surveyLabels, hidden }))
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${num(x0)} ${num(y0)} ${num(W)} ${num(H)}" width="${num(W)}" height="${num(H)}">${style}${defs}<rect x="${num(x0)}" y="${num(y0)}" width="${num(W)}" height="${num(H)}" fill="#fff"/>${parts.join('')}${bar.join('')}${leg.join('')}${schedSvg}</svg>`
   return { svg, width: W, height: H, fontSize: fs, layout }

@@ -30,7 +30,7 @@ import type { DimStyle, RoomTagFields } from '../../model/store'
 import { DIM_STYLE, worldPx, dimLine, type DimLine } from '../rooms/dims/dimLine'
 import { fittingRows, ringBox, textBox, textQuad, type Box } from '../rooms/dims/dimBoxes'
 import { DECLUTTER, keepDimTexts, smallRoomDims, type DimTextCandidate } from '../rooms/dims/declutter'
-import { outsideDimTextBoxes } from '../rooms/dims/outsideTextBoxes'
+import { outsideDimTextBoxes, outsideHiddenTexts } from '../rooms/dims/outsideTextBoxes'
 import { roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from '../rooms/roomTag'
 import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
 
@@ -459,14 +459,7 @@ export function planDimsLayout(input: PlanDimsInput): PlanDimsLayout {
     tag: roomTagLayout(r, input.tagFields, tagCtx),
   }))
   // The texts of the outside rows that are drawn are blockers too (as on the canvas).
-  const outsideBoxes = outsideDimTextBoxes(input.runs, {
-    zoom,
-    segmentText: (seg) => fullDimText({
-      ...segmentText(seg, step, units),
-      label: surveyLabels && seg.label ? seg.label : undefined,
-    }),
-    overallText: (run) => fmtLen(run.overallCm, units),
-  })
+  const outsideBoxes = outsideDimTextBoxes(input.runs, { zoom, ...outsideExportText(step, units, surveyLabels) })
   const blockers: Box[] = [
     ...rooms.flatMap((x) => (x.tag.box ? [x.tag.box] : [])),
     ...outsideBoxes,
@@ -499,7 +492,23 @@ export type OutsideCtx = {
   units: LengthUnits
   /** Write the facade survey label ("W12-E") in front of the value. */
   surveyLabels: boolean
+  /** Keys of the outside texts that the overlap pass hides ('<run.key>:seg:<i>', '<run.key>:overall'). */
+  hidden?: ReadonlySet<string>
 }
+
+/** The text rule of the export rows, for the overlap pass (shared with `planDimsLayout`). */
+export const outsideExportText = (step: number, units: LengthUnits, surveyLabels: boolean) => ({
+  segmentText: (seg: OutsideDimSegment) => fullDimText({
+    ...segmentText(seg, step, units),
+    label: surveyLabels && seg.label ? seg.label : undefined,
+  }),
+  overallText: (run: OutsideDimRun) => fmtLen(run.overallCm, units),
+  segmentMeasured: (seg: OutsideDimSegment) => segmentText(seg, step, units).measured,
+})
+
+/** The hidden outside texts of the export runs (the same pass as the plan). */
+export const outsideExportHidden = (runs: OutsideDimRun[], zoom: number, step: number, units: LengthUnits, surveyLabels: boolean) =>
+  outsideHiddenTexts(runs, { zoom, ...outsideExportText(step, units, surveyLabels) })
 
 /**
  * The two rows of one outside run, in the common dimension style and outside the wall band:
@@ -524,15 +533,16 @@ export function outsideRunSvg(run: OutsideDimRun, ctx: OutsideCtx): string {
     )
   })
   /** One row of the run, with the rule of the style: text past the end when it does not fit. */
-  const row = (a: Vec, b: Vec, offsetPx: number, text: DimText, outsideEnd: 'start' | 'end', dimKey: string) => {
+  const row = (a: Vec, b: Vec, offsetPx: number, text: DimText, outsideEnd: 'start' | 'end', dimKey: string, hideText: boolean) => {
     const base = { start: a, end: b, normal: run.normal, offsetCm: p(offsetPx), zoom, text: fullDimText(text) }
     const first = dimLine(base)
     if (!first) return
     const line = first.outside
       ? dimLine({ ...base, textPlace: 'outside', outsideEnd, textGapPx: DIM_STYLE.textGap + OUTSIDE_EXTRA_PX }) ?? first
       : first
-    parts.push(dimSvg({ line, text, dimKey, kind: 'outside', fs, zoom }))
+    parts.push(dimSvg({ line, text, dimKey, kind: 'outside', fs, zoom, hideText }))
   }
+  const overallHidden = !!ctx.hidden?.has(`${run.key}:overall`)
   const single = run.segments.length === 1
   if (!single) {
     run.segments.forEach((seg, i) => {
@@ -542,7 +552,7 @@ export function outsideRunSvg(run: OutsideDimRun, ctx: OutsideCtx): string {
         label: ctx.surveyLabels && seg.label ? seg.label : undefined,
       }
       // Past the end of the segment on the side of the outer end of the run.
-      row(seg.a, seg.b, CHAIN_ROW_PX, withLabel, i * 2 < run.segments.length ? 'start' : 'end', seg.label ?? `${run.key}:${i}`)
+      row(seg.a, seg.b, CHAIN_ROW_PX, withLabel, i * 2 < run.segments.length ? 'start' : 'end', seg.label ?? `${run.key}:${i}`, !!ctx.hidden?.has(`${run.key}:seg:${i}`))
     })
   }
   // The overall row: the whole run (one row only when the run has one segment, since the chain
@@ -551,9 +561,9 @@ export function outsideRunSvg(run: OutsideDimRun, ctx: OutsideCtx): string {
     const seg = run.segments[0]
     const text = segmentText(seg, ctx.step, ctx.units)
     const withLabel: DimText = { ...text, label: ctx.surveyLabels && seg.label ? seg.label : undefined }
-    row(seg.a, seg.b, OVERALL_ROW_PX, withLabel, 'end', seg.label ?? 'overall')
+    row(seg.a, seg.b, OVERALL_ROW_PX, withLabel, 'end', seg.label ?? 'overall', overallHidden)
   } else {
-    row(run.a, run.b, OVERALL_ROW_PX, { value: fmtLen(run.overallCm, ctx.units), measured: false }, 'end', `overall:${run.key}`)
+    row(run.a, run.b, OVERALL_ROW_PX, { value: fmtLen(run.overallCm, ctx.units), measured: false }, 'end', `overall:${run.key}`, overallHidden)
   }
   return parts.join('')
 }

@@ -10,7 +10,7 @@
 import { OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, type OutsideDimRun, type OutsideDimSegment } from '../outside/outsideDims'
 export { OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX }
 import { DIM_STYLE, dimLine, worldPx } from './dimLine'
-import { dimTextBox, type Box } from './dimBoxes'
+import { boxHit, dimTextBox, growBox, type Box } from './dimBoxes'
 
 /** Distance of the chain row and the overall row from the outer face line, screen px. */
 /** Extra distance from the row of a text that does not fit between its ticks, screen px. */
@@ -22,6 +22,8 @@ export type OutsideTextInput = {
   segmentText: (seg: OutsideDimSegment) => string
   /** The text of the overall row of a run. */
   overallText: (run: OutsideDimRun) => string
+  /** True when a chain segment shows a measured value (default: `seg.measuredCm > 0`). */
+  segmentMeasured?: (seg: OutsideDimSegment) => boolean
 }
 
 /**
@@ -48,14 +50,25 @@ function rowBox(
   return dimTextBox(line, text, zoom)
 }
 
-/**
- * Boxes of the texts of every outside row of the plan, cm. The outside layer draws one chain row per
- * straight run of outside faces (only when the run has several segments) and one overall row; a run
- * with one segment draws that segment once, on the overall row.
- */
-export function outsideDimTextBoxes(runs: OutsideDimRun[], input: OutsideTextInput): Box[] {
+/** Margin kept between two outside texts, screen px. */
+export const OUTSIDE_TEXT_MARGIN_PX = 2
+
+/** One outside text with its box and its priority. */
+export type OutsideTextEntry = {
+  /** Stable key: '<run.key>:seg:<i>' (chain segment) or '<run.key>:overall'. */
+  key: string
+  box: Box
+  /** 0 = overall/single row, 1 = chain row. */
+  rank: number
+  measured: boolean
+  lengthCm: number
+}
+
+/** Every outside text that is drawn, with its box (same text rule and placement as the layer). */
+export function outsideTextEntries(runs: OutsideDimRun[], input: OutsideTextInput): OutsideTextEntry[] {
   const { zoom } = input
-  const out: Box[] = []
+  const isMeasured = input.segmentMeasured ?? ((seg: OutsideDimSegment) => (seg.measuredCm ?? 0) > 0)
+  const out: OutsideTextEntry[] = []
   const chainOff = worldPx(OUTSIDE_ROWS_PX.chain, zoom)
   const overallOff = worldPx(OUTSIDE_ROWS_PX.overall, zoom)
   for (const run of runs) {
@@ -66,7 +79,7 @@ export function outsideDimTextBoxes(runs: OutsideDimRun[], input: OutsideTextInp
         // the first half of the row, the end of the run for the second half.
         const outsideEnd = i * 2 < run.segments.length ? 'start' : 'end'
         const box = rowBox(seg.a, seg.b, run.normal, chainOff, zoom, input.segmentText(seg), outsideEnd)
-        if (box) out.push(box)
+        if (box) out.push({ key: `${run.key}:seg:${i}`, box, rank: 1, measured: isMeasured(seg), lengthCm: seg.lengthCm })
       })
     }
     // The overall row: the segment itself when a run has one segment, else the length of the run.
@@ -75,7 +88,48 @@ export function outsideDimTextBoxes(runs: OutsideDimRun[], input: OutsideTextInp
     const a = single ? seg.a : run.a
     const b = single ? seg.b : run.b
     const box = rowBox(a, b, run.normal, overallOff, zoom, text, 'end')
-    if (box) out.push(box)
+    if (box) {
+      out.push({
+        key: `${run.key}:overall`, box, rank: 0,
+        measured: single && isMeasured(seg), lengthCm: single ? seg.lengthCm : run.overallCm,
+      })
+    }
   }
   return out
+}
+
+/**
+ * Greedy overlap pass over the outside texts: overall rows first, then the measured values, then the
+ * longer lengths; a text is kept when its box (with a 2 px margin) hits no kept box, else it is
+ * hidden (its line, ticks and extension lines stay). Returns the keys of the hidden texts.
+ */
+export function outsideHiddenTexts(runs: OutsideDimRun[], input: OutsideTextInput): Set<string> {
+  const entries = outsideTextEntries(runs, input)
+  const margin = worldPx(OUTSIDE_TEXT_MARGIN_PX, input.zoom)
+  const order = entries
+    .map((e, i) => ({ e, i }))
+    .sort((p, q) =>
+      p.e.rank - q.e.rank ||
+      Number(q.e.measured) - Number(p.e.measured) ||
+      q.e.lengthCm - p.e.lengthCm ||
+      p.i - q.i)
+  const kept: Box[] = []
+  const hidden = new Set<string>()
+  for (const { e } of order) {
+    const grown = growBox(e.box, margin / 2)
+    if (kept.some((k) => boxHit(growBox(k, margin / 2), grown))) hidden.add(e.key)
+    else kept.push(e.box)
+  }
+  return hidden
+}
+
+/**
+ * Boxes of the texts of every outside row of the plan, cm, without the texts that the overlap pass
+ * hides. The outside layer draws one chain row per straight run of outside faces (only when the run
+ * has several segments) and one overall row; a run with one segment draws that segment once, on the
+ * overall row.
+ */
+export function outsideDimTextBoxes(runs: OutsideDimRun[], input: OutsideTextInput): Box[] {
+  const hidden = outsideHiddenTexts(runs, input)
+  return outsideTextEntries(runs, input).filter((e) => !hidden.has(e.key)).map((e) => e.box)
 }

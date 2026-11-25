@@ -2,12 +2,23 @@
 // one overall row per straight run of outside faces, the common dimension style, and the layers
 // that hide them.
 import { renderToString } from 'react-dom/server'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Viewport } from '../../../canvas/Viewport'
 import { emptyDoc, useDoc, useUi, type Layers } from '../../../model/store'
 import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall, ToolId } from '../../../model/types'
 import { convertToV2 } from '../../../model/v2/convert'
 import { OutsideDimsLayer } from './OutsideDimsLayer'
+
+// The overlap pass can be forced for one test: the pure pass has its own tests.
+const forced = vi.hoisted(() => ({ hide: null as null | ((keys: string[]) => Set<string>) }))
+vi.mock('../dims/outsideTextBoxes', async (orig) => {
+  const actual = await orig<typeof import('../dims/outsideTextBoxes')>()
+  return {
+    ...actual,
+    outsideHiddenTexts: (...args: Parameters<typeof actual.outsideHiddenTexts>) =>
+      forced.hide ? forced.hide(args[0].map((r) => r.key)) : actual.outsideHiddenTexts(...args),
+  }
+})
 
 const BASE_LAYERS: Layers = {
   background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
@@ -225,5 +236,19 @@ describe('typing a length on an outside chain (docs/measurements-plan.md section
   it('keeps the outside texts read only with another tool, and in Measuring Mode', () => {
     expect(setup({ tool: 'wall' })).not.toContain('data-dim-text=')
     expect(setup({ mode: 'measure', tool: 'select' })).not.toContain('data-dim-text=')
+  })
+
+  it('does not draw a text that the overlap pass hides, but keeps its line', () => {
+    const before = setup()
+    expect(before).toContain('>410<')
+    forced.hide = (keys) => new Set([`${keys[0]}:overall`])
+    try {
+      const html = setup()
+      // One text less (the first run is a long side of 410 or 310), the same lines.
+      expect(count(html, 'data-dim="outside"')).toBe(count(before, 'data-dim="outside"'))
+      expect(count(html, '<text')).toBe(count(before, '<text') - 1)
+    } finally {
+      forced.hide = null
+    }
   })
 })
