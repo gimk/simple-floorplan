@@ -474,9 +474,11 @@ export function settleWallsWithoutFaces(doc: PlanDoc, prev: PlanDoc): PlanDoc {
       }
       return true
     }
-    // A new wall, a wall that the user drew (standalone) and a wall that already had no room face
-    // before the edit are not the business of the rule.
-    const wasUsed = before !== undefined && !before.standalone && before.faces.some((f) => f.roomId !== undefined)
+    // A new wall and a wall that already had no room face before the edit are not the business of the
+    // rule. A standalone wall that a room REUSED (it keeps its flag and has a room face) is: when the
+    // room moves away from it (a corner drag with Cmd/Ctrl, the room resize), it must not stay behind
+    // at the old place of the side.
+    const wasUsed = before !== undefined && before.faces.some((f) => f.roomId !== undefined)
     if (!wasUsed) return true
     const a = draft.pos(w.a)
     const b = draft.pos(w.b)

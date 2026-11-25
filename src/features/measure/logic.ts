@@ -150,13 +150,27 @@ export function rowValue(doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRo
 
 export const rowMeasured = (doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRow, 'labels'>) => rowValue(doc, row) != null
 
-/** Split a run total over its pieces in proportion to `bases`; the last piece takes the rounding rest. */
+/** Smallest value a piece of a split run can get (cm). The schema needs actualCm > 0. */
+export const MIN_PIECE_CM = 0.1
+
+/**
+ * Split a run total over its pieces in proportion to `bases`. Every piece gets at least MIN_PIECE_CM
+ * (a piece with a base of 0 or less counts as the smallest piece), so no piece is ever 0. The extra
+ * that the minimums take comes off the largest piece, and the pieces always add up to the total.
+ * A total too small for the minimums (total < n x MIN_PIECE_CM) is shared in equal parts.
+ */
 export function splitRunTotal(total: number, bases: number[]): number[] {
-  const sum = bases.reduce((a, b) => a + b, 0)
-  const w = sum > 0 ? bases : bases.map(() => 1)
-  const wsum = sum > 0 ? sum : bases.length
-  const out = w.map((b) => round1((total * b) / wsum))
-  out[out.length - 1] = round1(total - out.slice(0, -1).reduce((a, b) => a + b, 0))
+  const n = bases.length
+  if (!n) return []
+  if (total < n * MIN_PIECE_CM) return bases.map(() => total / n) // too small to round: equal parts, still > 0
+  const w = bases.map((b) => (b > 0 ? b : 0))
+  const sum = w.reduce((a, b) => a + b, 0)
+  const raw = sum > 0 ? w.map((b) => (total * b) / sum) : w.map(() => total / n)
+  const out = raw.map((v) => Math.max(MIN_PIECE_CM, round1(v)))
+  // The pieces add up to the total: the largest piece takes the rounding rest and the minimums.
+  let big = 0
+  out.forEach((v, i) => { if (v > out[big]) big = i })
+  out[big] = round1(out[big] + (total - out.reduce((a, b) => a + b, 0)))
   return out
 }
 

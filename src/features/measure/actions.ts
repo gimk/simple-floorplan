@@ -21,6 +21,8 @@ export const inputId = (label: string) => `m-${label}`
 export function setMeasurement(
   label: string, cm: number | null, source?: MeasureSource, target?: MeasureTarget, opts: { undo?: boolean } = {},
 ) {
+  // The schema needs actualCm > 0: a value of 0 (or less, or NaN) is never stored.
+  if (cm != null && !(cm > 0)) return
   const write = opts.undo ? useDoc.getState().update : useDoc.getState().updateSilent
   write((d) => {
     const measurements = { ...d.measurements }

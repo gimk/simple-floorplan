@@ -32,6 +32,16 @@ describe('grouped wall rows', () => {
     expect(p[0] / p[1]).toBeCloseTo(35 / 200, 1)
   })
 
+  it('never gives a piece 0: 5 pieces with very short ones, total 366', () => {
+    const p = splitRunTotal(366, [120, 0.02, 150, 0, 90])
+    expect(p).toHaveLength(5)
+    expect(p.every((v) => v > 0)).toBe(true)
+    expect(p.reduce((a, b) => a + b, 0)).toBeCloseTo(366, 5)
+    // Only zero bases, and a tiny total.
+    expect(splitRunTotal(366, [0, 0, 0]).every((v) => v > 0)).toBe(true)
+    expect(splitRunTotal(0.2, [10, 0, 5, 0, 1]).every((v) => v > 0)).toBe(true)
+  })
+
   it('entering the total stores pieces whose sum is the total', () => {
     const row = measureRows(room).find((r) => r.labels.length === 2)!
     setRunMeasurement(row, 310)

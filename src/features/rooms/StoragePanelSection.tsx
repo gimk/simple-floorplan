@@ -109,7 +109,7 @@ function StorageInspector({ doc, room }: { doc: PlanDoc; room: Room }) {
       )}
 
       {error && (
-        <p role="alert" className={ERROR}>
+        <p role="alert" className={error.startsWith('Warning:') ? WARNING : ERROR}>
           {error}
         </p>
       )}
@@ -146,6 +146,9 @@ function ParentStorageList({ doc, room }: { doc: PlanDoc; room: Room }) {
     </PanelSection>
   )
 }
+
+// Same amber style as the warning in Measuring Mode (measure/StorageEditor.tsx).
+const WARNING = 'rounded-lg bg-orange-100 px-3 py-2 text-[13px] font-semibold text-orange-900 dark:bg-orange-950 dark:text-orange-200'
 
 export function StoragePanelSection({ doc, room }: { doc: PlanDoc; room: Room }) {
   return room.storage ? <StorageInspector doc={doc} room={room} /> : <ParentStorageList doc={doc} room={room} />
