@@ -126,7 +126,7 @@ export function moveStorageToWall(
   targetWallStart: string,
   params: StorageParams,
   door: StorageDoor,
-): { doc: PlanDoc } | { error: string } {
+): { doc: PlanDoc; warning?: string } | { error: string } {
   const parent = doc.rooms.find((r) => r.id === storageRoom.storage?.parentRoomId)
   if (!parent) return { error: 'Parent room not found' }
   const targetWall = roomWalls(parent).find((w) => w.start.id === targetWallStart)
@@ -161,5 +161,5 @@ export function moveStorageToWall(
     walkOrder: storageRoom.walkOrder,
   })
   if ('error' in res) return res
-  return { doc: res.doc }
+  return res.warning ? { doc: res.doc, warning: res.warning } : { doc: res.doc }
 }
