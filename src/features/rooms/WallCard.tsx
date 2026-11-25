@@ -3,7 +3,7 @@
 // previous / next wall of the same room (docs/sidebar-plan-3.md step 4).
 import { facadePlannedLengths } from './outside/outsideDims'
 import { useMemo } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
 import { fmtCm, innerWallLengths, roomWalls } from '../../model/geometry'
 import { planPrecision, shownLength } from '../../model/precision'
 import { useUi } from '../../model/store'
@@ -19,6 +19,7 @@ import {
   WALL_STATUSES,
   WALL_TYPES,
   adjacentWallStart,
+  deleteRoomWall,
   patchWalls,
   setWallAligns,
   setWallLength,
@@ -75,6 +76,11 @@ export function WallCard({ doc, room, wallStart, group }: {
           <>
             <IconButton label="Previous wall" icon={<ChevronLeft size={16} />} onClick={() => stepTo(-1)} />
             <IconButton label="Next wall" icon={<ChevronRight size={16} />} onClick={() => stepTo(1)} />
+            <IconButton
+              label={props.locked ? 'Delete wall (this wall is locked: unlock it first)' : 'Delete wall'}
+              variant="danger" icon={<Trash2 size={16} />} disabled={!!props.locked}
+              onClick={() => deleteRoomWall(room.id, wall.start.id)}
+            />
           </>
         )}
       >

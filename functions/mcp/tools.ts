@@ -150,7 +150,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'run_commands',
     description:
-      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_room_note, add_pin, add_tape, set_apartment, add_storage, update_storage, delete_storage). Supports dryRun preview and baseVersion optimistic concurrency.',
+      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, delete_wall, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_room_note, add_pin, add_tape, set_apartment, add_storage, update_storage, delete_storage). Supports dryRun preview and baseVersion optimistic concurrency.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -395,6 +395,21 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         thicknessCm: { type: 'number', exclusiveMinimum: 0, description: 'Wall thickness in cm.' },
         locked: { type: 'boolean', description: 'Lock wall against automatic geometry adjustments.' },
         status: { type: 'string', enum: ['existing', 'demolish', 'new'], description: 'Renovation status: demolish = planned removal, new = planned wall.' },
+        dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
+        baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
+      },
+      required: ['projectId', 'wall'],
+    },
+  },
+  {
+    name: 'delete_wall',
+    description:
+      'Delete one wall of a room and let the plan solve it: a wall shared by two rooms merges the rooms; a wall of one room is removed by extending the two walls next to it until they meet (refused when a wall is locked, or the neighbours are parallel). Doors and windows on the wall go with it. A wall in no room is just removed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
+        wall: WALL_REF_SCHEMA,
         dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
         baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
       },
@@ -914,6 +929,24 @@ export async function callTool(
         },
         ({ version, dryRun }) =>
           `${dryRun ? '[dryRun] ' : ''}Updated wall ${typeof wall === 'string' ? wall : JSON.stringify(wall)} properties (version ${version}).`,
+        ctx,
+      )
+    }
+
+    case 'delete_wall': {
+      const projectId = asString(args.projectId)
+      const wall = args.wall ?? args.wallLabel
+      if (!projectId || !wall) return errResult('INVALID_PARAMS', 'projectId and wall are required.')
+      return executeCommandsTool(
+        store,
+        projectId,
+        [{ type: 'delete_wall', wall }],
+        {
+          dryRun: Boolean(args.dryRun),
+          baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,
+        },
+        ({ version, dryRun }) =>
+          `${dryRun ? '[dryRun] ' : ''}Deleted wall ${typeof wall === 'string' ? wall : JSON.stringify(wall)} (version ${version}).`,
         ctx,
       )
     }

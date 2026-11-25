@@ -71,6 +71,11 @@ Send `{ "commands": [ ... ], "dryRun": false, "baseVersion": 1 }`. Walls can be 
 { "type": "delete_room", "roomCode": "K1" }
 ```
 
+3b. `delete_wall` (a wall shared by two rooms merges them; a wall of one room is removed by extending the two walls next to it until they meet; refused when a wall is locked or the neighbours are parallel; doors on the wall go with it):
+```json
+{ "type": "delete_wall", "wall": "SE-3" }
+```
+
 4. `slice_room`:
 ```json
 { "type": "slice_room", "roomCode": "SE", "a": { "x": 200, "y": -10 }, "b": { "x": 200, "y": 430 }, "newRoomCode": "EN", "newRoomName": "Entry" }
@@ -252,6 +257,7 @@ Simple Floorplan exposes a stateless MCP Streamable HTTP endpoint at `/api/mcp` 
 - `add_storage` — Add a BUILT-IN STORAGE (a closet) on the OUTER side of a wall of a room: a small room with its own side and back walls, and a front door in the host wall that opens into the room (`{ projectId, room, wall, offsetCm, widthCm, depthCm, sideCm?, backCm?, door? }`).
 - `update_storage` — Change the position, the dimensions and/or the front door of a built-in storage; a field that is left out keeps its value (`{ projectId, storage, offsetCm?, widthCm?, depthCm?, sideCm?, backCm?, door? }`).
 - `delete_storage` — Delete a built-in storage: its room, its own walls and its front door; the host wall is merged back into one wall (`{ projectId, storage }`).
+- `delete_wall` — Delete one wall of a room: two rooms merge, or the walls next to it are extended to meet (`{ projectId, wall }`; supports `dryRun`).
 - `add_room` — Add a room by `rect` or `vertices`.
 - `slice_room` — Split a room along a line `(a, b)`.
 - `merge_rooms` — Merge two adjacent rooms (blocks bearing walls unless `allowBearingRemoval: true`; supports `dryRun`).

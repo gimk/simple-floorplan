@@ -251,6 +251,8 @@ export function summarizeCommand(cmd: CommandLike): string {
       return `update_room ${s(cmd.roomCode) || s(cmd.roomId)}`
     case 'delete_room':
       return `delete_room ${s(cmd.roomCode) || s(cmd.roomId)}`
+    case 'delete_wall':
+      return `delete_wall ${typeof cmd.wall === 'string' ? cmd.wall : ''}`
     case 'slice_room':
       return `slice_room ${s(cmd.roomCode)} -> ${s(cmd.newRoomCode)}`
     case 'cutout_room':

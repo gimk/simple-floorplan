@@ -131,6 +131,7 @@ describe('MCP JSON-RPC dispatcher', () => {
       'slice_room',
       'merge_rooms',
       'set_wall_props',
+      'delete_wall',
       'apply_measurements',
       'render_svg',
       'get_events',

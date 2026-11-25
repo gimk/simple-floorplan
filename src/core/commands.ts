@@ -51,6 +51,8 @@ import {
 import { findSharedWalls } from './queries'
 import { normalizeDoorHosts } from './doorHost'
 import { appendOld, renameOldCode } from '../model/oldMeasurements'
+import { deleteWall } from '../model/v2/deleteWall'
+import { ensureV2 } from '../model/v2/ensure'
 import { relabelByTarget } from '../model/v2/relabelV2'
 import { v2SyncRule } from '../model/v2/syncRule'
 import { attachTargets } from '../model/v2/targets'
@@ -156,6 +158,11 @@ const DeleteRoomSchema = z
   .refine((v) => Boolean(v.roomId || v.roomCode), {
     message: 'delete_room requires roomId or roomCode',
   })
+
+const DeleteWallSchema = z.object({
+  type: z.literal('delete_wall'),
+  wall: WallRefSchema,
+})
 
 const SliceRoomSchema = z.object({
   type: z.literal('slice_room'),
@@ -399,6 +406,7 @@ export const CommandSchema = z.discriminatedUnion('type', [
   AddRoomSchema,
   UpdateRoomSchema,
   DeleteRoomSchema,
+  DeleteWallSchema,
   SliceRoomSchema,
   CutoutRoomSchema,
   MergeRoomsSchema,
@@ -1233,6 +1241,22 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
       return {
         doc: cur,
         result: { affected },
+        warnings,
+      }
+    }
+
+    case 'delete_wall': {
+      // One wall of a room: two rooms merge, one room closes by extending the walls next to it, a
+      // wall that no room uses just goes (model/v2/deleteWall.ts). A v1 document is converted first.
+      const { room, wall, label } = resolveWall(doc, cmd.wall)
+      const v2 = ensureV2(doc) as PlanDocV1
+      const wallId = v2.rooms.find((r) => r.id === room.id)?.cycle?.[wall.index]?.wallId
+      if (!wallId) throw new CommandError('WALL_NOT_FOUND', `Wall ${label} has no stored wall.`)
+      const res = deleteWall(v2, wallId)
+      if ('error' in res) throw new CommandError('DELETE_WALL_REFUSED', res.error)
+      return {
+        doc: res.doc as PlanDocV1,
+        result: { deletedWall: label, wallId, ...(res.message ? { message: res.message } : {}) },
         warnings,
       }
     }

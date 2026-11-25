@@ -16,7 +16,7 @@
 //                   room uses the wall (a toast names the rooms).
 // The side the user clicked on the canvas is highlighted. All lengths are cm, one undo step per
 // edit of the wall itself; a value is not an undo step (same as Measuring Mode).
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { Check, DoorOpen, Ruler, Trash2 } from 'lucide-react'
 import { dist, fmtCm } from '../../model/geometry'
@@ -30,11 +30,10 @@ import {
   ERROR, EmptyHint, FIELD_GAP, FieldRow, HEADING, IconButton, MUTED, NumberField, PANEL_CARD, PanelSection, ROW, ROW_GAP, ROW_OFF, ROW_ON, SECTION_PAD,
   Segmented, SwitchRow,
 } from '../../shell/panel'
-import { toast } from '../toast'
 import { solveGlobal } from './globalSolve'
 import type { AlignSideChoice } from './cards'
 import {
-  alignOfSideChoice, alignSideChoice, deleteStoredWall, patchStoredWall, refusedDeleteText, setStoredWallSide,
+  alignOfSideChoice, alignSideChoice, deleteStoredWall, patchStoredWall, setStoredWallSide,
   setStoredWallFace, setStoredWallLength, structuralWarning, update, wallOwnerSide, WALL_ALIGN_SIDES, WALL_STATUSES, WALL_TYPES,
 } from './cards'
 import { ElementList } from './ElementList'
@@ -75,21 +74,7 @@ export function StoredWallCard({ doc, wallId, side, face }: {
     return new Map(solveGlobal(doc).residuals.map((r) => [r.label, r]))
   }, [doc, wallId, view])
 
-  // Delete / Backspace removes the whole wall, like the button (docs: one wall, one object).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (e.metaKey || e.ctrlKey || e.altKey) return
-      const target = e.target
-      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]')) return
-      if (useUi.getState().mode !== 'edit') return
-      e.preventDefault()
-      const res = deleteStoredWall(wallId)
-      if (!res.removed && res.refusedBy.length) toast(refusedDeleteText(wallId, res.refusedBy))
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [wallId])
+  // Delete / Backspace is handled by `deleteSelection` (features/rooms/interaction.ts): one handler.
 
   if (!view) return <EmptyHint>This wall is not on the plan any more.</EmptyHint>
   const { wall, props } = view
@@ -113,8 +98,7 @@ export function StoredWallCard({ doc, wallId, side, face }: {
   }
 
   const removeWallButton = () => {
-    const res = deleteStoredWall(wall.id)
-    if (!res.removed && res.refusedBy.length) toast(refusedDeleteText(wall.id, res.refusedBy))
+    deleteStoredWall(wall.id)
   }
 
   return (
@@ -123,7 +107,10 @@ export function StoredWallCard({ doc, wallId, side, face }: {
         title={wallTitle(wall.id)}
         icon={<Ruler size={16} />}
         actions={
-          <IconButton label="Delete wall" variant="danger" icon={<Trash2 size={16} />} onClick={removeWallButton} />
+          <IconButton
+            label={wall.locked ? 'Delete wall (this wall is locked: unlock it first)' : 'Delete wall'}
+            variant="danger" icon={<Trash2 size={16} />} disabled={!!wall.locked} onClick={removeWallButton}
+          />
         }
       >
         {view.rooms.length > 0 && (

@@ -55,6 +55,7 @@ export const OPENAPI_SPEC = {
                     'add_room',
                     'update_room',
                     'delete_room',
+                    'delete_wall',
                     'slice_room',
                     'cutout_room',
                     'merge_rooms',

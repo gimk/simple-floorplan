@@ -6,6 +6,7 @@ import type { SelItem } from '../../model/selection'
 import { useDoc, useUi } from '../../model/store'
 import type { PlanDoc, Room, StoredWall, WallAlign, WallProps, WallType } from '../../model/types'
 import { moveNode } from '../../model/v2/drag'
+import { ensureV2 } from '../../model/v2/ensure'
 import { removeWall } from '../../model/v2/write'
 import { toast, undoToast } from '../toast'
 import { moveHoleVertex, moveVertices, movableLinked } from './ops'
@@ -187,14 +188,26 @@ export function setStoredWallFace(wallId: string, side: 'L' | 'R', face: string)
  * REFUSED: nothing is written and the room codes come back, so the caller can name them in a toast.
  */
 export function deleteStoredWall(wallId: string): { removed: boolean; refusedBy: string[] } {
-  const doc = useDoc.getState().doc
-  const res = removeWall(doc, wallId)
-  if (res.refusedBy.length) return { removed: false, refusedBy: res.refusedBy }
-  if (res.doc === doc) return { removed: false, refusedBy: [] }
-  update(() => res.doc)
+  const res = useDoc.getState().deleteWall(wallId)
+  if ('error' in res) {
+    toast(res.error)
+    return { removed: false, refusedBy: [] }
+  }
   useUi.getState().select(null)
-  undoToast('Wall deleted', () => useDoc.temporal.getState().undo())
+  undoToast(res.message ?? 'Wall deleted', () => useDoc.temporal.getState().undo())
   return { removed: true, refusedBy: [] }
+}
+
+/** The stored wall of a room wall of a v1 document (the converted document has the same corner ids), or null. */
+export function storedWallOfRoomWall(doc: PlanDoc, roomId: string, wallStart: string): string | null {
+  const v2 = doc.schemaVersion === 2 ? doc : ensureV2(doc)
+  return v2.rooms.find((r) => r.id === roomId)?.cycle?.find((f) => f.cornerId === wallStart)?.wallId ?? null
+}
+
+/** Delete the room wall (v1 document selection `{ kind: 'wall' }`): the same rules as a stored wall. */
+export function deleteRoomWall(roomId: string, wallStart: string) {
+  const id = storedWallOfRoomWall(useDoc.getState().doc, roomId, wallStart)
+  if (id) deleteStoredWall(id)
 }
 
 /** Toast text when some walls of a group stay: 'Kept W3 (rooms EN, CO), W5 (rooms CO).' */

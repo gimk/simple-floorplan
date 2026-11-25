@@ -22,7 +22,7 @@ import {
 import { undoToast } from '../toast'
 import { moveNode, moveRoom as roomMove, moveWall } from '../../model/v2/drag'
 import { isV2Doc } from '../../model/v2/targets'
-import { deleteStoredWalls } from './cards'
+import { deleteRoomWall, deleteStoredWall, deleteStoredWalls } from './cards'
 import { storedWallLine } from './hoverTarget'
 import { sideOfPoint, wallFaceAcross, wallFaceAt, wallFaceAtPoint } from './wallSides'
 // Tab cycling of the select tool (Rayon "TAB: flick through overlapping entities", ./useTabCycle.ts):
@@ -668,7 +668,7 @@ function dragStoredWallOnGraph(e: ReactPointerEvent, vp: Vp, o: StoredWallDrag, 
         useGuides.getState().set([])
         useDoc.getState().updateSilent(() => base)
         // Say it once per drag: a wall that does not move must not look broken.
-        if (!warned) { warned = true; notify(`Wall ${o.wallId} is locked.`, o.a0) }
+        if (!warned) { warned = true; notify(`Wall ${o.wallId} is locked. Unlock it in the wall card to move it.`, o.a0) }
         return
       }
       const w = vp.toWorld(ev.clientX, ev.clientY)
@@ -845,7 +845,7 @@ export function onStoredNodeDown(e: ReactPointerEvent, vp: Vp, nodeId: string, w
       if (lockedWall) {
         useGuides.getState().set([])
         useDoc.getState().updateSilent(() => base)
-        if (!warned) { warned = true; notify(`Wall ${lockedWall.id} is locked.`, raw) }
+        if (!warned) { warned = true; notify(`Wall ${lockedWall.id} is locked. Unlock it in the wall card to move it.`, raw) }
         return
       }
       // Snap to the other rooms. The point itself is out of the snap set (its copies in the rooms
@@ -1052,7 +1052,7 @@ export function deleteGroup(): boolean {
   return true
 }
 
-/** Delete key: selected vertex (outline or hole), selected hole, or room. Walls and elements are ignored here. */
+/** Delete key: selected vertex (outline or hole), hole, room or wall. Elements have their own handler. */
 export function deleteSelection() {
   if (deleteGroup()) return
   const sel = useUi.getState().selection
@@ -1076,6 +1076,12 @@ export function deleteSelection() {
       useDoc.getState().update(() => next)
     }
     useUi.getState().select({ kind: 'room', roomId: sel.roomId })
+  } else if (sel.kind === 'storedWall') {
+    // One wall of a v2 document: two rooms merge, or the walls next to it are extended (deleteWall).
+    deleteStoredWall(sel.wallId)
+  } else if (sel.kind === 'wall') {
+    // A room wall of a v1 document: the same rules, after the conversion to walls.
+    deleteRoomWall(sel.roomId, sel.wallStart)
   } else if (sel.kind === 'room') {
     const h = getActiveHole()
     if (h) {

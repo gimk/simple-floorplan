@@ -5,6 +5,7 @@ import type { RenovationView } from '../features/renovation/logic'
 import { ensureStoredGraph } from './graphRule'
 import { ensureV2 } from './v2/ensure'
 import { repairGraph } from './v2/repair'
+import { deleteWall as deleteWallDoc } from './v2/deleteWall'
 import { toggleItem, type SelItem } from './selection'
 import { loadInitialDoc, scheduleSave, setLastProjectId } from '../sync/idb'
 import { addStorage as addStorageDoc, deleteStorage as deleteStorageDoc, updateStorage as updateStorageDoc, type StorageDoor, type StorageParams } from '../features/storage/actions'
@@ -37,6 +38,11 @@ type DocState = {
   addStorage: (parentRoomId: string, hostWall: string, params: StorageParams, door: StorageDoor) => { storageRoomId: string; warning?: string } | { error: string }
   updateStorage: (storageRoomId: string, params: StorageParams, door?: StorageDoor) => { error?: string; warning?: string }
   deleteStorage: (storageRoomId: string) => void
+  /**
+   * Delete one wall of a v2 document and let the plan solve it (model/v2/deleteWall.ts): one undo step.
+   * A v1 document is converted first. Gives `{ error }` (nothing changed) or an optional message for the toast.
+   */
+  deleteWall: (wallId: string) => { message?: string } | { error: string }
 }
 
 let silent = false
@@ -98,6 +104,13 @@ export const useDoc = create<DocState>()(
         if ('error' in res) return res
         get().update(() => res.doc)
         return { warning: res.warning }
+      },
+      deleteWall: (wallId) => {
+        const cur = get().doc
+        const res = deleteWallDoc(cur.schemaVersion === 2 ? cur : ensureV2(cur), wallId)
+        if ('error' in res) return res
+        get().update(() => res.doc)
+        return { message: res.message }
       },
       deleteStorage: (storageRoomId) => {
         const next = deleteStorageDoc(get().doc, storageRoomId)
