@@ -13,6 +13,7 @@
 import { dist } from '../../model/geometry'
 import { surveyIds } from '../../model/survey'
 import type { PlanDoc, Room, StoredFace, StoredNode, StoredWall, Vec, WallAlign } from '../../model/types'
+import { facadePlannedLengths } from './outside/outsideDims'
 import { deriveWallFaces, storedWallProps } from '../../model/v2/materialize'
 import { outsideFaceSide, wallCentreCm, wallOutsidePlanCm, wallValueLabel } from '../../model/wallValues'
 
@@ -338,6 +339,10 @@ export function storedWallView(
   const centreCm = wallCentreCm(doc.nodes ?? [], wall) ?? dist(a, b)
   const facadeSide = outsideFaceSide(wall, centreCm)
   const roomsById = new Map(doc.rooms.map((r) => [r.id, r]))
+  // The planned outside length is the length of the outside row on the plan (one source).
+  const facadePlanned = facadeSide
+    ? facadePlannedLengths(doc).get(wallValueLabel(wall.id, 'outside')) ?? wallOutsidePlanCm(doc.rooms, doc.nodes ?? [], wall)
+    : null
 
   const sides = SIDES.map((side): WallSideView => {
     const mine = wall.faces
@@ -374,7 +379,7 @@ export function storedWallView(
       faces,
       outside,
       facadeLabel: isFacade ? wallValueLabel(wall.id, 'outside') : null,
-      facadePlannedCm: isFacade ? wallOutsidePlanCm(doc.rooms, doc.nodes ?? [], wall) : null,
+      facadePlannedCm: isFacade ? facadePlanned : null,
     }
   }) as [WallSideView, WallSideView]
 

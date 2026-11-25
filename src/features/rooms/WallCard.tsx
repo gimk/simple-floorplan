@@ -1,6 +1,7 @@
 // Inspect card for one wall (or a Shift + click group of walls): type, renovation state,
 // thickness, line, length, lock, and the elements on the wall. The header steps to the
 // previous / next wall of the same room (docs/sidebar-plan-3.md step 4).
+import { facadePlannedLengths } from './outside/outsideDims'
 import { useMemo } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { fmtCm, innerWallLengths, roomWalls } from '../../model/geometry'
@@ -170,7 +171,7 @@ function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
   const outsideLabel = wallValueLabel(wall.id, 'outside')
   const centreValue = doc.measurements[centreLabel]?.actualCm
   const outsideValue = doc.measurements[outsideLabel]?.actualCm
-  const outsidePlanCm = wallOutsidePlanCm(doc.rooms, nodes, wall)
+  const outsidePlanCm = facadePlannedLengths(doc).get(wallValueLabel(wall.id, 'outside')) ?? wallOutsidePlanCm(doc.rooms, nodes, wall)
   const facade = centreCm !== null && outsideFaceSide(wall, centreCm) !== null
   // Source of the outside value, picked in Measuring Mode. The centre value is a plan value.
   const measureSource = useUi((s) => s.measureSource)

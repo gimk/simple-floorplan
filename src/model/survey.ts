@@ -2,6 +2,7 @@
 // CODE-1..n = walls in polygon order, CODE-D = diagonal (if room.diagonal), CODE-H = ceiling height,
 // CODE-n-T = thickness of wall n (optional, measured at a door or window frame).
 // W12-C / W12-E = centre line and outside face of a stored wall (optional, phase 5b).
+import { facadePlannedLengths } from '../features/rooms/outside/outsideDims'
 import { DEFAULT_WALL_CM, dist, roomInnerRing, roomWalls } from './geometry'
 import type { PlanDoc, Room, StoredNode, StoredWall } from './types'
 import { ownsWall } from './wallSides'
@@ -119,8 +120,10 @@ export type WallSurveyId = {
  * has an outside face on its whole length. `plannedCm` comes from the drawing, never from a solve.
  */
 export function wallValueIds(
-  d: { rooms: Room[]; nodes?: StoredNode[] },
+  d: { rooms: Room[]; nodes?: StoredNode[]; walls?: StoredWall[] },
   wall: StoredWall,
+  /** Planned outside lengths by label (facadePlannedLengths); computed here when not given. */
+  planned: Map<string, number> = facadePlannedLengths({ rooms: d.rooms, nodes: d.nodes, walls: d.walls ?? [wall] }),
 ): WallSurveyId[] {
   const nodes = d.nodes ?? []
   const centre = wallCentreCm(nodes, wall)
@@ -131,7 +134,9 @@ export function wallValueIds(
   if (outsideFaceSide(wall, centre)) {
     out.push({
       label: wallValueLabel(wall.id, 'outside'), kind: 'outside', wallId: wall.id,
-      plannedCm: wallOutsidePlanCm(d.rooms, nodes, wall) ?? centre, optional: true,
+      // The length of the outside row on the plan (one source); the end formula only as a fallback.
+      plannedCm: planned.get(wallValueLabel(wall.id, 'outside')) ?? wallOutsidePlanCm(d.rooms, nodes, wall) ?? centre,
+      optional: true,
     })
   }
   return out
@@ -141,5 +146,7 @@ export function wallValueIds(
  * Every wall value of the plan, in the order of the stored walls: W1-C, W1-E, W2-C... These are
  * optional values, so they are not part of `allSurveyIds` (progress of the rooms).
  */
-export const wallSurveyIds = (d: Pick<PlanDoc, 'rooms' | 'walls' | 'nodes'>): WallSurveyId[] =>
-  (d.walls ?? []).flatMap((w) => wallValueIds(d, w))
+export const wallSurveyIds = (d: Pick<PlanDoc, 'rooms' | 'walls' | 'nodes'>): WallSurveyId[] => {
+  const planned = facadePlannedLengths(d)
+  return (d.walls ?? []).flatMap((w) => wallValueIds(d, w, planned))
+}

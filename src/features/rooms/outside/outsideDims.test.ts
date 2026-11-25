@@ -5,9 +5,10 @@ import { emptyDoc } from '../../../model/store'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../../model/types'
 import { convertToV2 } from '../../../model/v2/convert'
 import { ensureV2 } from '../../../model/v2/ensure'
+import { wallSurveyIds } from '../../../model/survey'
 import { wallOutsidePlanCm } from '../../../model/wallValues'
 import { demoRooms } from '../../measure/demo'
-import { groupRuns, outsideDims, outsideSpans, type OutsideDimRun } from './outsideDims'
+import { facadePlannedLengths, groupRuns, outsideDims, outsideSpans, type OutsideDimRun } from './outsideDims'
 
 /** Length of the whole chain row of a run, cm. */
 const sumOf = (run: OutsideDimRun) => run.segments.reduce((s, seg) => s + seg.lengthCm, 0)
@@ -234,8 +235,10 @@ describe('outsideDims', () => {
     for (const run of runs) expect(sumOf(run)).toBeCloseTo(run.overallCm, 6)
     const w14 = runs.find((r) => r.key === 'W14:L')!
     expect(w14.segments).toHaveLength(1)
-    expect(Math.round(w14.overallCm)).toBe(221)
-    expect(Math.round(w14.segments[0].lengthCm)).toBe(221)
+    // 209, not 221 (round 2): the row now starts on the outer face of W5 (y 1290), the inside corner
+    // 7 cm below the start of W14, instead of at the start of the wall (y 1278, inside W5).
+    expect(Math.round(w14.overallCm)).toBe(209)
+    expect(Math.round(w14.segments[0].lengthCm)).toBe(209)
     // The whole outside side of the wall: it carries the facade value, which the two shortened
     // segments could not show.
     expect(w14.segments[0].label).toBe('W14-E')
@@ -345,5 +348,46 @@ describe('groupRuns', () => {
   it('skips a wall that no room uses (a single wall is not a facade)', () => {
     const nodes: StoredNode[] = [{ id: 'A1', x: 0, y: 0 }, { id: 'A2', x: 300, y: 0 }]
     expect(outsideDims(doc(nodes, [wall('W1', 'A1', 'A2')]))).toEqual([])
+  })
+})
+
+describe('demo apartment: inside corner at a T junction, and the facade planned length', () => {
+  const demo = () => {
+    const d = ensureV2({ ...emptyDoc(), rooms: demoRooms() })
+    return { d, runs: outsideDims({ rooms: d.rooms, nodes: d.nodes, walls: d.walls, measurements: d.measurements }) }
+  }
+
+  it('ends the rows of the inside corner W14 / W5 on the outer face of the other wall', () => {
+    const { runs } = demo()
+    // W14 (vertical, x 717..727) passes through the node of W5 (y 1280..1290) and W4 also ends
+    // there. W14's outside face (x = 717) runs THROUGH the node, so it is the face of the corner:
+    // the W5 row stops on x = 717 (not at 727 on W4's face) and the W14 row starts on y = 1290.
+    const w5 = runs.find((r) => r.key === 'W5:L')!
+    expect(w5.a.x).toBe(531)
+    expect(w5.b.x).toBeCloseTo(717, 6)
+    expect(w5.b.y).toBeCloseTo(1290, 6)
+    expect(w5.overallCm).toBeCloseTo(186, 6)
+    // The row W14:L starts on the outer face of W5 (y 1290): 1499 - 1290 = 209. The wall W14 itself
+    // starts at y 1278 (a T junction on W4), but the outside there is the corner with W5.
+    const w14 = runs.find((r) => r.key === 'W14:L')!
+    expect(w14.a.y).toBeCloseTo(1290, 6)
+    expect(w14.a.x).toBeCloseTo(717, 6)
+    expect(w14.overallCm).toBeCloseTo(209, 6)
+  })
+
+  it('gives the same planned length in Measuring Mode as the outside row, for every W*-E segment', () => {
+    const { d, runs } = demo()
+    const planned = new Map(wallSurveyIds(d).filter((s) => s.kind === 'outside').map((s) => [s.label, s.plannedCm!]))
+    const fromHelper = facadePlannedLengths(d)
+    let count = 0
+    for (const run of runs) {
+      for (const seg of run.segments) {
+        if (!seg.label || !/^W\d+-E$/.test(seg.label)) continue
+        count++
+        expect(planned.get(seg.label), seg.label).toBeCloseTo(seg.lengthCm, 1)
+        expect(fromHelper.get(seg.label), seg.label).toBeCloseTo(seg.lengthCm, 1)
+      }
+    }
+    expect(count).toBeGreaterThanOrEqual(12)
   })
 })

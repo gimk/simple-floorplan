@@ -93,8 +93,10 @@ describe('storedWallView', () => {
     const facade = view.sides.find((s) => s.facadeLabel)!
     expect(facade.facadeLabel).toBe('W5-E')
     expect(facade.outside).toBe(true)
-    // The outside face is longer than the centre line: half of each end wall sticks out.
-    expect(facade.facadePlannedCm!).toBeGreaterThan(view.centreCm)
+    // Half of the end wall sticks out at the W6 end (+5) and the row stops at the outer face of W14
+    // at the other end, an inside corner at a T junction (-5, was +5 before round 2): the planned
+    // length is the outside row, so it equals the centre line here.
+    expect(facade.facadePlannedCm!).toBeCloseTo(view.centreCm, 6)
   })
 
   it('keeps an outside span in the middle of a side, without the facade value', () => {

@@ -242,8 +242,11 @@ function outsideSidesAtNode(w: StoredWall, node: string, len: number): ('L' | 'R
  */
 function cornerShiftCm(
   node: string, runDir: Vec, runNormal: Vec, p: Vec, walls: StoredWall[], nodes: Map<string, Vec>,
+  bodySign: 1 | -1,
 ): number {
   let best = 0
+  // Shift given by a face that runs through the node: it wins over the end faces of other walls.
+  let through: number | null = null
   const at = nodes.get(node)
   for (const w of walls) {
     const pa = nodes.get(w.a)
@@ -255,6 +258,7 @@ function cornerShiftCm(
     const den = runDir.x * d.y - runDir.y * d.x
     if (Math.abs(den) <= PARALLEL_SIN) continue
     let sides: ('L' | 'R')[]
+    let isThrough = false
     if (w.a === node || w.b === node) {
       sides = outsideSidesAtNode(w, node, len)
       if (sides.length !== 1) continue
@@ -263,6 +267,7 @@ function cornerShiftCm(
       // Its outside face that stops at the node and leaves it towards the outside of the run is
       // the face that continues the outside round that corner.
       if (!at) continue
+      isThrough = true
       const along = (at.x - pa.x) * d.x + (at.y - pa.y) * d.y
       const off = (at.x - pa.x) * -d.y + (at.y - pa.y) * d.x
       if (Math.abs(off) > TOL_CM || along <= TOL_CM || along >= len - TOL_CM) continue
@@ -273,6 +278,17 @@ function cornerShiftCm(
           const hi = Math.max(f.from, f.to)
           const startsHere = Math.abs(lo - along) <= TOL_CM
           const endsHere = Math.abs(hi - along) <= TOL_CM
+          if (!startsHere && !endsHere) {
+            // A face that runs THROUGH the node (a T junction where another wall also ends, round
+            // 2 finding: W14 at the node of W5 and W4 in the demo): the face line goes on on both
+            // sides, so it is the outside face of the corner when it looks towards the body of
+            // the run. `bodySign` is +1 at the start of the run and -1 at its end.
+            if (!(lo < along - TOL_CM && hi > along + TOL_CM)) return false
+            const sideSign = side === 'L' ? 1 : -1
+            const nx = -d.y * sideSign
+            const ny = d.x * sideSign
+            return (nx * runDir.x + ny * runDir.y) * bodySign > 0.5
+          }
           if (startsHere === endsHere) return false
           const away = startsHere ? 1 : -1
           return (d.x * runNormal.x + d.y * runNormal.y) * away > 0.5
@@ -285,10 +301,24 @@ function cornerShiftCm(
     const half = storedWallProps(w).thicknessCm / 2
     const q = { x: pa.x - d.y * half * sign, y: pa.y + d.x * half * sign }
     const s = ((q.x - p.x) * d.y - (q.y - p.y) * d.x) / den
-    if (Math.abs(s) > MAX_EXTEND_CM || Math.abs(s) <= Math.abs(best)) continue
+    if (Math.abs(s) > MAX_EXTEND_CM) continue
+    if (isThrough && wholeThrough(w, node, nodes, d)) {
+      if (through === null || Math.abs(s) > Math.abs(through)) through = s
+      continue
+    }
+    if (Math.abs(s) <= Math.abs(best)) continue
     best = s
   }
-  return best
+  return through ?? best
+}
+
+/** True when a face of the wall runs through the node (not only stops at it). */
+function wholeThrough(w: StoredWall, node: string, nodes: Map<string, Vec>, d: Vec): boolean {
+  const at = nodes.get(node)
+  const pa = nodes.get(w.a)
+  if (!at || !pa) return false
+  const along = (at.x - pa.x) * d.x + (at.y - pa.y) * d.y
+  return w.faces.some((f) => f.roomId === undefined && Math.min(f.from, f.to) < along - TOL_CM && Math.max(f.from, f.to) > along + TOL_CM)
 }
 
 /** Two spans that make one straight run: same direction, same outer face line, touching. */
@@ -374,19 +404,27 @@ function buildRun(spans: OutsideSpan[], walls: StoredWall[], nodes: Map<string, 
   const firstSpan = spans.find((s) => samePoint(s.a, points[0]) || samePoint(s.b, points[0]))
   const lastSpan = spans.find((s) => samePoint(s.a, points[lastAt]) || samePoint(s.b, points[lastAt]))
   if (firstSpan && lastSpan && runDir.x * runDir.x + runDir.y * runDir.y > 0) {
-    const startNode = endNodeOf(firstSpan, points[0], nodes)
-    const endNode = endNodeOf(lastSpan, points[lastAt], nodes)
-    const startShift = cornerShiftCm(startNode, runDir, spans[0].normal, points[0], walls, nodes)
-    const endShift = cornerShiftCm(endNode, runDir, spans[0].normal, points[lastAt], walls, nodes)
+    // A chain point that sits closer to the run end than the wall thickness is a sliver of the
+    // corner join (round 2 finding: W14 starts 7 cm above the node where W5 and W4 meet it). The
+    // corner is at that point, not at the end of the wall, so the shift is taken from there.
+    const sliver = Math.max(...spans.map((sp) => sp.thicknessCm))
+    const startIdx = points.length > 2 && dist(points[0], points[1]) <= sliver ? 1 : 0
+    const endIdx = points.length > 2 && dist(points[lastAt], points[lastAt - 1]) <= sliver ? lastAt - 1 : lastAt
+    const startNode = endNodeOf(firstSpan, points[startIdx], nodes)
+    const endNode = endNodeOf(lastSpan, points[endIdx], nodes)
+    const startShift = cornerShiftCm(startNode, runDir, spans[0].normal, points[startIdx], walls, nodes, 1)
+    const endShift = cornerShiftCm(endNode, runDir, spans[0].normal, points[endIdx], walls, nodes, -1)
     // A shift must not pass the next chain point: that would turn a segment around.
-    const next = points[1]
-    const before = points[lastAt - 1]
-    const startRoom = next ? dist(points[0], next) - TOL_CM : 0
-    const endRoom = before ? dist(points[lastAt], before) - TOL_CM : 0
+    const next = points[startIdx + 1]
+    const before = points[endIdx - 1]
+    const startRoom = next ? dist(points[startIdx], next) - TOL_CM : 0
+    const endRoom = before ? dist(points[endIdx], before) - TOL_CM : 0
     const s0 = Math.abs(startShift) < startRoom ? startShift : 0
     const s1 = Math.abs(endShift) < endRoom ? endShift : 0
-    points[0] = { x: points[0].x + runDir.x * s0, y: points[0].y + runDir.y * s0 }
-    points[lastAt] = { x: points[lastAt].x + runDir.x * s1, y: points[lastAt].y + runDir.y * s1 }
+    const origin = points[startIdx]
+    const last = points[endIdx]
+    points[0] = startIdx ? { x: origin.x + runDir.x * s0, y: origin.y + runDir.y * s0 } : { x: points[0].x + runDir.x * s0, y: points[0].y + runDir.y * s0 }
+    points[lastAt] = endIdx !== lastAt ? { x: last.x + runDir.x * s1, y: last.y + runDir.y * s1 } : { x: points[lastAt].x + runDir.x * s1, y: points[lastAt].y + runDir.y * s1 }
   }
   // A chain point closer to the previous one than the thickness of the wall is not a span of the
   // facade: it is a sliver of the corner join (two walls that meet a few cm from the corner, round
@@ -473,6 +511,20 @@ export function outsideDimsLod(runs: OutsideDimRun[], zoom: number): OutsideDimR
       points: [run.a, run.b],
       segments: [{ a: run.a, b: run.b, lengthCm: run.overallCm, label: null, measuredCm: null }],
     })
+  }
+  return out
+}
+
+/**
+ * Planned length of the OUTSIDE face of each facade wall, by label ('W12-E'): the length of the
+ * chain segment that carries the label. ONE source for the row on the plan and for the planned
+ * length in Measuring Mode and on the wall card, so the two cannot differ. A wall with no such
+ * segment (its side is cut by a T junction, or not drawn) is not in the map.
+ */
+export function facadePlannedLengths(doc: Omit<OutsideSpanDoc, 'measurements'> & Partial<Pick<OutsideSpanDoc, 'measurements'>>): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const run of outsideDims({ ...doc, measurements: doc.measurements ?? {} })) {
+    for (const seg of run.segments) if (seg.label) out.set(seg.label, seg.lengthCm)
   }
   return out
 }
