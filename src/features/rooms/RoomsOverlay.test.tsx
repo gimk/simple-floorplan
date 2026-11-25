@@ -622,3 +622,50 @@ describe('typing a length on a dimension text (docs/measurements-plan.md section
     expect(setup()).not.toContain('data-dim-editor=')
   })
 })
+
+describe('the label of a built-in storage (UI test report docs/ui-test-report-storage.md, "Look")', () => {
+  /** A storage of 100 x 60 cm outside a parent room of 400 x 300 cm, in a v2 document. */
+  const storageDoc = (): PlanDoc => {
+    const parent = mk('A', [[0, 0], [400, 0], [400, 300], [0, 300]], 1)
+    const storage: Room = {
+      ...mk('R2', [[100, -70], [200, -70], [200, -10], [100, -10]], 2),
+      name: 'Storage',
+      storage: { parentRoomId: 'A' },
+    }
+    return convertToV2({ ...emptyDoc(), rooms: [parent, storage] }).doc
+  }
+
+  /** Draw the plan with the storage, at `zoom` px per cm. */
+  const at = (zoom: number) => {
+    applyState(useUi, {
+      layers: BASE_LAYERS, mode: 'edit', tool: 'select', selection: null, multi: [],
+      hoverLabel: null, hoverDiagonal: null, view: { x: 0, y: 0, zoom }, dimStyle: 'lines',
+    })
+    applyState(useSidebar, { tab: 'inspect' })
+    applyState(useDoc, { doc: storageDoc() })
+    return renderToString(<Viewport><RoomsLayer /><RoomsOverlay /></Viewport>)
+  }
+
+  it('writes the name of the storage alone, in the middle of its inside ring', () => {
+    const html = at(1)
+    // The inside ring of the storage runs from (105, -65) to (195, -5): 90 x 60 cm, centre (150, -35).
+    // The full tag (about 78 px wide) with a badge beside it does not fit: the name alone is drawn,
+    // at the centre, not with the size and the rows of the other rooms.
+    expect(html).toContain('data-room-code-only="R2"')
+    expect(html).not.toContain('data-room-label="R2"')
+    expect(html).toContain('font-weight="600" pointer-events="none" data-room-code-only="R2"')
+    expect(html).toMatch(/<text x="150" y="-35" text-anchor="middle" dominant-baseline="middle"[^>]*data-room-code-only="R2"/)
+    expect(html).toContain('>Storage<')
+  })
+
+  it('hides the name too when the inside ring is smaller than the label plus a badge margin', () => {
+    // At 0,4 px/cm the inside ring is 36 x 24 px on screen, while the name needs 43 px: the badge of
+    // a wall of the storage would touch it, so the label goes. The storage walls and its hatch stay.
+    const html = at(0.4)
+    expect(html).not.toContain('data-room-label="R2"')
+    expect(html).not.toContain('data-room-code-only="R2"')
+    // The storage itself stays: its walls and its hatch come from the other layers.
+    expect(html).toContain('data-room-storage="true"')
+    expect(html).toContain('url(#rooms-storage-hatch)')
+  })
+})

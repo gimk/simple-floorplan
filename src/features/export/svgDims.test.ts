@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Room } from '../../model/types'
 import { DIM_STYLE, worldPx } from '../rooms/dims/dimLine'
-import { outsideDims, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, type OutsideDimRun } from '../rooms/outside/outsideDims'
+import { outsideDims, OUTSIDE_ROWS_PX, type OutsideDimRun } from '../rooms/outside/outsideDims'
 import { ensureV2 } from '../../model/v2/ensure'
 import { emptyDoc } from '../../model/store'
 import {
@@ -184,7 +184,7 @@ describe('outsideRunSvg: the text of a short chain segment', () => {
     return { x: Number(xy[1]), y: Number(xy[2]), outside: tag.includes('data-dim-outside') }
   }
 
-  it('goes past the start end of the run, clear of the extension line, 13 px off the row', () => {
+  it('goes past the start end of the run, clear of the extension line, 7 px off the row', () => {
     // 20 cm on the paper is shorter than its own text: the rule puts the text outside.
     const run = topRun(20)
     const svg = outsideRunSvg(run, ctx)
@@ -195,10 +195,10 @@ describe('outsideRunSvg: the text of a short chain segment', () => {
     const half = p((`W1-E 20`.length * DIM_STYLE.charWidth) / 2)
     expect(t.x + half).toBeLessThanOrEqual(-p(DIM_STYLE.outsideGap) + 1e-9)
     expect(t.x).toBeLessThan(0)
-    // 13 px off the chain row (7 px of the style + the 6 px of a text that went outside), which is
-    // one step further from the wall than the 7 px of a text that fits.
+    // 7 px off the chain row, the standard gap of a text that fits: a text that went outside keeps
+    // the same distance from its row (UI test report docs/ui-test-report-storage.md, "Look").
     // 2 decimals: the SVG text keeps 2 decimals of a cm.
-    expect(t.y).toBeCloseTo(-p(OUTSIDE_ROWS_PX.chain) - p(DIM_STYLE.textGap + OUTSIDE_EXTRA_PX), 2)
+    expect(t.y).toBeCloseTo(-p(OUTSIDE_ROWS_PX.chain) - p(DIM_STYLE.textGap), 2)
     // The extension lines stay where they are: the text does not move them.
     expect(svg).toContain(`data-dim-ext="W1:R:0"`)
     // A segment that holds its text keeps it centred between the ticks, 7 px off the row.

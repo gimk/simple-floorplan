@@ -170,22 +170,23 @@ describe('OutsideDimsLayer', () => {
     expect(setup({ mode: 'measure' })).toContain('data-outside-dims')
   })
 
-  it('puts the text of a short segment past the outer end of its row, clear of the ticks (suggestion 4)', () => {
+  it('puts the text of a short segment past the outer end of its row, on its own row line (suggestion 4)', () => {
     // The first segment is 20,555 cm, written '205,55' (mm, 2 decimals): 6 characters, 37 px.
     // Zoom 2: the segment is 41 px on screen, over the 40 px of the level of detail, so the
     // chain row is drawn, but the text does not fit between the ticks.
     const zoom = 2
     const html = setup({ doc: v2short(15.555), zoom, units: { unit: 'mm', decimals: 2 } })
-    // The text goes past the START end of the segment (the first half of the row), one step
-    // further from the row.
+    // The text goes past the START end of the segment (the first half of the row), but it keeps
+    // the standard gap of 7 px from its own row line (UI test report docs/ui-test-report-storage.md,
+    // "Look": a text one step further out touched the dimension line of the next run).
     const first = /<g data-outside-seg="0">([\s\S]*?)<\/g>/.exec(html)![1]
     expect(first).toContain('data-dim-outside=""')
     const t = /<text x="([-\d.]+)" y="([-\d.]+)"/.exec(first)!
-    // Past the outside corner at x = -5, and 13 px instead of 7 px off the chain row at
-    // y = -5 - 28 px (all px divided by the zoom).
+    // Past the outside corner at x = -5, and 7 px off the chain row at y = -5 - 28 px (all px
+    // divided by the zoom).
     const row = -5 - 28 / zoom
     expect(Number(t[1])).toBeLessThan(-5)
-    expect(Number(t[2])).toBeCloseTo(row - 13 / zoom, 6)
+    expect(Number(t[2])).toBeCloseTo(row - 7 / zoom, 6)
     // A segment that holds its text keeps it centred between the ticks.
     const second = /<g data-outside-seg="1">([\s\S]*?)<\/g>/.exec(html)![1]
     expect(Number(/<text x="[-\d.]+" y="([-\d.]+)"/.exec(second)![1])).toBeCloseTo(row - 7 / zoom, 6)

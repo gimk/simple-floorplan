@@ -8,7 +8,9 @@ import { ensureV2 } from '../../../model/v2/ensure'
 import { wallSurveyIds } from '../../../model/survey'
 import { wallOutsidePlanCm } from '../../../model/wallValues'
 import { demoRooms } from '../../measure/demo'
-import { facadePlannedLengths, groupRuns, outsideDims, outsideSpans, type OutsideDimRun } from './outsideDims'
+import { dimTextBox } from '../dims/dimBoxes'
+import { DIM_STYLE } from '../dims/dimLine'
+import { OUTSIDE_ROWS_PX, facadePlannedLengths, groupRuns, outsideDims, outsideRowLine, outsideSpans, type OutsideDimRun } from './outsideDims'
 
 /** Length of the whole chain row of a run, cm. */
 const sumOf = (run: OutsideDimRun) => run.segments.reduce((s, seg) => s + seg.lengthCm, 0)
@@ -389,5 +391,60 @@ describe('demo apartment: inside corner at a T junction, and the facade planned 
       }
     }
     expect(count).toBeGreaterThanOrEqual(12)
+  })
+})
+
+describe('outsideRowLine: the text of a row stays on its own row line (UI test report, "Look")', () => {
+  /** The row of a face of `lengthCm`, its normal up (the outside of a top wall), at 1 px/cm. */
+  const row = (offsetPx: number, text: string, lengthCm = 95, outsideEnd: 'start' | 'end' = 'end') =>
+    outsideRowLine({
+      start: { x: 0, y: 0 }, end: { x: lengthCm, y: 0 }, normal: { x: 0, y: -1 },
+      offsetCm: offsetPx, zoom: 1, text, outsideEnd,
+    })!
+
+  it('keeps the text that does not fit at the standard gap from its own row line', () => {
+    // A measured value between two storages: too wide for its segment, so it goes past the end of
+    // its line. It keeps the text gap of every other label (7 px), not one step further out.
+    const text = 'W7-E ✓ 95 · 95,4'
+    const line = row(OUTSIDE_ROWS_PX.chain, text)
+    expect(line.outside).toBe(true)
+    expect(-OUTSIDE_ROWS_PX.chain - line.text.y).toBeCloseTo(DIM_STYLE.textGap, 6)
+  })
+
+  it('stays clear of the dimension line of the next run, 65 cm behind the wall', () => {
+    // The UI test: the '95' of the wall piece between two storages was on the overall row of its
+    // run (52 px off the host face), and the storage behind it is 65 cm deep, so the line of that
+    // storage is 65 px away. A text one step further out (the removed 6 px) crossed it; the text
+    // box of a label that keeps the standard gap does not.
+    const text = 'W7-E ✓ 95 · 95,4'
+    const line = row(OUTSIDE_ROWS_PX.overall, text)
+    const box = dimTextBox(line, text, 1)
+    expect(-box.y0).toBeLessThan(65)
+    // ... and it is still clear of its own row line: it sits above the line, never on it.
+    expect(box.y1).toBeLessThan(-OUTSIDE_ROWS_PX.overall)
+  })
+
+  it('still sends the text past the end of its own line, never on a tick', () => {
+    const text = 'W7-E ✓ 95 · 95,4'
+    const line = row(OUTSIDE_ROWS_PX.chain, text)
+    const half = (text.length * DIM_STYLE.charWidth) / 2
+    expect(line.text.x).toBeCloseTo(95 + DIM_STYLE.outsideGap + half, 6)
+    // The other end moves the text past the start of the line.
+    const atStart = row(OUTSIDE_ROWS_PX.chain, text, 95, 'start')
+    expect(atStart.text.x).toBeCloseTo(-DIM_STYLE.outsideGap - half, 6)
+  })
+
+  it('centres a text that fits on the middle of its own segment, at the standard gap', () => {
+    const line = row(OUTSIDE_ROWS_PX.chain, '95')
+    expect(line.outside).toBe(false)
+    expect(line.text.x).toBeCloseTo(47.5, 6)
+    expect(-OUTSIDE_ROWS_PX.chain - line.text.y).toBeCloseTo(DIM_STYLE.textGap, 6)
+  })
+
+  it('draws nothing for a face too short on screen to hold a line', () => {
+    expect(outsideRowLine({
+      start: { x: 0, y: 0 }, end: { x: 5, y: 0 }, normal: { x: 0, y: -1 },
+      offsetCm: OUTSIDE_ROWS_PX.chain, zoom: 0.1, text: '5', outsideEnd: 'end',
+    })).toBeNull()
   })
 })

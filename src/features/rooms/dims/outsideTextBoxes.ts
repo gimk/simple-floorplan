@@ -2,18 +2,15 @@
 // keep off the texts of the outside rows too, not only off the wall values.
 //
 // The layout below is the one of `outside/OutsideDimsLayer.tsx`, written again with the same pure
-// functions (`dimLine` of dims/dimLine.ts): the chain row px(28) from the outer face line, the
-// overall row px(52), the text of a segment that does not fit between its ticks past the end of its
-// line and one step further from the row, and one row only for a run that has one segment. The
-// layer file itself owns the drawing; this file only says where its texts are. Pure: no store, no
-// React. Units are cm, y points down.
-import { OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, type OutsideDimRun, type OutsideDimSegment } from '../outside/outsideDims'
-export { OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX }
-import { DIM_STYLE, dimLine, worldPx } from './dimLine'
+// function (`outsideRowLine` of outside/outsideDims.ts): the chain row px(28) from the outer face
+// line, the overall row px(52), the text of a segment that does not fit between its ticks past the
+// end of its line at the standard distance from the row, and one row only for a run that has one
+// segment. The layer file itself owns the drawing; this file only says where its texts are. Pure:
+// no store, no React. Units are cm, y points down.
+import { OUTSIDE_ROWS_PX, outsideRowLine, type OutsideDimRun, type OutsideDimSegment } from '../outside/outsideDims'
+export { OUTSIDE_ROWS_PX }
+import { worldPx } from './dimLine'
 import { boxHit, dimTextBox, growBox, type Box } from './dimBoxes'
-
-/** Distance of the chain row and the overall row from the outer face line, screen px. */
-/** Extra distance from the row of a text that does not fit between its ticks, screen px. */
 
 export type OutsideTextInput = {
   /** Screen px per cm. */
@@ -39,14 +36,11 @@ function rowBox(
   text: string,
   outsideEnd: 'start' | 'end',
 ): Box | null {
-  const base = { start: a, end: b, normal, offsetCm, zoom, text }
-  const first = dimLine(base)
-  if (!first) return null
-  // A text that does not fit between the ticks of a row goes past the end of its line, one step
-  // further from the row than the standard gap (round 1 suggestion 4).
-  const line = first.outside
-    ? dimLine({ ...base, textPlace: 'outside', outsideEnd, textGapPx: DIM_STYLE.textGap + OUTSIDE_EXTRA_PX }) ?? first
-    : first
+  // A text that does not fit between the ticks of a row goes past the end of its line, at the
+  // standard distance from the row (outsideRowLine: one rule for the layer, this mask and the
+  // export).
+  const line = outsideRowLine({ start: a, end: b, normal, offsetCm, zoom, text, outsideEnd })
+  if (!line) return null
   return dimTextBox(line, text, zoom)
 }
 

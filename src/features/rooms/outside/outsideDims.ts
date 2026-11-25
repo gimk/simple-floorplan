@@ -27,6 +27,7 @@ import { dist } from '../../../model/geometry'
 import type { PlanDoc, Room, StoredNode, StoredWall, Vec } from '../../../model/types'
 import { deriveWallFaces, storedWallProps } from '../../../model/v2/materialize'
 import { outsideFaceSide, wallValueLabel } from '../../../model/wallValues'
+import { dimLine, type DimLine } from '../dims/dimLine'
 import { gapAreas } from '../gaps'
 
 /** Two spans are in line when their directions differ by less than this (0.5 degree). */
@@ -482,8 +483,48 @@ export function outsideDims(doc: OutsideSpanDoc): OutsideDimRun[] {
 export const OUTSIDE_ROWS_PX = { chain: 28, overall: 52 }
 /** Start of the extension lines off the outer face, screen px. */
 export const OUTSIDE_EXT_GAP_PX = 4
-/** Extra distance from the row of a text that does not fit between its ticks, screen px. */
-export const OUTSIDE_EXTRA_PX = 6
+
+/** One row of an outside run: the face it measures, its normal and the distance of the row. */
+export type OutsideRowInput = {
+  start: Vec
+  end: Vec
+  /** Unit normal of the run, away from the wall: the side the text goes. */
+  normal: Vec
+  /** Distance of the row line from the outer face line, cm (from OUTSIDE_ROWS_PX). */
+  offsetCm: number
+  /** Screen px per cm. */
+  zoom: number
+  text: string
+  /** End the text goes past when it does not fit between the ticks. */
+  outsideEnd: 'start' | 'end'
+}
+
+/**
+ * The dimension line of one outside row, with its text. ONE rule for the plan layer, the badge
+ * mask (dims/outsideTextBoxes.ts) and the export (export/svgDims.ts).
+ *
+ * A text that does not fit between the ticks of its segment goes past the end of its line (round 1
+ * suggestion 4: never on a tick, never on the text of the neighbouring segment), but it keeps the
+ * STANDARD distance from the row line, like every other label of the plan. It used to go one step
+ * further out (a gap of 6 px more): on a short row that put it between two rows, and its end
+ * touched the corner of the dimension line of the next run (UI test report
+ * docs/ui-test-report-storage.md, "Look": the '95' between two storages touched the line of the
+ * neighbouring storage). The values and the runs are the same as before.
+ */
+export function outsideRowLine(input: OutsideRowInput): DimLine | null {
+  const base = {
+    start: input.start,
+    end: input.end,
+    normal: input.normal,
+    offsetCm: input.offsetCm,
+    zoom: input.zoom,
+    text: input.text,
+  }
+  const first = dimLine(base)
+  if (!first) return null
+  if (!first.outside) return first
+  return dimLine({ ...base, textPlace: 'outside', outsideEnd: input.outsideEnd }) ?? first
+}
 
 /**
  * Level of detail of the outside rows, screen px. When the plan is zoomed out, the rows of the

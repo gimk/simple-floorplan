@@ -32,7 +32,7 @@ import { fittingRows, ringBox, textBox, textQuad, type Box } from '../rooms/dims
 import { DECLUTTER, keepDimTexts, smallRoomDims, type DimTextCandidate } from '../rooms/dims/declutter'
 import { outsideDimTextBoxes, outsideHiddenTexts } from '../rooms/dims/outsideTextBoxes'
 import { roomPerimeterCm, roomTagLines, tagCeilingCm, wallProgress } from '../rooms/roomTag'
-import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
+import { OUTSIDE_EXT_GAP_PX, OUTSIDE_ROWS_PX, outsideDims, outsideRowLine, type OutsideDimRun, type OutsideDimSegment } from '../rooms/outside/outsideDims'
 
 // ---- text of the paper ----
 export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -534,12 +534,11 @@ export function outsideRunSvg(run: OutsideDimRun, ctx: OutsideCtx): string {
   })
   /** One row of the run, with the rule of the style: text past the end when it does not fit. */
   const row = (a: Vec, b: Vec, offsetPx: number, text: DimText, outsideEnd: 'start' | 'end', dimKey: string, hideText: boolean) => {
-    const base = { start: a, end: b, normal: run.normal, offsetCm: p(offsetPx), zoom, text: fullDimText(text) }
-    const first = dimLine(base)
-    if (!first) return
-    const line = first.outside
-      ? dimLine({ ...base, textPlace: 'outside', outsideEnd, textGapPx: DIM_STYLE.textGap + OUTSIDE_EXTRA_PX }) ?? first
-      : first
+    // The same placement as the plan layer and the badge mask (outside/outsideDims.ts).
+    const line = outsideRowLine({
+      start: a, end: b, normal: run.normal, offsetCm: p(offsetPx), zoom, text: fullDimText(text), outsideEnd,
+    })
+    if (!line) return
     parts.push(dimSvg({ line, text, dimKey, kind: 'outside', fs, zoom, hideText }))
   }
   const overallHidden = !!ctx.hidden?.has(`${run.key}:overall`)
@@ -582,7 +581,7 @@ export function exportOutsideRuns(doc: PlanDoc, on: boolean): OutsideDimRun[] {
  * export grows enough to keep them in the image.
  */
 export function outsideExtentPoints(runs: OutsideDimRun[], zoom: number): Vec[] {
-  const far = worldPx(OVERALL_ROW_PX + DIM_STYLE.textGap + OUTSIDE_EXTRA_PX + DIM_STYLE.font, zoom)
+  const far = worldPx(OVERALL_ROW_PX + DIM_STYLE.textGap + DIM_STYLE.font, zoom)
   const near = worldPx(CHAIN_ROW_PX, zoom)
   const out: Vec[] = []
   for (const run of runs) {

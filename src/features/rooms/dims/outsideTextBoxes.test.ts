@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../../model/types'
 import { DIM_STYLE } from './dimLine'
 import { outsideDims, type OutsideDimRun } from '../outside/outsideDims'
-import { OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDimTextBoxes, outsideHiddenTexts, type OutsideTextInput } from './outsideTextBoxes'
+import { OUTSIDE_ROWS_PX, outsideDimTextBoxes, outsideHiddenTexts, type OutsideTextInput } from './outsideTextBoxes'
 
 const wall = (id: string, a: string, b: string, thicknessCm = 10): StoredWall =>
   ({ id, a, b, faces: [], type: 'partition', thicknessCm })
@@ -86,17 +86,18 @@ describe('outsideDimTextBoxes', () => {
     expect((boxes[2].y0 + boxes[2].y1) / 2).toBeCloseTo(-5 - OUTSIDE_ROWS_PX.overall - DIM_STYLE.textGap, 6)
   })
 
-  it('sends the text of a short segment past the end of its line, one step further from the row', () => {
+  it('sends the text of a short segment past the end of its line, on its own row line', () => {
     // The first chain segment of the top facade is 20 cm long at zoom 1: its text does not fit
     // between the ticks, so it goes past the end of its line, DIM_STYLE.outsideGap + half its width
-    // beyond that end, and DIM_STYLE.textGap + OUTSIDE_EXTRA_PX away from the row.
+    // beyond that end, and it keeps the standard DIM_STYLE.textGap away from the row (a text one
+    // step further out touched the dimension line of the next run: UI test report, "Look").
     const runs = outsideDims(shortFirstSegment())
     const split = runs.find((r) => r.segments.length === 2)!
     expect(Math.round(split.segments[0].lengthCm)).toBe(20)
     const boxes = outsideDimTextBoxes([split], { ...input, segmentText: () => '20' })
     const row = -5 - OUTSIDE_ROWS_PX.chain
-    // The text is one step further from the row than the standard gap of a dimension text.
-    expect((boxes[0].y0 + boxes[0].y1) / 2).toBeCloseTo(row - DIM_STYLE.textGap - OUTSIDE_EXTRA_PX, 6)
+    // The text keeps the standard gap of a dimension text from its own row line.
+    expect((boxes[0].y0 + boxes[0].y1) / 2).toBeCloseTo(row - DIM_STYLE.textGap, 6)
     // It went past the START end of the segment, at the outside corner of the run (x = -5).
     const firstX = (boxes[0].x0 + boxes[0].x1) / 2
     expect(firstX).toBeCloseTo(-5 - DIM_STYLE.outsideGap - DIM_STYLE.charWidth, 6)

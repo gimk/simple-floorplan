@@ -13,11 +13,10 @@ import { useDoc, useUi } from '../../../model/store'
 import type { Vec } from '../../../model/types'
 import { isV2Doc } from '../../../model/v2/targets'
 import { useIsDesktop } from '../../../shell/useDesktop'
-import { DIM_STYLE, dimLine } from '../dims/dimLine'
 import { outsideHiddenTexts } from '../dims/outsideTextBoxes'
 import { DimLineView } from '../dims/DimLineView'
 import { dimEditAllowed, dimTextLabel, useDimEdit } from '../dims/dimEdit'
-import { OUTSIDE_EXT_GAP_PX, OUTSIDE_EXTRA_PX, OUTSIDE_ROWS_PX, outsideDims, outsideDimsLod, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
+import { OUTSIDE_EXT_GAP_PX, OUTSIDE_ROWS_PX, outsideDims, outsideDimsLod, outsideRowLine, type OutsideDimSegment, type OutsideDimRun } from './outsideDims'
 
 /** Row distances from the outer face line, screen px (shared with the badge mask and the export). */
 const ROW_CHAIN_PX = OUTSIDE_ROWS_PX.chain
@@ -62,12 +61,8 @@ type RowProps = {
  * (round 1 suggestion 4).
  */
 function RowDim({ a, b, normal, offset, text, measured, outsideEnd, dimKey, zoom, editLabel, plannedCm, editing, hidden }: RowProps) {
-  const base = { start: a, end: b, normal, offsetCm: offset, zoom, text }
-  const first = dimLine(base)
-  if (!first) return null
-  const line = first.outside
-    ? dimLine({ ...base, textPlace: 'outside', outsideEnd, textGapPx: DIM_STYLE.textGap + OUTSIDE_EXTRA_PX }) ?? first
-    : first
+  const line = outsideRowLine({ start: a, end: b, normal, offsetCm: offset, zoom, text, outsideEnd })
+  if (!line) return null
   return (
     <DimLineView line={line} text={text} measured={measured} kind="outside" dimKey={dimKey} hideText={editing || hidden}
       onTextDoubleClick={editLabel ? () => useDimEdit.getState().open({ label: editLabel, at: line.text, plannedCm: plannedCm ?? 0 }) : undefined} />

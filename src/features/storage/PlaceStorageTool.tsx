@@ -74,12 +74,17 @@ export function PlaceStorageTool() {
         style={{ cursor: 'crosshair' }}
       />
       {preview && (
+        // A light preview: the tool overlay is drawn ABOVE the dimension layers, so a strong orange
+        // box hid the outside dimension number under it (UI test report docs/ui-test-report-storage.md,
+        // "Look": the preview of the 'g' tool over the '410' of the outside row). About 25 % of
+        // fill, a thin stroke, no hatch: the value below stays readable.
         <polygon
           points={[preview.A, preview.B, preview.C, preview.D].map((pt) => `${pt.x},${pt.y}`).join(' ')}
-          className="fill-amber-200/50 stroke-orange-600 dark:fill-amber-700/40 dark:stroke-orange-400"
-          strokeWidth={px(2)}
+          className="fill-amber-200/25 stroke-orange-600/70 dark:fill-amber-700/25 dark:stroke-orange-400/70"
+          strokeWidth={px(1.5)}
           strokeDasharray={`${px(5)} ${px(4)}`}
           pointerEvents="none"
+          data-storage-preview=""
         />
       )}
     </g>

@@ -26,6 +26,7 @@ import { useIsDesktop } from '../../shell/useDesktop'
 import { DIM_STYLE, dimLine, dimLineOfSpan, worldPx, type DimLine } from './dims/dimLine'
 import { DimLineView } from './dims/DimLineView'
 import { fittingRows, pickWallBadge, ringBox, tagBox, textBox, textQuad, wallBadgePlaces, type Box } from './dims/dimBoxes'
+import { storageLabelCentre, storageLabelFits, storageLabelSize } from './dims/storageLabel'
 import { DECLUTTER, keepDimTexts, smallRoomDims } from './dims/declutter'
 import { outsideDimTextBoxes } from './dims/outsideTextBoxes'
 import { outsideDims, outsideDimsLod } from './outside/outsideDims'
@@ -99,6 +100,8 @@ export function RoomsOverlay() {
     box: Box | null
     /** Too small on screen for the name: the code alone is drawn. */
     small: boolean
+    /** Not drawn at all: the label of a storage that a wall number badge would touch. */
+    hide: boolean
   }
   const tags = new Map<string, TagInfo>()
   /** Box of the tag of every room of a group, by room id: the wall dimensions of a room avoid it. */
@@ -106,22 +109,41 @@ export function RoomsOverlay() {
   for (const d of display) {
     const ring = d.pieces[0]?.[0] ?? []
     if (ring.length < 3) continue
-    const place = labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
+    const members = rooms.filter((r) => d.roomIds.includes(r.id))
+    const inner = !d.merged && members[0] ? roomInnerRing(members[0]) : ring
+    // A built-in storage is a small room outside its parent: its label goes at the CENTRE of its
+    // inside ring, it keeps its name alone when the full tag would touch a wall number badge of its
+    // own walls, and it is dropped when even the name is too wide (UI test report
+    // docs/ui-test-report-storage.md, "Look": the badge '3' sat on the end of the small "Storage"
+    // label). The hatch and the walls of the storage stay.
+    const isStorageRoom = !d.merged && !!members[0]?.storage
+    const place = isStorageRoom
+      ? { p: storageLabelCentre(inner), vertical: false }
+      : labelAt.get(d.id) ?? { p: labelPoint(d.pieces[0]), vertical: false }
+    /** True when the name of a storage alone fits in its ring, clear of the badges; other rooms pass. */
+    const nameFits = () => {
+      if (!isStorageRoom) return true
+      const nameSize = storageLabelSize(d.name, zoom)
+      return storageLabelFits(inner, nameSize.w, nameSize.h, zoom)
+    }
     const lines = roomTagLines(tagInput(d), tag, { showCodes })
     const xs = ring.map((v) => v.x), ys = ring.map((v) => v.y)
     const small = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * zoom < 50
     if (small) {
-      tags.set(d.id, { place, lines, rows: [], box: null, small: true })
+      tags.set(d.id, { place, lines, rows: [], box: null, small: true, hide: !nameFits() })
       continue
     }
     // The inside box of the room: a tag may not stick out of it (a small room keeps fewer rows).
-    const members = rooms.filter((r) => d.roomIds.includes(r.id))
-    const inner = !d.merged && members[0] ? roomInnerRing(members[0]) : ring
     const size = labelAt.get(d.id)?.size ?? ((count: number) => ({ w: 0, h: count }))
     const rows = fittingRows(lines.rows, { p: place.p, vertical: place.vertical, size, room: ringBox(inner) })
     const kept = size(rows.length)
     const box = tagBox(place.p, kept.w, kept.h, place.vertical)
-    tags.set(d.id, { place, lines: { title: lines.title, rows }, rows, box, small: false })
+    if (isStorageRoom && !storageLabelFits(inner, kept.w, kept.h, zoom)) {
+      // No room for the tag and a badge beside it: the name alone, or nothing (keep the hatch).
+      tags.set(d.id, { place, lines, rows: [], box: null, small: true, hide: !nameFits() })
+      continue
+    }
+    tags.set(d.id, { place, lines: { title: lines.title, rows }, rows, box, small: false, hide: false })
     for (const id of d.roomIds) tagBoxInRoom.set(id, box)
   }
 
@@ -130,6 +152,9 @@ export function RoomsOverlay() {
     if (!d.merged && editing === d.id) return null
     const info = tags.get(d.id)
     if (!info) return null
+    // A storage whose label a wall number badge would touch shows its hatch only (UI test report
+    // docs/ui-test-report-storage.md, "Look").
+    if (info.hide) return null
     const lines = info.lines
     // Room code in front of the name, so the survey IDs of the Solve tab are found on the plan.
     const code = lines.title.code ?? ''
