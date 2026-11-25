@@ -13,7 +13,7 @@ export type ProgressRow = {
   verified: number
   /** Number of walls of the room. */
   walls: number
-  /** Fit error of the measured values against the plan, in cm rms. Null when there is none. */
+  /** Average mismatch of the measured values against the plan, in cm. Null when there is none. */
   residualCm: number | null
   /** Every verified wall is locked (and there is at least one). */
   allLocked: boolean
@@ -41,7 +41,7 @@ export type ProgressTotals = {
   verified: number
   /** Rooms whose verified walls are all locked. */
   lockedRooms: number
-  /** Fit error over the rooms, in cm rms (each room weighs the same). Null when no room has one. */
+  /** Average mismatch over the rooms, in cm (each room weighs the same). Null when no room has one. */
   residualCm: number | null
 }
 

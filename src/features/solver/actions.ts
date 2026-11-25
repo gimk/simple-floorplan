@@ -44,6 +44,23 @@ export function solveNow(): string | null {
   return reportText
 }
 
+/**
+ * Re-solve the plan silently (no new undo step) if the solver is On.
+ * Used by Edit Mode settle triggers to fold the re-solve into the user edit's undo step.
+ */
+export function solveNowSilent(): string | null {
+  if (!useDoc.getState().doc.solver?.enabled) return null
+  let reportText: string | null = null
+  const opts = currentSolverOptions()
+  useDoc.getState().updateSilent((d) => {
+    if (!d.solver?.enabled) return d
+    const res = solverOn(d, opts)
+    reportText = describeGlobal(res.report)
+    return res.doc
+  })
+  return reportText
+}
+
 /** Hold a wall's position or thickness at its base value and re-solve if On (one undo step). */
 export function revokeSolverChange(key: SolverKey): string | null {
   let reportText: string | null = null

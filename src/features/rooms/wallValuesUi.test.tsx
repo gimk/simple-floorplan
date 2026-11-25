@@ -51,15 +51,29 @@ describe('Inspect wall card: wall values', () => {
     expect(html).not.toContain('Outside face')
   })
 
-  it('shows the measured and the solved value when a centre value exists', () => {
+  it('shows the measured and plan/solved value when a centre value exists', () => {
     const doc = plan()
     const id = wallIdOf(doc, 'A', 'Av3')
     const withValue = plan({ [`${id}-C`]: { label: `${id}-C`, actualCm: 400, updatedAt: '' } })
-    const html = renderToString(<RoomsPanelView doc={withValue} selection={{ kind: 'wall', roomId: 'A', wallStart: 'Av3' }} activeHole={null} />)
+    const htmlOff = renderToString(<RoomsPanelView doc={withValue} selection={{ kind: 'wall', roomId: 'A', wallStart: 'Av3' }} activeHole={null} />)
     // Server rendering puts comment marks between two text nodes, so the parts are checked alone.
-    expect(html).toContain('Measured')
-    expect(html).toContain('400')
-    expect(html).toContain('Solved')
+    expect(htmlOff).toContain('Measured')
+    expect(htmlOff).toContain('400')
+    expect(htmlOff).toContain('Plan')
+
+    const withSolved: PlanDoc = {
+      ...withValue,
+      solver: {
+        enabled: true,
+        changes: [{ kind: 'position', wallId: id, label: 'A-4', moveCm: 1, dir: 'W' }],
+        revoked: [],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+    const htmlOn = renderToString(<RoomsPanelView doc={withSolved} selection={{ kind: 'wall', roomId: 'A', wallStart: 'Av3' }} activeHole={null} />)
+    expect(htmlOn).toContain('Measured')
+    expect(htmlOn).toContain('Solved')
   })
 })
 

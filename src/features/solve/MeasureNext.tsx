@@ -14,7 +14,6 @@ import { isV2Doc, targetOfLabel } from '../../model/v2/targets'
 import { sourceSigmaCm } from '../../model/measureSource'
 import { parseCm } from '../measure/logic'
 import type { RoomAngles, SurfaceMode } from '../rooms/globalSolve'
-import { scheduleAutoApply } from '../rooms/measureRules'
 import { roomFaceKeyOnSide } from '../rooms/wallSides'
 import { suggestMeasurements, type Remeasure, type Suggestion } from '../rooms/suggest'
 
@@ -29,7 +28,7 @@ export const hoverUi = (
  * A touch screen has no hover, so only a mouse or a pen shows it. The field of the line does the
  * same on focus, so a value being typed in is always visible on the plan.
  */
-function useRowHover(label: string, diagonal: { roomId: string; pair: [number, number] } | null = null) {
+export function useRowHover(label: string, diagonal: { roomId: string; pair: [number, number] } | null = null) {
   const set = useUi((s) => s.set)
   const enter = () => set(hoverUi(label, diagonal))
   const leave = () => set(hoverUi(null))
@@ -103,8 +102,6 @@ function saveValue(s: Suggestion, cm: number) {
         measurements: { ...d.measurements, [s.label]: { label: s.label, actualCm: cm, updatedAt: nowIso(), source, ...(kept ? { target: kept } : {}) } },
       }
     })
-    const code = useDoc.getState().doc.rooms.find((r) => r.id === s.roomId)?.code
-    if (code) scheduleAutoApply(code)
     return
   }
   // A wall or a thickness: the same path as Measuring Mode.
@@ -230,7 +227,7 @@ export function MeasureNext({ doc, surfaceMode, keepLocked, angles }: {
   const free = angles ?? uiAngles
   // The value will be typed with the source picked in Measuring Mode: it sets its accuracy.
   const source = useUi((s) => s.measureSource)
-  // Same solve as "Solve whole plan", so the list follows every value and every setting.
+  // Same solve as the solver, so the list follows every value and every setting.
   const { suggestions, remeasure } = useMemo(
     () => suggestMeasurements(doc, { keepLocked: keep, surfaceMode: mode, angles: free, sigmaCm: sourceSigmaCm(source) }),
     [doc, keep, mode, free, source],

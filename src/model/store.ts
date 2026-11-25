@@ -226,20 +226,18 @@ type UiState = {
   /** Element kind to place with the 'place-element' tool. */
   placeKind: ElementKind
   snap: { grid: boolean; gridCm: number; angles: boolean; vertices: boolean }
-  /** "Solve whole plan" keeps locked walls. */
+  /** Solver keeps locked walls. */
   solveKeepLocked: boolean
-  /** "Solve whole plan": walls not found by the data snap to usual thicknesses. */
+  /** Solver: walls not found by the data snap to usual thicknesses. */
   solveSnapThickness: boolean
-  /** "Solve whole plan" and doc.apartment.references: off, guide (one-sided) or match. */
+  /** Solver and doc.apartment.references: off, guide (one-sided) or match. */
   solveSurfaceMode: 'off' | 'guide' | 'match'
   /**
-   * "Solve whole plan": 'square' (default) keeps walls drawn horizontal or vertical at their drawn
+   * Solver: 'square' (default) keeps walls drawn horizontal or vertical at their drawn
    * angle; 'free' lets every wall turn, so a measured diagonal can show a room that is out of square
    * (docs/walls-plan.md phase 4b).
    */
   solveAngles: 'square' | 'free'
-  /** Report of the last run of the Solve tab (whole plan, not per room). */
-  solveReport: string | null
   layers: Layers
   /** Wall lengths on the plan: dimension lines (default) or text only (docs/measurements-plan.md). */
   dimStyle: DimStyle
@@ -286,15 +284,13 @@ type UiState = {
   select: (s: Selection) => void
   /** Shift + click: add the item to the group, or remove it. */
   toggleSelect: (s: SelItem) => void
-  /** Write the report of the Solve tab (null clears it). */
-  setSolveReport: (text: string | null) => void
   /** Source saved with the next values typed in Measuring Mode. */
   setMeasureSource: (s: MeasureSource) => void
   /** Request opening the inspector drawer on phone after a canvas tap selection. */
   openInspector: () => void
   set: (
     p: Partial<
-      Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect' | 'setSolveReport' | 'setMeasureSource' | 'openInspector'>
+      Omit<UiState, 'set' | 'setMode' | 'setTool' | 'select' | 'toggleSelect' | 'setMeasureSource' | 'openInspector'>
     >,
   ) => void
 }
@@ -310,7 +306,6 @@ export const useUi = create<UiState>()((set) => ({
   solveSnapThickness: false,
   solveSurfaceMode: 'off',
   solveAngles: 'square',
-  solveReport: null,
   layers: {
     background: true, dimensions: true, bearingHighlight: true, openings: true, notes: true, clashes: true,
     roomCodes: 'auto', wallLabels: 'auto', outsideDims: true,
@@ -331,7 +326,6 @@ export const useUi = create<UiState>()((set) => ({
   setTool: (tool) => set({ tool }),
   select: (selection) => set({ selection, multi: [] }),
   toggleSelect: (item) => set((s) => toggleItem(s, item)),
-  setSolveReport: (solveReport) => set({ solveReport }),
   setMeasureSource: (measureSource) => set({ measureSource }),
   openInspector: () => set((s) => ({ inspectorOpenTick: s.inspectorOpenTick + 1 })),
   set: (p) => set(p),

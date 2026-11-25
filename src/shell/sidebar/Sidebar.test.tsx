@@ -18,9 +18,9 @@ describe('Sidebar shell', () => {
   it('gives the Solve tab the whole-plan sections', () => {
     const html = renderToString(<Sidebar />)
     expect(html).toContain('-panel-solve"')
+    expect(html).toContain('aria-label="Solver"')
     expect(html).toContain('aria-label="Progress"')
     expect(html).toContain('aria-label="Settings"')
-    expect(html).toContain('aria-label="Actions"')
     // The whole-plan tools live there now, not in the room card.
     expect(html).toContain('name="solveKeepLocked"')
     expect(html).toContain('aria-label="Precision of solved corners and thicknesses"')

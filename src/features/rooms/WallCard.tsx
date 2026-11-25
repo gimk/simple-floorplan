@@ -2,7 +2,6 @@
 // thickness, line, length, lock, and the elements on the wall. The header steps to the
 // previous / next wall of the same room (docs/sidebar-plan-3.md step 4).
 import { facadePlannedLengths } from './outside/outsideDims'
-import { useMemo } from 'react'
 import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react'
 import { fmtCm, innerWallLengths, roomWalls } from '../../model/geometry'
 import { planPrecision, shownLength } from '../../model/precision'
@@ -12,8 +11,9 @@ import {
   outsideFaceSide, storedWallOfRoomWall, wallCentreCm, wallOutsidePlanCm, wallValueLabel,
 } from '../../model/wallValues'
 import { setMeasurement } from '../measure/actions'
-import { solveGlobal } from './globalSolve'
+import { solverChangeForLabel } from '../solver/lookup'
 import { EmptyHint, FieldRow, IconButton, NumberField, PanelSection, Segmented, SwitchRow } from '../../shell/panel'
+import { MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
 import {
   WALL_ALIGNS,
   WALL_STATUSES,
@@ -147,7 +147,7 @@ export function WallCard({ doc, room, wallStart, group }: {
         <EmptyHint>
           Key B: bearing / partition. Length moves the end vertex. "In line on" is the line of this wall that lines up with
           the walls that continue it: the face in this room (as measured on site), the centre (as on an architect plan),
-          or the face on the other side. The dotted blue line on the plan shows it. "Solve whole plan" uses it.
+          or the face on the other side. The dotted blue line on the plan shows it. The solver uses it.
         </EmptyHint>
       </PanelSection>
 
@@ -181,17 +181,22 @@ function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
   const facade = centreCm !== null && outsideFaceSide(wall, centreCm) !== null
   // Source of the outside value, picked in Measuring Mode. The centre value is a plan value.
   const measureSource = useUi((s) => s.measureSource)
-  // What the solver says these values are now (a centre value with no source counts as 'plan').
-  const solved = useMemo(() => {
-    if (centreValue == null && outsideValue == null) return null
-    return new Map(solveGlobal(doc).residuals.map((r) => [r.label, r]))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [doc])
-  const solvedLine = (label: string, measuredCm: number) => {
-    const r = solved?.get(label)
+  const fmtDiff = (planCm: number, measuredCm: number) => {
+    const d = Math.round((planCm - measuredCm) * 10) / 10
+    return d === 0 ? '0 cm' : `${d > 0 ? '+' : '-'}${fmtCm(Math.abs(d))} cm`
+  }
+  const solvedLine = (label: string, measuredCm: number, planCm: number | null) => {
+    if (planCm == null) {
+      return <EmptyHint><span className={MEASURED_TEXT}>Measured {fmtCm(measuredCm)}</span></EmptyHint>
+    }
+    const changed = solverChangeForLabel(doc, label) !== undefined
     return (
       <EmptyHint>
-        Measured {fmtCm(measuredCm)}{r ? ` · Solved ${fmtCm(r.solvedCm)}` : ' · not used by the solve'}
+        <span className={MEASURED_TEXT}>Measured {fmtCm(measuredCm)}</span>
+        {' · '}
+        {changed
+          ? <span className={SOLVED_TEXT}>Solved {fmtCm(planCm)} ({fmtDiff(planCm, measuredCm)})</span>
+          : <>Plan {fmtCm(planCm)} ({fmtDiff(planCm, measuredCm)})</>}
       </EmptyHint>
     )
   }
@@ -216,7 +221,7 @@ function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
           }}
         />
       </FieldRow>
-      {centreValue != null && solvedLine(centreLabel, centreValue)}
+      {centreValue != null && solvedLine(centreLabel, centreValue, centreCm)}
       {facade && (
         <>
           <FieldRow label="Outside face" htmlFor={`wall-${wall.id}-outside`} hint="corner to corner">
@@ -234,7 +239,7 @@ function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
               }}
             />
           </FieldRow>
-          {outsideValue != null && solvedLine(outsideLabel, outsideValue)}
+          {outsideValue != null && solvedLine(outsideLabel, outsideValue, outsidePlanCm)}
         </>
       )}
     </>

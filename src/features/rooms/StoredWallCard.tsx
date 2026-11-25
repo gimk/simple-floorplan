@@ -30,7 +30,8 @@ import {
   ERROR, EmptyHint, FIELD_GAP, FieldRow, HEADING, IconButton, MUTED, NumberField, PANEL_CARD, PanelSection, ROW, ROW_GAP, ROW_OFF, ROW_ON, SECTION_PAD,
   Segmented, SwitchRow,
 } from '../../shell/panel'
-import { solveGlobal } from './globalSolve'
+import { MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
+import { solverChangeForLabel } from '../solver/lookup'
 import type { AlignSideChoice } from './cards'
 import {
   alignOfSideChoice, alignSideChoice, deleteStoredWall, patchStoredWall, setStoredWallSide,
@@ -66,13 +67,6 @@ export function StoredWallCard({ doc, wallId, side, face }: {
   const view = useMemo(() => storedWallView(doc, wallId), [doc, wallId])
   const measureSource = useUi((s) => s.measureSource)
   const select = useUi.getState().select
-  // What the solver says the values are now (only when the wall or one of its faces has a value).
-  const solved = useMemo(() => {
-    const labels = [wallValueLabel(wallId, 'centre'), wallValueLabel(wallId, 'outside')]
-    if (view) labels.push(...view.sides.flatMap((s) => s.faces.flatMap((f) => (f.kind === 'room' && f.measuredCm != null ? [f.label] : []))))
-    if (!labels.some((l) => doc.measurements[l] != null)) return null
-    return new Map(solveGlobal(doc).residuals.map((r) => [r.label, r]))
-  }, [doc, wallId, view])
 
   // Delete / Backspace is handled by `deleteSelection` (features/rooms/interaction.ts): one handler.
 
@@ -87,12 +81,28 @@ export function StoredWallCard({ doc, wallId, side, face }: {
   const single = view.rooms.length === 0
   const drawnCm = Math.round(dist(view.a, view.b) * 10) / 10
 
-  /** 'Measured x · Solved y' under a field, when the value exists. */
-  const solvedLine = (label: string, measuredCm: number) => {
-    const r = solved?.get(label)
+  const fmtDiff = (planCm: number, measuredCm: number) => {
+    const d = Math.round((planCm - measuredCm) * 10) / 10
+    return d === 0 ? '0 cm' : `${d > 0 ? '+' : '-'}${fmtCm(Math.abs(d))} cm`
+  }
+
+  /** 'Measured x · Solved y (diff)' or 'Measured x · Plan y (diff)' from recorded solver state. */
+  const solvedLine = (label: string, measuredCm: number, planCm: number | null) => {
+    if (planCm == null) {
+      return (
+        <p className={MUTED} data-solved-line={label}>
+          <span className={MEASURED_TEXT}>Measured {fmtCm(measuredCm)}</span>
+        </p>
+      )
+    }
+    const changed = solverChangeForLabel(doc, label) !== undefined
     return (
       <p className={MUTED} data-solved-line={label}>
-        Measured {fmtCm(measuredCm)}{r ? ` · Solved ${fmtCm(r.solvedCm)}` : ' · not used by the solve'}
+        <span className={MEASURED_TEXT}>Measured {fmtCm(measuredCm)}</span>
+        {' · '}
+        {changed
+          ? <span className={SOLVED_TEXT}>Solved {fmtCm(planCm)} ({fmtDiff(planCm, measuredCm)})</span>
+          : <>Plan {fmtCm(planCm)} ({fmtDiff(planCm, measuredCm)})</>}
       </p>
     )
   }
@@ -218,7 +228,7 @@ export function StoredWallCard({ doc, wallId, side, face }: {
             }}
           />
         </FieldRow>
-        {centreValue != null && solvedLine(centreLabel, centreValue)}
+        {centreValue != null && solvedLine(centreLabel, centreValue, view.centreCm)}
         <SwitchRow
           name="storedWallLocked"
           label="Locked (cannot be moved or resized)"
@@ -266,7 +276,7 @@ function SideSection({ wallId, doc, view, active, activeFace, measureSource, sol
   /** Key of the selected face (`Selection.face`), when the user picked one face. */
   activeFace?: string
   measureSource: Parameters<typeof setMeasurement>[2]
-  solvedLine: (label: string, measuredCm: number) => ReactNode
+  solvedLine: (label: string, measuredCm: number, planCm: number | null) => ReactNode
 }) {
   const select = useUi.getState().select
   const keys = sideFaceKeys(view)
@@ -343,7 +353,7 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
   face: Extract<WallSideFace, { kind: 'room' }>
   active: string
   measureSource: Parameters<typeof setMeasurement>[2]
-  solvedLine: (label: string, measuredCm: number) => ReactNode
+  solvedLine: (label: string, measuredCm: number, planCm: number | null) => ReactNode
   onSelectRoom: () => void
   selected: boolean
   onSelectFace: () => void
@@ -364,7 +374,7 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
           <span className="min-w-0 truncate">{face.name}</span>
         </button>
         <FaceButton selected={selected} onSelect={onSelectFace} title={`Show face ${face.label} on the plan`}
-          className={verified ? 'text-emerald-700 dark:text-emerald-400' : MUTED}>
+          className={verified ? MEASURED_TEXT : MUTED}>
           {verified && <Check size={11} role="img" aria-label="measured" className="mr-0.5 inline align-[-1px]" />}
           {face.label}
         </FaceButton>
@@ -377,7 +387,7 @@ function RoomFaceRow({ doc, face, active, measureSource, solvedLine, onSelectRoo
         ariaLabel={`Measured ${face.label} (${face.code}, side ${active})`}
         onValue={(n) => setMeasurement(face.label, n, measureSource, targetOfLabel(doc, face.label))}
       />
-      {verified && solvedLine(face.label, face.measuredCm!)}
+      {verified && solvedLine(face.label, face.measuredCm!, face.plannedCm)}
     </div>
   )
 }
@@ -391,7 +401,7 @@ function OutsideRow({ doc, face, view, measureSource, solvedLine, selected, onSe
   face: Extract<WallSideFace, { kind: 'outside' }>
   view: WallSideView
   measureSource: Parameters<typeof setMeasurement>[2]
-  solvedLine: (label: string, measuredCm: number) => ReactNode
+  solvedLine: (label: string, measuredCm: number, planCm: number | null) => ReactNode
   selected: boolean
   onSelectFace: () => void
 }) {
@@ -415,7 +425,7 @@ function OutsideRow({ doc, face, view, measureSource, solvedLine, selected, onSe
             ariaLabel={`Measured ${label} (outside face)`}
             onValue={(n) => setMeasurement(label, n, measureSource, targetOfLabel(doc, label))}
           />
-          {value != null && solvedLine(label, value)}
+          {value != null && solvedLine(label, value, view.facadePlannedCm)}
         </>
       )}
     </div>

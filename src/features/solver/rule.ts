@@ -3,8 +3,14 @@
 // recorded change, treat the user's new value as base (remove from baseNodes / baseThickness),
 // and hold it with `by: 'edit'`. Solver writes (`next.solver !== prev.solver`) are ignored.
 import type { DocRule } from '../../model/store'
-import type { SolverHold } from '../../model/types'
+import type { PlanDoc, SolverHold } from '../../model/types'
 import { userEditedWalls } from './engine'
+
+/** Docs whose `solver` field was updated by `solverEditRule` (a user edit, not a solver run). */
+const editRuledDocs = new WeakSet<PlanDoc>()
+
+/** True when `doc` is the direct output of `solverEditRule` (so triggers know it was a user edit). */
+export const isEditRuledDoc = (doc: PlanDoc) => editRuledDocs.has(doc)
 
 export const solverEditRule: DocRule = (prev, next) => {
   const s = next.solver
@@ -41,7 +47,7 @@ export const solverEditRule: DocRule = (prev, next) => {
   for (const wallId of edited.position) addEditHold('position', wallId)
   for (const wallId of edited.thickness) addEditHold('thickness', wallId)
 
-  return {
+  const out: PlanDoc = {
     ...next,
     solver: {
       ...s,
@@ -51,4 +57,6 @@ export const solverEditRule: DocRule = (prev, next) => {
       baseThickness,
     },
   }
+  editRuledDocs.add(out)
+  return out
 }

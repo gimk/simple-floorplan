@@ -244,7 +244,7 @@ describe('stored wall values of a slanted wall', () => {
 
 describe('the Room angles option of the Solve tab', () => {
   it('shows the two choices and the hint, Square first', () => {
-    const html = renderToString(<SolvePanelView doc={doc([trapRoomForUi()], meas({}))} report={null} />)
+    const html = renderToString(<SolvePanelView doc={doc([trapRoomForUi()], meas({}))} />)
     expect(html).toContain('Room angles')
     expect(html).toContain('aria-label=\"Room angles: Square or Free\"')
     expect(html).toContain('Free: a measured diagonal can show a room that is not square.')

@@ -1,8 +1,15 @@
 import { renderToString } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
-import type { PlanDoc, Room } from '../../model/types'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { emptyDoc, useDoc, useUi } from '../../model/store'
+import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../model/types'
+import { materializeRooms } from '../../model/v2/materialize'
+import { SOLVED_TEXT } from '../../shell/panel/styles'
+import { restoreSolverChange, revokeSolverChange, setSolverEnabled, solverOn } from '../solver'
 import { hoverUi } from './MeasureNext'
 import { SolvePanel, SolvePanelView } from './SolvePanel'
+
+const FIXED_NOW = '2026-11-25T12:00:00.000Z'
+const FIXED_NOW_MS = Date.parse('2026-11-25T12:02:00.000Z')
 
 const rect = (over: Partial<Room> = {}): Room => ({
   id: 'r1',
@@ -33,8 +40,40 @@ const doc = (over: Partial<PlanDoc> = {}): PlanDoc => ({
   ...over,
 })
 
-const render = (d: PlanDoc = doc(), report: string | null = null) =>
-  renderToString(<SolvePanelView doc={d} report={report} />)
+const makeV2Doc = (values: Record<string, number> = {}): PlanDoc => {
+  const nodes: StoredNode[] = [
+    { id: 'N1', x: 0, y: 0 },
+    { id: 'N2', x: 400, y: 0 },
+    { id: 'N3', x: 400, y: 300 },
+    { id: 'N4', x: 0, y: 300 },
+  ]
+  const walls: StoredWall[] = [
+    { id: 'W1', a: 'N1', b: 'N2', faces: [], type: 'exterior', thicknessCm: 20 },
+    { id: 'W2', a: 'N2', b: 'N3', faces: [], type: 'partition', thicknessCm: 10 },
+    { id: 'W3', a: 'N3', b: 'N4', faces: [], type: 'partition', thicknessCm: 10 },
+    { id: 'W4', a: 'N4', b: 'N1', faces: [], type: 'exterior', thicknessCm: 20 },
+  ]
+  const cycle: RoomFace[] = [
+    { wallId: 'W1', side: 'L', from: 0, to: 400, cornerId: 'v1' },
+    { wallId: 'W2', side: 'L', from: 0, to: 300, cornerId: 'v2' },
+    { wallId: 'W3', side: 'L', from: 0, to: 400, cornerId: 'v3' },
+    { wallId: 'W4', side: 'L', from: 0, to: 300, cornerId: 'v4' },
+  ]
+  const base: PlanDoc = {
+    ...emptyDoc(),
+    schemaVersion: 2,
+    nodes,
+    walls,
+    rooms: [{ id: 'R1', code: 'KI', name: 'Kitchen', vertices: [], cycle, holes: [], walls: {}, walkOrder: 1 }],
+    measurements: Object.fromEntries(
+      Object.entries(values).map(([label, actualCm]) => [label, { label, actualCm, updatedAt: FIXED_NOW }]),
+    ),
+  }
+  return { ...base, rooms: materializeRooms(base) }
+}
+
+const render = (d: PlanDoc = doc(), extra: Partial<Parameters<typeof SolvePanelView>[0]> = {}) =>
+  renderToString(<SolvePanelView doc={d} mode="edit" nowMs={FIXED_NOW_MS} {...extra} />)
 
 // react-dom/server separates interpolated text nodes with <!-- -->, so match fragments.
 
@@ -42,38 +81,172 @@ const verifiedDoc = () => doc({
   measurements: { 'SE-1': { label: 'SE-1', actualCm: 390, updatedAt: '' } },
 })
 
+beforeEach(() => {
+  useUi.setState({ mode: 'edit', solveKeepLocked: true, solveSnapThickness: false, solveSurfaceMode: 'off', solveAngles: 'square' })
+  useDoc.getState().replace(emptyDoc())
+})
 
 describe('SolvePanel sections', () => {
-  it('renders Progress, Measure next, Actions, Last result and Settings in workflow order', () => {
-    const html = render(verifiedDoc(), 'Solved 1 rooms together: fit error 0,4 cm rms.')
+  it('renders Solver, Changes, Kept walls, Progress, Measure next and Settings in order', () => {
+    const solved = solverOn(makeV2Doc({ 'KI-1': 405, 'KI-3': 405 }), { now: FIXED_NOW }).doc
+    const withHold: PlanDoc = {
+      ...solved,
+      solver: {
+        ...solved.solver!,
+        revoked: [{ kind: 'position', wallId: 'W1', by: 'revoke' }],
+      },
+    }
+    const html = render(withHold)
+    const solver = html.indexOf('aria-label="Solver"')
+    const changes = html.indexOf('aria-label="Changes"')
+    const kept = html.indexOf('aria-label="Kept walls"')
     const progress = html.indexOf('aria-label="Progress"')
     const measureNext = html.indexOf('aria-label="Measure next"')
-    const actions = html.indexOf('aria-label="Actions"')
-    const lastResult = html.indexOf('aria-label="Last result"')
     const settings = html.indexOf('aria-label="Settings"')
-    expect(progress).toBeGreaterThanOrEqual(0)
+    expect(solver).toBeGreaterThanOrEqual(0)
+    expect(changes).toBeGreaterThan(solver)
+    expect(kept).toBeGreaterThan(changes)
+    expect(progress).toBeGreaterThan(kept)
     expect(measureNext).toBeGreaterThan(progress)
-    expect(actions).toBeGreaterThan(measureNext)
-    expect(lastResult).toBeGreaterThan(actions)
-    // The settings are set once: they come last, and they stay closed (review finding 10).
-    expect(settings).toBeGreaterThan(lastResult)
+    expect(settings).toBeGreaterThan(measureNext)
     expect(html).toContain('aria-expanded="false"')
+    // Removed old buttons and Last result block.
+    expect(html).not.toContain('Apply measured lengths to all rooms')
+    expect(html).not.toContain('Solve whole plan')
+    expect(html).not.toContain('aria-label="Last result"')
+  })
+})
+
+describe('SolvePanel solver switch & status', () => {
+  it('shows Off status text when solver is Off and hides Changes section', () => {
+    const html = render(verifiedDoc())
+    expect(html).toContain('role="switch"')
+    expect(html).toContain('aria-checked="false"')
+    expect(html).toContain('Off: the plan shows estimated and measured values only.')
+    expect(html).not.toContain('aria-label="Changes"')
   })
 
-  it('shows no Last result section before the first run', () => {
-    expect(render(verifiedDoc())).not.toContain('aria-label="Last result"')
+  it('toggles solver enabled via setSolverEnabled and shows On status line', () => {
+    useDoc.getState().replace(makeV2Doc({ 'KI-1': 405, 'KI-3': 403 }))
+    expect(renderToString(<SolvePanel />)).toContain('aria-checked="false"')
+
+    setSolverEnabled(true)
+    const onDoc = useDoc.getState().doc
+    expect(onDoc.solver?.enabled).toBe(true)
+    const html = render(onDoc, { nowMs: Date.parse(onDoc.solver!.solvedAt!) + 120_000 })
+    expect(html).toContain('aria-checked="true"')
+    expect(html).toContain('Solved 2 min ago')
+    expect(html).toContain('average mismatch')
+
+    setSolverEnabled(false)
+    expect(useDoc.getState().doc.solver?.enabled).toBe(false)
+    expect(renderToString(<SolvePanel />)).toContain('aria-checked="false"')
   })
 
-  it('shows the report of the last run when there is one', () => {
-    const html = render(verifiedDoc(), 'Solved 1 rooms together: fit error 0,4 cm rms.')
-    expect(html).toContain('aria-label="Last result"')
-    expect(html).toContain('data-solve-report')
-    expect(html).toContain('Solved 1 rooms together')
+  it('shows waiting status text when On in Measuring Mode', () => {
+    const solved = solverOn(makeV2Doc({ 'KI-1': 405 }), { now: FIXED_NOW }).doc
+    const html = render(solved, { mode: 'measure' })
+    expect(html).toContain('Waits until you leave Measuring Mode.')
+  })
+
+  it('renders the help tip explaining estimated, measured, and solved colours', () => {
+    const html = render(verifiedDoc(), { tipDefaultOpen: true })
+    expect(html).toContain('aria-label="About the solver"')
+    expect(html).toContain('estimated on the plan')
+    expect(html).toContain('measured')
+    expect(html).toContain('solved')
+    expect(html).toContain('Turning it off puts the plan back.')
+  })
+})
+
+describe('SolvePanel changes & kept walls', () => {
+  it('renders position and thickness changes with SOLVED_TEXT, hover label, and Revoke button', () => {
+    const solved = solverOn(makeV2Doc({ 'KI-1': 405, 'KI-3': 405 }), { now: FIXED_NOW }).doc
+    const withBoth: PlanDoc = {
+      ...solved,
+      solver: {
+        ...solved.solver!,
+        changes: [
+          {
+            kind: 'position',
+            wallId: 'W2',
+            label: 'KI-2',
+            moveCm: 1.5,
+            dir: 'E',
+            lengthFromCm: 300,
+            lengthToCm: 298.5,
+          },
+          {
+            kind: 'thickness',
+            wallId: 'W1',
+            label: 'KI-1',
+            fromCm: 20,
+            toCm: 18,
+          },
+        ],
+      },
+    }
+    const html = render(withBoth)
+    expect(html).toContain(SOLVED_TEXT)
+    expect(html).toContain('data-solver-change="position:W2"')
+    expect(html).toContain('data-hover-row="W2-C"')
+    expect(html).toContain('KI-2')
+    expect(html).toContain('east')
+    expect(html).toContain('length')
+    expect(html).toContain('data-solver-change="thickness:W1"')
+    expect(html).toContain('thickness')
+    expect(html).toContain('data-solver-revoke="position:W2"')
+    expect(html).toContain('>Revoke</button>')
+  })
+
+  it('shows empty changes hint when On with no changes', () => {
+    const emptySolved: PlanDoc = {
+      ...makeV2Doc(),
+      solver: { enabled: true, solvedAt: FIXED_NOW, rmsCm: 0, changes: [], revoked: [], baseNodes: {}, baseThickness: {} },
+    }
+    expect(render(emptySolved)).toContain('The solver changed nothing.')
+  })
+
+  it('revoking a change moves it to Kept walls and restoring brings it back', () => {
+    useDoc.getState().replace(makeV2Doc({ 'KI-1': 405, 'KI-3': 405 }))
+    setSolverEnabled(true)
+    expect(useDoc.getState().doc.solver!.changes.some((c) => c.wallId === 'W4')).toBe(true)
+
+    revokeSolverChange({ kind: 'position', wallId: 'W4' })
+    const afterRevoke = render(useDoc.getState().doc)
+    expect(afterRevoke).toContain('aria-label="Kept walls"')
+    expect(afterRevoke).toContain('data-solver-kept="position:W4"')
+    expect(afterRevoke).toContain('kept at plan value')
+    expect(afterRevoke).toContain('(revoked)')
+    expect(afterRevoke).toContain('data-solver-restore="position:W4"')
+
+    restoreSolverChange({ kind: 'position', wallId: 'W4' })
+    expect(useDoc.getState().doc.solver!.revoked).toEqual([])
+    expect(render(useDoc.getState().doc)).not.toContain('aria-label="Kept walls"')
+  })
+
+  it('shows "(you edited it)" for edit holds in Kept walls', () => {
+    const d: PlanDoc = {
+      ...makeV2Doc(),
+      solver: {
+        enabled: true,
+        solvedAt: FIXED_NOW,
+        rmsCm: 0,
+        changes: [],
+        revoked: [{ kind: 'position', wallId: 'W2', by: 'edit' }],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+    const html = render(d)
+    expect(html).toContain('KI-2')
+    expect(html).toContain('kept at plan value')
+    expect(html).toContain('(you edited it)')
   })
 })
 
 describe('SolvePanel progress', () => {
-  it('gives one row per room with its counts and its fit error', () => {
+  it('gives one row per room with its counts and its average mismatch', () => {
     const d = doc({
       measurements: { 'SE-1': { label: 'SE-1', actualCm: 392, updatedAt: '' } },
       rooms: [rect(), rect({ id: 'r2', code: 'CU', name: 'Cuisine' })],
@@ -86,7 +259,8 @@ describe('SolvePanel progress', () => {
     expect(html).toContain('data-solve-residual="SE"')
     expect(html).toContain('±<!-- -->2')
     expect(html).toContain('data-solve-totals')
-    expect(html).toContain('2 rooms, 1 of 8 walls measured')
+    expect(html).toContain('2 rooms, 1 of 8 walls measured, average mismatch')
+    expect(html).not.toContain('fit error')
   })
 
   it('shows a lock on a room whose verified walls are all locked', () => {
@@ -119,29 +293,12 @@ describe('SolvePanel settings', () => {
   })
 })
 
-describe('SolvePanel actions', () => {
-  it('disables both actions when no room has a verified wall length', () => {
-    const html = render(doc())
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Apply measured lengths to all rooms<\/button>/)
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Solve whole plan<\/button>/)
-    expect(html).toContain('No measured wall length in any room.')
-  })
-
-  it('enables the actions once a wall is verified, and keeps the solve hint', () => {
-    const html = render(verifiedDoc())
-    expect(html).toContain('>Apply measured lengths to all rooms</button>')
-    expect(html).toContain('>Solve whole plan</button>')
-    expect(html).not.toContain('No measured wall length in any room.')
-    expect(html).toContain('Solve all rooms together: shared walls, wall thicknesses and walls in line.')
-  })
-})
-
 describe('SolvePanel (wired to the stores)', () => {
   it('renders on its own with the empty plan', () => {
     const html = renderToString(<SolvePanel />)
+    expect(html).toContain('aria-label="Solver"')
     expect(html).toContain('aria-label="Progress"')
     expect(html).toContain('No room in the plan yet.')
-    expect(html).toContain('No measured wall length in any room.')
   })
 })
 
@@ -170,25 +327,18 @@ describe('SolvePanel surface references', () => {
 
   it('marks the mode passed by the panel as pressed', () => {
     const view = (mode: 'off' | 'guide' | 'match') =>
-      renderToString(<SolvePanelView doc={withRef()} report={null} surfaceMode={mode} />)
+      renderToString(<SolvePanelView doc={withRef()} mode="edit" surfaceMode={mode} />)
     expect(view('guide')).toContain('aria-pressed="true" title="Never move a surface away from its reference')
     expect(view('match')).toContain('aria-pressed="true" title="Pull the surface toward its reference')
-  })
-
-  it('keeps the new lines of the surface report visible', () => {
-    const html = render(withRef(), 'Solved 1 rooms together: fit error 0,3 cm rms.\nDPE (SE): 11,3 -> 12,0 m2, ref 12,0 m2 (+0,0 %)')
-    expect(html).toContain('data-solve-report')
-    expect(html).toContain('whitespace-pre-line')
-    expect(html).toContain('DPE (SE): 11,3 -&gt; 12,0 m2')
   })
 })
 
 describe('SolvePanel measure next', () => {
-  it('sits above Actions and says which value to measure next, with its uncertainty', () => {
+  it('sits above Settings and says which value to measure next, with its uncertainty', () => {
     const html = render(doc())
     const section = html.indexOf('aria-label="Measure next"')
     expect(section).toBeGreaterThan(0)
-    expect(section).toBeLessThan(html.indexOf('aria-label="Actions"'))
+    expect(section).toBeLessThan(html.indexOf('aria-label="Settings"'))
     expect(html).toContain('data-measure-suggestion="SE-1"')
     // Each button names its row (review finding 12).
     expect(html).toContain('aria-label="Show SE-1 on plan"')
@@ -235,33 +385,6 @@ describe('SolvePanel measure next', () => {
     const html = render(doc({ measurements: all }))
     expect(html).toContain('Nothing left to suggest')
     expect(html).not.toContain('data-measure-list')
-  })
-})
-
-describe('SolvePanel preview', () => {
-  const preview = {
-    moves: [
-      { roomId: 'r1', code: 'SE', vertexIndex: 2, dxCm: 4, dyCm: 1.3, distCm: 4.2 },
-      { roomId: 'r1', code: 'SE', vertexIndex: 0, dxCm: 1.5, dyCm: 0, distCm: 1.5 },
-      { roomId: 'r1', code: 'SE', vertexIndex: 1, dxCm: 0.5, dyCm: 0, distCm: 0.5 },
-    ],
-    thicknessChanges: [{ walls: ['SE-1', 'SB-3'], fromCm: 10, toCm: 7 }],
-    report: { rooms: 1, rmsCm: 0, lockedKept: 0, foundThicknesses: [], surfaces: [] },
-  }
-
-  it('shows no preview block by default', () => {
-    expect(renderToString(<SolvePanelView doc={verifiedDoc()} report={null} />)).not.toContain('data-solve-preview')
-  })
-
-  it('shows the headline, the changes, the top moves, Apply and Cancel', () => {
-    const html = renderToString(<SolvePanelView doc={verifiedDoc()} report={null} preview={preview} />)
-    expect(html).toContain('data-solve-preview-apply')
-    expect(html).toContain('data-solve-preview-cancel')
-    expect(html).toContain('2 corners move')
-    expect(html).toContain('4,2')
-    expect(html).toContain('SE corner 3')
-    expect(html).toContain('SE-1/SB-3')
-    expect(html).toContain('Snap thicknesses not found by the data to usual values')
   })
 })
 
