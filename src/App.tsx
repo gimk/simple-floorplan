@@ -26,7 +26,7 @@ import { CanvasGrid } from './shell/CanvasGrid'
 import { EmptyState } from './shell/EmptyState'
 import { ZoomControls } from './shell/ZoomControls'
 import { ViewMenu } from './shell/view/ViewMenu'
-import { ToolHints } from './shell/ToolHints'
+import { ToolTipsButton } from './shell/ToolHints'
 import { SnapPopover } from './shell/SnapPopover'
 import { ShortcutsDialog } from './shell/ShortcutsDialog'
 import { CommandPalette } from './shell/CommandPalette'
@@ -432,34 +432,32 @@ export default function App() {
             </Viewport>
             <EmptyState />
             {/* Zoom pill and View menu: bottom-right. Above the tool bar on a phone and on a narrow
-                canvas, on the same line at 2xl. The hints sit above them, centred. */}
+                canvas, on the same line at 2xl. */}
             <div className={`pointer-events-none absolute right-3 z-10 flex flex-wrap-reverse items-end justify-end gap-2 max-md:left-2 max-md:right-2 ${measureDesktop ? 'bottom-3' : 'bottom-[calc(4.5rem+env(safe-area-inset-bottom))] 2xl:bottom-3'}`}>
               <ZoomControls />
               <ViewMenu />
-            </div>
-            <div className={`pointer-events-none absolute inset-x-3 z-10 flex justify-center max-md:inset-x-2 ${measureDesktop ? 'bottom-3' : 'bottom-[calc(8rem+env(safe-area-inset-bottom))] 2xl:bottom-[calc(4.5rem+env(safe-area-inset-bottom))]'}`}>
-              <ToolHints />
+              {measureDesktop && <ToolTipsButton onOpenShortcuts={() => setShortcutsOpen(true)} pill />}
             </div>
             {!measureDesktop && (
               <div className="pointer-events-none absolute inset-x-2 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-10 flex justify-center">
-                <nav
-                  className="pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-full border border-black/10 bg-white p-1 shadow-lg dark:border-white/10 dark:bg-[#1b2128]"
-                  aria-label="Tools"
-                >
-                  {TOOLS.map(({ id, label, key, icon: Icon }) => (
-                    <button
-                      key={id}
-                      title={`${label} (${key.toUpperCase()})`}
-                      aria-label={label}
-                      aria-pressed={tool === id}
-                      data-tool={id}
-                      onClick={() => setTool(id)}
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full max-md:h-11 max-md:w-11 ${tool === id ? 'bg-orange-700 text-white' : 'hover:bg-black/5 dark:hover:bg-white/10'}`}
-                    >
-                      <Icon size={18} />
-                    </button>
-                  ))}
-                </nav>
+                <div className="pointer-events-auto flex max-w-full items-center rounded-full border border-black/10 bg-white p-1 shadow-lg dark:border-white/10 dark:bg-[#1b2128]">
+                  <nav className="flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Tools">
+                    {TOOLS.map(({ id, label, key, icon: Icon }) => (
+                      <button
+                        key={id}
+                        title={`${label} (${key.toUpperCase()})`}
+                        aria-label={label}
+                        aria-pressed={tool === id}
+                        data-tool={id}
+                        onClick={() => setTool(id)}
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full max-md:h-11 max-md:w-11 ${tool === id ? 'bg-orange-700 text-white' : 'hover:bg-black/5 dark:hover:bg-white/10'}`}
+                      >
+                        <Icon size={18} />
+                      </button>
+                    ))}
+                  </nav>
+                  <ToolTipsButton onOpenShortcuts={() => setShortcutsOpen(true)} />
+                </div>
               </div>
             )}
           </main>

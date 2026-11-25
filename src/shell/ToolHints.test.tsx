@@ -1,10 +1,16 @@
 import { renderToString } from 'react-dom/server'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { emptyDoc, useDoc, useUi } from '../model/store'
 import { convertToV2 } from '../model/v2/convert'
 import type { Room } from '../model/types'
-import { useToast } from '../features/toast'
-import { ToolHints, ToolHintsView } from './ToolHints'
+import {
+  MEASURE_TIPS,
+  SELECT_V2_TIPS,
+  TOOL_TIPS,
+  ToolTipsButton,
+  getToolTips,
+  handleTipsKeyDown,
+} from './ToolHints'
 
 const room: Room = {
   id: 'A', code: 'A', name: 'A', holes: [], walls: {}, walkOrder: 1,
@@ -20,61 +26,70 @@ const applyState = (store: unknown, patch: object) => {
 beforeEach(() => {
   applyState(useUi, { mode: 'edit', tool: 'select' })
   applyState(useDoc, { doc: { ...emptyDoc(), rooms: [room] } })
-  applyState(useToast, { toasts: [] })
 })
 
-describe('ToolHints', () => {
-  it('shows v1 select hint for v1 documents and v2 select hint for v2 documents', () => {
-    const v1Html = renderToString(<ToolHints />)
-    expect(v1Html).toContain('this room only')
-    expect(v1Html).not.toContain('box add to selection')
+describe('ToolTipsButton and TOOL_TIPS', () => {
+  it('hides the button for tools with no tips (pin, tape, place-element)', () => {
+    for (const tool of ['pin', 'tape', 'place-element'] as const) {
+      applyState(useUi, { tool })
+      expect(TOOL_TIPS[tool]).toEqual([])
+      expect(renderToString(<ToolTipsButton />)).toBe('')
+    }
+  })
+
+  it('starts closed and shows the wall items when opened', () => {
+    applyState(useUi, { tool: 'wall' })
+    const closed = renderToString(<ToolTipsButton onOpenShortcuts={() => {}} />)
+    expect(closed).toContain('aria-label="Tips for this tool"')
+    expect(closed).toContain('title="Tips for this tool"')
+    expect(closed).toContain('aria-expanded="false"')
+    expect(closed).not.toContain('role="dialog"')
+    expect(closed).not.toContain('Exact length')
+
+    const open = renderToString(<ToolTipsButton onOpenShortcuts={() => {}} defaultOpen />)
+    expect(open).toContain('aria-expanded="true"')
+    expect(open).toContain('role="dialog"')
+    expect(open).toContain('>Wall</div>')
+    for (const tip of TOOL_TIPS.wall) {
+      expect(open).toContain(`>${tip.keys}</kbd>`)
+      expect(open).toContain(`>${tip.action}</dd>`)
+    }
+    expect(open).toContain('All shortcuts')
+  })
+
+  it('shows v1 select tips for v1 documents and v2 select tips for v2 documents', () => {
+    const v1Html = renderToString(<ToolTipsButton defaultOpen />)
+    expect(v1Html).toContain('Move this room only (shared walls stay)')
+    expect(v1Html).not.toContain('Box add to selection')
 
     applyState(useDoc, { doc: convertToV2({ ...emptyDoc(), rooms: [room] }).doc })
-    const v2Html = renderToString(<ToolHints />)
-    expect(v2Html).toContain('Shift+drag on floor = box add to selection')
-    expect(v2Html).toContain('Shift+click = add or remove room/wall')
-    expect(v2Html).not.toContain('this room only')
+    const v2Html = renderToString(<ToolTipsButton defaultOpen />)
+    expect(v2Html).toContain('Add or remove room / wall')
+    expect(v2Html).toContain('Box add to selection')
+    expect(v2Html).not.toContain('Move this room only (shared walls stay)')
+    expect(getToolTips('select', { v2: true })).toEqual(SELECT_V2_TIPS)
   })
 
-  it('hides the hint bar on phone widths while a toast is visible', () => {
-    expect(renderToString(<ToolHints />)).not.toContain('max-md:hidden')
-    applyState(useToast, { toasts: [{ id: 1, message: 'Notice', durationMs: 5000 }] })
-    expect(renderToString(<ToolHints />)).toContain('max-md:hidden')
+  it('shows the measuring mode tip when measuring', () => {
+    applyState(useUi, { mode: 'measure' })
+    const html = renderToString(<ToolTipsButton pill defaultOpen />)
+    expect(html).toContain('>Measuring Mode</div>')
+    expect(html).toContain('>Hover a wall</kbd>')
+    expect(html).toContain('>Find its field</dd>')
+    expect(getToolTips('select', { measuring: true })).toEqual(MEASURE_TIPS)
   })
 
-  it('keeps one line on a phone, with a button that opens the full text', () => {
-    const hint = 'Drag room to move · Shift+click = add to selection · a long hint that does not fit'
-    const compact = renderToString(<ToolHintsView hint={hint} compact />)
-    // One line, cut with an ellipsis, and a tap target with aria-expanded.
-    expect(compact).toContain('truncate')
-    expect(compact).toContain('<button')
-    expect(compact).toContain('aria-expanded="false"')
-    expect(compact).toContain('aria-label="Tool hints"')
-    expect(compact).toContain('pointer-events-auto')
-    // Nothing is hidden from the text: the full hint is in the DOM (the CSS cuts it).
-    expect(compact).toContain('a long hint that does not fit')
+  it('closes on Escape and ignores other keys', () => {
+    const onClose = vi.fn()
+    const preventDefault = vi.fn()
+    const stopPropagation = vi.fn()
 
-    // Desktop: the plain bar, no button, no ellipsis.
-    const desktop = renderToString(<ToolHintsView hint={hint} compact={false} />)
-    expect(desktop).not.toContain('<button')
-    expect(desktop).not.toContain('truncate')
-    expect(desktop).toContain('pointer-events-none')
-  })
+    expect(handleTipsKeyDown({ key: 'Enter', preventDefault, stopPropagation }, onClose)).toBe(false)
+    expect(onClose).not.toHaveBeenCalled()
 
-  it('hides the bar on phone widths while a toast is visible (compact view too)', () => {
-    expect(renderToString(<ToolHintsView hint="x" compact hiddenWhileToast />)).toContain('max-md:hidden')
-    expect(renderToString(<ToolHintsView hint="x" compact />)).not.toContain('max-md:hidden')
-  })
-
-  it('gives the wall hint the typed length and the alignment key', () => {
-    applyState(useUi, { tool: 'wall' })
-    const html = renderToString(<ToolHints />)
-    expect(html).toContain('type a length')
-    expect(html).toContain('S = centre / side A / side B')
-  })
-
-  it('gives the select hint the double-click on a length', () => {
-    applyState(useUi, { tool: 'select' })
-    expect(renderToString(<ToolHints />)).toContain('double-click a length to type the measured value')
+    expect(handleTipsKeyDown({ key: 'Escape', preventDefault, stopPropagation }, onClose)).toBe(true)
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(stopPropagation).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
