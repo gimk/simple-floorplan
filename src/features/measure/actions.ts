@@ -60,7 +60,8 @@ export function setRunMeasurement(
     return
   }
   const cur = useDoc.getState().doc.measurements
-  const bases = row.pieces.map((p) => cur[p.label]?.actualCm ?? p.plannedCm)
+  const allMeasured = row.pieces.every((p) => cur[p.label]?.actualCm != null)
+  const bases = row.pieces.map((p) => (allMeasured ? cur[p.label]!.actualCm : p.plannedCm))
   const parts = splitRunTotal(total, bases)
   row.pieces.forEach((p, i) => setMeasurement(p.label, parts[i], source, undefined, opts))
 }

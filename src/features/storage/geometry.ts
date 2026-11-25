@@ -23,6 +23,23 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000
 export const isV2Doc = (doc: Pick<PlanDoc, 'rooms' | 'schemaVersion'>): boolean =>
   doc.schemaVersion === 2 || doc.rooms.some((r) => (r.cycle?.length ?? 0) > 0)
 
+/** Two consecutive faces belong to one straight wall if within 0.5° or middle node within 1 cm of chord. */
+const COLLINEAR_SIN = Math.sin((0.5 * Math.PI) / 180)
+const COLLINEAR_DIST_CM = 1
+
+function isCollinearStep(a: Vec, b: Vec, c: Vec, refDir: Vec): boolean {
+  const ab = dist(a, b)
+  const bc = dist(b, c)
+  if (ab < 1e-6 || bc < 1e-6) return false
+  const d1 = { x: (b.x - a.x) / ab, y: (b.y - a.y) / ab }
+  const d2 = { x: (c.x - b.x) / bc, y: (c.y - b.y) / bc }
+  if (dot(d1, d2) <= 0.99 || dot(d1, refDir) <= 0.99 || dot(d2, refDir) <= 0.99) return false
+  if (Math.abs(cross(d1, refDir)) <= COLLINEAR_SIN && Math.abs(cross(d2, refDir)) <= COLLINEAR_SIN) return true
+  const ac = dist(a, c)
+  if (ac < 1e-6) return false
+  return Math.abs(cross(sub(b, a), sub(c, a))) / ac <= COLLINEAR_DIST_CM
+}
+
 /**
  * Index of the first face of the run of collinear faces of the parent room that holds face `idx`.
  * A v2 room is split where another room meets it, so the host wall of a storage is one piece of a
@@ -36,9 +53,8 @@ export function collinearRunStart(parent: Room, idx: number, dir: Vec): number {
     const prevIdx = (start - 1 + n) % n
     const p0 = parent.vertices[prevIdx]
     const p1 = parent.vertices[start]
-    if (dist(p0, p1) < 1e-6) break
-    const prevDir = norm(sub(p1, p0))
-    if (Math.abs(cross(prevDir, dir)) < 1e-3 && dot(prevDir, dir) > 0.99) start = prevIdx
+    const p2 = parent.vertices[(start + 1) % n]
+    if (isCollinearStep(p0, p1, p2, dir)) start = prevIdx
     else break
   }
   return start
@@ -51,11 +67,10 @@ export function collinearRunEnd(parent: Room, idx: number, dir: Vec): number {
   let end = idx
   for (let step = 0; step < n - 1; step++) {
     const nextIdx = (end + 1) % n
-    const p0 = parent.vertices[nextIdx]
-    const p1 = parent.vertices[(nextIdx + 1) % n]
-    if (dist(p0, p1) < 1e-6) break
-    const nextDir = norm(sub(p1, p0))
-    if (Math.abs(cross(nextDir, dir)) < 1e-3 && dot(nextDir, dir) > 0.99) end = nextIdx
+    const p0 = parent.vertices[end]
+    const p1 = parent.vertices[nextIdx]
+    const p2 = parent.vertices[(nextIdx + 1) % n]
+    if (isCollinearStep(p0, p1, p2, dir)) end = nextIdx
     else break
   }
   return end

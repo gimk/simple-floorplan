@@ -141,14 +141,23 @@ export function measureRows(room: Room, defaultCeilingCm?: number): MeasureRow[]
 /** A thickness id as a row of its own (one label). */
 export const thicknessRow = (s: SurveyId): MeasureRow => ({ ...s, text: s.label, labels: [s.label], faceIndices: [], pieces: [] })
 
-/** Measured length of a row: the value, or for a grouped row the sum of its pieces (all must be measured). */
-export function rowValue(doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRow, 'labels'>): number | undefined {
+/**
+ * Measured length of a row: the value, or for a grouped row the sum of its pieces.
+ * When a single piece of a grouped row already holds a value close to the whole run length
+ * (within DISCREPANCY_CM of plannedCm) while the other pieces are unmeasured, treat that value as
+ * the run total (the user typed the full wall length into one piece).
+ */
+export function rowValue(doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRow, 'labels' | 'plannedCm'>): number | undefined {
   const vals = row.labels.map((l) => doc.measurements[l]?.actualCm)
-  if (vals.some((v) => v == null)) return undefined
-  return round1((vals as number[]).reduce((a, v) => a + v, 0))
+  if (vals.every((v) => v != null)) return round1((vals as number[]).reduce((a, v) => a + v, 0))
+  if (row.labels.length > 1 && row.plannedCm != null) {
+    const present = vals.filter((v): v is number => v != null)
+    if (present.length === 1 && Math.abs(present[0] - row.plannedCm) <= DISCREPANCY_CM) return round1(present[0])
+  }
+  return undefined
 }
 
-export const rowMeasured = (doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRow, 'labels'>) => rowValue(doc, row) != null
+export const rowMeasured = (doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRow, 'labels' | 'plannedCm'>) => rowValue(doc, row) != null
 
 /** Smallest value a piece of a split run can get (cm). The schema needs actualCm > 0. */
 export const MIN_PIECE_CM = 0.1

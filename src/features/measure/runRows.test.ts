@@ -62,7 +62,41 @@ describe('grouped wall rows', () => {
     expect(rowValue(doc, row)).toBe(295.5)
     expect(roomProgress(doc, room).done).toBe(1)
     expect(docProgress(doc)).toEqual({ done: 1, total: 6 })
-    // Only one piece measured: the row is not measured yet.
+    // Only one piece measured with a partial value: the row is not measured yet.
     expect(rowValue(mk(m({ 'R1-2': 80 })), row)).toBeUndefined()
+  })
+
+  it('groups a T-split straight wall even when the T node is slightly off-line (<= 0.5 deg or <= 1 cm)', () => {
+    // Middle node off by 0.4 cm on a 35 cm piece (~0.65 deg, chord dist ~0.34 cm <= 1 cm).
+    const slightlyOff: Room = {
+      ...room,
+      vertices: [[0, 0], [400, 0], [400.4, 200], [400, 235], [0, 235]].map(([x, y], i) => ({ id: `b${i}`, x, y })),
+    }
+    const rows = measureRows(slightlyOff).filter((r) => r.kind === 'wall')
+    expect(rows.map((r) => r.text)).toEqual(['R1-1', 'R1-2+3', 'R1-4', 'R1-5'])
+
+    // Real bend (15 cm off-line over 235 cm): stays two separate rows.
+    const bent: Room = {
+      ...room,
+      vertices: [[0, 0], [400, 0], [415, 200], [400, 235], [0, 235]].map(([x, y], i) => ({ id: `c${i}`, x, y })),
+    }
+    const bentRows = measureRows(bent).filter((r) => r.kind === 'wall')
+    expect(bentRows.map((r) => r.text)).toEqual(['R1-1', 'R1-2', 'R1-3', 'R1-4', 'R1-5'])
+  })
+
+  it('treats a single piece holding the whole run length (within 2 cm) as the run total, and splits on next edit', () => {
+    const row = measureRows(room).find((r) => r.labels.length === 2)!
+    // Planned run total is ~290 cm. User typed 291 into R1-2 only, leaving R1-3 unmeasured.
+    const doc = mk(m({ 'R1-2': 291 }))
+    expect(rowValue(doc, row)).toBe(291)
+    expect(roomProgress(doc, room).done).toBe(1)
+
+    // Next edit of the row splits the new total across all pieces using planned proportions.
+    useDoc.setState({ doc })
+    setRunMeasurement(row, 295)
+    const after = useDoc.getState().doc
+    expect(rowValue(after, row)).toBe(295)
+    expect(after.measurements['R1-2']?.actualCm).toBeCloseTo((row.pieces[0].plannedCm / row.plannedCm!) * 295, 0)
+    expect(after.measurements['R1-3']?.actualCm).toBeCloseTo((row.pieces[1].plannedCm / row.plannedCm!) * 295, 0)
   })
 })

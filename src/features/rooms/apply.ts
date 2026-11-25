@@ -1,7 +1,8 @@
 // "Apply measured lengths": re-solve a room polygon from verified wall lengths (plan 2.5.7 / 5.4). Pure, cm.
 import { dist, roomWalls } from '../../model/geometry'
 import { planPrecision, roundVec } from '../../model/precision'
-import type { PlanDoc, Room, WallProps } from '../../model/types'
+import type { PlanDoc, Room, StoredWall, Vec, WallProps } from '../../model/types'
+import { moveNodes } from '../../model/v2/drag'
 import { moveVertices, movableLinked, type VMove } from './ops'
 import { hasVerifiedWalls, measuredNeighbours, solveRoom, twinValues, verifiedWalls, type SolveMode, type SolveResidual } from './solve'
 import { wallProps } from './walls'
@@ -65,21 +66,60 @@ export function applyMeasured(doc: PlanDoc, roomId: string): { doc: PlanDoc; rep
   if (walls.some((x) => x.length < 1)) return { doc, report: none(room, 'A wall would collapse') }
 
   // Lock a verified wall only when the fit keeps it within 0.5 cm of its value.
-  const props: Record<string, WallProps> = { ...room.walls }
-  for (const v of ver) {
-    const res = solved.residuals.find((x) => x.index === v.index)
-    if (res && Math.abs(res.diffCm) <= 0.5) props[v.wallStart] = { ...wallProps(room, v.wallStart), locked: true }
+  let next: PlanDoc
+  const isV2 = doc.schemaVersion === 2 && Array.isArray(doc.nodes) && Array.isArray(doc.walls) &&
+    (room.cycle?.length ?? 0) === room.vertices.length && room.vertices.length >= 3
+  if (isV2) {
+    const cycle = room.cycle!
+    const wallMap = new Map((doc.walls ?? []).map((w) => [w.id, w]))
+    const nodePos = new Map((doc.nodes ?? []).map((n) => [n.id, n]))
+    const sharedNodeId = (a: StoredWall | undefined, b: StoredWall | undefined): string | null => {
+      if (!a || !b || a.id === b.id) return null
+      if (a.a === b.a || a.a === b.b) return a.a
+      if (a.b === b.a || a.b === b.b) return a.b
+      return null
+    }
+    const cornerNodeId = (i: number, v: Vec): string | null => {
+      const prev = cycle[(i - 1 + cycle.length) % cycle.length]
+      const cur = cycle[i]
+      const shared = sharedNodeId(wallMap.get(prev.wallId), wallMap.get(cur.wallId))
+      if (shared && nodePos.has(shared) && dist(nodePos.get(shared)!, v) <= 1) return shared
+      let best: { id: string; d: number } | null = null
+      for (const n of doc.nodes ?? []) {
+        const d = dist(n, v)
+        if (d <= 1 && (!best || d < best.d)) best = { id: n.id, d }
+      }
+      return best ? best.id : null
+    }
+    const nodeMoves = new Map<string, Vec>()
+    room.vertices.forEach((v, i) => {
+      const to = solved.points[i]
+      if (dist(v, to) < 0.01) return
+      const nid = cornerNodeId(i, v)
+      if (nid) nodeMoves.set(nid, to)
+    })
+    const lockWalls = new Set<string>()
+    for (const v of ver) {
+      const res = solved.residuals.find((x) => x.index === v.index)
+      if (res && Math.abs(res.diffCm) <= 0.5) lockWalls.add(cycle[v.index].wallId)
+    }
+    next = moveNodes(doc, nodeMoves, lockWalls)
+  } else {
+    const props: Record<string, WallProps> = { ...room.walls }
+    for (const v of ver) {
+      const res = solved.residuals.find((x) => x.index === v.index)
+      if (res && Math.abs(res.diffCm) <= 0.5) props[v.wallStart] = { ...wallProps(room, v.wallStart), locked: true }
+    }
+    const moves: VMove[] = []
+    room.vertices.forEach((v, i) => {
+      const to = solved.points[i]
+      if (dist(v, to) < 0.01) return
+      moves.push({ roomId, vertexId: v.id, x: to.x, y: to.y })
+      for (const ref of followersForApply(doc, roomId, v.id)) moves.push({ ...ref, x: to.x, y: to.y })
+    })
+    const moved = moveVertices(doc, moves)
+    next = { ...moved, rooms: moved.rooms.map((r) => (r.id === roomId ? { ...r, walls: props } : r)) }
   }
-
-  const moves: VMove[] = []
-  room.vertices.forEach((v, i) => {
-    const to = solved.points[i]
-    if (dist(v, to) < 0.01) return
-    moves.push({ roomId, vertexId: v.id, x: to.x, y: to.y })
-    for (const ref of followersForApply(doc, roomId, v.id)) moves.push({ ...ref, x: to.x, y: to.y })
-  })
-  const moved = moveVertices(doc, moves)
-  const next: PlanDoc = { ...moved, rooms: moved.rooms.map((r) => (r.id === roomId ? { ...r, walls: props } : r)) }
 
   const report: ApplyReport = {
     roomId, code: room.code, mode: solved.mode, appliedWalls: ver.length,

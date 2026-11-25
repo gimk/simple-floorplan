@@ -250,6 +250,68 @@ export function moveNode(doc: PlanDoc, nodeId: string, to: Vec): PlanDoc {
 }
 
 /**
+ * Move several nodes in one step (e.g. solving a room from measured lengths) and optionally lock
+ * stored walls. Reuses all existing walls without adding or duplicating any. Any T-junction node
+ * that lay on a moved wall stays on the moved wall line (slides along it).
+ */
+export function moveNodes(
+  doc: PlanDoc,
+  moves: ReadonlyMap<string, Vec>,
+  lockWallIds?: ReadonlySet<string>,
+): PlanDoc {
+  const nodes = doc.nodes ?? []
+  const walls = doc.walls ?? []
+  if (!moves.size && (!lockWallIds || !lockWallIds.size)) return doc
+  const oldPos = new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }]))
+  const nextPos = new Map<string, Vec>()
+  for (const [id, p] of moves) nextPos.set(id, { x: roundStored(p.x), y: roundStored(p.y) })
+
+  // Keep interior T-junction nodes on their host wall line when the wall moves.
+  for (const w of walls) {
+    if (!moves.has(w.a) && !moves.has(w.b)) continue
+    const oldA = oldPos.get(w.a)
+    const oldB = oldPos.get(w.b)
+    if (!oldA || !oldB) continue
+    const oldLen = dist(oldA, oldB)
+    if (oldLen < EPS) continue
+    const stops = stopsWithNodes(w, oldPos)
+    if (!stops || stops.length <= 2) continue
+    const newA = nextPos.get(w.a) ?? oldA
+    const newB = nextPos.get(w.b) ?? oldB
+    const newLen = dist(newA, newB)
+    if (newLen < EPS) continue
+    const newD = { x: (newB.x - newA.x) / newLen, y: (newB.y - newA.y) / newLen }
+    for (const s of stops) {
+      if (s.nodeId === w.a || s.nodeId === w.b) continue
+      const target = moves.get(s.nodeId)
+      const u = target
+        ? Math.min(Math.max(dot(sub(target, newA), newD), 0), newLen)
+        : (s.u / oldLen) * newLen
+      nextPos.set(s.nodeId, { x: roundStored(newA.x + newD.x * u), y: roundStored(newA.y + newD.y * u) })
+    }
+  }
+
+  let nodesChanged = false
+  const nextNodes = nodes.map((n) => {
+    const to = nextPos.get(n.id)
+    if (!to || (to.x === n.x && to.y === n.y)) return n
+    nodesChanged = true
+    return { ...n, x: to.x, y: to.y }
+  })
+  let wallsChanged = false
+  const nextWalls = lockWallIds?.size
+    ? walls.map((w) => {
+        if (!lockWallIds.has(w.id) || w.locked) return w
+        wallsChanged = true
+        return { ...w, locked: true }
+      })
+    : walls
+  if (!nodesChanged && !wallsChanged) return doc
+  const before = beforeMove(doc)
+  return rebuild(doc, doc.rooms, nodesChanged ? nextNodes : nodes, wallsChanged ? nextWalls : walls, before)
+}
+
+/**
  * Move one wall by `delta`: its two nodes move, so the rooms on both of its sides follow (one wall,
  * two faces) and the walls connected at its ends stretch.
  */
