@@ -54,6 +54,14 @@ import { appendOld, renameOldCode } from '../model/oldMeasurements'
 import { relabelByTarget } from '../model/v2/relabelV2'
 import { v2SyncRule } from '../model/v2/syncRule'
 import { attachTargets } from '../model/v2/targets'
+import { addStorage, deleteStorage, updateStorage } from '../features/storage/actions'
+import {
+  DEFAULT_STORAGE_BACK_CM,
+  DEFAULT_STORAGE_SIDE_CM,
+  readStorageParams,
+  type StorageDoor,
+  type StorageParams,
+} from '../features/storage/geometry'
 
 const EPS = 0.05
 const BIG = 1e5
@@ -254,6 +262,45 @@ const DeleteElementSchema = z.object({
   elementId: z.string().min(1),
 })
 
+// ---------- built-in storage (docs/storage-plan.md, step 4) ----------
+
+/** Door type of a built-in storage: a door variant, or "none" for a plain opening. */
+export const StorageDoorSchema = z.enum(['single', 'double', 'sliding', 'pocket', 'bifold', 'none'])
+
+/** Dimensions of a built-in storage, cm. Side and back wall thicknesses default to 5 cm. */
+export const AddStorageSchema = z.object({
+  type: z.literal('add_storage'),
+  /** Parent room: its id or its code. */
+  room: z.string().min(1),
+  /** Host wall of the parent room: survey label "SE-2", { roomId, wallStart } or { roomCode, wallIndex }. */
+  wall: WallRefSchema,
+  offsetCm: z.number().finite().min(0),
+  widthCm: z.number().finite().positive(),
+  depthCm: z.number().finite().positive(),
+  sideCm: z.number().finite().positive().optional(),
+  backCm: z.number().finite().positive().optional(),
+  door: StorageDoorSchema.optional(),
+})
+
+/** Change the dimensions/position and/or the door of a built-in storage; missing fields are kept. */
+export const UpdateStorageSchema = z.object({
+  type: z.literal('update_storage'),
+  /** The storage room: its id or its code. */
+  storage: z.string().min(1),
+  offsetCm: z.number().finite().min(0).optional(),
+  widthCm: z.number().finite().positive().optional(),
+  depthCm: z.number().finite().positive().optional(),
+  sideCm: z.number().finite().positive().optional(),
+  backCm: z.number().finite().positive().optional(),
+  door: StorageDoorSchema.optional(),
+})
+
+export const DeleteStorageSchema = z.object({
+  type: z.literal('delete_storage'),
+  /** The storage room: its id or its code. */
+  storage: z.string().min(1),
+})
+
 const SetMeasurementSchema = z.object({
   type: z.literal('set_measurement'),
   label: z.string().min(1),
@@ -368,6 +415,9 @@ export const CommandSchema = z.discriminatedUnion('type', [
   AddPinSchema,
   AddTapeSchema,
   SetApartmentSchema,
+  AddStorageSchema,
+  UpdateStorageSchema,
+  DeleteStorageSchema,
 ])
 
 export type Command = z.infer<typeof CommandSchema>
@@ -671,6 +721,63 @@ export function resolveWall(doc: PlanDoc, ref: WallRef): { room: Room; wall: Wal
     throw new CommandError('WALL_NOT_FOUND', `Wall ${ref.roomCode}-${ref.wallIndex} not found (room has ${walls.length} walls).`)
   }
   return { room, wall, label: `${room.code}-${wall.index + 1}` }
+}
+
+// ---------- built-in storage helpers ----------
+
+/** Dimensions of a built-in storage with the default side and back wall thicknesses. */
+const storageParamsOf = (input: {
+  offsetCm: number
+  widthCm: number
+  depthCm: number
+  sideCm?: number
+  backCm?: number
+}): StorageParams => ({
+  offsetCm: input.offsetCm,
+  widthCm: input.widthCm,
+  depthCm: input.depthCm,
+  sideCm: input.sideCm ?? DEFAULT_STORAGE_SIDE_CM,
+  backCm: input.backCm ?? DEFAULT_STORAGE_BACK_CM,
+})
+
+/** The storage room named by its id or its code. */
+function resolveStorageRoom(doc: PlanDoc, ref: string): Room {
+  const room = doc.rooms.find((r) => r.id === ref) ?? doc.rooms.find((r) => r.code === ref)
+  if (!room) throw new CommandError('STORAGE_NOT_FOUND', `Storage room "${ref}" not found.`)
+  if (!room.storage) throw new CommandError('NOT_A_STORAGE', `Room "${room.code}" is not a built-in storage.`)
+  return room
+}
+
+/**
+ * Id that `addStorage` needs for a wall of a room: the stored wall id in a v2 document, the id of
+ * the wall start vertex in a v1 document (`Room.cycle` is the calculated view of a v2 room).
+ */
+function storageHostWallId(doc: PlanDoc, room: Room, wall: Wall): string {
+  if (doc.schemaVersion !== 2) return wall.start.id
+  const face = room.cycle?.[wall.index]
+  if (!face) {
+    throw new CommandError('WALL_NOT_FOUND', `Wall ${room.code}-${wall.index + 1} has no stored wall.`)
+  }
+  return face.wallId
+}
+
+/** Result payload of a storage command. */
+function storageResult(doc: PlanDoc, storageRoomId: string, wallLabel?: string) {
+  const room = doc.rooms.find((r) => r.id === storageRoomId)
+  if (!room) return { storageRoomId }
+  const params = readStorageParams(doc, room)
+  return {
+    storageRoomId,
+    code: room.code,
+    name: room.name,
+    parentRoomId: room.storage?.parentRoomId ?? null,
+    ...(wallLabel !== undefined ? { wallLabel } : {}),
+    widthCm: params ? round2(params.widthCm) : null,
+    depthCm: params ? round2(params.depthCm) : null,
+    sideCm: params ? round2(params.sideCm) : null,
+    backCm: params ? round2(params.backCm) : null,
+    areaM2: round2(roomAreaM2(room)),
+  }
 }
 
 // ---------- apply_measurements pure solver ----------
@@ -1519,6 +1626,58 @@ function runCommand(doc: PlanDocV1, cmd: z.infer<typeof CommandSchema>, warnings
       return {
         doc: next,
         result: { deletedElementId: cmd.elementId },
+        warnings,
+      }
+    }
+
+    case 'add_storage': {
+      // The parent room is named by id or code; the host wall by a survey label or a wall reference.
+      const parent = doc.rooms.find((r) => r.id === cmd.room) ?? doc.rooms.find((r) => r.code === cmd.room)
+      if (!parent) throw new CommandError('ROOM_NOT_FOUND', `Room "${cmd.room}" not found.`)
+      if (parent.storage) throw new CommandError('NOT_A_PARENT_ROOM', `Room "${parent.code}" is a built-in storage.`)
+      const { room, wall, label } = resolveWall(doc, cmd.wall)
+      if (room.id !== parent.id) {
+        throw new CommandError('WALL_NOT_IN_ROOM', `Wall ${label} does not belong to room ${parent.code}.`)
+      }
+      const params = storageParamsOf(cmd)
+      const door: StorageDoor = cmd.door ?? 'single'
+      const res = addStorage(doc, parent.id, storageHostWallId(doc, room, wall), params, door)
+      if ('error' in res) throw new CommandError('STORAGE_INVALID', res.error)
+      return {
+        doc: res.doc as PlanDocV1,
+        result: { ...storageResult(res.doc, res.storageRoomId, label), door },
+        warnings,
+      }
+    }
+
+    case 'update_storage': {
+      const storageRoom = resolveStorageRoom(doc, cmd.storage)
+      const current = readStorageParams(doc, storageRoom)
+      if (!current) {
+        throw new CommandError('STORAGE_INVALID', `Storage room "${storageRoom.code}" cannot be read.`)
+      }
+      const params: StorageParams = {
+        offsetCm: cmd.offsetCm ?? current.offsetCm,
+        widthCm: cmd.widthCm ?? current.widthCm,
+        depthCm: cmd.depthCm ?? current.depthCm,
+        sideCm: cmd.sideCm ?? current.sideCm,
+        backCm: cmd.backCm ?? current.backCm,
+      }
+      const res = updateStorage(doc, storageRoom.id, params, cmd.door)
+      if ('error' in res) throw new CommandError('STORAGE_INVALID', res.error)
+      return {
+        doc: res.doc as PlanDocV1,
+        result: { ...storageResult(res.doc, storageRoom.id), ...(cmd.door !== undefined ? { door: cmd.door } : {}) },
+        warnings,
+      }
+    }
+
+    case 'delete_storage': {
+      const storageRoom = resolveStorageRoom(doc, cmd.storage)
+      const next = deleteStorage(doc, storageRoom.id)
+      return {
+        doc: next as PlanDocV1,
+        result: { deletedStorageRoomId: storageRoom.id, code: storageRoom.code },
         warnings,
       }
     }

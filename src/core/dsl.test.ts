@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { applyBatch } from './commands'
 import { parsePlan, type PlanDocV1 } from './schema'
 import { planToDsl, dslToPlan, DslParseError } from './dsl'
+import { readStorageParams } from '../features/storage/geometry'
+import { ensureV2 } from '../model/v2/ensure'
 import type { PlanDoc, Room } from '../model/types'
 
 const NOW = '2026-01-01T00:00:00.000Z'
@@ -423,5 +425,85 @@ describe('DSL wall thickness IDs', () => {
     const doc = dslToPlan('plan "T" version=1 unit=cm\n\nroom SE "Living" rect(0,0 400x300) walk=1\n  measure SE-1=390 SE-2-T=14\n')
     expect(doc.measurements['SE-2-T']?.actualCm).toBe(14)
     expect(planToDsl(doc)).toContain('measure SE-1=390 SE-2-T=14')
+  })
+})
+
+describe('DSL built-in storage (docs/storage-plan.md, step 4)', () => {
+  const storageDsl = [
+    'plan "T" version=1 unit=cm',
+    '',
+    'room SE "Living" rect(0,0 400x300) walk=1',
+    '  storage SE-1 from 100 width 60 depth 40 door double',
+    '',
+    'room CU "Kitchen" rect(400,0 200x300) walk=2',
+    '  storage CU-2 from 40 width 50 depth 35 side 6 back 8',
+  ].join('\n')
+
+  it('parses a storage line into a storage room with its front door', () => {
+    const doc = dslToPlan(storageDsl, undefined, { now: NOW })
+    const storages = doc.rooms.filter((r) => r.storage)
+    expect(storages).toHaveLength(2)
+    const se = storages.find((r) => r.storage!.parentRoomId === 'room_SE')!
+    // Inside clear 60 x 40, on the outer side of SE-1 (from (0,0) to (400,0)), so above it (y < 0).
+    const p = readStorageParams(doc, se)!
+    expect(p).toMatchObject({ offsetCm: 100, widthCm: 60, depthCm: 40, sideCm: 5, backCm: 5 })
+    expect(Math.min(...se.vertices.map((v) => v.y))).toBeLessThan(0)
+    // The front door belongs to the parent room, in the opening of the host wall.
+    const door = doc.elements.filter((e) => e.roomId === 'room_SE')
+    expect(door).toHaveLength(1)
+    expect(door[0]).toMatchObject({ kind: 'door', variant: 'double', widthCm: 60 })
+    // The second storage has its own side and back thickness.
+    const cu = storages.find((r) => r.storage!.parentRoomId === 'room_CU')!
+    expect(readStorageParams(doc, cu)).toMatchObject({ offsetCm: 40, widthCm: 50, depthCm: 35, sideCm: 6, backCm: 8 })
+  })
+
+  it('does not write a storage room as a room statement, and writes the door with the storage', () => {
+    const doc = dslToPlan(storageDsl, undefined, { now: NOW })
+    const text = planToDsl(doc)
+    expect(text).toContain('  storage SE-1 from 100 width 60 depth 40 door double')
+    expect(text).toContain('  storage CU-2 from 40 width 50 depth 35 side 6 back 8')
+    // No room block of a storage, and no element line for its front door.
+    expect(text.match(/^room /gm)).toHaveLength(2)
+    expect(text).not.toContain('door SE-1 at=')
+    // The front of the storage stays a door of its parent room when the text is read again.
+    const back = dslToPlan(text, undefined, { now: NOW })
+    expect(back.rooms.filter((r) => r.storage)).toHaveLength(2)
+  })
+
+  it('round trips: the text of a storage plan does not change', () => {
+    const doc = dslToPlan(storageDsl, undefined, { now: NOW })
+    const dsl1 = planToDsl(doc)
+    const dsl2 = planToDsl(dslToPlan(dsl1, undefined, { now: NOW }))
+    expect(dsl2).toBe(dsl1)
+    expect(dsl2).toContain('storage SE-1 from 100 width 60 depth 40 door double')
+  })
+
+  it('round trips a v2 document: the storage stays on its host wall', () => {
+    const v1 = dslToPlan(storageDsl, undefined, { now: NOW })
+    const v2 = ensureV2(v1, { now: NOW })
+    const dsl1 = planToDsl(v2)
+    const back = dslToPlan(dsl1, v2, { now: NOW })
+    const storages = back.rooms.filter((r) => r.storage)
+    expect(storages).toHaveLength(2)
+    const se = storages.find((r) => r.storage!.parentRoomId === 'room_SE')!
+    expect(readStorageParams(back, se)).toMatchObject({ offsetCm: 100, widthCm: 60, depthCm: 40 })
+    // A second pass is stable.
+    expect(planToDsl(dslToPlan(planToDsl(back), back, { now: NOW }))).toBe(planToDsl(back))
+  })
+
+  it('refuses a bad wall: a wall of another room, out of range, or too short', () => {
+    const bad = (line: string) => {
+      try {
+        dslToPlan(`plan "T" version=1 unit=cm\n\nroom SE "Living" rect(0,0 400x300)\n  ${line}\n`, undefined, { now: NOW })
+        return null
+      } catch (err) {
+        return err as DslParseError
+      }
+    }
+    expect(bad('storage CU-1 from 10 width 40 depth 30')?.message).toMatch(/does not belong to room SE/)
+    expect(bad('storage SE-9 from 10 width 40 depth 30')?.message).toMatch(/out of range/)
+    expect(bad('storage SE-1 from 380 width 40 depth 30')?.message).toMatch(/does not fit/)
+    expect(bad('storage SE-1 from 10 width 40')?.message).toMatch(/needs from <offset>, width <w> and depth <d>/)
+    expect(bad('storage SE-1 from 10 width 40 depth 30 door hatch')?.message).toMatch(/storage door must be one of/)
   })
 })

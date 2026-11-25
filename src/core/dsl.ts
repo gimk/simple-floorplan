@@ -15,8 +15,11 @@
 //   shape     := "poly(" pt ( WS pt )* ")"  |  "rect(" x "," y " " w "x" h ")"
 //   pt        := ( ID ":" )? x "," y                 (WS = whitespace)
 //   attr      := "id=" WORD | "ceiling=" num | "walk=" num | "outdoor" | "diag=" i "," j
-//   roomLine  := INDENT ( wall | hole | element | measure | note | pin )
+//   roomLine  := INDENT ( wall | storage | hole | element | measure | note | pin )
 //   wall      := "wall" LABEL ( WALLTYPE | THICK | "locked" | WALLSTATE )*
+//   storage   := "storage" LABEL "from" num "width" num "depth" num
+//              ( "side" num )? ( "back" num )? ( "door" STORAGEDOOR )?
+//   STORAGEDOOR := single | double | sliding | pocket | bifold | none
 //   WALLSTATE := demolish | new            (renovation, 7.4; default = existing)
 //   hole      := "hole" "poly(" pt ( WS pt )* ")"
 //   element   := KIND LABEL elemAttr*
@@ -47,6 +50,12 @@
 // stored wall graph (`doc.nodes`, `doc.walls`, phase 5a). Both are drawing data that the text form
 // ignores on purpose: a plan written as text has rooms, and its traces and graph are rebuilt.
 //
+// Built-in storage (docs/storage-plan.md): a storage room (`room.storage`) is NOT written as a room.
+// Its parent room holds one "storage" line, which names the host wall and the dimensions; the parser
+// rebuilds the storage room, its walls and its front door with `addStorage` (features/storage). The
+// offset and the width follow `WallElement.offsetCm`: the offset is the distance along the host wall,
+// measured on the whole wall (a v2 wall split by a storage is one wall again in the text).
+//
 // Example:
 //   plan "Apartment 4B" version=1 unit=cm
 //   room EN "Entry" rect(0,0 180x240) ceiling=265 walk=1
@@ -60,7 +69,7 @@
 //     window SE-1 at=80 w=160 h=140 sill=90 french
 //     measure SE-1=421 SE-D=594
 
-import { DEFAULT_WALL_CM, roomWalls } from '../model/geometry'
+import { DEFAULT_WALL_CM, roomWalls, sub } from '../model/geometry'
 import { surveyIds } from '../model/survey'
 import type {
   ElementKind,
@@ -77,10 +86,20 @@ import type {
   WallStatus,
   WallType,
   Vertex,
+  Vec,
 } from '../model/types'
 import { parsePlan, type PlanDocV1 } from './schema'
 import { ensureV2 } from '../model/v2/ensure'
 import { addStandaloneWall } from '../model/v2/write'
+import { addStorage } from '../features/storage/actions'
+import {
+  DEFAULT_STORAGE_BACK_CM,
+  DEFAULT_STORAGE_SIDE_CM,
+  readStoragePlacement,
+  storageFrontDoor,
+  type StorageDoor,
+  type StorageParams,
+} from '../features/storage/geometry'
 
 // ---------- errors ----------
 
@@ -240,6 +259,27 @@ export function planToDsl(doc: PlanDoc): string {
   const pins = doc.pins ?? []
   const tapes = doc.tapes ?? []
 
+  // Built-in storages (docs/storage-plan.md): a "storage" line in the block of the parent room. A
+  // storage that cannot be described keeps its own room block, so no data is lost.
+  const storagesOf = new Map<string, { room: Room; layout: NonNullable<ReturnType<typeof readStoragePlacement>> }[]>()
+  const storageRoomIds = new Set<string>()
+  /** Front doors of the storages: `addStorage` gives them back, they are not element lines. */
+  const storageDoorIds = new Set<string>()
+  for (const r of rooms) {
+    if (!r.storage) continue
+    const parentId = r.storage.parentRoomId
+    const parent = rooms.find((p) => p.id === parentId && p.id !== r.id)
+    if (!parent) continue
+    const layout = readStoragePlacement(doc, r)
+    if (!layout) continue
+    const list = storagesOf.get(parentId) ?? []
+    list.push({ room: r, layout })
+    storagesOf.set(parentId, list)
+    storageRoomIds.add(r.id)
+    const door = storageFrontDoor(doc, r)
+    if (door) storageDoorIds.add(door.id)
+  }
+
   // Global ordinals for deterministic pin/tape ids, in emission order.
   let pinCounter = 0
   let tapeCounter = 0
@@ -261,6 +301,8 @@ export function planToDsl(doc: PlanDoc): string {
   }
 
   rooms.forEach((r, ri) => {
+    // A built-in storage is written by the "storage" line of its parent room.
+    if (storageRoomIds.has(r.id)) return
     out.push('')
     const rect = asRect(r)
     const shape = rect
@@ -293,10 +335,26 @@ export function planToDsl(doc: PlanDoc): string {
       out.push(`  hole ${fmtPoly(hole, (i) => defaultHoleVertexId(r.code, hi, i))}`)
     })
 
+    // Built-in storages attached outside a wall of this room (docs/storage-plan.md).
+    for (const { layout } of storagesOf.get(r.id) ?? []) {
+      const parts = [
+        'storage', `${r.code}-${layout.wallIndex}`,
+        'from', fmtNum(layout.offsetCm),
+        'width', fmtNum(layout.widthCm),
+        'depth', fmtNum(layout.depthCm),
+      ]
+      if (layout.sideCm !== DEFAULT_STORAGE_SIDE_CM) parts.push('side', fmtNum(layout.sideCm))
+      if (layout.backCm !== DEFAULT_STORAGE_BACK_CM) parts.push('back', fmtNum(layout.backCm))
+      if (layout.door !== 'single') parts.push('door', layout.door)
+      out.push(`  ${parts.join(' ')}`)
+    }
+
     // Elements in doc order; default id = per-wall ordinal in emission order.
     const perWallCount = new Map<string, number>()
     for (const el of doc.elements ?? []) {
       if (el.roomId !== r.id) continue
+      // The front door of a built-in storage comes from its "storage" line.
+      if (storageDoorIds.has(el.id)) continue
       const w = walls.find((ww) => ww.start.id === el.wallStart)
       if (!w) throw new Error(`planToDsl: element ${el.id} references unknown wallStart ${el.wallStart} in room ${r.code}`)
       const k = perWallCount.get(el.wallStart) ?? 0
@@ -538,6 +596,20 @@ function parsePointList(cur: Cursor, line: number, idOf: (i: number) => string):
 
 export type DslToPlanOptions = { now?: string }
 
+/** One `storage` line of the text: the parent room, its host wall and the dimensions. */
+type ParsedStorage = {
+  line: number
+  /** Code of the parent room. */
+  code: string
+  /** 1-based index of the host wall in the parent room polygon order. */
+  wallIndex: number
+  params: StorageParams
+  door: StorageDoor
+}
+
+/** Door types of a `storage` line (see `StorageDoor`). */
+const STORAGE_DOORS: StorageDoor[] = ['single', 'double', 'sliding', 'pocket', 'bifold', 'none']
+
 export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOptions = {}): PlanDocV1 {
   const now = opts.now ?? new Date().toISOString()
   const lines = text.split('\n')
@@ -576,6 +648,8 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
   const roomNotes: Record<string, string> = {}
   const tapes: TapeMeasure[] = []
   const pins: Pin[] = []
+  // Built-in storage lines: the storage room and its walls are built by `addStorage` after the parse.
+  const storages: ParsedStorage[] = []
   let pinCounter = 0
   let tapeCounter = 0
   let apartmentDefaultCeilingCm: number | undefined
@@ -732,6 +806,59 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
         }
       }
       if (props) currentRoom.walls[currentRoom.vertices[label.n - 1].id] = props
+      continue
+    }
+
+    if (kw === 'storage') {
+      // "storage SE-2 from 60 width 60 depth 40 side 5 back 5 door single" (docs/storage-plan.md).
+      if (!indented || !currentRoom) throw new DslParseError(lineNo, '"storage" must be indented inside a room block')
+      cur.next()
+      const label = parseLabel(lineNo, cur.word())
+      if (label.code !== currentRoom.code) {
+        throw new DslParseError(lineNo, `storage wall "${label.code}-${label.n}" does not belong to room ${currentRoom.code}`)
+      }
+      if (label.n < 1 || label.n > currentRoom.vertices.length) {
+        throw new DslParseError(lineNo, `storage wall ${label.code}-${label.n} out of range (room has ${currentRoom.vertices.length} walls)`)
+      }
+      const params: StorageParams = {
+        offsetCm: 0, widthCm: 0, depthCm: 0,
+        sideCm: DEFAULT_STORAGE_SIDE_CM, backCm: DEFAULT_STORAGE_BACK_CM,
+      }
+      let door: StorageDoor = 'single'
+      let hasFrom = false
+      let hasWidth = false
+      let hasDepth = false
+      while (!cur.done) {
+        const keyTok = cur.next()
+        if (keyTok.t !== 'word') throw new DslParseError(lineNo, `unexpected token ${tokDesc(keyTok)} in storage line`)
+        if (keyTok.v === 'door') {
+          const d = cur.next()
+          if (d.t !== 'word' || !STORAGE_DOORS.includes(d.v as StorageDoor)) {
+            throw new DslParseError(lineNo, `storage door must be one of ${STORAGE_DOORS.join(', ')}`)
+          }
+          door = d.v as StorageDoor
+          continue
+        }
+        const v = cur.next()
+        if (v.t !== 'num') throw new DslParseError(lineNo, `expected a number after "${keyTok.v}" but found ${tokDesc(v)}`)
+        if (keyTok.v === 'from') { params.offsetCm = v.v; hasFrom = true }
+        else if (keyTok.v === 'width') { params.widthCm = v.v; hasWidth = true }
+        else if (keyTok.v === 'depth') { params.depthCm = v.v; hasDepth = true }
+        else if (keyTok.v === 'side') params.sideCm = v.v
+        else if (keyTok.v === 'back') params.backCm = v.v
+        else throw new DslParseError(lineNo, `unknown storage attribute "${keyTok.v}"`)
+      }
+      if (!hasFrom || !hasWidth || !hasDepth) {
+        throw new DslParseError(lineNo, 'storage needs from <offset>, width <w> and depth <d>')
+      }
+      if (!(params.offsetCm >= 0)) throw new DslParseError(lineNo, 'storage offset must not be negative')
+      if (!(params.widthCm > 0) || !(params.depthCm > 0)) {
+        throw new DslParseError(lineNo, 'storage width and depth must be positive')
+      }
+      if (!(params.sideCm > 0) || !(params.backCm > 0)) {
+        throw new DslParseError(lineNo, 'storage side and back thickness must be positive')
+      }
+      storages.push({ line: lineNo, code: currentRoom.code, wallIndex: label.n, params, door })
       continue
     }
 
@@ -1102,18 +1229,21 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
         }
       : {}),
   })
+  // The built-in storages are built on the v1 document of the text: their walls and their front door
+  // come from `addStorage`, then a v2 project converts the whole plan (walls-plan phase 5c).
+  const docWithStorages = applyStorages(doc, storages)
   // An import into a v2 project keeps the walls as the source (docs/walls-plan.md phase 5c): the
   // rooms of the text go into the wall graph of the project, and the values get their target.
   // A v1 project, a new project and the CLI keep the v1 document of the text.
-  if (baseDoc?.schemaVersion !== 2) return doc
+  if (baseDoc?.schemaVersion !== 2) return docWithStorages
   // The fields that the .sfp text does not hold are kept as they are (review finding 2): an import
   // must not delete the values of removed walls, the traced walls or the rounding precision.
   const precisionCm = baseDoc.apartment?.precisionCm
   const carried: PlanDocV1 = {
-    ...doc,
+    ...docWithStorages,
     ...(baseDoc.oldMeasurements ? { oldMeasurements: baseDoc.oldMeasurements } : {}),
     ...(baseDoc.traces ? { traces: baseDoc.traces } : {}),
-    ...(precisionCm !== undefined ? { apartment: { ...(doc.apartment ?? {}), precisionCm } } : {}),
+    ...(precisionCm !== undefined ? { apartment: { ...(docWithStorages.apartment ?? {}), precisionCm } } : {}),
   }
   const out = ensureV2(carried, { now }) as PlanDocV1
   // The walls that the user drew are not in the text (see `carryStandaloneWalls`): they go back into
@@ -1122,6 +1252,94 @@ export function dslToPlan(text: string, baseDoc?: PlanDoc, opts: DslToPlanOption
   // `ensureV2` writes the report of ITS conversion: the report of the project (already shown once)
   // is kept instead, so an import does not show the conversion report again.
   return baseDoc.conversion ? { ...withWalls, conversion: baseDoc.conversion } : withWalls
+}
+
+/**
+ * Build the built-in storages of the text with `addStorage` (features/storage/actions.ts). The host
+ * wall of a storage line is a whole wall: the collinear vertices that a v2 split left in the parent
+ * polygon are merged first, so the offsets of the text (measured on the whole wall) fit.
+ */
+function applyStorages(doc: PlanDocV1, storages: ParsedStorage[]): PlanDocV1 {
+  let out = doc
+  for (const s of storages) {
+    const parent = out.rooms.find((r) => r.code === s.code)
+    if (!parent) throw new DslParseError(s.line, `storage references unknown room "${s.code}"`)
+    if (s.wallIndex < 1 || s.wallIndex > parent.vertices.length) {
+      throw new DslParseError(s.line, `storage wall ${s.code}-${s.wallIndex} out of range (room has ${parent.vertices.length} walls)`)
+    }
+    const merged = mergeHostRun(out, parent, s)
+    const host = merged.rooms.find((r) => r.id === parent.id)!
+    const hostWall = host.vertices[s.wallIndex - 1].id
+    const res = addStorage(merged, parent.id, hostWall, s.params, s.door)
+    if ('error' in res) throw new DslParseError(s.line, `storage on ${s.code}-${s.wallIndex}: ${res.error}`)
+    out = res.doc as PlanDocV1
+  }
+  return out
+}
+
+/** True when wall `i` of the polygon goes the same way as `dir` (collinear, same direction). */
+function sameDirection(a: Vec, b: Vec): boolean {
+  const la = Math.hypot(a.x, a.y)
+  const lb = Math.hypot(b.x, b.y)
+  if (la < 1e-6 || lb < 1e-6) return false
+  const cross = (a.x / la) * (b.y / lb) - (a.y / la) * (b.x / lb)
+  const dot = (a.x / la) * (b.x / lb) + (a.y / la) * (b.y / lb)
+  return Math.abs(cross) < 1e-3 && dot > 0.99
+}
+
+/**
+ * Merge the run of collinear walls that holds wall `wallIndex` of a room into one wall: the vertices
+ * inside the run go away, so `addStorage` sees one host wall (a v2 room is split where another room
+ * meets it, and the text measures the offset on the whole wall).
+ */
+function mergeHostRun(doc: PlanDocV1, room: Room, s: ParsedStorage): PlanDocV1 {
+  const n = room.vertices.length
+  if (n < 4) return doc
+  const idx = s.wallIndex - 1
+  const dirOf = (i: number): Vec => {
+    const a = room.vertices[i % n]
+    const b = room.vertices[(i + 1) % n]
+    return sub(b, a)
+  }
+  const dir = dirOf(idx)
+  let start = idx
+  for (let step = 0; step < n - 1; step++) {
+    if (!sameDirection(dirOf((start - 1 + n) % n), dir)) break
+    start = (start - 1 + n) % n
+  }
+  let end = (idx + 1) % n
+  for (let step = 0; step < n - 1; step++) {
+    if (!sameDirection(dirOf(end), dir)) break
+    end = (end + 1) % n
+  }
+  if (end === start) return doc
+  // Vertices of the run, in polygon order, from its start to its end (excluded).
+  const run: number[] = []
+  for (let i = start; ; i = (i + 1) % n) {
+    if (i === end) break
+    run.push(i)
+    if (run.length > n) return doc
+  }
+  if (run.length <= 1) return doc
+  const drop = new Set(run.slice(1)) // a wall goes from a vertex to the next one: its start vertex goes away
+  const vertices = room.vertices.filter((_, i) => !drop.has(i))
+  if (vertices.length < 3) return doc
+  const kept = new Set(vertices.map((v) => v.id))
+  const walls: Room['walls'] = {}
+  for (const [id, props] of Object.entries(room.walls)) if (kept.has(id)) walls[id] = props
+  // The diagonal (index pair) survives only when both of its corners are still there.
+  const map = new Map<number, number>()
+  let k = 0
+  for (let i = 0; i < n; i++) if (!drop.has(i)) map.set(i, k++)
+  let diagonal: [number, number] | undefined
+  if (room.diagonal) {
+    const a = map.get(room.diagonal[0])
+    const b = map.get(room.diagonal[1])
+    if (a !== undefined && b !== undefined) diagonal = [a, b]
+  }
+  const next: Room = { ...room, vertices, walls, ...(diagonal ? { diagonal } : {}) }
+  if (!diagonal) delete (next as { diagonal?: [number, number] }).diagonal
+  return { ...doc, rooms: doc.rooms.map((r) => (r.id === room.id ? next : r)) }
 }
 
 /**

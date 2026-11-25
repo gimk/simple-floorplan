@@ -150,7 +150,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'run_commands',
     description:
-      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_room_note, add_pin, add_tape, set_apartment). Supports dryRun preview and baseVersion optimistic concurrency.',
+      'Execute an atomic batch of high-level floorplan commands (add_room, update_room, delete_room, slice_room, cutout_room, merge_rooms, set_wall_props, set_wall_length, move_vertex, place_element, update_element, delete_element, set_measurement, clear_measurement, apply_measurements, set_room_note, add_pin, add_tape, set_apartment, add_storage, update_storage, delete_storage). Supports dryRun preview and baseVersion optimistic concurrency.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -236,6 +236,72 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
       },
       required: ['projectId', 'wall', 'kind', 'offsetCm'],
+    },
+  },
+  {
+    name: 'add_storage',
+    description:
+      'Add a BUILT-IN STORAGE (a closet) on the OUTER side of a wall of a room: a small room with its own side and back walls, and a front door in the host wall that opens into the room. Storage inside a room is furniture: it is not supported.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
+        room: { type: 'string', minLength: 1, description: 'Parent room ID or code (the room the storage opens into).' },
+        wall: WALL_REF_SCHEMA,
+        offsetCm: { type: 'number', minimum: 0, description: 'Distance along the host wall from its start to the near inside face of the storage, cm.' },
+        widthCm: { type: 'number', exclusiveMinimum: 0, description: 'Inside clear width of the storage, cm.' },
+        depthCm: { type: 'number', exclusiveMinimum: 0, description: 'Inside clear depth, from the outer face of the host wall, cm.' },
+        sideCm: { type: 'number', exclusiveMinimum: 0, description: 'Side wall thickness in cm (default 5).' },
+        backCm: { type: 'number', exclusiveMinimum: 0, description: 'Back wall thickness in cm (default 5).' },
+        door: {
+          type: 'string',
+          enum: ['single', 'double', 'sliding', 'pocket', 'bifold', 'none'],
+          description: 'Front door type (default single). "none" is a plain opening.',
+        },
+        dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
+        baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
+      },
+      required: ['projectId', 'room', 'wall', 'offsetCm', 'widthCm', 'depthCm'],
+    },
+  },
+  {
+    name: 'update_storage',
+    description:
+      'Change the position, the dimensions and/or the front door of a built-in storage. A field that is left out keeps its value.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
+        storage: { type: 'string', minLength: 1, description: 'Storage room ID or code.' },
+        offsetCm: { type: 'number', minimum: 0, description: 'New distance along the host wall, cm.' },
+        widthCm: { type: 'number', exclusiveMinimum: 0, description: 'New inside clear width, cm.' },
+        depthCm: { type: 'number', exclusiveMinimum: 0, description: 'New inside clear depth, cm.' },
+        sideCm: { type: 'number', exclusiveMinimum: 0, description: 'New side wall thickness, cm.' },
+        backCm: { type: 'number', exclusiveMinimum: 0, description: 'New back wall thickness, cm.' },
+        door: {
+          type: 'string',
+          enum: ['single', 'double', 'sliding', 'pocket', 'bifold', 'none'],
+          description: 'New front door type.',
+        },
+        dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
+        baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
+      },
+      required: ['projectId', 'storage'],
+    },
+  },
+  {
+    name: 'delete_storage',
+    description:
+      'Delete a built-in storage: its room, its own walls and its front door. The host wall is merged back into one wall.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', minLength: 1, description: 'Project ID.' },
+        storage: { type: 'string', minLength: 1, description: 'Storage room ID or code.' },
+        dryRun: { type: 'boolean', default: false, description: 'Preview without saving.' },
+        baseVersion: { type: 'integer', minimum: 0, description: 'Optional expected snapshot version.' },
+      },
+      required: ['projectId', 'storage'],
     },
   },
   {
@@ -681,6 +747,79 @@ export async function callTool(
         },
         ({ version, dryRun }) =>
           `${dryRun ? '[dryRun] ' : ''}Placed ${String(args.kind)} on wall ${typeof wall === 'string' ? wall : JSON.stringify(wall)} (version ${version}).`,
+        ctx,
+      )
+    }
+
+    case 'add_storage': {
+      const projectId = asString(args.projectId)
+      const room = asString(args.room)
+      const wall = args.wall ?? args.wallLabel
+      if (!projectId || !room || !wall) {
+        return errResult('INVALID_PARAMS', 'projectId, room and wall are required.')
+      }
+      const cmd: Record<string, unknown> = {
+        type: 'add_storage',
+        room,
+        wall,
+        offsetCm: args.offsetCm,
+        widthCm: args.widthCm,
+        depthCm: args.depthCm,
+      }
+      for (const k of ['sideCm', 'backCm', 'door'] as const) if (args[k] !== undefined) cmd[k] = args[k]
+      return executeCommandsTool(
+        store,
+        projectId,
+        [cmd],
+        {
+          dryRun: Boolean(args.dryRun),
+          baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,
+        },
+        ({ version, dryRun, results }) => {
+          const r = results[0] as { code?: string; widthCm?: number; depthCm?: number } | undefined
+          return `${dryRun ? '[dryRun] ' : ''}Added built-in storage ${r?.code ?? ''} (${r?.widthCm ?? '?'} x ${r?.depthCm ?? '?'} cm) to room ${room} (version ${version}).`
+        },
+        ctx,
+      )
+    }
+
+    case 'update_storage': {
+      const projectId = asString(args.projectId)
+      const storage = asString(args.storage)
+      if (!projectId || !storage) return errResult('INVALID_PARAMS', 'projectId and storage are required.')
+      const cmd: Record<string, unknown> = { type: 'update_storage', storage }
+      for (const k of ['offsetCm', 'widthCm', 'depthCm', 'sideCm', 'backCm', 'door'] as const) {
+        if (args[k] !== undefined) cmd[k] = args[k]
+      }
+      return executeCommandsTool(
+        store,
+        projectId,
+        [cmd],
+        {
+          dryRun: Boolean(args.dryRun),
+          baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,
+        },
+        ({ version, dryRun, results }) => {
+          const r = results[0] as { widthCm?: number; depthCm?: number; areaM2?: number } | undefined
+          return `${dryRun ? '[dryRun] ' : ''}Updated built-in storage ${storage} (${r?.widthCm ?? '?'} x ${r?.depthCm ?? '?'} cm, ${r?.areaM2 ?? '?'} m², version ${version}).`
+        },
+        ctx,
+      )
+    }
+
+    case 'delete_storage': {
+      const projectId = asString(args.projectId)
+      const storage = asString(args.storage)
+      if (!projectId || !storage) return errResult('INVALID_PARAMS', 'projectId and storage are required.')
+      return executeCommandsTool(
+        store,
+        projectId,
+        [{ type: 'delete_storage', storage }],
+        {
+          dryRun: Boolean(args.dryRun),
+          baseVersion: typeof args.baseVersion === 'number' ? args.baseVersion : undefined,
+        },
+        ({ version, dryRun }) => `${dryRun ? '[dryRun] ' : ''}Deleted built-in storage ${storage} (version ${version}).`,
         ctx,
       )
     }

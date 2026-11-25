@@ -307,3 +307,53 @@ describe('surveyIds: planned ceiling height uses the apartment default', () => {
     expect(summary.warnings.some((w) => w.code === 'DISCREPANCY' && w.label === 'SE-H')).toBe(true)
   })
 })
+
+describe('queries: built-in storage (docs/storage-plan.md, step 4)', () => {
+  /** SE 400x300 with one storage (60 x 40) on the outer side of SE-4, CU next to it. */
+  function storageDoc() {
+    return applyBatch(sampleDoc(), [
+      { type: 'add_storage', room: 'SE', wall: 'SE-4', offsetCm: 100, widthCm: 60, depthCm: 40, door: 'double' },
+    ]).doc
+  }
+
+  it('reports the storage under its parent room, not as a room', () => {
+    const doc = storageDoc()
+    const res = runQuery(doc, { query: 'summary' }) as {
+      roomCount: number
+      rooms: { id: string; code: string; areaM2: number; storages: Record<string, unknown>[] }[]
+    }
+    // Three rooms (SE, CU, BA); the storage is not one of them.
+    expect(res.roomCount).toBe(3)
+    expect(res.rooms.map((r) => r.code).sort()).toEqual(['BA', 'CU', 'SE'])
+    const se = res.rooms.find((r) => r.code === 'SE')!
+    expect(se.storages).toHaveLength(1)
+    const st = se.storages[0] as {
+      id: string; parentRoomId: string; widthCm: number; depthCm: number; areaM2: number; door: string
+    }
+    expect(st.parentRoomId).toBe(se.id)
+    expect(st.widthCm).toBe(60)
+    expect(st.depthCm).toBe(40)
+    // Inside 60 x 40 = 0.24 m².
+    expect(st.areaM2).toBe(0.24)
+    expect(st.door).toBe('double')
+    // A room without storage has an empty list.
+    expect(res.rooms.find((r) => r.code === 'CU')!.storages).toEqual([])
+  })
+
+  it('reports the storage in the room query of the parent, and its parent on the storage', () => {
+    const doc = storageDoc()
+    const se = runQuery(doc, { query: 'room', args: { roomCode: 'SE' } }) as {
+      id: string
+      storages: { id: string; widthCm: number; depthCm: number; door: string; parentRoomId: string }[]
+    }
+    expect(se.storages).toHaveLength(1)
+    expect(se.storages[0]).toMatchObject({ parentRoomId: se.id, widthCm: 60, depthCm: 40, door: 'double' })
+    const storageCode = doc.rooms.find((r) => r.storage)!.code
+    const st = runQuery(doc, { query: 'room', args: { roomCode: storageCode } }) as {
+      storageParentRoomId?: string
+      storages: unknown[]
+    }
+    expect(st.storageParentRoomId).toBe(se.id)
+    expect(st.storages).toEqual([])
+  })
+})

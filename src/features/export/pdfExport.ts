@@ -3,6 +3,7 @@ import { roomAreaM2 } from '../../model/geometry'
 import type { PlanDoc } from '../../model/types'
 import { effectiveCeilingCm, effectiveWallLengths } from './calc'
 import { itemRows, surveyRows } from './surveyExport'
+import { scheduleRows } from '../schedule/rows'
 import { buildPlanSvg, fitStandardScale, svgToCanvas, type SvgOptions } from './svgExport'
 
 export type PageSize = 'a4' | 'a3'
@@ -55,13 +56,16 @@ export async function exportPlanPdf(doc: PlanDoc, opts: SvgOptions & { size?: Pa
   pdf.setFontSize(9); pdf.setFont('helvetica', 'normal')
   pdf.text(std ? `Scale 1:${std} (${size.toUpperCase()} landscape)` : 'Scale: see scale bar', m, ph - m + 2)
 
-  // Page 2: room table
+  // Page 2: room table. A built-in storage has its own row under its parent room, as in the
+  // schedule (label "Storage (<parent name>)"): same rule, same order (docs/storage-plan.md).
   pdf.addPage()
   pdf.setFontSize(14); pdf.setFont('helvetica', 'bold'); pdf.text(`${doc.title || 'Floor plan'} - rooms`, m + 2, m + 6)
-  const rows = doc.rooms.map((r) => {
-    const per = effectiveWallLengths(doc, r).reduce((a, b) => a + b, 0) / 100
-    const h = effectiveCeilingCm(doc, r)
-    return [r.code, r.name, fmt(roomAreaM2(r), 2), fmt(per, 2), h ? fmt(h, 0) : '']
+  const byId = new Map(doc.rooms.map((r) => [r.id, r]))
+  const rows = scheduleRows(doc).rows.map((row) => {
+    const r = byId.get(row.roomId)
+    const per = r ? effectiveWallLengths(doc, r).reduce((a, b) => a + b, 0) / 100 : row.perimeterCm / 100
+    const h = r ? effectiveCeilingCm(doc, r) : row.ceilingCm
+    return [row.code, row.name, fmt(row.areaM2, 2), fmt(per, 2), h ? fmt(h, 0) : '']
   })
   const total = doc.rooms.filter((r) => !r.outdoor).reduce((s, r) => s + roomAreaM2(r), 0)
   rows.push(['', 'Total (indoor)', fmt(total, 2), '', ''])

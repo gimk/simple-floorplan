@@ -1,9 +1,10 @@
 // Survey export rows (planned vs measured, items) for CSV and PDF.
 import { allSurveyIds, roomsInWalkOrder } from '../../model/survey'
 import { roomWalls } from '../../model/geometry'
-import type { PlanDoc } from '../../model/types'
+import type { PlanDoc, Room } from '../../model/types'
 import { KIND_LABEL } from '../elements/geometry'
 import { markRows } from '../photosketch/logic'
+import { scheduleRowName, scheduleRows } from '../schedule/rows'
 import { toCsv } from './csv'
 
 export type SurveyRow = {
@@ -19,10 +20,29 @@ export type ItemRow = {
 
 const r1 = (v: number) => Math.round(v * 10) / 10
 
+/**
+ * Order of the rooms of the survey tables: the order of the room schedule, so a built-in storage
+ * comes on its own line just under its parent room (docs/storage-plan.md, step 3).
+ */
+function scheduleOrder(doc: PlanDoc): Map<string, number> {
+  const order = new Map<string, number>()
+  scheduleRows(doc).rows.forEach((r, i) => order.set(r.roomId, i))
+  return order
+}
+
+/** Name of a room in the survey tables: "Storage (Bedroom 1)" for a built-in storage. */
+function surveyRoomName(doc: PlanDoc, room: Room): string {
+  if (!room.storage) return room.name
+  const parent = doc.rooms.find((r) => r.id === room.storage?.parentRoomId && r.id !== room.id)
+  return scheduleRowName(room, parent)
+}
+
 export function surveyRows(doc: PlanDoc): SurveyRow[] {
   const byId = new Map(doc.rooms.map((r) => [r.id, r]))
   const seenRoom = new Set<string>()
-  return allSurveyIds(doc).map((s) => {
+  const order = scheduleOrder(doc)
+  const rank = (roomId: string) => order.get(roomId) ?? Number.MAX_SAFE_INTEGER
+  const rows = allSurveyIds(doc).map((s, i) => {
     const room = byId.get(s.roomId)!
     const m = doc.measurements?.[s.label]
     const planned = s.plannedCm !== undefined ? r1(s.plannedCm) : null
@@ -30,14 +50,18 @@ export function surveyRows(doc: PlanDoc): SurveyRow[] {
     // The room note goes on the first row of each room.
     let notes = ''
     if (!seenRoom.has(room.id)) { seenRoom.add(room.id); notes = doc.roomNotes?.[room.code] ?? '' }
-    return {
-      roomCode: room.code, roomName: room.name, id: s.label, kind: s.kind,
+    const row: SurveyRow = {
+      roomCode: room.code, roomName: surveyRoomName(doc, room), id: s.label, kind: s.kind,
       plannedCm: planned, measuredCm: measured,
       diffCm: planned !== null && measured !== null ? r1(measured - planned) : null,
       status: m ? 'verified' : 'estimated', notes,
       ...(s.optional ? { optional: true } : {}),
     }
+    return { at: i, rank: rank(room.id), row }
   })
+  // A stable sort: the rows of a room keep their survey order, the rooms follow the schedule.
+  rows.sort((a, b) => a.rank - b.rank || a.at - b.at)
+  return rows.map((r) => r.row)
 }
 
 export function itemRows(doc: PlanDoc): ItemRow[] {

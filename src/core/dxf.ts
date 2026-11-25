@@ -251,8 +251,17 @@ export function planToDxf(doc: PlanDoc, opts: DxfOptions = {}): string {
   e(2, 'ENTITIES')
 
   for (const room of doc.rooms) {
-    polyline(e, 'ROOMS', room.vertices, true)
-    for (const hole of room.holes ?? []) polyline(e, 'ROOMS', hole, true)
+    // A built-in storage is a room of its own (docs/storage-plan.md): its outline and hatch go on
+    // STORAGE, its walls are drawn like every other wall below.
+    const roomLayer = room.storage ? 'STORAGE' : 'ROOMS'
+    polyline(e, roomLayer, room.vertices, true)
+    for (const hole of room.holes ?? []) polyline(e, roomLayer, hole, true)
+    if (room.storage && room.vertices.length >= 4) {
+      // Hatch: the two diagonals of the storage outline, so it reads as storage in a CAD viewer.
+      // R12 has no pattern fill, so the hatch is plain lines on the same layer.
+      line(e, 'STORAGE', room.vertices[0], room.vertices[2])
+      line(e, 'STORAGE', room.vertices[1], room.vertices[3])
+    }
 
     const walls = roomWalls(room)
     for (const wall of walls) emitWall(e, room, wall)

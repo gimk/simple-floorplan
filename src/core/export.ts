@@ -44,6 +44,10 @@ const DEFAULT_T: Record<WallType, number> = {
 }
 
 const VERIFIED = '#15803d'
+// Built-in storage (docs/storage-plan.md): the light amber fill and hatch of the Edit Mode canvas.
+const STORAGE_FILL = '#fffbeb'
+const STORAGE_HATCH = '#d97706'
+const STORAGE_LABEL = '#92400e'
 
 const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -248,6 +252,15 @@ export function renderPlanSvg(doc: PlanDoc, opts: RenderSvgOptions = {}): Render
       draw: (x, y) => `<text x="${num(x)}" y="${num(y + fs * 0.3)}" fill="${VERIFIED}" font-size="${num(fs * 0.9)}">123</text>`,
     },
   ]
+  // The legend entry of built-in storage appears only when the plan has one (docs/storage-plan.md).
+  if (doc.rooms.some((r) => r.storage)) {
+    legendItems.push({
+      label: 'Built-in storage',
+      draw: (x, y) =>
+        `<rect x="${num(x)}" y="${num(y - fs * 0.45)}" width="${num(fs * 2)}" height="${num(fs * 0.9)}" fill="${STORAGE_FILL}" stroke="#94a3b8" stroke-width="${num(fs * 0.08)}"/>` +
+        `<line x1="${num(x)}" y1="${num(y + fs * 0.45)}" x2="${num(x + fs * 2)}" y2="${num(y - fs * 0.45)}" stroke="${STORAGE_HATCH}" stroke-opacity="0.45" stroke-width="${num(fs * 0.14)}"/>`,
+    })
+  }
   const entryW = fs * 10
   const perRow = Math.max(1, Math.floor((W - fs * 4) / entryW))
   const legTop = sby + fs * 2.6
@@ -287,14 +300,20 @@ export function renderPlanSvg(doc: PlanDoc, opts: RenderSvgOptions = {}): Render
 
   // Defs & style
   const hatch = fs * 0.7
-  const defs = `<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="${num(hatch)}" height="${num(hatch)}" patternTransform="rotate(45)"><line x1="${num(hatch / 2)}" y1="0" x2="${num(hatch / 2)}" y2="${num(hatch)}" stroke="#fff" stroke-opacity="0.8" stroke-width="${num(fs * 0.14)}"/></pattern></defs>`
+  const defs =
+    `<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="${num(hatch)}" height="${num(hatch)}" patternTransform="rotate(45)"><line x1="${num(hatch / 2)}" y1="0" x2="${num(hatch / 2)}" y2="${num(hatch)}" stroke="#fff" stroke-opacity="0.8" stroke-width="${num(fs * 0.14)}"/></pattern>`
+    + `<pattern id="storage-hatch" patternUnits="userSpaceOnUse" width="${num(hatch)}" height="${num(hatch)}" patternTransform="rotate(45)"><line x1="${num(hatch / 2)}" y1="0" x2="${num(hatch / 2)}" y2="${num(hatch)}" stroke="${STORAGE_HATCH}" stroke-width="${num(fs * 0.14)}"/></pattern></defs>`
   const style = `<style>text{font-family:Helvetica,Arial,sans-serif}</style>`
 
   // Rooms
   for (const r of doc.rooms) {
+    // A built-in storage is drawn like a room, in the light amber of the Edit Mode canvas.
+    const d = pathOf([r.vertices, ...r.holes])
+    const fill = r.storage ? STORAGE_FILL : r.outdoor ? '#d1fae5' : '#eef6fb'
     parts.push(
-      `<path d="${pathOf([r.vertices, ...r.holes])}" fill-rule="evenodd" fill="${r.outdoor ? '#d1fae5' : '#eef6fb'}" data-room-id="${esc(r.id)}" data-room-code="${esc(r.code)}"/>`,
+      `<path d="${d}" fill-rule="evenodd" fill="${fill}" data-room-id="${esc(r.id)}" data-room-code="${esc(r.code)}"${r.storage ? ' data-room-storage="true"' : ''}/>`,
     )
+    if (r.storage) parts.push(`<path d="${d}" fill-rule="evenodd" fill="url(#storage-hatch)"/>`)
     for (const h of r.holes) {
       parts.push(`<path d="${pathOf([h])}" fill="none" stroke="#334155" stroke-width="${num(fs * 0.15)}"/>`)
     }
@@ -358,6 +377,14 @@ export function renderPlanSvg(doc: PlanDoc, opts: RenderSvgOptions = {}): Render
   // Room labels
   for (const r of doc.rooms) {
     const c = labelPoint([r.vertices, ...(r.holes ?? [])])
+    const area = `${roomAreaM2(r).toFixed(2).replace('.', ',')} m²`
+    if (r.storage) {
+      // Small label: the name of the storage and its area (docs/storage-plan.md).
+      parts.push(
+        `<text x="${num(c.x)}" y="${num(c.y)}" text-anchor="middle" fill="${STORAGE_LABEL}" font-size="${num(fs * 0.55)}" data-room-storage-label="${esc(r.id)}"><tspan x="${num(c.x)}" font-weight="700">${esc(r.name)}</tspan><tspan x="${num(c.x)}" dy="${num(fs * 0.65)}" font-size="${num(fs * 0.45)}">${esc(area)}</tspan></text>`,
+      )
+      continue
+    }
     parts.push(
       `<text x="${num(c.x)}" y="${num(c.y)}" text-anchor="middle" fill="#0f172a" font-size="${num(fs)}"><tspan x="${num(c.x)}" font-weight="700">${esc(r.name)}</tspan><tspan x="${num(c.x)}" dy="${num(fs * 1.15)}" font-size="${num(fs * 0.85)}" fill="#475569">${roomAreaM2(r).toFixed(2).replace('.', ',')} m²</tspan></text>`,
     )

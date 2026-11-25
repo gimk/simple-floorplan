@@ -212,6 +212,53 @@ describe('room schedule in the export', () => {
   })
 })
 
+// Built-in storage (docs/storage-plan.md, step 4): the storage room is drawn like a room, in the
+// light amber fill and hatch of the Edit Mode canvas, with a small label and the legend entry.
+describe('built-in storage in the export', () => {
+  /** The sample rectangle plus a storage room of 60 x 40 outside its wall 4 (above y = 0). */
+  const storageRoom = (over: Partial<Room> = {}): Room => ({
+    id: 'r2',
+    code: 'R1',
+    name: 'Storage',
+    walkOrder: 2,
+    vertices: [
+      { id: 's1', x: 97.5, y: 0 },
+      { id: 's2', x: 162.5, y: 0 },
+      { id: 's3', x: 162.5, y: -45 },
+      { id: 's4', x: 97.5, y: -45 },
+    ],
+    holes: [],
+    walls: { s1: { type: 'partition', thicknessCm: 10 }, s2: { type: 'partition', thicknessCm: 5 }, s3: { type: 'partition', thicknessCm: 5 }, s4: { type: 'partition', thicknessCm: 5 } },
+    storage: { parentRoomId: 'r1' },
+    ...over,
+  })
+  const withStorage = () => ({ ...docOf(room(422, 312)), rooms: [room(422, 312), storageRoom()] })
+
+  it('fills the storage in the light amber of the plan and hatches it', () => {
+    const { svg } = buildPlanSvg(withStorage(), { date: '2026-11-24' })
+    expect(svg).toContain('data-room-storage="true"')
+    expect(svg).toContain('fill="#fffbeb"')
+    expect(svg).toContain('url(#storage-hatch)')
+    expect(svg).toContain('id="storage-hatch"')
+  })
+
+  it('writes a small label with the name and the area of the storage', () => {
+    const { svg } = buildPlanSvg(withStorage(), { date: '2026-11-24' })
+    expect(svg).toContain('data-room-storage-label="r2"')
+    expect(svg).toContain('>Storage</tspan>')
+    // The area of the inside ring follows the name.
+    const label = /data-room-storage-label="r2"[^>]*>(.*?)<\/text>/.exec(svg)![1]
+    expect(label).toMatch(/m²/)
+  })
+
+  it('adds the legend entry only when the plan has a storage', () => {
+    const without = buildPlanSvg(square(), { date: '2026-11-24' })
+    const withSt = buildPlanSvg(withStorage(), { date: '2026-11-24' })
+    expect(without.svg).not.toContain('Built-in storage')
+    expect(withSt.svg).toContain('Built-in storage')
+  })
+})
+
 // The export writes the room wall values with the rules of the plan (visual review V-1, V-2, V-3,
 // V-6, V-7): one declutter pass over the whole plan, at the paper zoom.
 describe('buildPlanSvg: the declutter rules of the plan', () => {

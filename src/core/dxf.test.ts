@@ -133,3 +133,62 @@ describe('dxf: planToDxf', () => {
     expect(ps).toContainEqual([1, 'AC1009'])
   })
 })
+
+describe('dxf: built-in storage (docs/storage-plan.md, step 4)', () => {
+  /** The sample plan with one built-in storage on the outer side of SE-4 (above y = 0). */
+  function storageDoc(): PlanDocV1 {
+    return applyBatch(sampleDoc(), [
+      { type: 'add_storage', room: 'SE', wall: 'SE-4', offsetCm: 100, widthCm: 60, depthCm: 40, door: 'single' },
+    ]).doc as PlanDocV1
+  }
+
+  /** Entities of the file as { type, layer, xs } blocks (each block starts with a group code 0). */
+  function entities(dxf: string): { type: string; layer: string; xs: string[] }[] {
+    const out: { type: string; layer: string; xs: string[] }[] = []
+    const ps = pairs(dxf)
+    let cur: { type: string; layer: string; xs: string[] } | null = null
+    for (const [code, value] of ps) {
+      if (code === 0) {
+        // The points of a POLYLINE are VERTEX entities: they belong to the polyline before them.
+        if (value === 'VERTEX' || value === 'SEQEND') continue
+        cur = { type: value, layer: '', xs: [] }
+        out.push(cur)
+        continue
+      }
+      if (!cur) continue
+      if (code === 8) cur.layer = value
+      if (code === 10) cur.xs.push(value)
+    }
+    return out.filter((e) => ['POLYLINE', 'LINE', 'TEXT', 'ARC'].includes(e.type))
+  }
+
+  it('writes the storage outline and its hatch on the STORAGE layer', () => {
+    const doc = storageDoc()
+    const storage = doc.rooms.find((r) => r.storage)!
+    const ents = entities(planToDxf(doc))
+    // One closed outline per room: the outline of the storage is on STORAGE, the others on ROOMS.
+    const outlines = ents.filter((e) => e.type === 'POLYLINE')
+    const corners = storage.vertices.map((v) => String(v.x))
+    const withCorners = outlines.filter((e) => corners.every((x) => e.xs.includes(x)))
+    expect(withCorners).toHaveLength(1)
+    expect(withCorners[0].layer).toBe('STORAGE')
+    // The other rooms keep their outline on ROOMS.
+    expect(outlines.filter((e) => e.layer === 'ROOMS')).toHaveLength(doc.rooms.filter((r) => !r.storage).length)
+    // The hatch: the two diagonals of the storage, as LINEs on the same layer.
+    expect(ents.filter((e) => e.type === 'LINE' && e.layer === 'STORAGE').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('draws the storage walls like other walls, with their own thickness', () => {
+    const doc = storageDoc()
+    const storage = doc.rooms.find((r) => r.storage)!
+    const ents = entities(planToDxf(doc))
+    // Two faces per wall, on WALLS_PARTITION (the storage walls are partitions), plus the hatch.
+    const partitionLines = ents.filter((e) => e.type === 'LINE' && e.layer === 'WALLS_PARTITION').length
+    expect(partitionLines).toBeGreaterThanOrEqual(2 * storage.vertices.length)
+    // The label of the storage room is written as a TEXT, like every room label.
+    const values = ents.filter((e) => e.type === 'TEXT').flatMap((e) => e.xs)
+    expect(values.length).toBeGreaterThan(0)
+    const texts = pairs(planToDxf(doc)).filter(([c]) => c === 1).map(([, v]) => v)
+    expect(texts.some((t) => t.includes('Storage'))).toBe(true)
+  })
+})

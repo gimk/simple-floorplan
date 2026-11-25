@@ -229,6 +229,37 @@ Enable multimodal agents (Claude, Gemini) to trace a scanned plan or phone photo
 - **Idempotency table:** `idempotency_keys (key, project_id, response_json, created_at)` in D1 (24 h TTL) so retried agent tool calls return the exact prior result.
 - **Append-only Event Log:** Add D1 table `project_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id, actor, command_type, payload_json, diff_json, snapshot_version, created_at)`. Expose `GET /api/projects/:id/events?sinceSeq=` so agents and humans can audit every edit and roll back cleanly.
 
+### 3.11 Built-in Storage (a closet outside a room wall)
+
+A built-in storage is a small ROOM attached to the OUTER side of a wall of a room (a closet). It is
+never inside the room: storage inside a room is furniture, and the app does not manage furniture yet.
+
+**DSL (`.sfp`).** One `storage` line inside the room block of the parent room, in the style of the
+`wall` and `door` lines. `from` is the distance along the host wall to the near inside face of the
+storage (the rule of `WallElement.offsetCm`), `width` is the inside clear width, `depth` is the inside
+clear depth from the outer face of the host wall. `side` and `back` are the side and back wall
+thicknesses (default 5 cm) and are written only when they differ.
+
+```text
+room SE "Bedroom 1" rect(0,0 400x300) ceiling=250 walk=1
+  wall SE-4 partition 10cm
+  storage SE-4 from 100 width 60 depth 40 door single
+```
+`STORAGEDOOR` is `single` | `double` | `sliding` | `pocket` | `bifold` | `none` (`none` = a plain
+opening). The parser builds the storage room, its walls and its front door with `addStorage`; the
+writer reads them back with `readStorageParams`. A storage room is never written as a `room`
+statement, and its front door is never written as a `door` line.
+
+**MCP tools.**
+- `add_storage` — `{ projectId, room, wall, offsetCm, widthCm, depthCm, sideCm?, backCm?, door? }`
+- `update_storage` — `{ projectId, storage, offsetCm?, widthCm?, depthCm?, sideCm?, backCm?, door? }`
+- `delete_storage` — `{ projectId, storage }`
+
+The same commands exist in `POST /api/projects/:id/commands` (`add_storage`, `update_storage`,
+`delete_storage`, in `src/core/commands.ts`). The room queries report a storage inside its parent room
+(`summary` and `room` return a `storages` list: `id`, `parentRoomId`, `widthCm`, `depthCm`, `areaM2`,
+`door`); a storage is not counted as a room.
+
 ---
 
 ## 4. Concrete API & MCP Tool Specification (18 Tools)

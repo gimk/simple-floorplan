@@ -4,14 +4,14 @@
 // export (see the comment at the top of that file).
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { roomWalls, wallByStart } from '../../model/geometry'
+import { labelPoint, roomAreaM2, roomWalls, wallByStart } from '../../model/geometry'
 import { planPrecision } from '../../model/precision'
 import type { CanvasUnits, DimStyle, RoomTagFields } from '../../model/store'
 import { DEFAULT_UNITS } from '../../model/units'
 import type { PlanDoc, Room, Vec, WallType } from '../../model/types'
 import { elementFrame, wallThickness } from '../elements/geometry'
 import { COLORS, ElementSymbol } from '../elements/Symbol'
-import { scheduleRows, scheduleSvgTable, scheduleTableHeight } from '../schedule/rows'
+import { STORAGE_NAME, scheduleRows, scheduleSvgTable, scheduleTableHeight } from '../schedule/rows'
 import {
   esc,
   exportOutsideRuns,
@@ -74,6 +74,11 @@ const pathOf = (rings: Vec[][]) => rings.map((r) => 'M' + r.map((p) => `${num(p.
 const WALL_STROKE: Record<WallType, string> = { bearing: '#0f172a', exterior: '#0f172a', partition: '#94a3b8' }
 const DEFAULT_T: Record<WallType, number> = { partition: 10, bearing: 25, exterior: 30 }
 const VERIFIED = '#15803d'
+// Built-in storage (docs/storage-plan.md): the light amber fill and hatch of the Edit Mode canvas
+// (features/rooms/RoomsLayer.tsx: fill-amber-50 with an amber 45° hatch).
+const STORAGE_FILL = '#fffbeb'
+const STORAGE_HATCH = '#d97706'
+const STORAGE_LABEL = '#92400e'
 
 const wallInfo = (r: Room, startId: string) => {
   const p = r.walls[startId]
@@ -156,6 +161,15 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
     { label: 'Radiator', draw: (x, y) => `<rect x="${num(x)}" y="${num(y - fs * 0.25)}" width="${num(fs * 2)}" height="${num(fs * 0.5)}" fill="#dc262622" stroke="${COLORS.radiator}" stroke-width="${num(fs * 0.08)}"/>` },
     { label: 'Verified on site', draw: (x, y) => `<text x="${num(x)}" y="${num(y + fs * 0.3)}" fill="${VERIFIED}" font-size="${num(fs * 0.9)}">123</text>` },
   ]
+  // The legend entry of built-in storage appears only when the plan has one (docs/storage-plan.md).
+  if (doc.rooms.some((r) => r.storage)) {
+    legendItems.push({
+      label: 'Built-in storage',
+      draw: (x, y) =>
+        `<rect x="${num(x)}" y="${num(y - fs * 0.45)}" width="${num(fs * 2)}" height="${num(fs * 0.9)}" fill="${STORAGE_FILL}" stroke="#94a3b8" stroke-width="${num(fs * 0.08)}"/>`
+        + `<line x1="${num(x)}" y1="${num(y + fs * 0.45)}" x2="${num(x + fs * 2)}" y2="${num(y - fs * 0.45)}" stroke="${STORAGE_HATCH}" stroke-opacity="0.45" stroke-width="${num(fs * 0.14)}"/>`,
+    })
+  }
   const entryW = fs * 10
   const perRow = Math.max(1, Math.floor((W - fs * 4) / entryW))
   const legTop = sby + fs * 2.6
@@ -195,11 +209,18 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
 
   // ----- rooms -----
   const hatch = fs * 0.7
-  const defs = `<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="${num(hatch)}" height="${num(hatch)}" patternTransform="rotate(45)"><line x1="${num(hatch / 2)}" y1="0" x2="${num(hatch / 2)}" y2="${num(hatch)}" stroke="#fff" stroke-opacity="0.8" stroke-width="${num(fs * 0.14)}"/></pattern></defs>`
+  const defs =
+    `<defs><pattern id="hatch" patternUnits="userSpaceOnUse" width="${num(hatch)}" height="${num(hatch)}" patternTransform="rotate(45)"><line x1="${num(hatch / 2)}" y1="0" x2="${num(hatch / 2)}" y2="${num(hatch)}" stroke="#fff" stroke-opacity="0.8" stroke-width="${num(fs * 0.14)}"/></pattern>`
+    // Built-in storage: the light amber diagonal hatch of the Edit Mode canvas (RoomsLayer.tsx).
+    + `<pattern id="storage-hatch" patternUnits="userSpaceOnUse" width="${num(hatch)}" height="${num(hatch)}" patternTransform="rotate(45)"><line x1="${num(hatch / 2)}" y1="0" x2="${num(hatch / 2)}" y2="${num(hatch)}" stroke="${STORAGE_HATCH}" stroke-width="${num(fs * 0.14)}"/></pattern></defs>`
   const style = `<style>text{font-family:Helvetica,Arial,sans-serif}rect[class*="fill-"]{fill:#fff}</style>`
 
   for (const r of doc.rooms) {
-    parts.push(`<path d="${pathOf([r.vertices, ...r.holes])}" fill-rule="evenodd" fill="${r.outdoor ? '#d1fae5' : '#eef6fb'}"/>`)
+    // A built-in storage reads as storage: the light amber fill and hatch of the Edit Mode canvas.
+    const fill = r.storage ? STORAGE_FILL : r.outdoor ? '#d1fae5' : '#eef6fb'
+    const d = pathOf([r.vertices, ...r.holes])
+    parts.push(`<path d="${d}" fill-rule="evenodd" fill="${fill}"${r.storage ? ' data-room-storage="true"' : ''}/>`)
+    if (r.storage) parts.push(`<path d="${d}" fill-rule="evenodd" fill="url(#storage-hatch)"/>`)
     for (const h of r.holes) parts.push(`<path d="${pathOf([h])}" fill="none" stroke="#334155" stroke-width="${num(fs * 0.15)}"/>`)
   }
   for (const r of doc.rooms) {
@@ -235,10 +256,12 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
     thicknessOf: (r: Room, startId: string) => wallInfo(r, startId).t,
     defaultCeilingCm: doc.apartment?.defaultCeilingCm,
   })
-  for (const { entries, tag } of layout.rooms) {
+  for (const { room, entries, tag } of layout.rooms) {
     // Wall lengths: dimension lines (default) or the old text only, like the plan.
     parts.push(roomWallDimsSvg(entries, { fs, zoom }))
-    parts.push(tag.svg)
+    // A built-in storage gets a small label with its area instead of a full room tag (it has no
+    // code of its own in the plan, and its name is "Storage").
+    parts.push(room.storage ? storageLabelSvg(room, fs) : tag.svg)
   }
 
   // ----- outside dimension chains (v2 documents, when the option is on) -----
@@ -247,6 +270,16 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${num(x0)} ${num(y0)} ${num(W)} ${num(H)}" width="${num(W)}" height="${num(H)}">${style}${defs}<rect x="${num(x0)}" y="${num(y0)}" width="${num(W)}" height="${num(H)}" fill="#fff"/>${parts.join('')}${bar.join('')}${leg.join('')}${schedSvg}</svg>`
   return { svg, width: W, height: H, fontSize: fs, layout }
+}
+
+/** Small centred label of a built-in storage: its name and its inside area. */
+function storageLabelSvg(room: Room, fs: number) {
+  const c = labelPoint([room.vertices, ...room.holes])
+  const name = (room.name ?? '').trim() || STORAGE_NAME
+  const area = `${roomAreaM2(room).toFixed(2).replace('.', ',')} m²`
+  return `<text x="${num(c.x)}" y="${num(c.y)}" text-anchor="middle" fill="${STORAGE_LABEL}" font-size="${num(fs * 0.45)}" data-room-storage-label="${esc(room.id)}">`
+    + `<tspan x="${num(c.x)}" font-weight="700">${esc(name)}</tspan>`
+    + `<tspan x="${num(c.x)}" dy="${num(fs * 0.55)}" font-size="${num(fs * 0.38)}">${esc(area)}</tspan></text>`
 }
 
 function wallSwatch(x: number, y: number, fs: number, type: WallType) {

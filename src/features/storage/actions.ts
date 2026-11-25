@@ -4,15 +4,19 @@ import polygonClipping from 'polygon-clipping'
 import {
   DEFAULT_WALL_CM, area, cross, dist, dot, norm, projectOnSegment, roomWalls, signedArea, sub, wallByStart,
 } from '../../model/geometry'
-import { nowIso, uid } from '../../model/store'
 import { nextRoomCode } from '../../model/survey'
 import type { PlanDoc, Room, RoomFace, StoredNode, StoredWall, Vec, WallElement, WallProps } from '../../model/types'
 import { syncElements } from '../../model/v2/elements'
 import { deriveWallFaces, materializeRooms, roomFaceForward, roundStored, storedWallProps } from '../../model/v2/materialize'
-import { maxWalkOrder } from '../rooms/ops'
 import { readStorageParams, storageCorners, type StorageDoor, type StorageParams } from './geometry'
 
 export type { StorageDoor, StorageParams }
+
+// The same id and timestamp helpers as model/store.ts and features/rooms/ops.ts, copied here so this
+// module stays pure: the workers and the CLI import it through src/core (no React store).
+const uid = (prefix = ''): string => prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+const nowIso = (): string => new Date().toISOString()
+const maxWalkOrder = (d: PlanDoc) => d.rooms.reduce((m, r) => Math.max(m, r.walkOrder), 0)
 
 const FIT_TOL_CM = 0.01
 const NODE_SNAP_CM = 0.5

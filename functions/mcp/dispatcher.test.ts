@@ -124,6 +124,9 @@ describe('MCP JSON-RPC dispatcher', () => {
       'run_commands',
       'set_measurement',
       'place_element',
+      'add_storage',
+      'update_storage',
+      'delete_storage',
       'add_room',
       'slice_room',
       'merge_rooms',
@@ -503,5 +506,81 @@ describe('MCP JSON-RPC dispatcher', () => {
     )
     const content = (res.contents as { text: string }[])[0]
     expect(JSON.parse(content.text).events).toHaveLength(4)
+  })
+
+  it('adds, updates and deletes a built-in storage (docs/storage-plan.md, step 4)', async () => {
+    const store = createFakeStore()
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const out = await dispatchRpc(store, {
+        jsonrpc: '2.0',
+        id: name,
+        method: 'tools/call',
+        params: { name, arguments: args },
+      })
+      return asResult(out.body as JsonRpcResponse) as unknown as McpToolResult
+    }
+
+    const created = await call('create_project', { name: 'Apt', title: 'Apt' })
+    const projectId = (created.structuredContent?.project as { id: string }).id
+    await call('add_room', { projectId, code: 'SE', name: 'Living', rect: { x: 0, y: 0, w: 400, h: 300 } })
+
+    // Add: a 60 x 40 closet on the outer side of SE-4, with a double door.
+    const added = await call('add_storage', {
+      projectId,
+      room: 'SE',
+      wall: 'SE-4',
+      offsetCm: 100,
+      widthCm: 60,
+      depthCm: 40,
+      door: 'double',
+    })
+    expect(added.isError).toBeUndefined()
+    const addedRow = (added.structuredContent?.results as { code?: string; widthCm?: number; depthCm?: number }[])[0]
+    const storageCode = addedRow.code as string
+    expect(storageCode).toBeTruthy()
+    expect(addedRow.widthCm).toBe(60)
+    expect(addedRow.depthCm).toBe(40)
+
+    // The storage is listed under its room, not as a room of its own.
+    const plan = await call('get_plan', { projectId, format: 'summary' })
+    const rooms = plan.structuredContent?.rooms as { code: string; storages: { widthCm: number; door: string }[] }[]
+    expect(rooms).toHaveLength(1)
+    expect(rooms[0].storages).toHaveLength(1)
+    expect(rooms[0].storages[0]).toMatchObject({ widthCm: 60, depthCm: 40, door: 'double' })
+
+    // Update: wider, with a sliding door.
+    const updated = await call('update_storage', { projectId, storage: storageCode, widthCm: 80, door: 'sliding' })
+    expect(updated.isError).toBeUndefined()
+    expect((updated.structuredContent?.results as { widthCm?: number }[])[0].widthCm).toBe(80)
+    const plan2 = await call('get_plan', { projectId, format: 'summary' })
+    const rooms2 = plan2.structuredContent?.rooms as { storages: { widthCm: number; door: string }[] }[]
+    expect(rooms2[0].storages[0]).toMatchObject({ widthCm: 80, door: 'sliding' })
+
+    // Delete: the storage and its front door are gone.
+    const deleted = await call('delete_storage', { projectId, storage: storageCode })
+    expect(deleted.isError).toBeUndefined()
+    const plan3 = await call('get_plan', { projectId, format: 'summary' })
+    const rooms3 = plan3.structuredContent?.rooms as { storages: unknown[] }[]
+    expect(rooms3[0].storages).toEqual([])
+  })
+
+  it('refuses a storage on a wall that does not belong to the room', async () => {
+    const store = createFakeStore()
+    const created = await dispatchRpc(store, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'create_project', arguments: { name: 'Apt', title: 'Apt' } },
+    })
+    const projectId = (asResult(created.body as JsonRpcResponse) as unknown as McpToolResult)
+      .structuredContent?.project as { id: string }
+    const out = await dispatchRpc(store, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'add_storage', arguments: { projectId: projectId.id, room: 'SE', wall: 'SE-1', offsetCm: 10, widthCm: 40, depthCm: 30 } },
+    })
+    const res = asResult(out.body as JsonRpcResponse) as unknown as McpToolResult
+    expect(res.isError).toBe(true)
   })
 })

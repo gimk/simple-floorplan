@@ -5,6 +5,7 @@ import { allSurveyIds, roomsInWalkOrder, surveyIds } from '../model/survey'
 import type { PlanDoc, Room, Vec, WallType } from '../model/types'
 import { calcAll, calcRoom, DEFAULT_INPUTS, effectiveCeilingCm, type CalcInputs } from '../features/export/calc'
 import { overflows, wallThickness } from '../features/elements/geometry'
+import { readStoragePlacement } from '../features/storage/geometry'
 import {
   discrepancy,
   docProgress,
@@ -95,6 +96,47 @@ function filterRooms(doc: PlanDoc, ref?: { roomId?: string; roomCode?: string })
   return room ? [room] : []
 }
 
+// ---------- built-in storage (docs/storage-plan.md) ----------
+
+/** One built-in storage of a room, as the plan and the agent tools report it. */
+export type RoomStorageInfo = {
+  id: string
+  code: string
+  name: string
+  /** The room the storage opens into. */
+  parentRoomId: string
+  /** Inside clear width, cm. */
+  widthCm: number | null
+  /** Inside clear depth, cm (from the outer face of the host wall). */
+  depthCm: number | null
+  /** Inside area, m². */
+  areaM2: number
+  /** Door type; "none" for a plain opening. */
+  door: string | null
+}
+
+/**
+ * The built-in storages of a room, in document order. A storage is a ROOM with `storage`, so it is
+ * not a room of its own: it is reported inside the room it opens into (docs/storage-plan.md).
+ */
+export function roomStorages(doc: Pick<PlanDoc, 'rooms' | 'nodes' | 'walls' | 'schemaVersion' | 'elements'>, roomId: string): RoomStorageInfo[] {
+  return doc.rooms
+    .filter((r) => r.storage?.parentRoomId === roomId && r.id !== roomId)
+    .map((r) => {
+      const p = readStoragePlacement(doc as PlanDoc, r)
+      return {
+        id: r.id,
+        code: r.code,
+        name: r.name,
+        parentRoomId: roomId,
+        widthCm: p ? round2(p.widthCm) : null,
+        depthCm: p ? round2(p.depthCm) : null,
+        areaM2: round2(roomAreaM2(r)),
+        door: p ? p.door : null,
+      }
+    })
+}
+
 // ---------- 1. summary ----------
 
 export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSchema>) {
@@ -110,7 +152,10 @@ export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSche
   let totalIndoorAreaM2 = 0
   let totalOutdoorAreaM2 = 0
 
-  const rooms = ordered.map((r) => {
+  // A built-in storage is shown inside its parent room, never as a room of its own.
+  const listed = ordered.filter((r) => !r.storage)
+
+  const rooms = listed.map((r) => {
     const areaM2 = round2(roomAreaM2(r))
     if (r.outdoor) totalOutdoorAreaM2 += areaM2
     else totalIndoorAreaM2 += areaM2
@@ -131,6 +176,7 @@ export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSche
       wallCount: walls.length,
       elementCount,
       measured: { done: rp.done, total: rp.total, state: rp.state },
+      storages: roomStorages(doc, r.id),
     }
   })
 
@@ -139,7 +185,7 @@ export function querySummary(doc: PlanDoc, args?: z.infer<typeof SummaryArgsSche
     title: doc.title,
     totalIndoorAreaM2: round2(totalIndoorAreaM2),
     totalOutdoorAreaM2: round2(totalOutdoorAreaM2),
-    roomCount: ordered.length,
+    roomCount: listed.length,
     elementCount: (doc.elements ?? []).length,
     progress,
     rooms,
@@ -576,6 +622,9 @@ export function queryRoom(doc: PlanDoc, args: z.infer<typeof RoomArgsSchema>) {
       : null,
     oppositeWalls: opp.map((o) => ({ wallA: o.a, wallB: o.b, diffCm: round1(o.diff) })),
     progress: roomProgress(doc, room),
+    // Built-in storages that open into this room (docs/storage-plan.md), or the parent of a storage.
+    storages: roomStorages(doc, room.id),
+    ...(room.storage ? { storageParentRoomId: room.storage.parentRoomId } : {}),
   }
 }
 

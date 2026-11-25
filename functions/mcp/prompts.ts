@@ -65,6 +65,7 @@ export function getPrompt(
                 `3. Add rooms using add_room (rect or polygon vertices) or a single run_commands batch. Use slice_room for adjacent spaces that share a straight wall.\n` +
                 `4. Mark thick structural walls with set_wall_props (bearing 25 cm, exterior 30 cm, partition 10 cm).\n` +
                 `5. Place doors, windows, openings, and radiators with place_element using survey wall labels (CODE-1..n).\n` +
+                `   Built-in storage (a closet) is OUTSIDE a room, behind one of its walls: add it with add_storage (room, wall, offsetCm, widthCm, depthCm, optional sideCm, backCm, door), then update_storage or delete_storage. Storage INSIDE a room is furniture: it is not supported.\n` +
                 `6. Run validate_plan and render_svg (with background: true if a background image is attached) to verify alignment, and report room areas plus total indoor/outdoor m².` +
                 extra,
             },
