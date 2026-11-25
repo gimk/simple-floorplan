@@ -1,5 +1,5 @@
 // Pure logic for Measuring Mode. No React here, so it is easy to test.
-import { lerp, roomWalls } from '../../model/geometry'
+import { fmtCm, lerp, roomWalls } from '../../model/geometry'
 import type { Wall } from '../../model/geometry'
 import { roomsInWalkOrder, surveyIds } from '../../model/survey'
 import type { SurveyId } from '../../model/survey'
@@ -33,6 +33,22 @@ export function discrepancy(plannedCm?: number, actualCm?: number) {
   if (plannedCm == null || actualCm == null) return null
   const diff = actualCm - plannedCm
   return { diff, flagged: Math.abs(diff) > DISCREPANCY_CM }
+}
+
+/**
+ * Text under a measured field (docs/solver-plan.md, Measuring Mode): the length that the plan has now,
+ * then how far it is from the value typed. `d` = measured − plan, so d > 0 means the plan is
+ * SHORTER than the measurement.
+ *   solved wall: "Solved 295,8 · 0,2 cm shorter than measured"
+ *   other wall:  "Plan 296 · matches measured"
+ * A flagged value (over DISCREPANCY_CM) also says to check it.
+ */
+export function fieldLine(plannedCm: number, measuredCm: number, solved: boolean, flagged = false): string {
+  const d = measuredCm - plannedCm
+  const a = Math.round(Math.abs(d) * 10) / 10
+  const head = `${solved ? 'Solved' : 'Plan'} ${fmtCm(plannedCm)} · `
+  const tail = a < 0.05 ? 'matches measured' : `${fmtCm(a)} cm ${d > 0 ? 'shorter' : 'longer'} than measured`
+  return head + tail + (flagged ? ' · check this value' : '')
 }
 
 const val = (doc: Pick<PlanDoc, 'measurements'>, label: string) => doc.measurements[label]?.actualCm

@@ -8,9 +8,11 @@ import type { Room } from '../../model/types'
 import { allMeasureRows, docProgress, rowMeasured, measureRooms, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged, roomProgress } from './logic'
 import { jumpToMeasureField, selectionRoomId, startLabel, useLastFocusedLabel } from './focusField'
 import { FilterGroup, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
+import { ApplyMeasuredButton } from './ApplyMeasuredButton'
 import { FacadeSection } from './FacadeCard'
 import { DeletedRoomsOldValues, RemovedWallsOldValues } from './OldValues'
 import { RoomCard } from './RoomCard'
+import { SolverBanner } from './SolverBanner'
 import { useWakeLock } from './useWakeLock'
 
 /**
@@ -105,6 +107,9 @@ export function MeasurePanel() {
         </div>
       </div>
 
+      {/* Solver state first: it says whether the plan follows the values now or on Apply (docs/solver-plan.md). */}
+      <SolverBanner doc={doc} />
+
       {allRooms.length === 0 ? (
         <p className="text-sm text-slate-600 dark:text-slate-300">
           No rooms to measure yet. Use Exit Measuring Mode, then draw your rooms.
@@ -128,6 +133,7 @@ export function MeasurePanel() {
         </div>
       )}
       <FacadeSection doc={doc} />
+      <ApplyMeasuredButton />
       <RemovedWallsOldValues doc={doc} />
       <DeletedRoomsOldValues doc={doc} />
     </div>

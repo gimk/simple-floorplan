@@ -5,8 +5,10 @@ import { roomsInWalkOrder } from '../../model/survey'
 import type { PlanDoc } from '../../model/types'
 import { demoRooms } from './demo'
 import { focusMeasureField, selectionRoomId } from './focusField'
+import { APPLY_LABEL } from './ApplyMeasuredButton'
 import { currentRoomId, MeasurePanel } from './MeasurePanel'
 import { RoomCard } from './RoomCard'
+import { SOLVER_OFF_TEXT, SOLVER_ON_TEXT } from './SolverBanner'
 
 /** renderToString reads the INITIAL zustand state, so patch both (see RoomsLayer.test.tsx). */
 const applyState = (store: unknown, patch: object) => {
@@ -54,6 +56,24 @@ describe('MeasurePanel', () => {
     expect(html).toContain('aria-label="Filter rooms"')
     expect(html).toContain('aria-label="Keep screen on"')
     expect(html).not.toContain('Sunlight')
+  })
+
+  it('puts the solver banner at the top and the apply button at the bottom', () => {
+    const html = renderToString(<MeasurePanel />)
+    const banner = html.indexOf(SOLVER_OFF_TEXT)
+    const rooms = html.indexOf('Click a room or a wall on the plan')
+    const facade = html.indexOf('Facade')
+    const apply = html.indexOf(APPLY_LABEL)
+    expect(banner).toBeGreaterThan(-1)
+    expect(apply).toBeGreaterThan(-1)
+    expect(banner).toBeLessThan(rooms)
+    expect(apply).toBeGreaterThan(facade)
+    // The banner explains the solver state (purple when On).
+    expect(html).toContain('data-solver-banner="off"')
+    applyState(useDoc, { doc: { ...doc(), solver: { enabled: true, changes: [], revoked: [], baseNodes: {}, baseThickness: {} } } })
+    const on = renderToString(<MeasurePanel />)
+    expect(on).toContain(SOLVER_ON_TEXT)
+    expect(on).toContain('data-solver-banner="on"')
   })
 
   it('opens the first room when nothing is selected', () => {

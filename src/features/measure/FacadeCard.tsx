@@ -8,7 +8,9 @@ import { wallSurveyIds, type WallSurveyId } from '../../model/survey'
 import { useUi } from '../../model/store'
 import type { PlanDoc } from '../../model/types'
 import { inputId, setMeasurement } from './actions'
-import { discrepancy, fmtDiff } from './logic'
+import { discrepancy, fieldLine } from './logic'
+import { ESTIMATED_TEXT, MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
+import { solverChangeForLabel } from '../solver/lookup'
 import { NumField } from './NumField'
 
 /** Survey label under the pointer or focus: the canvas draws it, and the matching field gets a ring. */
@@ -26,6 +28,12 @@ function FacadeField({ doc, sid }: { doc: PlanDoc; sid: WallSurveyId }) {
   const m = doc.measurements[sid.label]
   const verified = m != null
   const dis = verified ? discrepancy(sid.plannedCm, m.actualCm) : null
+  // A facade length that the solver fitted shows the solved length, not the drawn plan.
+  const change = verified ? solverChangeForLabel(doc, sid.label) : undefined
+  const flagged = !!dis?.flagged
+  const line = verified && sid.plannedCm != null && dis
+    ? fieldLine(sid.plannedCm, m.actualCm, !!change, flagged)
+    : null
   return (
     <div
       className={`flex min-w-0 flex-col gap-1 rounded-lg ${hoverLabel === sid.label ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-white dark:ring-orange-400 dark:ring-offset-[#1b2128]' : ''}`}
@@ -35,7 +43,7 @@ function FacadeField({ doc, sid }: { doc: PlanDoc; sid: WallSurveyId }) {
     >
       <label
         htmlFor={inputId(sid.label)}
-        className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}`}
+        className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? MEASURED_TEXT : 'text-slate-600 dark:text-slate-300'}`}
       >
         <span className="truncate" title={`${sid.label} · outside face`}>{sid.label}</span>
         {verified
@@ -50,9 +58,9 @@ function FacadeField({ doc, sid }: { doc: PlanDoc; sid: WallSurveyId }) {
         onFocus={() => { setFocused(sid.label); setHover(sid.label) }}
         onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); clearHover(sid.label) }}
       />
-      {verified && sid.plannedCm != null && dis && (
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          Measured {fmtCm(m.actualCm)} · Solved {fmtCm(sid.plannedCm)} ({fmtDiff(dis.diff)})
+      {line && (
+        <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : change ? SOLVED_TEXT : ESTIMATED_TEXT}`}>
+          {line}
         </p>
       )}
     </div>

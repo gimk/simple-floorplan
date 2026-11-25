@@ -1,9 +1,7 @@
 // Small side-effect helpers for Measuring Mode (store writes, DOM navigation).
 import { nowIso, useDoc } from '../../model/store'
-import { parseThicknessLabel } from '../../model/survey'
 import type { MeasureSource, MeasureTarget } from '../../model/types'
 import { splitRunTotal, type MeasureRow } from './logic'
-import { scheduleAutoApply, wallLabelRoom } from '../rooms/measureRules'
 import { applyThicknessLabel } from '../rooms/thickness'
 
 export const inputId = (label: string) => `m-${label}`
@@ -14,8 +12,8 @@ export const inputId = (label: string) => `m-${label}`
  * source the value has no `source` field, which counts as tape.
  * `target` says what the value measures (phase 5c). With no target the value keeps the
  * target already stored for this label, so typing a new value never drops it.
- * A wall value also solves its room again shortly after the typing stops (the plan follows
- * the measurements; that shape change is one undo step).
+ * A value NEVER moves the plan (docs/solver-plan.md): the plan changes only when the user
+ * presses "Apply measured values to the plan", or when the solver runs on leaving this mode.
  * `opts.undo`: the write is one undo step (a value typed on the plan, docs/measurements-plan.md 4).
  */
 export function setMeasurement(
@@ -40,8 +38,6 @@ export function setMeasurement(
     // A thickness (CODE-n-T) becomes the thickness of the wall, on both sides of it.
     return cm == null ? { ...d, measurements } : applyThicknessLabel({ ...d, measurements }, label, cm)
   })
-  const code = wallLabelRoom(label) ?? parseThicknessLabel(label)?.code
-  if (cm != null && code && useDoc.getState().doc.rooms.some((r) => r.code === code)) scheduleAutoApply(code)
 }
 
 /**

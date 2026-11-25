@@ -17,8 +17,11 @@ const SWING_ARC = /<path[^>]*d="M[^"]*A[0-9.]+,[0-9.]+ 0 0 [01] [^"]*"/
 /** Dashed stroke used for items of adjacent rooms on a shared wall. */
 const ADJACENT_DASH = 'stroke-dasharray="4 3"'
 
-it('shows the empty state', () => {
-  expect(renderToString(<MeasureMode />)).toContain('Load demo apartment')
+it('shows the empty state, with the solver banner on top', () => {
+  const html = renderToString(<MeasureMode />)
+  expect(html).toContain('Load demo apartment')
+  expect(html).toContain('data-solver-banner="off"')
+  expect(html).toContain('Solver off. Your values change the plan only when you apply them')
 })
 
 it('renders the demo apartment with values and items', () => {

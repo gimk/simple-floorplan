@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { Check } from 'lucide-react'
 import { fmtCm } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
-import { parseThicknessLabel, thicknessIds } from '../../model/survey'
+import { thicknessIds } from '../../model/survey'
 import type { PlanDoc, Room } from '../../model/types'
 import { ItemsEditor } from './ItemsEditor'
 import { StorageEditor } from './StorageEditor'
-import { discrepancy, fmtDiff, measureRows, nextLabel, oppositeWallNotes, roomProgress, rowValue, squarenessCheck, thicknessRow, type MeasureRow } from './logic'
+import { discrepancy, fieldLine, fmtDiff, measureRows, nextLabel, oppositeWallNotes, roomProgress, rowValue, squarenessCheck, thicknessRow, type MeasureRow } from './logic'
 import { inputId, setMeasurement, setRunMeasurement } from './actions'
-import { flushAutoApply, wallLabelRoom } from '../rooms/measureRules'
+import { ESTIMATED_TEXT, MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
+import { solverChangeForLabel } from '../solver/lookup'
 import { MiniDrawing } from './MiniDrawing'
 import { NumField } from './NumField'
 import { RoomOldValues } from './OldValues'
@@ -68,7 +69,11 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
       : sid.kind === 'height' ? `${sid.label} · ${room.outdoor ? 'height' : 'ceiling height'}`
       : sid.kind === 'thickness' ? `${sid.label} · thickness`
       : sid.text
-    const applyRoom = wallLabelRoom(sid.label) ?? parseThicknessLabel(sid.label)?.code
+    // The plan changed this wall: the solved length comes after the fit (docs/solver-plan.md).
+    const change = verified ? solverChangeForLabel(doc, sid.label) : undefined
+    const line = verified && sid.plannedCm != null && dis
+      ? fieldLine(sid.plannedCm, value as number, !!change, flagged)
+      : null
     return (
       <div
         key={sid.label}
@@ -77,7 +82,7 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
         onPointerEnter={() => setHover(sid.label)}
         onPointerLeave={() => { if (focused !== sid.label) clearHover(sid.label) }}
       >
-        <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? 'text-emerald-700 dark:text-emerald-400' : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
+        <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? MEASURED_TEXT : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
           <span className="truncate">{title}</span>
           {verified
             ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> measured</span>
@@ -89,14 +94,15 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
           placeholder={sid.plannedCm != null ? (hideDrawing ? fmtCm(sid.plannedCm) : `plan ${fmtCm(sid.plannedCm)}`) : undefined}
           onValue={(n) => (grouped ? setRunMeasurement(sid, n, measureSource) : setMeasurement(sid.label, n, measureSource))}
           onFocus={() => { setFocused(sid.label); setHover(sid.label) }}
-          onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); clearHover(sid.label); if (applyRoom) flushAutoApply(applyRoom) }}
+          onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); clearHover(sid.label) }}
           onEnter={() => goNext(sid.label)}
         />
-        {verified && sid.plannedCm != null && dis && (
-          <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : 'text-slate-500 dark:text-slate-400'}`}>
-            {/* The measured value is never changed by the solver: the plan follows it. "Solved" is
-                the length that the plan has now, after the solve. */}
-            Measured {fmtCm(value)} · Solved {fmtCm(sid.plannedCm)} ({fmtDiff(dis.diff)})
+        {line && (
+          <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : change ? SOLVED_TEXT : ESTIMATED_TEXT}`}>
+            {/* The plan length (solved when the solver fitted this wall, else the drawn plan), then how
+                far it is from the value typed. d > 0 means the plan is SHORTER than the measurement.
+                A flagged value (over 2 cm) is orange and says to check it. */}
+            {line}
           </p>
         )}
       </div>

@@ -7,9 +7,11 @@ import { loadDemoApartment } from './demo'
 import { allMeasureRows, docProgress, rowMeasured, measureRooms, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged } from './logic'
 import { jumpToMeasureField, startLabel, useLastFocusedLabel } from './focusField'
 import { Overview } from './Overview'
+import { ApplyMeasuredButton } from './ApplyMeasuredButton'
 import { FacadeSection } from './FacadeCard'
 import { DeletedRoomsOldValues, RemovedWallsOldValues } from './OldValues'
 import { RoomCard } from './RoomCard'
+import { SolverBanner } from './SolverBanner'
 import { useWakeLock } from './useWakeLock'
 import { FilterGroup, SyncLine, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
 
@@ -100,6 +102,8 @@ export function MeasureMode() {
       </header>
 
       <main className="mx-auto flex max-w-[560px] flex-col gap-5 px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-4">
+        {/* Solver state first: it says whether the plan follows the values now or on Apply (docs/solver-plan.md). */}
+        <SolverBanner doc={doc} />
         {!hasRooms ? (
           <div className="flex flex-col items-start gap-3 rounded-xl border border-slate-300 bg-white p-5 dark:border-slate-700 dark:bg-[#1b2128]">
             <h2 className="text-lg font-semibold">No rooms to measure yet</h2>
@@ -123,6 +127,7 @@ export function MeasureMode() {
             )}
             {rooms.map((r) => <RoomCard key={r.id} doc={doc} room={r} allLabels={labels} />)}
             <FacadeSection doc={doc} />
+            <ApplyMeasuredButton />
             <RemovedWallsOldValues doc={doc} />
             <DeletedRoomsOldValues doc={doc} />
           </>

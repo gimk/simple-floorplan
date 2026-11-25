@@ -5,8 +5,8 @@
 //     values move with their wall (model/relabel.ts). In a v2 document each value follows its
 //     stored target instead (model/v2/relabelV2.ts). A split or removed wall loses its value,
 //     and a toast says which walls to measure again.
-//  2. When a wall value is entered, its room is solved again from all its values ("Apply
-//     measured lengths" for that room), a short time after the typing stops.
+//  2. A value typed in Measuring Mode NEVER moves the plan (docs/solver-plan.md): the plan changes
+//     only when the user applies the values, or when the solver runs on leaving Measuring Mode.
 import { graphRule } from '../../model/graphRule'
 import { appendOld, REASON_WORDS, renameOldCode, renamedCodes } from '../../model/oldMeasurements'
 import { relabelMeasurements } from '../../model/relabel'
@@ -14,11 +14,10 @@ import { relabelByTarget, type RelabelTargetsResult } from '../../model/v2/relab
 import { v2SyncRule } from '../../model/v2/syncRule'
 import { attachTargets, isV2Doc } from '../../model/v2/targets'
 import { removedWallValues } from '../../model/wallValues'
-import { addDocRule, addSettleRule, isSilentEdit, nowIso, useDoc, type DocRule, type SettleRule } from '../../model/store'
+import { addDocRule, addSettleRule, isSilentEdit, nowIso, type DocRule, type SettleRule } from '../../model/store'
 import type { OldMeasurement, PlanDoc } from '../../model/types'
 import { toast } from '../toast'
 import { solverEditRule } from '../solver/rule'
-import { applyMeasuredNear, describeReport } from './apply'
 
 /** Toast text for the walls that must be measured again, e.g. 'Measure again: SE-2 (wall split). The old value is kept in the room card.' */
 export function measureAgainText(dropped: { label: string; reason: 'wall-split' | 'wall-removed' | 'room-deleted' }[]): string {
@@ -132,41 +131,8 @@ export function installMeasureRules() {
   addSettleRule(settleRelabel)
 }
 
-// ---------- auto-apply after a wall value is entered ----------
-
-const AUTO_APPLY_MS = 800
-const timers = new Map<string, ReturnType<typeof setTimeout>>()
-
 /** Wall label "CODE-n" -> room code, or null for a diagonal, a height or any other label. */
 export function wallLabelRoom(label: string): string | null {
   const m = /^(.+)-(\d+)$/.exec(label)
   return m ? m[1] : null
-}
-
-/** Solve the room again from its values now (one undo step). Returns the report text. */
-export function applyRoomNow(code: string): string | null {
-  const doc = useDoc.getState().doc
-  const room = doc.rooms.find((r) => r.code === code)
-  if (!room) return null
-  const r = applyMeasuredNear(doc, room.id)
-  if (r.doc !== doc) useDoc.getState().update(() => r.doc)
-  return r.reports[0].mode === 'none' ? null : describeReport(r.reports[0])
-}
-
-/**
- * A wall value of room `code` changed: solve the room again once the typing stops.
- * Every key press restarts the wait, so "2", "29", "296" do not each move the plan.
- */
-export function scheduleAutoApply(code: string) {
-  const t = timers.get(code)
-  if (t) clearTimeout(t)
-  timers.set(code, setTimeout(() => { timers.delete(code); applyRoomNow(code) }, AUTO_APPLY_MS))
-}
-
-/** Run a waiting auto-apply now (field blur, leaving the room). */
-export function flushAutoApply(code?: string) {
-  for (const [c, t] of [...timers]) {
-    if (code && c !== code) continue
-    clearTimeout(t); timers.delete(c); applyRoomNow(c)
-  }
 }

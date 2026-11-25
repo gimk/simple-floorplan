@@ -1,11 +1,14 @@
-// Entering a measurement in Measuring Mode must never add walls or create overlaps.
+// Entering a measurement in Measuring Mode must never add walls or create overlaps, and typing a
+// value never moves the plan (docs/solver-plan.md: no auto-apply). Applying the values is a
+// separate action (the button at the bottom of the mode), and that must not add walls either.
 import { describe, expect, it } from 'vitest'
 import { cross, dist, dot, sub } from '../../model/geometry'
 import { emptyDoc, useDoc } from '../../model/store'
 import type { PlanDoc, Room, StoredNode, StoredWall } from '../../model/types'
 import { deriveWallFaces, materializeRooms } from '../../model/v2/materialize'
 import { overlaps } from '../../model/v2/overlapHelper'
-import { flushAutoApply, installMeasureRules } from '../rooms/measureRules'
+import { applyMeasuredAll } from '../rooms/apply'
+import { installMeasureRules } from '../rooms/measureRules'
 import { setMeasurement, setRunMeasurement } from './actions'
 import { measureRows } from './logic'
 
@@ -88,6 +91,13 @@ function unsplitHostTDoc(): PlanDoc {
   return finalizeV2(nodes, walls, [room])
 }
 
+/** The Apply button's action: one undo step, the same path as src/features/measure/ApplyMeasuredButton.tsx. */
+function applyAll() {
+  const doc = useDoc.getState().doc
+  const r = applyMeasuredAll(doc)
+  if (r.doc !== doc) useDoc.getState().update(() => r.doc)
+}
+
 function distToLine(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
   const len = dist(a, b)
   if (len < 1e-6) return dist(p, a)
@@ -103,7 +113,9 @@ describe('measuring in v2 never adds walls', () => {
     const beforeIds = (before.walls ?? []).map((w) => w.id)
 
     setMeasurement('R1-2', 235.5)
-    flushAutoApply('R1')
+    // Typing alone moves nothing.
+    expect(useDoc.getState().doc.nodes).toEqual(before.nodes)
+    applyAll()
 
     const after = useDoc.getState().doc
     expect((after.walls ?? []).map((w) => w.id)).toEqual(beforeIds)
@@ -129,7 +141,9 @@ describe('measuring in v2 never adds walls', () => {
 
     const row = measureRows(before.rooms[0]).find((r) => r.labels.length === 2)!
     setRunMeasurement(row, 260)
-    flushAutoApply('R1')
+    // Typing alone moves nothing.
+    expect(useDoc.getState().doc.nodes).toEqual(before.nodes)
+    applyAll()
 
     const after = useDoc.getState().doc
     expect((after.walls ?? []).map((w) => w.id)).toEqual(beforeIds)
