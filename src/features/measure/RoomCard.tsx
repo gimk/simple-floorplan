@@ -2,12 +2,12 @@ import { useState } from 'react'
 import { Check } from 'lucide-react'
 import { fmtCm } from '../../model/geometry'
 import { useDoc, useUi } from '../../model/store'
-import { parseThicknessLabel, surveyIds, thicknessIds, type SurveyId } from '../../model/survey'
+import { parseThicknessLabel, thicknessIds } from '../../model/survey'
 import type { PlanDoc, Room } from '../../model/types'
 import { ItemsEditor } from './ItemsEditor'
 import { StorageEditor } from './StorageEditor'
-import { discrepancy, fmtDiff, nextLabel, oppositeWallNotes, roomProgress, squarenessCheck } from './logic'
-import { inputId, setMeasurement } from './actions'
+import { discrepancy, fmtDiff, measureRows, nextLabel, oppositeWallNotes, roomProgress, rowValue, squarenessCheck, thicknessRow, type MeasureRow } from './logic'
+import { inputId, setMeasurement, setRunMeasurement } from './actions'
 import { flushAutoApply, wallLabelRoom } from '../rooms/measureRules'
 import { MiniDrawing } from './MiniDrawing'
 import { NumField } from './NumField'
@@ -41,8 +41,8 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
   const hoverLabel = useUi((s) => s.hoverLabel)
   // Source saved with the values typed in this card. The picker is gone, so it stays tape.
   const measureSource = useUi((s) => s.measureSource)
-  const ids = surveyIds(room, doc.apartment?.defaultCeilingCm)
-  const thick = thicknessIds(doc, room)
+  const ids = measureRows(room, doc.apartment?.defaultCeilingCm)
+  const thick = thicknessIds(doc, room).map(thicknessRow)
   const thickDone = thick.filter((s) => doc.measurements[s.label] != null).length
   const { done, total } = roomProgress(doc, room)
   const square = squarenessCheck(doc, room)
@@ -54,22 +54,26 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
     if (el) el.focus(); else (document.activeElement as HTMLElement | null)?.blur()
   }
 
-  const field = (sid: SurveyId) => {
+  const field = (sid: MeasureRow) => {
     const m = doc.measurements[sid.label]
-    const verified = m != null
-    const dis = verified ? discrepancy(sid.plannedCm, m.actualCm) : null
+    // A grouped wall (one visible wall stored as 2+ faces) shows the TOTAL: the sum of its pieces.
+    const grouped = sid.labels.length > 1
+    const value = grouped ? rowValue(doc, sid) : m?.actualCm
+    const verified = value != null
+    const dis = verified ? discrepancy(sid.plannedCm, value) : null
+    const ringed = hoverLabel != null && sid.labels.includes(hoverLabel)
     // A thickness that differs from the plan is new data, not an error: never flagged.
     const flagged = !!dis?.flagged && !sid.optional
     const title = sid.kind === 'diagonal' ? `${sid.label} · diagonal`
       : sid.kind === 'height' ? `${sid.label} · ${room.outdoor ? 'height' : 'ceiling height'}`
       : sid.kind === 'thickness' ? `${sid.label} · thickness`
-      : sid.label
+      : sid.text
     const applyRoom = wallLabelRoom(sid.label) ?? parseThicknessLabel(sid.label)?.code
     return (
       <div
         key={sid.label}
-        className={`flex min-w-0 flex-col gap-1 rounded-lg ${hoverLabel === sid.label ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-white dark:ring-orange-400 dark:ring-offset-[#1b2128]' : ''}`}
-        data-field-highlight={hoverLabel === sid.label ? sid.label : undefined}
+        className={`flex min-w-0 flex-col gap-1 rounded-lg ${ringed ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-white dark:ring-orange-400 dark:ring-offset-[#1b2128]' : ''}`}
+        data-field-highlight={ringed ? sid.label : undefined}
         onPointerEnter={() => setHover(sid.label)}
         onPointerLeave={() => { if (focused !== sid.label) clearHover(sid.label) }}
       >
@@ -81,9 +85,9 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
         </label>
         <NumField
           id={inputId(sid.label)}
-          value={m?.actualCm}
+          value={value}
           placeholder={sid.plannedCm != null ? (hideDrawing ? fmtCm(sid.plannedCm) : `plan ${fmtCm(sid.plannedCm)}`) : undefined}
-          onValue={(n) => setMeasurement(sid.label, n, measureSource)}
+          onValue={(n) => (grouped ? setRunMeasurement(sid, n, measureSource) : setMeasurement(sid.label, n, measureSource))}
           onFocus={() => { setFocused(sid.label); setHover(sid.label) }}
           onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); clearHover(sid.label); if (applyRoom) flushAutoApply(applyRoom) }}
           onEnter={() => goNext(sid.label)}
@@ -92,7 +96,7 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
           <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : 'text-slate-500 dark:text-slate-400'}`}>
             {/* The measured value is never changed by the solver: the plan follows it. "Solved" is
                 the length that the plan has now, after the solve. */}
-            Measured {fmtCm(m.actualCm)} · Solved {fmtCm(sid.plannedCm)} ({fmtDiff(dis.diff)})
+            Measured {fmtCm(value)} · Solved {fmtCm(sid.plannedCm)} ({fmtDiff(dis.diff)})
           </p>
         )}
       </div>

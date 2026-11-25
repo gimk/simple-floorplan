@@ -1,7 +1,7 @@
 import { fmtCm, roomInnerRing, roomWalls } from '../../model/geometry'
 import type { PlanDoc, Room, Vec } from '../../model/types'
 import { inputId } from './actions'
-import { adjacentItems, itemSpan } from './logic'
+import { adjacentItems, itemSpan, measureRows, rowValue } from './logic'
 
 const W = 340, PAD = 40
 const f = (n: number) => n.toFixed(1)
@@ -38,6 +38,7 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
   const P = v.map(T)
   const unT = (x: number, y: number): Vec => ({ x: (x - ox) / s + minx, y: (y - PAD) / s + miny })
   const walls = roomWalls(room)
+  const wallRows = measureRows(room, doc.apartment?.defaultCeilingCm).filter((r) => r.kind === 'wall')
   const val = (label: string) => doc.measurements[label]?.actualCm
   const focus = (label: string) => document.getElementById(inputId(label))?.focus()
   const labelText = (label: string) => { const x = val(label); return x != null ? `${label} · ${fmtCm(x)}` : label }
@@ -114,9 +115,14 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
       )}
 
       {/* walls: highlight, start arrow, label */}
-      {walls.map((wl) => {
-        const label = `${room.code}-${wl.index + 1}`
-        const a = P[wl.index], b = P[(wl.index + 1) % P.length]
+      {wallRows.map((row) => {
+        // One visible straight wall = one row: a wall stored as 2+ faces is drawn and labelled once.
+        const label = row.label
+        const wl = walls.find((w) => w.index === row.faceIndices[0]) ?? walls[0]
+        const lastFace = row.faceIndices[row.faceIndices.length - 1]
+        const a = P[row.faceIndices[0]], b = P[(lastFace + 1) % P.length]
+        const total = rowValue(doc, row)
+        const text = total != null ? `${row.text} · ${fmtCm(total)}` : row.text
         const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1
         const ux = dx / L, uy = dy / L, n = wl.inward
         const cx = (a.x + b.x) / 2 + n.x * 7, cy = (a.y + b.y) / 2 + n.y * 7
@@ -126,7 +132,7 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
         if (ang > 90) ang -= 180
         if (ang <= -90) ang += 180
         return (
-          <g key={wl.start.id}>
+          <g key={label}>
             {/* wide transparent hit line along the whole wall (≥ 40 px touch target) */}
             <line
               x1={f(a.x)} y1={f(a.y)} x2={f(b.x)} y2={f(b.y)}
@@ -135,9 +141,9 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
               style={{ cursor: 'pointer' }}
               onClick={() => focus(label)} onKeyDown={keyTap(() => focus(label))}
             />
-            {(focused === label || focused === `${label}-T`) && <line x1={f(a.x)} y1={f(a.y)} x2={f(b.x)} y2={f(b.y)} className="stroke-orange-600 dark:stroke-orange-400" strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
+            {(row.labels.some((l) => focused === l || focused === `${l}-T`)) && <line x1={f(a.x)} y1={f(a.y)} x2={f(b.x)} y2={f(b.y)} className="stroke-orange-600 dark:stroke-orange-400" strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
             <polygon points={tri.map(([x, y]) => `${f(x)},${f(y)}`).join(' ')} className="fill-slate-500 dark:fill-slate-400" pointerEvents="none" />
-            <Label x={mx} y={my} angle={ang} text={labelText(label)} ok={val(label) != null} onTap={() => focus(label)} />
+            <Label x={mx} y={my} angle={ang} text={text} ok={total != null} onTap={() => focus(label)} />
           </g>
         )
       })}

@@ -1,7 +1,9 @@
 // Pure logic for Measuring Mode. No React here, so it is easy to test.
 import { lerp, roomWalls } from '../../model/geometry'
 import type { Wall } from '../../model/geometry'
-import { allRequiredSurveyIds, requiredSurveyIds, roomsInWalkOrder } from '../../model/survey'
+import { roomsInWalkOrder, surveyIds } from '../../model/survey'
+import type { SurveyId } from '../../model/survey'
+import { wallRunMetrics } from '../storage/geometry'
 import type { ElementKind, PlanDoc, Room, Vec, WallElement } from '../../model/types'
 
 /** Parse a length typed by the user. Comma or dot. null = empty, NaN = invalid. */
@@ -74,27 +76,109 @@ export function nextLabel(labels: string[], current: string): string | null {
  * Next survey ID without a measured value, starting AFTER `current` (wrapping once around).
  * `current` null/empty starts from the beginning. null when everything is measured.
  */
-export function nextUnmeasuredLabel(doc: Pick<PlanDoc, 'measurements'>, labels: string[], current: string | null): string | null {
+export function nextUnmeasuredLabel(
+  doc: Pick<PlanDoc, 'measurements'>, labels: string[], current: string | null,
+  /** Is this row label measured? Default: the label has a value (a grouped wall row needs all its pieces). */
+  isMeasured: (label: string) => boolean = (l) => doc.measurements[l] != null,
+): string | null {
   if (!labels.length) return null
   const start = current ? labels.indexOf(current) : -1
   for (let k = 1; k <= labels.length; k++) {
     const i = (((start + k) % labels.length) + labels.length) % labels.length
-    if (doc.measurements[labels[i]] == null) return labels[i]
+    if (!isMeasured(labels[i])) return labels[i]
   }
   return null
 }
 
-/** True when at least one survey ID of the room has no measured value yet. */
+// ---------- measure rows: one row per VISIBLE straight wall ----------
+// A straight wall can be stored as 2+ consecutive collinear faces (a T junction where another room's
+// wall meets it, a locked piece, a piece of another type). The user sees one wall, so the panel shows
+// ONE row for the run (wallRunMetrics, the same grouping as the storage "Wall" select).
+// The solver is unchanged: it reads one value per face label. A total typed on a grouped row is
+// written as one value per piece, split in proportion (setRunMeasurement); the row shows the sum.
+
+export type MeasureRow = SurveyId & {
+  /** Text shown for the row: "R1-4" for one face, "R1-4+5" for a run. */
+  text: string
+  /** Face labels of the row, in wall order. `label` is the first one. */
+  labels: string[]
+  /** Stored faces of the run (vertex indices), in wall order. */
+  faceIndices: number[]
+  /** Planned length of each piece, in wall order (a grouped row only). */
+  pieces: { label: string; plannedCm: number }[]
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10
+
+/** Rows of one room (walls grouped by run, diagonal, height). */
+export function measureRows(room: Room, defaultCeilingCm?: number): MeasureRow[] {
+  const ids = surveyIds(room, defaultCeilingCm)
+  const wallIds = ids.filter((s) => s.kind === 'wall')
+  const byIndex = new Map(wallIds.map((s, i) => [i, s]))
+  const done = new Set<number>()
+  const rows: MeasureRow[] = []
+  const nWalls = wallIds.length
+  for (const s of ids) {
+    if (s.kind !== 'wall') { rows.push({ ...s, text: s.label, labels: [s.label], faceIndices: [], pieces: [] }); continue }
+    const i = wallIds.indexOf(s)
+    if (done.has(i)) continue
+    const run = wallRunMetrics(room, i)?.faceIndices ?? [i]
+    const faces = run.length > 1 && run.length < nWalls && run.every((k) => byIndex.has(k)) ? run : [i]
+    faces.forEach((k) => done.add(k))
+    const pieces = faces.map((k) => ({ label: byIndex.get(k)!.label, plannedCm: byIndex.get(k)!.plannedCm ?? 0 }))
+    const first = byIndex.get(faces[0])!
+    const nums = pieces.map((p) => p.label.slice(p.label.lastIndexOf('-') + 1))
+    rows.push({
+      ...first,
+      plannedCm: faces.length > 1 ? round1(pieces.reduce((a, p) => a + p.plannedCm, 0)) : first.plannedCm,
+      text: faces.length > 1 ? `${first.label}+${nums.slice(1).join('+')}` : first.label,
+      labels: pieces.map((p) => p.label), faceIndices: faces, pieces: faces.length > 1 ? pieces : [],
+    })
+  }
+  return rows
+}
+
+/** A thickness id as a row of its own (one label). */
+export const thicknessRow = (s: SurveyId): MeasureRow => ({ ...s, text: s.label, labels: [s.label], faceIndices: [], pieces: [] })
+
+/** Measured length of a row: the value, or for a grouped row the sum of its pieces (all must be measured). */
+export function rowValue(doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRow, 'labels'>): number | undefined {
+  const vals = row.labels.map((l) => doc.measurements[l]?.actualCm)
+  if (vals.some((v) => v == null)) return undefined
+  return round1((vals as number[]).reduce((a, v) => a + v, 0))
+}
+
+export const rowMeasured = (doc: Pick<PlanDoc, 'measurements'>, row: Pick<MeasureRow, 'labels'>) => rowValue(doc, row) != null
+
+/** Split a run total over its pieces in proportion to `bases`; the last piece takes the rounding rest. */
+export function splitRunTotal(total: number, bases: number[]): number[] {
+  const sum = bases.reduce((a, b) => a + b, 0)
+  const w = sum > 0 ? bases : bases.map(() => 1)
+  const wsum = sum > 0 ? sum : bases.length
+  const out = w.map((b) => round1((total * b) / wsum))
+  out[out.length - 1] = round1(total - out.slice(0, -1).reduce((a, b) => a + b, 0))
+  return out
+}
+
+/** Required rows of a room (no optional ones). */
+export const requiredRows = (room: Room, defaultCeilingCm?: number) => measureRows(room, defaultCeilingCm).filter((s) => !s.optional)
+
+/** Every required row of the plan in walk order, storage rooms left out (they live in their parent card). */
+export function allMeasureRows(doc: PlanDoc): MeasureRow[] {
+  return measureRooms(doc).flatMap((r) => requiredRows(r, doc.apartment?.defaultCeilingCm))
+}
+
+/** True when at least one row of the room has no measured value yet. */
 export function roomHasMissing(doc: Pick<PlanDoc, 'measurements'>, room: Room): boolean {
-  return requiredSurveyIds(room).some((s) => doc.measurements[s.label] == null)
+  return requiredRows(room).some((s) => !rowMeasured(doc, s))
 }
 
 /** True when the room has a flagged discrepancy (> 2 cm vs plan) or a squareness warning. */
 export function roomIsFlagged(doc: Pick<PlanDoc, 'measurements'> & { apartment?: PlanDoc['apartment'] }, room: Room): boolean {
-  const flagged = requiredSurveyIds(room, doc.apartment?.defaultCeilingCm).some((s) => {
-    const m = doc.measurements[s.label]
-    if (m == null || s.plannedCm == null) return false
-    return Math.abs(m.actualCm - s.plannedCm) > DISCREPANCY_CM
+  const flagged = requiredRows(room, doc.apartment?.defaultCeilingCm).some((s) => {
+    const v = rowValue(doc, s)
+    if (v == null || s.plannedCm == null) return false
+    return Math.abs(v - s.plannedCm) > DISCREPANCY_CM
   })
   if (flagged) return true
   const sq = squarenessCheck(doc, room)
@@ -102,9 +186,9 @@ export function roomIsFlagged(doc: Pick<PlanDoc, 'measurements'> & { apartment?:
 }
 
 export function roomProgress(doc: PlanDoc, room: Room) {
-  const ids = requiredSurveyIds(room)
-  const done = ids.filter((s) => doc.measurements[s.label] != null).length
-  const total = ids.length
+  const rows = requiredRows(room)
+  const done = rows.filter((s) => rowMeasured(doc, s)).length
+  const total = rows.length
   return { done, total, state: (done === 0 ? 'none' : done === total ? 'full' : 'part') as 'none' | 'part' | 'full' }
 }
 
@@ -113,10 +197,8 @@ export const measureRooms = (doc: Pick<PlanDoc, 'rooms'>): Room[] =>
   roomsInWalkOrder(doc as PlanDoc).filter((r) => !r.storage)
 
 export function docProgress(doc: PlanDoc) {
-  const storageIds = new Set(doc.rooms.filter((r) => r.storage).map((r) => r.id))
-  const ids = allRequiredSurveyIds(doc).filter((s) => !storageIds.has(s.roomId))
-  const done = ids.filter((s) => doc.measurements[s.label] != null).length
-  return { done, total: ids.length }
+  const rows = allMeasureRows(doc)
+  return { done: rows.filter((s) => rowMeasured(doc, s)).length, total: rows.length }
 }
 
 /** Length used to place items on a wall: measured if known, else planned. */

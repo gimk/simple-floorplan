@@ -2,6 +2,7 @@
 import { nowIso, useDoc } from '../../model/store'
 import { parseThicknessLabel } from '../../model/survey'
 import type { MeasureSource, MeasureTarget } from '../../model/types'
+import { splitRunTotal, type MeasureRow } from './logic'
 import { scheduleAutoApply, wallLabelRoom } from '../rooms/measureRules'
 import { applyThicknessLabel } from '../rooms/thickness'
 
@@ -39,6 +40,27 @@ export function setMeasurement(
   })
   const code = wallLabelRoom(label) ?? parseThicknessLabel(label)?.code
   if (cm != null && code && useDoc.getState().doc.rooms.some((r) => r.code === code)) scheduleAutoApply(code)
+}
+
+/**
+ * Save the TOTAL length of a grouped wall row (one visible wall stored as 2+ faces). The solver reads
+ * one value per face, so the total is split over the pieces and each piece is saved as its own value:
+ * the pieces keep their proportions (measured value if the piece has one, else the planned length).
+ * The sum of the pieces is exactly the total, so the solver sees the total as the sum.
+ * Empty (null) removes the values of every piece.
+ */
+export function setRunMeasurement(
+  row: Pick<MeasureRow, 'labels' | 'pieces'>, total: number | null, source?: MeasureSource,
+  opts: { undo?: boolean } = {},
+) {
+  if (row.labels.length < 2 || total == null) {
+    for (const l of row.labels) setMeasurement(l, total, source, undefined, opts)
+    return
+  }
+  const cur = useDoc.getState().doc.measurements
+  const bases = row.pieces.map((p) => cur[p.label]?.actualCm ?? p.plannedCm)
+  const parts = splitRunTotal(total, bases)
+  row.pieces.forEach((p, i) => setMeasurement(p.label, parts[i], source, undefined, opts))
 }
 
 export const goRoom = (code: string) => {

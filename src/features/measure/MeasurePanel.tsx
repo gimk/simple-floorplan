@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowDownCircle, ChevronRight, Eye } from 'lucide-react'
 import { useDoc, useUi } from '../../model/store'
-import { allRequiredSurveyIds, labelRoomCode } from '../../model/survey'
+import { labelRoomCode } from '../../model/survey'
 import type { Room } from '../../model/types'
-import { docProgress, measureRooms, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged, roomProgress } from './logic'
+import { allMeasureRows, docProgress, rowMeasured, measureRooms, nextUnmeasuredLabel, roomHasMissing, roomIsFlagged, roomProgress } from './logic'
 import { jumpToMeasureField, selectionRoomId, startLabel, useLastFocusedLabel } from './focusField'
 import { FilterGroup, useNormalizeDoorHosts, useStoredFlag, type Filter } from './MeasureControls'
 import { FacadeSection } from './FacadeCard'
@@ -28,8 +28,8 @@ export function MeasurePanel() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
   const allRooms = measureRooms(doc)
-  const storageIds = new Set(doc.rooms.filter((r) => r.storage).map((r) => r.id))
-  const labels = allRequiredSurveyIds(doc).filter((s) => !storageIds.has(s.roomId)).map((s) => s.label)
+  const rows = allMeasureRows(doc)
+  const labels = rows.map((s) => s.label)
   const { done, total } = docProgress(doc)
 
   const lastFocused = useLastFocusedLabel()
@@ -67,7 +67,7 @@ export function MeasurePanel() {
   const jumpNextUnmeasured = () => {
     const active = document.activeElement
     const current = startLabel(active instanceof HTMLElement ? active.id : undefined, lastFocused.current)
-    const nx = nextUnmeasuredLabel(doc, labels, current)
+    const nx = nextUnmeasuredLabel(doc, labels, current, (l) => { const r = rows.find((x) => x.label === l); return r ? rowMeasured(doc, r) : doc.measurements[l] != null })
     if (!nx) return
     const code = labelRoomCode(nx)
     const room = allRooms.find((r) => r.code === code)
