@@ -55,19 +55,24 @@ export const RoomSchema = z.object({
   diagonal: z.tuple([z.number().int().min(0), z.number().int().min(0)]).optional(),
 })
 
-export const ElementKindSchema = z.enum(['door', 'window', 'opening', 'cupboard', 'radiator', 'other'])
+/**
+ * Element kinds the app knows, and the variants of each kind. Kept in one place so that an
+ * element of a kind that no longer exists (the old `cupboard`) can be recognised and dropped
+ * instead of failing the whole document.
+ */
+export const ELEMENT_KINDS = ['door', 'window', 'opening', 'radiator', 'other'] as const
+
+export const ElementKindSchema = z.enum(ELEMENT_KINDS)
 
 export const ElementVariantSchema = z.enum([
   'single',
   'double',
   'sliding',
   'pocket',
+  'bifold',
   'standard',
   'french',
   'fixed',
-  'wall-cabinet',
-  'recessed',
-  'wardrobe',
 ])
 
 export const WallElementSchema = z.object({
@@ -93,6 +98,26 @@ export const WallElementSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 })
+
+/** True when `v` is one of the element kinds this app knows. */
+export const isKnownElementKind = (v: unknown): boolean =>
+  typeof v === 'string' && (ELEMENT_KINDS as readonly string[]).includes(v)
+
+/**
+ * Wall elements of a document. An element of a kind this app no longer has (the old
+ * `cupboard`, deleted in docs/storage-plan.md step 0) is DROPPED, so an old saved document
+ * still loads instead of failing the whole parse.
+ */
+const WallElementsSchema = z.preprocess(
+  (v) =>
+    Array.isArray(v)
+      ? v.filter((el) => {
+          const kind = typeof el === 'object' && el !== null ? (el as { kind?: unknown }).kind : undefined
+          return typeof kind !== 'string' || isKnownElementKind(kind)
+        })
+      : v,
+  z.array(WallElementSchema),
+)
 
 export const BackgroundImageSchema = z.object({
   src: z.string(),
@@ -302,7 +327,7 @@ export const PlanDocV1Schema = z.object({
   title: z.string().default(''),
   background: BackgroundImageSchema.optional(),
   rooms: z.array(RoomSchema).default([]),
-  elements: z.array(WallElementSchema).default([]),
+  elements: WallElementsSchema.default([]),
   measurements: z.record(z.string(), MeasurementSchema).default({}),
   roomNotes: z.record(z.string(), z.string()).default({}),
   tapes: z.array(TapeMeasureSchema).default([]),
@@ -331,7 +356,7 @@ export const SnapshotPutBodySchema = z.object({
   title: z.string().optional(),
   background: BackgroundImageSchema.optional(),
   rooms: z.array(RoomSchema).optional().default([]),
-  elements: z.array(WallElementSchema).optional().default([]),
+  elements: WallElementsSchema.optional().default([]),
   tapes: z.array(TapeMeasureSchema).optional().default([]),
   pins: z.array(PinSchema).optional().default([]),
   // Ignored on snapshot write (stored in separate tables), allowed if client sends full doc.

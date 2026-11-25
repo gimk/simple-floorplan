@@ -144,7 +144,6 @@ describe('item defaults', () => {
   it('has the agreed defaults', () => {
     expect(ITEM_DEFAULTS.door).toEqual({ widthCm: 80, heightCm: 204 })
     expect(ITEM_DEFAULTS.opening).toEqual({ widthCm: 90, heightCm: 204 })
-    expect(ITEM_DEFAULTS.cupboard).toEqual({ widthCm: 100, depthCm: 60 })
     expect(ITEM_DEFAULTS.radiator).toEqual({ widthCm: 80, heightCm: 60 })
   })
   it('swaps untouched defaults when the type changes and drops the unused ones', () => {

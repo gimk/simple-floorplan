@@ -3,16 +3,15 @@ import type { ElementKind, ElementVariant, Room, Vec, WallElement } from '../../
 import { dot, projectOnSegment, roomWalls, sub, type Wall } from '../../model/geometry'
 
 export const VARIANTS: Record<ElementKind, ElementVariant[]> = {
-  door: ['single', 'double', 'sliding', 'pocket'],
+  door: ['single', 'double', 'sliding', 'pocket', 'bifold'],
   window: ['standard', 'french', 'fixed'],
   opening: [],
-  cupboard: ['wall-cabinet', 'recessed', 'wardrobe'],
   radiator: [],
   other: [],
 }
 
 export const KIND_LABEL: Record<ElementKind, string> = {
-  door: 'Door', window: 'Window', opening: 'Opening', cupboard: 'Cupboard', radiator: 'Radiator', other: 'Other',
+  door: 'Door', window: 'Window', opening: 'Opening', radiator: 'Radiator', other: 'Other',
 }
 
 export const VARIANT_LABEL: Record<ElementVariant, string> = {
@@ -20,12 +19,10 @@ export const VARIANT_LABEL: Record<ElementVariant, string> = {
   double: 'Double swing',
   sliding: 'Sliding',
   pocket: 'Pocket',
+  bifold: 'Bifold',
   standard: 'Standard',
   french: 'French window',
   fixed: 'Fixed',
-  'wall-cabinet': 'Wall cabinet',
-  recessed: 'Recessed',
-  wardrobe: 'Wardrobe',
 }
 
 export const defaultVariant = (kind: ElementKind): ElementVariant | undefined => VARIANTS[kind][0]
@@ -126,7 +123,6 @@ export function defaultElement(kind: ElementKind, variant?: ElementVariant): New
     case 'door': return { kind, variant: v, widthCm: v === 'double' ? 140 : 80, heightCm: 204, hinge: 'start', swing: 'in' }
     case 'window': return { kind, variant: v, widthCm: 120, heightCm: 135, sillCm: 90 }
     case 'opening': return { kind, widthCm: 90, heightCm: 204 }
-    case 'cupboard': return { kind, variant: v, widthCm: 100, depthCm: 60 }
     case 'radiator': return { kind, widthCm: 80, heightCm: 60, depthCm: 10 }
     default: return { kind: 'other', widthCm: 50 }
   }

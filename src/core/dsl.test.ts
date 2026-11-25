@@ -17,7 +17,7 @@ room SE "Living Room" rect(0,0 400x300) ceiling=260 walk=1
 room CU "Kitchen" rect(400,0 200x300) ceiling=265 walk=2
   wall CU-1 exterior 30cm locked
   window CU-2 at=40 w=120 h=140 sill=90 french
-  cupboard CU-3 at=10 w=100 depth=60 wall-cabinet
+  radiator CU-3 at=10 w=100 h=60 depth=20
   hole poly(500,200 560,200 560,260 500,260)
 
 room BA "Balcony" poly(0,300 400,300 400,400 0,400) walk=3 outdoor
@@ -45,7 +45,7 @@ function sampleDoc(): PlanDocV1 {
     { type: 'set_wall_props', wall: 'CU-1', wallType: 'exterior', thicknessCm: 30, locked: true },
     { type: 'place_element', id: 'el_door', wall: 'SE-2', kind: 'door', offsetCm: 100, widthCm: 80, heightCm: 204 },
     { type: 'place_element', id: 'el_win', wall: 'CU-2', kind: 'window', variant: 'french', offsetCm: 40, widthCm: 120, heightCm: 140, sillCm: 90 },
-    { type: 'place_element', id: 'el_cup', wall: 'CU-3', kind: 'cupboard', variant: 'wall-cabinet', offsetCm: 10, widthCm: 100, depthCm: 60 },
+    { type: 'place_element', id: 'el_rad', wall: 'CU-3', kind: 'radiator', offsetCm: 10, widthCm: 100, heightCm: 60, depthCm: 20 },
     { type: 'cutout_room', roomCode: 'CU', rect: { x: 500, y: 200, w: 60, h: 60 } },
     { type: 'set_measurement', label: 'SE-1', actualCm: 400.5 },
     { type: 'set_measurement', label: 'SE-D', actualCm: 500 },
@@ -139,6 +139,19 @@ describe('dsl: planToDsl / dslToPlan', () => {
     const dsl = planToDsl(doc)
     const back = dslToPlan(dsl, undefined, { now: NOW })
     expect(normalize(back)).toEqual(normalize(doc))
+  })
+
+  it('parses and writes the bifold door variant', () => {
+    const text = [
+      'plan "T" version=1 unit=cm',
+      '',
+      'room SE "Living" rect(0,0 400x300)',
+      '  door SE-1 at=100 w=80 h=204 bifold hinge=start swing=in',
+    ].join('\n')
+    const doc = dslToPlan(text, undefined, { now: NOW })
+    expect(doc.elements).toHaveLength(1)
+    expect(doc.elements[0]).toMatchObject({ kind: 'door', variant: 'bifold', widthCm: 80 })
+    expect(planToDsl(doc)).toContain('door SE-1 at=100 w=80 h=204 bifold')
   })
 
   it('produces stable text across a double round-trip', () => {

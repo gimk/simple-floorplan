@@ -203,7 +203,7 @@ export function DimensionsTable({ doc }: { doc: PlanDoc }) {
   )
 }
 
-/** Doors, windows, cupboards and radiators with their sizes on the wall. */
+/** Doors, windows and radiators with their sizes on the wall. */
 export function OpeningsTable({ doc }: { doc: PlanDoc }) {
   const rows = useMemo(() => itemRows(doc), [doc])
   if (rows.length === 0) return null

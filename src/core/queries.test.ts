@@ -70,7 +70,7 @@ describe('queries & SVG export', () => {
       // Overlapping element on SE-2 (el_door is 100..180, place another at 150..230)
       { type: 'place_element', id: 'el_overlap', wall: 'SE-2', kind: 'radiator', offsetCm: 150, widthCm: 80 },
       // Overflowing element on CU-1 (length 200, offset 150 + width 100 = 250)
-      { type: 'place_element', id: 'el_overflow', wall: 'CU-1', kind: 'cupboard', offsetCm: 150, widthCm: 100 },
+      { type: 'place_element', id: 'el_overflow', wall: 'CU-1', kind: 'radiator', offsetCm: 150, widthCm: 100 },
     ]).doc
 
     // Add a bowtie self-intersecting room directly
@@ -168,6 +168,19 @@ describe('queries & SVG export', () => {
       { background: true },
     )
     expect(withBg.svg).toContain('<image href="data:image/png;base64,AAAA"')
+  })
+
+  it('renderPlanSvg draws a bifold door as two folded leaves per jamb', () => {
+    const doc = applyBatch(sampleDoc(), [
+      { type: 'place_element', id: 'el_bifold', wall: 'SE-3', kind: 'door', variant: 'bifold', offsetCm: 50, widthCm: 80, heightCm: 204 },
+    ]).doc
+    const { svg } = renderPlanSvg(doc)
+    expect(svg).toContain('data-element-kind="door"')
+    // 20 cm = w/4 for an 80 cm opening: two leaves per jamb, meeting at the middle.
+    expect(svg).toContain('d="M 0 0 L 20 20 L 40 0"')
+    expect(svg).toContain('d="M 80 0 L 60 20 L 40 0"')
+    // The old storage legend entry is gone.
+    expect(svg).not.toContain('>Storage<')
   })
 })
 

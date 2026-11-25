@@ -3,7 +3,7 @@
 // order is tested alone. Units are cm, y points down.
 //
 // The order of the stack is fixed:
-//   1. element on a wall (a door, a window, a cupboard...);
+//   1. element on a wall (a door, a window, a radiator...);
 //   2. wall face: the face of the side under the point of a STORED wall (v2), or the ROOM WALL of a
 //      v1 document (a v1 document has no stored wall: the wall is the face);
 //   3. stored wall (v2 only): the wall of the face, with the side of the point;

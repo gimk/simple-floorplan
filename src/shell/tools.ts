@@ -23,7 +23,7 @@ export const TOOLS: ToolSpec[] = [
   { id: 'make-room', label: 'Make room', key: 'm', icon: SquareDashedMousePointer },
   { id: 'slice', label: 'Slice room', key: 's', icon: Scissors },
   { id: 'cutout', label: 'Cutout', key: 'x', icon: SquareDashed },
-  { id: 'place-element', label: 'Door / window / storage', key: 'd', icon: DoorOpen },
+  { id: 'place-element', label: 'Door / window', key: 'd', icon: DoorOpen },
   { id: 'calibrate', label: 'Calibrate scale', key: 'c', icon: Crosshair },
   { id: 'tape', label: 'Tape measure', key: 't', icon: Ruler },
   { id: 'pin', label: 'Note / photo pin', key: 'n', icon: MapPin },

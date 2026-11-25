@@ -176,7 +176,7 @@ export function adjacentItems(doc: PlanDoc, room: Room) {
 }
 
 export const KIND_LABEL: Record<ElementKind, string> = {
-  window: 'Window', door: 'Door', opening: 'Opening (no door)', cupboard: 'Cupboard', radiator: 'Radiator', other: 'Other',
+  window: 'Window', door: 'Door', opening: 'Opening (no door)', radiator: 'Radiator', other: 'Other',
 }
 
 export type ItemField = 'offsetCm' | 'widthCm' | 'heightCm' | 'sillCm' | 'depthCm'
@@ -184,7 +184,6 @@ export const KIND_FIELDS: Record<ElementKind, [ItemField, string][]> = {
   window: [['offsetCm', 'From start'], ['widthCm', 'Width'], ['heightCm', 'Height'], ['sillCm', 'Sill height']],
   door: [['offsetCm', 'From start'], ['widthCm', 'Width'], ['heightCm', 'Height']],
   opening: [['offsetCm', 'From start'], ['widthCm', 'Width'], ['heightCm', 'Height']],
-  cupboard: [['offsetCm', 'From start'], ['widthCm', 'Width'], ['depthCm', 'Depth'], ['heightCm', 'Height']],
   radiator: [['offsetCm', 'From start'], ['widthCm', 'Width'], ['heightCm', 'Height']],
   other: [['offsetCm', 'From start'], ['widthCm', 'Width']],
 }
@@ -196,7 +195,6 @@ export const ITEM_DEFAULTS: Record<ElementKind, ItemSizes> = {
   door: { widthCm: 80, heightCm: 204 },
   window: { widthCm: 120, heightCm: 135, sillCm: 90 },
   opening: { widthCm: 90, heightCm: 204 },
-  cupboard: { widthCm: 100, depthCm: 60 },
   radiator: { widthCm: 80, heightCm: 60 },
   other: {},
 }

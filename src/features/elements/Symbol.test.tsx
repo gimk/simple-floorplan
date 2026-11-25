@@ -35,3 +35,26 @@ describe('symbolExtent: the drawn side of a door', () => {
     expect(symbolExtent('door', 'single', 80, 10, undefined, 'out')).toEqual([-80, 5])
   })
 })
+
+describe('ElementSymbol: bifold door', () => {
+  /** Every path `d` of the symbol. */
+  const pathsOf = (html: string) => [...html.matchAll(/<path[^>]*d="([^"]*)"/g)].map((m) => m[1])
+
+  it('draws two folded leaves from each jamb, each leaf w/4 wide at 45 degrees', () => {
+    const paths = pathsOf(renderToString(<ElementSymbol kind="door" variant="bifold" w={80} t={10} swing="in" hair={1} />))
+    // Left jamb: (0,0) -> (20,20) -> (40,0). Right jamb mirrored.
+    expect(paths).toContain('M 0 0 L 20 20 L 40 0')
+    expect(paths).toContain('M 80 0 L 60 20 L 40 0')
+  })
+
+  it('folds into the swing side (negative y for an out-door)', () => {
+    const paths = pathsOf(renderToString(<ElementSymbol kind="door" variant="bifold" w={80} t={10} swing="out" hair={1} />))
+    expect(paths).toContain('M 0 0 L 20 -20 L 40 0')
+    expect(paths).toContain('M 80 0 L 60 -20 L 40 0')
+  })
+
+  it('extends the hit area by one leaf on the swing side', () => {
+    expect(symbolExtent('door', 'bifold', 80, 10, undefined, 'in')).toEqual([-5, 20])
+    expect(symbolExtent('door', 'bifold', 80, 10, undefined, 'out')).toEqual([-20, 5])
+  })
+})

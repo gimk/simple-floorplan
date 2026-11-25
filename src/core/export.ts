@@ -28,7 +28,6 @@ const COLORS: Record<ElementKind, string> = {
   door: '#7c3aed',
   opening: '#7c3aed',
   radiator: '#dc2626',
-  cupboard: '#6b7280',
   other: '#6b7280',
 }
 
@@ -124,6 +123,20 @@ function renderElementSymbolSvg(params: {
         `</g>`
       )
     }
+    if (variant === 'bifold') {
+      // Two leaves per jamb, folded in a zig-zag: each leaf spans w/4 along the wall and w/4
+      // into the swing side (45 degrees). The two halves meet at the middle of the opening.
+      const q = w / 4
+      const fold = (x0: number, dx: 1 | -1) =>
+        `<path d="M ${num(x0)} 0 L ${num(x0 + dx * q)} ${num(s * q)} L ${num(x0 + dx * 2 * q)} 0" fill="none" stroke="${c}" stroke-width="${num(leaf)}"/>`
+      return (
+        `<g>${gap}` +
+        `<line x1="0" x2="${num(w)}" y1="0" y2="0" stroke="${c}" stroke-width="${num(thin)}" stroke-dasharray="${num(thin * 3)} ${num(thin * 3)}"/>` +
+        fold(0, 1) +
+        fold(w, -1) +
+        `</g>`
+      )
+    }
     if (variant === 'pocket') {
       const x0 = hinge === 'start' ? -w : w
       return (
@@ -162,19 +175,6 @@ function renderElementSymbolSvg(params: {
   if (kind === 'radiator') {
     const d = depth ?? 10
     return `<rect x="0" y="${num(h)}" width="${num(w)}" height="${num(d)}" fill="#dc262622" stroke="${c}" stroke-width="${num(thin)}"/>`
-  }
-
-  if (kind === 'cupboard') {
-    const d = depth ?? 60
-    const y0 = variant === 'recessed' ? -h - d : h
-    const dash = variant === 'wall-cabinet' ? ` stroke-dasharray="${num(thin * 5)} ${num(thin * 3)}"` : ''
-    let extra = ''
-    if (variant === 'wardrobe') {
-      extra = `<path d="M 0 ${num(y0)} L ${num(w)} ${num(y0 + d)} M ${num(w)} ${num(y0)} L 0 ${num(y0 + d)}" stroke="${c}" stroke-width="${num(thin)}"/>`
-    } else if (variant === 'recessed') {
-      extra = `<path d="M 0 ${num(y0 + d)} L ${num(w)} ${num(y0)}" stroke="${c}" stroke-width="${num(thin)}"/>`
-    }
-    return `<g><rect x="0" y="${num(y0)}" width="${num(w)}" height="${num(d)}" fill="#6b728018" stroke="${c}" stroke-width="${num(thin)}"${dash}/>${extra}</g>`
   }
 
   return `<line x1="0" x2="${num(w)}" y1="0" y2="0" stroke="${c}" stroke-width="${num(leaf)}"/>`
@@ -238,11 +238,6 @@ export function renderPlanSvg(doc: PlanDoc, opts: RenderSvgOptions = {}): Render
     { label: 'Exterior wall', draw: (x, y) => wallSwatch(x, y, fs, 'exterior') },
     { label: 'Door', draw: (x, y) => swatchLine(x, y, fs, COLORS.door, true) },
     { label: 'Window', draw: (x, y) => swatchLine(x, y, fs, COLORS.window, false) },
-    {
-      label: 'Storage',
-      draw: (x, y) =>
-        `<rect x="${num(x)}" y="${num(y - fs * 0.35)}" width="${num(fs * 2)}" height="${num(fs * 0.7)}" fill="#6b728018" stroke="${COLORS.cupboard}" stroke-width="${num(fs * 0.08)}"/>`,
-    },
     {
       label: 'Radiator',
       draw: (x, y) =>

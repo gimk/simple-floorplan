@@ -58,8 +58,7 @@ describe('clearance geometry', () => {
 
   it('defaults fixture depths', () => {
     expect(fixtureDepth({ kind: 'radiator' })).toBe(10)
-    expect(fixtureDepth({ kind: 'cupboard' })).toBe(60)
-    expect(fixtureDepth({ kind: 'cupboard', depthCm: 35 })).toBe(35)
+    expect(fixtureDepth({ kind: 'radiator', depthCm: 35 })).toBe(35)
     expect(fixtureDepth({ kind: 'other' })).toBe(0)
   })
 })
@@ -99,13 +98,13 @@ describe('elementFootprints', () => {
     expect(elementFootprints(doc, room, element({ variant: 'pocket' }))).toEqual([])
   })
 
-  it('gives cupboards and radiators a rectangle pushed into the room', () => {
+  it('gives radiators a rectangle pushed into the room', () => {
     const doc = docOf([room], [])
     const [radiator] = elementFootprints(doc, room, element({ kind: 'radiator', offsetCm: 100, widthCm: 80 }))
     expect(radiator.role).toBe('fixture')
     expect(Math.max(...radiator.points.map((p) => p.y))).toBeCloseTo(10, 6)
-    const [cupboard] = elementFootprints(doc, room, element({ kind: 'cupboard', offsetCm: 100, widthCm: 60, depthCm: 40 }))
-    expect(Math.max(...cupboard.points.map((p) => p.y))).toBeCloseTo(40, 6)
+    const [deep] = elementFootprints(doc, room, element({ kind: 'radiator', offsetCm: 100, widthCm: 60, depthCm: 40 }))
+    expect(Math.max(...deep.points.map((p) => p.y))).toBeCloseTo(40, 6)
     expect(elementFootprints(doc, room, element({ kind: 'other' }))).toEqual([])
     expect(elementFootprints(doc, room, element({ kind: 'opening' }))).toEqual([])
   })
@@ -170,19 +169,19 @@ describe('findClashes', () => {
     const room = rect('A', 0, 0, 400, 300)
     const doc = docOf([room], [
       element({ id: 'd1', variant: 'double', offsetCm: 200, widthCm: 140 }),
-      element({ id: 'cup', kind: 'cupboard', offsetCm: 200, widthCm: 120, depthCm: 60 }),
+      element({ id: 'rad', kind: 'radiator', offsetCm: 200, widthCm: 120, depthCm: 60 }),
     ])
     const clashes = findClashes(doc)
     expect(clashes).toHaveLength(1)
-    expect(clashes[0]).toMatchObject({ kind: 'door-fixture', a: 'd1', b: 'cup' })
+    expect(clashes[0]).toMatchObject({ kind: 'door-fixture', a: 'd1', b: 'rad' })
     expect(clashFootprints(doc)).toHaveLength(3) // two sectors + one rectangle
   })
 
   it('ignores two bodies next to each other', () => {
     const room = rect('A', 0, 0, 400, 300)
     const doc = docOf([room], [
-      element({ id: 'cup', kind: 'cupboard', offsetCm: 60, widthCm: 80, depthCm: 60 }),
-      element({ id: 'rad', kind: 'radiator', offsetCm: 70, widthCm: 80 }),
+      element({ id: 'rad1', kind: 'radiator', offsetCm: 60, widthCm: 80, depthCm: 60 }),
+      element({ id: 'rad2', kind: 'radiator', offsetCm: 70, widthCm: 80 }),
     ])
     expect(findClashes(doc)).toEqual([])
   })

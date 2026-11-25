@@ -6,7 +6,7 @@ import { adjacentItems, itemSpan } from './logic'
 const W = 340, PAD = 40
 const f = (n: number) => n.toFixed(1)
 
-/** Mini drawing of one room: wall IDs, start arrows, diagonal, doors/windows/cupboards. Read-only. */
+/** Mini drawing of one room: wall IDs, start arrows, diagonal, doors/windows/radiators. Read-only. */
 export type DrawingPin = { n: number; at: Vec; active?: boolean }
 export type DrawingTape = { a: Vec; b: Vec; label: string }
 
@@ -64,11 +64,6 @@ export function MiniDrawing({ doc, room, focused, pins, tapes, marks, onPick }: 
         const a = T(span.p0), b = T(span.p1), n = span.wall.inward
         const wpx = Math.hypot(b.x - a.x, b.y - a.y)
         const k = el.id
-        if (el.kind === 'cupboard') {
-          const d = (el.depthCm || 60) * s
-          const q = (p: Vec) => `${f(p.x + n.x * d)},${f(p.y + n.y * d)}`
-          return <polygon key={k} points={[`${f(a.x)},${f(a.y)}`, `${f(b.x)},${f(b.y)}`, q(b), q(a)].join(' ')} className="fill-stone-300 stroke-slate-800 dark:fill-stone-600 dark:stroke-slate-200" strokeWidth={1.5} />
-        }
         const cls = {
           window: 'stroke-blue-600 dark:stroke-blue-400', door: 'stroke-violet-600 dark:stroke-violet-400',
           radiator: 'stroke-red-600 dark:stroke-red-400', other: 'stroke-slate-500', opening: 'stroke-slate-100 dark:stroke-slate-800',

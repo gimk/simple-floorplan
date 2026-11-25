@@ -208,7 +208,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
   },
   {
     name: 'place_element',
-    description: 'Place a door, window, opening, radiator, cupboard, or other element along a wall in centimeters.',
+    description: 'Place a door, window, opening, radiator, or other element along a wall in centimeters.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -216,19 +216,19 @@ export const MCP_TOOLS: McpToolDefinition[] = [
         wall: WALL_REF_SCHEMA,
         kind: {
           type: 'string',
-          enum: ['door', 'window', 'opening', 'radiator', 'cupboard', 'other'],
+          enum: ['door', 'window', 'opening', 'radiator', 'other'],
           description: 'Element kind.',
         },
         variant: {
           type: 'string',
-          enum: ['single', 'double', 'sliding', 'pocket', 'standard', 'french', 'fixed', 'wardrobe', 'wall-cabinet', 'recessed'],
+          enum: ['single', 'double', 'sliding', 'pocket', 'bifold', 'standard', 'french', 'fixed'],
           description: 'Optional visual/functional variant.',
         },
         offsetCm: { type: 'number', minimum: 0, description: 'Distance from wall start vertex in cm.' },
         widthCm: { type: 'number', exclusiveMinimum: 0, description: 'Element width in cm (defaults by kind).' },
         heightCm: { type: 'number', exclusiveMinimum: 0, description: 'Optional height in cm.' },
         sillCm: { type: 'number', minimum: 0, description: 'Optional window sill height in cm.' },
-        depthCm: { type: 'number', exclusiveMinimum: 0, description: 'Optional depth in cm (radiators/cupboards).' },
+        depthCm: { type: 'number', exclusiveMinimum: 0, description: 'Optional depth in cm (radiators).' },
         hinge: { type: 'string', enum: ['start', 'end'], description: 'Door hinge side.' },
         swing: { type: 'string', enum: ['in', 'out'], description: 'Door swing direction.' },
         note: { type: 'string', description: 'Optional note.' },

@@ -20,15 +20,14 @@ describe('elementPanelTitle', () => {
 describe('showsHeight', () => {
   it('hides the height field for "other" only', () => {
     expect(showsHeight('other')).toBe(false)
-    for (const kind of ['door', 'window', 'opening', 'cupboard', 'radiator'] as const) {
+    for (const kind of ['door', 'window', 'opening', 'radiator'] as const) {
       expect(showsHeight(kind)).toBe(true)
     }
   })
 })
 
 describe('hasDepth and depthDefault', () => {
-  it('gives a depth to cupboards and radiators only', () => {
-    expect(hasDepth('cupboard')).toBe(true)
+  it('gives a depth to radiators only', () => {
     expect(hasDepth('radiator')).toBe(true)
     expect(hasDepth('door')).toBe(false)
     expect(hasDepth('window')).toBe(false)
@@ -38,7 +37,7 @@ describe('hasDepth and depthDefault', () => {
 
   it('defaults to 10 cm for a radiator and 60 cm otherwise', () => {
     expect(depthDefault('radiator')).toBe(10)
-    expect(depthDefault('cupboard')).toBe(60)
+    expect(depthDefault('other')).toBe(60)
   })
 })
 

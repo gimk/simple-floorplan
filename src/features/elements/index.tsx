@@ -70,7 +70,7 @@ function frameTransform(room: Room, el: Pick<WallElement, 'wallStart' | 'offsetC
   return { wall, f, transform: `matrix(${f.dir.x} ${f.dir.y} ${f.inward.x} ${f.inward.y} ${f.a.x} ${f.a.y})` }
 }
 
-/** Draws doors/windows/storage/radiators on their host walls (drawn above RoomsLayer). */
+/** Draws doors/windows/radiators on their host walls (drawn above RoomsLayer). */
 export function ElementsLayer() {
   const doc = useDoc((s) => s.doc)
   const selection = useUi((s) => s.selection)
@@ -197,7 +197,7 @@ export function ElementsLayer() {
   )
 }
 
-const KINDS: ElementKind[] = ['door', 'window', 'opening', 'cupboard', 'radiator', 'other']
+const KINDS: ElementKind[] = ['door', 'window', 'opening', 'radiator', 'other']
 
 /** One candidate placement under the pointer (the swing is read from `point` at render time). */
 type PlaceHover = { roomId: string; wallStart: string; offsetCm: number; widthCm: number; host: Wall; point: Vec }

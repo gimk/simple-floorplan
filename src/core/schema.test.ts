@@ -60,6 +60,30 @@ describe('schema: parsePlan & migration', () => {
     expect(badEl.ok).toBe(false)
   })
 
+  it('drops an element of a kind this app no longer has (the old cupboard)', () => {
+    const el = (id: string, kind: string) => ({
+      id,
+      roomId: 'r1',
+      wallStart: 'v1',
+      kind,
+      offsetCm: 10,
+      widthCm: 100,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    })
+    const raw = {
+      projectId: 'p1',
+      elements: [el('e_door', 'door'), el('e_cup', 'cupboard'), el('e_cup2', 'cupboard'), el('e_rad', 'radiator')],
+    }
+    // Load path: the unknown kind is filtered out, the rest of the document still parses.
+    const parsed = safeParsePlan(raw)
+    expect(parsed.ok).toBe(true)
+    if (parsed.ok) expect(parsed.doc.elements.map((e) => e.id)).toEqual(['e_door', 'e_rad'])
+    // Snapshot write path: same rule, one element fewer, no error.
+    const body = SnapshotPutBodySchema.parse({ baseVersion: 1, ...raw })
+    expect(body.elements.map((e) => e.id)).toEqual(['e_door', 'e_rad'])
+  })
+
   it('validates SnapshotPutBodySchema with baseVersion', () => {
     const ok = SnapshotPutBodySchema.safeParse({ baseVersion: 2, title: 'Apt', rooms: [] })
     expect(ok.success).toBe(true)

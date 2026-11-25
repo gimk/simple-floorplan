@@ -17,7 +17,7 @@ const HINTS: Record<ToolId, string> = {
   'make-room': 'Click inside an area closed by walls to make a room · the area under the pointer is previewed · Esc = Select',
   slice: 'Click two points across a room to split it into two · Esc cancels',
   cutout: 'Drag to carve a rectangular cutout · Shift+click to start a polygon cutout · Esc cancels',
-  'place-element': 'Click a wall to place the selected door / window / storage on it',
+  'place-element': 'Click a wall to place the selected door / window on it',
   calibrate: 'Click two points on a known length (e.g. a wall), then enter the real size · Esc cancels',
   tape: 'Click two points to record a point-to-point distance · Esc cancels',
   pin: 'Click anywhere to drop a note / photo pin',

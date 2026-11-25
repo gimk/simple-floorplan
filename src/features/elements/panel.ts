@@ -16,10 +16,10 @@ export function elementPanelTitle(kind: ElementKind, wallLabel: string, wallLeng
 /** The inspector shows a height field for every kind but "other". */
 export const showsHeight = (kind: ElementKind): boolean => kind !== 'other'
 
-/** Only cupboards and radiators stand out of the wall, so only they have a depth. */
-export const hasDepth = (kind: ElementKind): boolean => kind === 'cupboard' || kind === 'radiator'
+/** Only radiators stand out of the wall, so only they have a depth. */
+export const hasDepth = (kind: ElementKind): boolean => kind === 'radiator'
 
-/** Depth used when the stored element has none: a radiator is 10 cm deep, a cupboard 60 cm. */
+/** Depth used when the stored element has none: a radiator is 10 cm deep. */
 export const depthDefault = (kind: ElementKind): number => (kind === 'radiator' ? 10 : 60)
 
 /** Inline warning under the width field when offset + width is longer than the wall. */

@@ -153,7 +153,6 @@ export function buildPlanSvg(doc: PlanDoc, opts: SvgOptions = {}): SvgResult {
     { label: 'Exterior wall', draw: (x, y) => wallSwatch(x, y, fs, 'exterior') },
     { label: 'Door', draw: (x, y) => swatchLine(x, y, fs, COLORS.door, true) },
     { label: 'Window', draw: (x, y) => swatchLine(x, y, fs, COLORS.window, false) },
-    { label: 'Storage', draw: (x, y) => `<rect x="${num(x)}" y="${num(y - fs * 0.35)}" width="${num(fs * 2)}" height="${num(fs * 0.7)}" fill="#6b728018" stroke="${COLORS.cupboard}" stroke-width="${num(fs * 0.08)}"/>` },
     { label: 'Radiator', draw: (x, y) => `<rect x="${num(x)}" y="${num(y - fs * 0.25)}" width="${num(fs * 2)}" height="${num(fs * 0.5)}" fill="#dc262622" stroke="${COLORS.radiator}" stroke-width="${num(fs * 0.08)}"/>` },
     { label: 'Verified on site', draw: (x, y) => `<text x="${num(x)}" y="${num(y + fs * 0.3)}" fill="${VERIFIED}" font-size="${num(fs * 0.9)}">123</text>` },
   ]

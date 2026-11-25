@@ -9,7 +9,7 @@ import { NumField } from './NumField'
 const KINDS = Object.keys(KIND_LABEL) as ElementKind[]
 const DOT: Record<ElementKind, string> = {
   window: 'bg-blue-600 dark:bg-blue-400', door: 'bg-violet-600 dark:bg-violet-400', opening: 'border-2 border-dashed border-slate-700 dark:border-slate-300',
-  cupboard: 'border border-slate-700 bg-stone-300 dark:border-slate-300 dark:bg-stone-600', radiator: 'bg-red-600 dark:bg-red-400', other: 'bg-slate-500',
+  radiator: 'bg-red-600 dark:bg-red-400', other: 'bg-slate-500',
 }
 
 // Measurements and items are not undo steps in Measuring Mode.
@@ -156,7 +156,7 @@ export function ItemsEditor({ room, elements }: { room: Room; elements: WallElem
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-center justify-between gap-2">
-        <b className="text-sm">Doors, windows &amp; cupboards</b>
+        <b className="text-sm">Doors &amp; windows</b>
         <button type="button" onClick={onAdd} className="min-h-11 rounded-lg border border-orange-600 px-3 text-sm font-semibold text-orange-700 dark:border-orange-400 dark:text-orange-400">+ Add item</button>
       </div>
       <p className="text-[13px] text-slate-500 dark:text-slate-400">

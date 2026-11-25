@@ -6,8 +6,7 @@
 //   window with variant
 //   "french"                  -> two sectors, like a double door. Other windows give nothing.
 //   sliding / pocket door     -> nothing (the leaf never sweeps the room).
-//   cupboard / radiator /
-//   other                     -> a rectangle of depthCm pushed into the room.
+//   radiator / other          -> a rectangle of depthCm pushed into the room.
 // Two footprints that overlap by more than CLASH_TOLERANCE_CM2 make a clash. A door sector that
 // reaches through another wall (not its host wall) makes a "door-wall" clash: the leaf cannot
 // open against it.
@@ -24,7 +23,6 @@ import { itemSpan } from '../measure/logic'
 export const CLASH_TOLERANCE_CM2 = 25
 /** Depths used when the element has none: the same defaults as the element inspector. */
 export const RADIATOR_DEPTH_CM = 10
-export const CUPBOARD_DEPTH_CM = 60
 /** Two walls are the same wall when both endpoints match within this distance. */
 const SAME_WALL_CM = 3
 /** Points on a quarter arc. 16 keeps the polygon within ~1 mm of the true circle at 80 cm. */
@@ -35,7 +33,7 @@ export type FootprintRole = 'door' | 'fixture'
 /** One solid area of one element, closed outline in world cm. */
 export type Footprint = {
   elementId: string
-  /** door = the sweep of a leaf (also a French window), fixture = the body of a cupboard/radiator. */
+  /** door = the sweep of a leaf (also a French window), fixture = the body of a radiator. */
   role: FootprintRole
   points: Vec[]
 }
@@ -97,17 +95,16 @@ export function swingSector(hinge: Vec, along: Vec, open: Vec, radius: number, s
   return points
 }
 
-/** Body depth of a standing fixture: its own depthCm, else radiator 10 cm, cupboard 60 cm. */
+/** Body depth of a standing fixture: its own depthCm, else radiator 10 cm. */
 export function fixtureDepth(el: Pick<WallElement, 'kind' | 'depthCm'>): number {
   const own = el.depthCm
   if (typeof own === 'number' && Number.isFinite(own) && own > 0) return own
-  if (el.kind === 'cupboard') return CUPBOARD_DEPTH_CM
   if (el.kind === 'radiator') return RADIATOR_DEPTH_CM
   return 0 // "other" without a depth has no body to clash with
 }
 
 const hasFootprint = (el: WallElement) =>
-  el.kind === 'door' || el.kind === 'window' || el.kind === 'cupboard' || el.kind === 'radiator' || el.kind === 'other'
+  el.kind === 'door' || el.kind === 'window' || el.kind === 'radiator' || el.kind === 'other'
 
 /** Footprints of one element, in world cm. Empty when the element cannot be drawn yet. */
 export function elementFootprints(
@@ -202,7 +199,7 @@ export function findClashes(doc: PlanDoc, footprints: Footprint[] = clashFootpri
           : first.role === 'door' || second.role === 'door'
             ? 'door-fixture'
             : null
-      if (!kind) continue // two bodies (radiator next to a cupboard) never clash
+      if (!kind) continue // two bodies (two radiators side by side) never clash
       let overlap = 0
       for (const fa of byElement.get(ids[i])!) {
         for (const fb of byElement.get(ids[j])!) overlap += overlapArea(fa.points, fb.points)

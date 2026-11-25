@@ -20,7 +20,7 @@
 //   WALLSTATE := demolish | new            (renovation, 7.4; default = existing)
 //   hole      := "hole" "poly(" pt ( WS pt )* ")"
 //   element   := KIND LABEL elemAttr*
-//   KIND      := door | window | opening | cupboard | radiator | other
+//   KIND      := door | window | opening | radiator | other
 //   elemAttr  := "id=" WORD | "at=" num | "w=" num | "h=" num | "sill=" num
 //              | "depth=" num | "hinge=" (start|end) | "swing=" (in|out)
 //              | "note=" STRING | VARIANT          (VARIANT = bare word, e.g. "french")
@@ -213,11 +213,10 @@ function decodeSketches(line: number, json: string): { p: number; mark: PhotoMar
   return out
 }
 
-const ELEMENT_KINDS: ElementKind[] = ['door', 'window', 'opening', 'cupboard', 'radiator', 'other']
+const ELEMENT_KINDS: ElementKind[] = ['door', 'window', 'opening', 'radiator', 'other']
 const VARIANTS = new Set<string>([
-  'single', 'double', 'sliding', 'pocket',
+  'single', 'double', 'sliding', 'pocket', 'bifold',
   'standard', 'french', 'fixed',
-  'wall-cabinet', 'recessed', 'wardrobe',
 ])
 
 export function planToDsl(doc: PlanDoc): string {

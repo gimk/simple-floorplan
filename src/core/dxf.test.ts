@@ -22,7 +22,7 @@ function sampleDoc(): PlanDocV1 {
     { type: 'set_wall_props', wall: 'CU-1', wallType: 'exterior', thicknessCm: 30 },
     { type: 'place_element', id: 'el_door', wall: 'SE-2', kind: 'door', offsetCm: 100, widthCm: 80, heightCm: 204 },
     { type: 'place_element', id: 'el_win', wall: 'CU-2', kind: 'window', variant: 'standard', offsetCm: 40, widthCm: 120, heightCm: 140, sillCm: 90 },
-    { type: 'place_element', id: 'el_cup', wall: 'CU-3', kind: 'cupboard', variant: 'wall-cabinet', offsetCm: 10, widthCm: 100, depthCm: 60 },
+    { type: 'place_element', id: 'el_rad', wall: 'CU-3', kind: 'radiator', offsetCm: 10, widthCm: 100, heightCm: 60, depthCm: 20 },
   ]).doc
 }
 

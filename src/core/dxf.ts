@@ -4,7 +4,7 @@
 // measured CCW in DXF space. $INSUNITS = 5 (centimeters).
 //
 // Layers: ROOMS, WALLS_BEARING, WALLS_PARTITION, WALLS_EXTERIOR, DOORS, WINDOWS,
-// STORAGE, DIMENSIONS, TEXT.
+// STORAGE (standing fixtures), DIMENSIONS, TEXT.
 // R12 has no LWPOLYLINE: room outlines are POLYLINE (closed, flag 70=1) + VERTEX
 // + SEQEND; walls are pairs of LINE entities (both faces); door swings are ARC + leaf
 // LINE; room labels and wall dimensions are TEXT.
@@ -104,7 +104,6 @@ const KIND_LAYER: Record<ElementKind, string> = {
   door: 'DOORS',
   opening: 'DOORS',
   window: 'WINDOWS',
-  cupboard: 'STORAGE',
   radiator: 'STORAGE',
   other: 'STORAGE',
 }
@@ -161,7 +160,7 @@ function emitElement(e: E, room: Room, wall: Wall, el: WallElement) {
     return
   }
 
-  // cupboard / radiator / other: rectangle protruding inward by depthCm.
+  // radiator / other: rectangle protruding inward by depthCm.
   const depth = el.depthCm ?? 30
   const a2 = { x: f.a.x + wall.inward.x * depth, y: f.a.y + wall.inward.y * depth }
   const b2 = { x: f.b.x + wall.inward.x * depth, y: f.b.y + wall.inward.y * depth }

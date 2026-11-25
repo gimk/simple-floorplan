@@ -52,15 +52,13 @@ export type Room = {
   diagonal?: [number, number]
 }
 
-export type ElementKind = 'door' | 'window' | 'opening' | 'cupboard' | 'radiator' | 'other'
+export type ElementKind = 'door' | 'window' | 'opening' | 'radiator' | 'other'
 
 export type ElementVariant =
   // doors
-  | 'single' | 'double' | 'sliding' | 'pocket'
+  | 'single' | 'double' | 'sliding' | 'pocket' | 'bifold'
   // windows
   | 'standard' | 'french' | 'fixed'
-  // storage
-  | 'wall-cabinet' | 'recessed' | 'wardrobe'
 
 /**
  * A door / window / fixture attached to a wall.
