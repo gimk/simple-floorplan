@@ -204,6 +204,7 @@ function Label({ x, y, angle, text, ok, onTap }: { x: number; y: number; angle: 
         x={f(x)} y={f(y)}
         transform={angle ? `rotate(${f(angle)} ${f(x)} ${f(y)})` : undefined}
         textAnchor="middle" dominantBaseline="central" pointerEvents="none"
+        data-value-state={ok ? 'measured' : undefined}
         className={`font-mono text-[12px] font-semibold [paint-order:stroke] stroke-white stroke-[4px] dark:stroke-[#1b2128] ${ok ? 'fill-green-700 dark:fill-green-400' : 'fill-orange-700 dark:fill-orange-400'}`}
       >
         {text}

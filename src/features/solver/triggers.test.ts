@@ -111,7 +111,9 @@ describe('solver triggers', () => {
       nodes: d.nodes!.map((n) => (n.id === 'N1' || n.id === 'N4' ? { ...n, x: n.x + 10 } : n)),
     }))
     // solverEditRule held W4 as 'edit'; re-solve has NOT fired yet before debounce.
-    expect(useDoc.getState().doc.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W4', by: 'edit' })
+    expect(useDoc.getState().doc.solver!.revoked).toContainEqual(
+      expect.objectContaining({ kind: 'position', wallId: 'W4', by: 'edit' }),
+    )
     expect(useDoc.getState().doc.solver!.solvedAt).toBe(solvedAtBefore)
     expect(useDoc.temporal.getState().pastStates.length).toBe(pastBeforeEdit + 1)
 
@@ -186,7 +188,9 @@ describe('solver triggers', () => {
     endDrag(start2)
     expect(useDoc.getState().doc.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W4')).toBe(false)
     expect('N1' in useDoc.getState().doc.solver!.baseNodes).toBe(false)
-    expect(useDoc.getState().doc.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W4', by: 'edit' })
+    expect(useDoc.getState().doc.solver!.revoked).toContainEqual(
+      expect.objectContaining({ kind: 'position', wallId: 'W4', by: 'edit' }),
+    )
 
     vi.advanceTimersByTime(SOLVER_DEBOUNCE_MS)
     expect(useDoc.getState().doc.solver!.solvedAt).not.toBe(solvedAtBefore)

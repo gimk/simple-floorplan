@@ -273,6 +273,91 @@ describe('SolvePanel changes & kept walls', () => {
     expect(rowText('thickness:W2')).toContain('thickness: kept at plan value')
     expect(rowText('thickness:W2')).toContain('(you edited it)')
   })
+
+  it('keeps the readable multi-face wall label in Kept walls after revoking', () => {
+    // Wall W_SHARED is shared by three room faces: EN-1 / CO-1 / WC-1.
+    const nodes: StoredNode[] = [
+      { id: 'N1', x: 0, y: 0 },
+      { id: 'N2', x: 300, y: 0 },
+      { id: 'N3', x: 300, y: 200 },
+      { id: 'N4', x: 0, y: 200 },
+      { id: 'N5', x: 150, y: 0 },
+      { id: 'N6', x: 0, y: -100 },
+      { id: 'N7', x: 150, y: -100 },
+      { id: 'N8', x: 300, y: -100 },
+    ]
+    const walls: StoredWall[] = [
+      { id: 'W_SHARED', a: 'N1', b: 'N2', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W2', a: 'N2', b: 'N3', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W3', a: 'N3', b: 'N4', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W4', a: 'N4', b: 'N1', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W5', a: 'N1', b: 'N6', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W6', a: 'N6', b: 'N7', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W7', a: 'N7', b: 'N5', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W8', a: 'N7', b: 'N8', faces: [], type: 'partition', thicknessCm: 10 },
+      { id: 'W9', a: 'N8', b: 'N2', faces: [], type: 'partition', thicknessCm: 10 },
+    ]
+    const base: PlanDoc = {
+      ...emptyDoc(),
+      schemaVersion: 2,
+      nodes,
+      walls,
+      rooms: [
+        {
+          id: 'R_EN', code: 'EN', name: 'Entrée', vertices: [], holes: [], walls: {}, walkOrder: 1,
+          cycle: [
+            { wallId: 'W_SHARED', side: 'L', from: 0, to: 300, cornerId: 'e1' },
+            { wallId: 'W2', side: 'L', from: 0, to: 200, cornerId: 'e2' },
+            { wallId: 'W3', side: 'L', from: 0, to: 300, cornerId: 'e3' },
+            { wallId: 'W4', side: 'L', from: 0, to: 200, cornerId: 'e4' },
+          ],
+        },
+        {
+          id: 'R_CO', code: 'CO', name: 'Couloir', vertices: [], holes: [], walls: {}, walkOrder: 2,
+          cycle: [
+            { wallId: 'W6', side: 'L', from: 0, to: 150, cornerId: 'c1' },
+            { wallId: 'W7', side: 'L', from: 0, to: 100, cornerId: 'c2' },
+            { wallId: 'W_SHARED', side: 'R', from: 0, to: 150, cornerId: 'c3' },
+            { wallId: 'W5', side: 'R', from: 0, to: 100, cornerId: 'c4' },
+          ],
+        },
+        {
+          id: 'R_WC', code: 'WC', name: 'Wc', vertices: [], holes: [], walls: {}, walkOrder: 3,
+          cycle: [
+            { wallId: 'W8', side: 'L', from: 0, to: 150, cornerId: 'w1' },
+            { wallId: 'W9', side: 'L', from: 0, to: 100, cornerId: 'w2' },
+            { wallId: 'W_SHARED', side: 'R', from: 150, to: 300, cornerId: 'w3' },
+            { wallId: 'W7', side: 'R', from: 0, to: 100, cornerId: 'w4' },
+          ],
+        },
+      ],
+      measurements: {
+        'EN-2': { label: 'EN-2', actualCm: 210, updatedAt: FIXED_NOW },
+        'EN-4': { label: 'EN-4', actualCm: 210, updatedAt: FIXED_NOW },
+      },
+    }
+    const mat: PlanDoc = { ...base, rooms: materializeRooms(base) }
+    useDoc.getState().replace(mat)
+    setSolverEnabled(true)
+    revokeSolverChange({ kind: 'position', wallId: 'W_SHARED' })
+
+    const after = useDoc.getState().doc
+    const hold = after.solver!.revoked.find((h) => h.wallId === 'W_SHARED')
+    expect(hold?.label).toBe('EN-1 / CO-3 / WC-3')
+
+    const html = render(after).replace(/<!-- -->/g, '')
+    expect(html).toContain('EN-1 / CO-3 / WC-3 position: kept at plan value')
+    expect(html).toContain('(revoked)')
+
+    // Even if room cycles are absent, the stored hold.label still renders (never empty).
+    const noCycles: PlanDoc = {
+      ...after,
+      rooms: after.rooms.map((r) => ({ ...r, cycle: undefined })),
+      walls: after.walls!.map((w) => ({ ...w, faces: [] })),
+    }
+    const htmlFallback = render(noCycles).replace(/<!-- -->/g, '')
+    expect(htmlFallback).toContain('EN-1 / CO-3 / WC-3 position: kept at plan value')
+  })
 })
 
 describe('SolvePanel progress', () => {

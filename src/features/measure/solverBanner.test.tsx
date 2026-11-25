@@ -7,7 +7,10 @@ import { emptyDoc } from '../../model/store'
 import type { Measurement, PlanDoc, Room } from '../../model/types'
 import { LEGEND_TIP_TEXT, SOLVER_OFF_TEXT, SOLVER_ON_TEXT, SolverBanner, SolverLegend } from './SolverBanner'
 import { fmtCm } from '../../model/geometry'
+import { FacadeSection } from './FacadeCard'
 import { fieldLine, measureRows } from './logic'
+import { MiniDrawing } from './MiniDrawing'
+import { Overview } from './Overview'
 import { RoomCard } from './RoomCard'
 
 const room = (id: string, pts: [number, number][]): Room => ({
@@ -129,5 +132,58 @@ describe('RoomCard field lines', () => {
     expect(html).toContain(`Solved ${fmtCm(planned(base, 'A-4'))} · matches measured`)
     expect(html).toContain('text-violet-700')
     expect(html).not.toContain('check this value')
+  })
+
+  it('adds data-value-state hooks for sunlight mode across banner, legend, cards, drawing and overview', () => {
+    const base = plan()
+    const wallId = base.walls!.find((w) => w.faces.some((f) => f.roomId === 'A' && f.wallStart === 'Av3'))!.id
+    const doc: PlanDoc = {
+      ...base,
+      measurements: {
+        'A-1': { label: 'A-1', actualCm: planned(base, 'A-1'), updatedAt: '' },
+        'A-4': {
+          label: 'A-4', actualCm: planned(base, 'A-4'), updatedAt: '',
+          target: { wallId, side: 'L', roomId: 'A', kind: 'face' },
+        },
+        [`${wallId}-E`]: { label: `${wallId}-E`, actualCm: 410, updatedAt: '' },
+      },
+      solver: {
+        enabled: true,
+        changes: [{ kind: 'position', wallId, label: 'A-4', moveCm: 1.2, dir: 'E', lengthFromCm: 400, lengthToCm: 401.2 }],
+        revoked: [],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+
+    const bannerOn = renderToString(<SolverBanner doc={doc} />)
+    expect(bannerOn).toContain('data-solver-banner="on"')
+    expect(bannerOn).toMatch(/data-solver-banner="on"[^>]*data-value-state="solved"|data-value-state="solved"[^>]*data-solver-banner="on"/)
+
+    const legend = renderToString(<SolverLegend />)
+    expect(legend).toContain('data-value-state="estimated"')
+    expect(legend).toContain('data-value-state="measured"')
+    expect(legend).toContain('data-value-state="solved"')
+
+    const card = renderToString(<RoomCard doc={doc} room={doc.rooms[0]} allLabels={labels} hideDrawing />)
+    expect(card).toContain('data-value-state="measured"')
+    expect(card).toContain('data-value-state="estimated"')
+    expect(card).toContain('data-value-state="solved"')
+
+    const facade = renderToString(<FacadeSection doc={doc} />)
+    expect(facade).toContain('data-value-state="measured"')
+    expect(facade).toContain('data-value-state="solved"')
+
+    const drawing = renderToString(<MiniDrawing doc={doc} room={doc.rooms[0]} focused={null} />)
+    expect(drawing).toContain('data-value-state="measured"')
+
+    const fullMeasured: PlanDoc = {
+      ...base,
+      measurements: Object.fromEntries(
+        ['A-1', 'A-2', 'A-3', 'A-4', 'A-H'].map((l) => [l, { label: l, actualCm: 300, updatedAt: '' }]),
+      ),
+    }
+    const overview = renderToString(<Overview doc={fullMeasured} rooms={fullMeasured.rooms} />)
+    expect(overview).toContain('data-value-state="measured"')
   })
 })

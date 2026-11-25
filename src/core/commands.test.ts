@@ -803,7 +803,7 @@ describe('commands: document solver (docs/solver-plan.md)', () => {
 
     const rev = apply(on.doc, { type: 'solver_revoke', wallId: change.wallId, kind: change.kind })
     expect(rev.doc.solver?.revoked).toEqual(
-      expect.arrayContaining([{ kind: change.kind, wallId: change.wallId, by: 'revoke' }]),
+      expect.arrayContaining([expect.objectContaining({ kind: change.kind, wallId: change.wallId, by: 'revoke' })]),
     )
     // A revoked change leaves the change list: the wall stays at its base value.
     expect(

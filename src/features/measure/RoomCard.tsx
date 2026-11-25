@@ -86,11 +86,15 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
         onPointerEnter={() => setHover(sid.label)}
         onPointerLeave={() => { if (focused !== sid.label) clearHover(sid.label) }}
       >
-        <label htmlFor={inputId(sid.label)} className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? MEASURED_TEXT : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}>
+        <label
+          htmlFor={inputId(sid.label)}
+          data-value-state={verified ? 'measured' : undefined}
+          className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? MEASURED_TEXT : sid.optional ? 'text-slate-600 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`}
+        >
           <span className="truncate">{title}</span>
           {verified
-            ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> measured</span>
-            : <span className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">{sid.plannedCm != null ? 'estimated' : 'to measure'}</span>}
+            ? <span data-value-state="measured" className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> measured</span>
+            : <span data-value-state={sid.plannedCm != null ? 'estimated' : undefined} className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">{sid.plannedCm != null ? 'estimated' : 'to measure'}</span>}
         </label>
         <NumField
           id={inputId(sid.label)}
@@ -102,7 +106,10 @@ export function RoomCard({ doc, room, allLabels, hideDrawing }: Props) {
           onEnter={() => goNext(sid.label)}
         />
         {line && (
-          <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : change ? SOLVED_TEXT : ESTIMATED_TEXT}`}>
+          <p
+            data-value-state={flagged ? undefined : change ? 'solved' : 'estimated'}
+            className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : change ? SOLVED_TEXT : ESTIMATED_TEXT}`}
+          >
             {/* The plan length (solved when the solver fitted this wall, else the drawn plan), then how
                 far it is from the value typed. d > 0 means the plan is SHORTER than the measurement.
                 A flagged value (over 2 cm) is orange and says to check it. */}

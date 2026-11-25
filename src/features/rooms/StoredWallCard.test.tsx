@@ -6,6 +6,7 @@ import type { Measurement, PlanDoc, Room, WallElement } from '../../model/types'
 import { convertToV2 } from '../../model/v2/convert'
 import { removeRoom } from '../../model/v2/write'
 import { useUi } from '../../model/store'
+import { SOLVED_TEXT } from '../../shell/panel/styles'
 import { RoomsPanelView } from './RoomsPanel'
 import { refusedDeleteText, setStoredWallSide } from './cards'
 import { StoredWallCard } from './StoredWallCard'
@@ -175,6 +176,53 @@ describe('StoredWallCard', () => {
     expect(render(doc, id, 'L').match(/Selected/g)).toHaveLength(1)
     expect(render(doc, id, 'R').match(/Selected/g)).toHaveLength(1)
     expect(render(doc, id)).not.toContain('Selected')
+  })
+
+  it('shows a purple solved line for an unmeasured wall whose length or position changed, and none when Off or unchanged', () => {
+    const doc = plan()
+    const wall = sharedWall(doc)
+    // Solver Off -> no solved line.
+    expect(render(doc, wall.id, 'L')).not.toContain('data-wall-solved=')
+
+    // Solver On, wall unchanged -> no solved line.
+    const unchanged: PlanDoc = {
+      ...doc,
+      solver: { enabled: true, changes: [], revoked: [], baseNodes: {}, baseThickness: {} },
+    }
+    expect(render(unchanged, wall.id, 'L')).not.toContain('data-wall-solved=')
+
+    // Length changed (stretched): shows "Solved length {to} cm (plan was {from} cm)" in SOLVED_TEXT.
+    const aNode = doc.nodes!.find((n) => n.id === wall.a)!
+    const lengthSolved: PlanDoc = {
+      ...doc,
+      solver: {
+        enabled: true,
+        changes: [],
+        revoked: [],
+        baseNodes: { [wall.a]: { x: aNode.x - 10, y: aNode.y } },
+        baseThickness: {},
+      },
+    }
+    const lenHtml = render(lengthSolved, wall.id, 'L').replace(/<!-- -->/g, '')
+    expect(lenHtml).toContain(`data-wall-solved="${wall.id}"`)
+    expect(lenHtml).toContain(SOLVED_TEXT)
+    expect(lenHtml).toContain('Solved length 400 cm (plan was 410 cm)')
+
+    // Pure position move (length unchanged): shows "Solver moved it {moveCm} cm {direction}" in SOLVED_TEXT.
+    const movedSolved: PlanDoc = {
+      ...doc,
+      solver: {
+        enabled: true,
+        changes: [{ kind: 'position', wallId: wall.id, label: 'A-3 / B-1', moveCm: 3.5, dir: 'N', lengthFromCm: 400, lengthToCm: 400 }],
+        revoked: [],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+    const moveHtml = render(movedSolved, wall.id, 'L').replace(/<!-- -->/g, '')
+    expect(moveHtml).toContain(`data-wall-solved="${wall.id}"`)
+    expect(moveHtml).toContain(SOLVED_TEXT)
+    expect(moveHtml).toContain('Solver moved it 3,5 cm north')
   })
 })
 

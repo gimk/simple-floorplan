@@ -6,6 +6,7 @@ import { CircleHelp } from 'lucide-react'
 import type { PlanDoc } from '../../model/types'
 import { handleTipsKeyDown } from '../../shell/ToolHints'
 import { ESTIMATED_TEXT, MEASURED_TEXT, SOLVED_BG, SOLVED_BORDER, SOLVED_TEXT } from '../../shell/panel/styles'
+import type { ValueState } from '../solver/lookup'
 
 /** Solver On: the solver runs when the user leaves Measuring Mode. */
 export const SOLVER_ON_TEXT = 'Solver on. It fits the plan to your values when you leave Measuring Mode.'
@@ -18,10 +19,10 @@ export const LEGEND_TIP_TEXT =
   'Turn the solver on or off in the Solve tab.'
 
 /** One legend item: a dot and a word, both in the colour of its token. */
-function LegendItem({ word, token }: { word: string; token: string }) {
+function LegendItem({ word, token, state }: { word: string; token: string; state: ValueState }) {
   return (
-    <span className={`flex items-center gap-1 ${token}`}>
-      <span aria-hidden="true" className={`h-2.5 w-2.5 flex-none rounded-full bg-current ${token}`} />
+    <span data-value-state={state} className={`flex items-center gap-1 ${token}`}>
+      <span aria-hidden="true" data-value-state={state} className={`h-2.5 w-2.5 flex-none rounded-full bg-current ${token}`} />
       {word}
     </span>
   )
@@ -83,9 +84,9 @@ export function LegendTip({ defaultOpen = false }: { defaultOpen?: boolean }) {
 export function SolverLegend({ tipDefaultOpen = false }: { tipDefaultOpen?: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium" data-solver-legend="">
-      <LegendItem word="Plan" token={ESTIMATED_TEXT} />
-      <LegendItem word="Measured" token={MEASURED_TEXT} />
-      <LegendItem word="Solved" token={SOLVED_TEXT} />
+      <LegendItem word="Plan" token={ESTIMATED_TEXT} state="estimated" />
+      <LegendItem word="Measured" token={MEASURED_TEXT} state="measured" />
+      <LegendItem word="Solved" token={SOLVED_TEXT} state="solved" />
       <LegendTip defaultOpen={tipDefaultOpen} />
     </div>
   )
@@ -100,6 +101,7 @@ export function SolverBanner({ doc, tipDefaultOpen = false }: { doc: PlanDoc; ti
   return (
     <div
       data-solver-banner={on ? 'on' : 'off'}
+      data-value-state={on ? 'solved' : undefined}
       className={`flex flex-col gap-1.5 rounded-lg border px-3 py-2 text-xs ${
         on
           ? `${SOLVED_BG} ${SOLVED_TEXT} ${SOLVED_BORDER}`

@@ -8,6 +8,7 @@
 //   - Stored wall outside:    "W12-E"   -> wallId 'W12',   kind 'position'
 //   - Diagonals ("KI-D"), ceiling heights ("KI-H"), and unknown labels -> undefined
 //     (not tied to one wall's position or thickness).
+import { fmtCm } from '../../model/geometry'
 import { roundTo } from '../../model/precision'
 import { labelRoomCode, parseThicknessLabel } from '../../model/survey'
 import type { PlanDoc, SolverChange, SolverKey } from '../../model/types'
@@ -242,4 +243,37 @@ export function hoverLabelForWall(doc: Pick<PlanDoc, 'rooms' | 'walls'>, wallId:
   if (parseWallValueLabel(centre)) return centre
   const display = wallLabel(doc, wallId)
   return display.split(' / ')[0] || wallId
+}
+
+const DIR_WORD: Record<'N' | 'S' | 'E' | 'W', string> = {
+  N: 'north',
+  S: 'south',
+  E: 'east',
+  W: 'west',
+}
+
+/**
+ * Purple status text for a wall card when the solver changed this wall's length or position,
+ * or null when the solver is Off or the wall did not change.
+ */
+export function wallSolvedSummary(
+  doc: Pick<PlanDoc, 'solver' | 'nodes' | 'walls'>,
+  wallId: string,
+): string | null {
+  if (!doc.solver?.enabled) return null
+  const lenChange = solverLengthChange(doc, wallId)
+  if (lenChange) {
+    return `Solved length ${fmtCm(lenChange.toCm)} cm (plan was ${fmtCm(lenChange.fromCm)} cm)`
+  }
+  const posChange = solverChangeForWall(doc, wallId, 'position')
+  if (!posChange) return null
+  if (
+    posChange.lengthFromCm !== undefined
+    && posChange.lengthToCm !== undefined
+    && Math.abs(posChange.lengthToCm - posChange.lengthFromCm) >= MOVE_TOL_CM
+  ) {
+    return `Solved length ${fmtCm(posChange.lengthToCm)} cm (plan was ${fmtCm(posChange.lengthFromCm)} cm)`
+  }
+  const dir = posChange.dir ? ` ${DIR_WORD[posChange.dir]}` : ''
+  return `Solver moved it ${fmtCm(posChange.moveCm ?? 0)} cm${dir}`
 }

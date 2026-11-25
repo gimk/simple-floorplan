@@ -6,14 +6,18 @@
 // `doc.solver`, and rebuilds room views via `applyGraphUpdate`. `solverOff` writes back
 // `baseNodes` and `baseThickness` and rebuilds the room views, restoring the exact base geometry.
 // A v1 document is converted once via `ensureV2` before solving.
-import { DEFAULT_WALL_CM, dot, mul, roomWalls, sub } from '../../model/geometry'
+import { DEFAULT_WALL_CM, dot, innerWallLengths, mul, roomInnerRing, roomWalls, sub } from '../../model/geometry'
 import { planPrecision, roundTo } from '../../model/precision'
 import type { PlanDoc, SolverChange, SolverHold, SolverKey, StoredNode, StoredWall, Vec } from '../../model/types'
+import { wallCentreCm, wallOutsidePlanCm, wallValueLabel } from '../../model/wallValues'
 import { applyGraphUpdate } from '../../model/v2/drag'
 import { ensureV2 } from '../../model/v2/ensure'
 import { applyGlobal, type GlobalApplyOptions, type GlobalReport } from '../rooms/applyGlobal'
 import type { GlobalHold } from '../rooms/globalSolve'
+import { facadePlannedLengths } from '../rooms/outside/outsideDims'
+import { verifiedWalls } from '../rooms/solve'
 import { readStorageParams, storageCorners, wallRunMetrics, type StorageParams } from '../storage/geometry'
+import { wallLabel } from './lookup'
 
 /** Movement or thickness change threshold (cm) below which a node/wall counts as unchanged. */
 const MOVE_TOL_CM = 0.05
@@ -95,23 +99,46 @@ function holdsFrom(revoked: SolverHold[]): GlobalHold {
   }
 }
 
-/** Best readable label for a stored wall: survey labels of its room faces (walk order), or wallId. */
-function wallLabel(doc: PlanDoc, wallId: string): string {
-  const rooms = [...doc.rooms].sort((a, b) => a.walkOrder - b.walkOrder || a.code.localeCompare(b.code))
-  const labels: string[] = []
-  const seen = new Set<string>()
-  for (const r of rooms) {
-    const cycle = r.cycle ?? []
-    cycle.forEach((f, idx) => {
-      if (f.wallId !== wallId) return
-      const lab = `${r.code}-${idx + 1}`
-      if (!seen.has(lab)) {
-        seen.add(lab)
-        labels.push(lab)
-      }
-    })
+/**
+ * Whole-plan RMS mismatch (cm) of all measured lengths (room inside walls, diagonals, stored wall
+ * centre and outside face values) against the actual geometry of `doc`.
+ */
+function planRmsCm(doc: PlanDoc): number {
+  const diffs: number[] = []
+  for (const room of doc.rooms) {
+    const inner = innerWallLengths(room)
+    for (const v of verifiedWalls(doc, room)) {
+      diffs.push(v.cm - inner[v.index])
+    }
+    const dm = doc.measurements[`${room.code}-D`]?.actualCm
+    if (room.diagonal && dm && dm > 0) {
+      const q = roomInnerRing(room)
+      const a = q[room.diagonal[0]]
+      const b = q[room.diagonal[1]]
+      if (a && b) diffs.push(dm - Math.hypot(b.x - a.x, b.y - a.y))
+    }
   }
-  return labels.length ? labels.join(' / ') : wallId
+  const nodes = doc.nodes ?? []
+  const walls = doc.walls ?? []
+  if (walls.length && nodes.length) {
+    let outsidePlan: Map<string, number> | null = null
+    for (const w of walls) {
+      const cLabel = wallValueLabel(w.id, 'centre')
+      const cm = doc.measurements[cLabel]?.actualCm
+      if (cm && cm > 0) {
+        const planCm = wallCentreCm(nodes, w)
+        if (planCm != null) diffs.push(cm - planCm)
+      }
+      const oLabel = wallValueLabel(w.id, 'outside')
+      const om = doc.measurements[oLabel]?.actualCm
+      if (om && om > 0) {
+        outsidePlan ??= facadePlannedLengths(doc)
+        const planCm = outsidePlan.get(oLabel) ?? wallOutsidePlanCm(doc.rooms, nodes, w)
+        if (planCm != null) diffs.push(om - planCm)
+      }
+    }
+  }
+  return diffs.length ? Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length) : 0
 }
 
 /** Compass direction of a vector (plan x right = East, y down = South). */
@@ -163,20 +190,21 @@ export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc
 
   // If applyGlobal made no change (e.g. no measurements to fit) or the doc is not v2, keep base.
   if (applied.doc === base || base.schemaVersion !== 2 || !base.nodes || !base.walls) {
+    const rmsCm = planRmsCm(base)
     return {
       doc: {
         ...base,
         solver: {
           enabled: true,
           solvedAt,
-          rmsCm: applied.report.rmsCm,
+          rmsCm,
           changes: [],
           revoked,
           baseNodes: {},
           baseThickness: {},
         },
       },
-      report: applied.report,
+      report: { ...applied.report, rmsCm },
     }
   }
 
@@ -518,20 +546,22 @@ export function solverOn(doc: PlanDoc, opts: SolverOptions = {}): { doc: PlanDoc
 
   changes.sort((a, b) => changeSize(b) - changeSize(a) || a.wallId.localeCompare(b.wallId))
 
+  const rmsCm = planRmsCm(nextDoc)
+
   return {
     doc: {
       ...nextDoc,
       solver: {
         enabled: true,
         solvedAt,
-        rmsCm: applied.report.rmsCm,
+        rmsCm,
         changes,
         revoked,
         baseNodes,
         baseThickness,
       },
     },
-    report: applied.report,
+    report: { ...applied.report, rmsCm },
   }
 }
 
@@ -546,9 +576,11 @@ export function revokeChange(
 ): { doc: PlanDoc; report: GlobalReport | null } {
   const prev = doc.solver
   const existing = prev?.revoked ?? []
+  const matched = prev?.changes.find((c) => sameKey(c, key))
+  const label = matched?.label || wallLabel(doc, key.wallId)
   const nextRevoked: SolverHold[] = [
     ...existing.filter((h) => !sameKey(h, key)),
-    { ...key, by: 'revoke' },
+    { ...key, by: 'revoke', ...(label ? { label } : {}) },
   ]
   if (!prev?.enabled) {
     return {
@@ -698,9 +730,13 @@ export function applySolverEdit(prev: PlanDoc, next: PlanDoc): PlanDoc {
   const revoked: SolverHold[] = liveWallIds ? s.revoked.filter((h) => liveWallIds.has(h.wallId)) : [...s.revoked]
   const addEditHold = (kind: 'position' | 'thickness', wallId: string) => {
     if (liveWallIds && !liveWallIds.has(wallId)) return
+    const prevChange = s.changes.find((c) => c.kind === kind && c.wallId === wallId)
+    const prevHold = revoked.find((h) => h.kind === kind && h.wallId === wallId)
+    const label = prevChange?.label || prevHold?.label || wallLabel(next, wallId)
+    const hold: SolverHold = { kind, wallId, by: 'edit', ...(label ? { label } : {}) }
     const idx = revoked.findIndex((h) => h.kind === kind && h.wallId === wallId)
-    if (idx >= 0) revoked[idx] = { kind, wallId, by: 'edit' }
-    else revoked.push({ kind, wallId, by: 'edit' })
+    if (idx >= 0) revoked[idx] = hold
+    else revoked.push(hold)
   }
   for (const wallId of edited.position) addEditHold('position', wallId)
   for (const wallId of edited.thickness) addEditHold('thickness', wallId)

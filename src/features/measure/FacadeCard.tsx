@@ -43,11 +43,12 @@ function FacadeField({ doc, sid }: { doc: PlanDoc; sid: WallSurveyId }) {
     >
       <label
         htmlFor={inputId(sid.label)}
+        data-value-state={verified ? 'measured' : undefined}
         className={`flex items-center justify-between gap-1 font-mono text-[13px] font-semibold ${verified ? MEASURED_TEXT : 'text-slate-600 dark:text-slate-300'}`}
       >
         <span className="truncate" title={`${sid.label} · outside face`}>{sid.label}</span>
         {verified
-          ? <span className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> measured</span>
+          ? <span data-value-state="measured" className="flex items-center gap-0.5 font-sans text-[11px] font-medium"><Check size={13} aria-hidden /> measured</span>
           : <span className="font-sans text-[11px] font-medium text-slate-500 dark:text-slate-400">outside face</span>}
       </label>
       <NumField
@@ -59,7 +60,10 @@ function FacadeField({ doc, sid }: { doc: PlanDoc; sid: WallSurveyId }) {
         onBlur={() => { setFocused((f) => (f === sid.label ? null : f)); clearHover(sid.label) }}
       />
       {line && (
-        <p className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : change ? SOLVED_TEXT : ESTIMATED_TEXT}`}>
+        <p
+          data-value-state={flagged ? undefined : change ? 'solved' : 'estimated'}
+          className={`text-xs ${flagged ? 'rounded bg-orange-100 px-1.5 py-0.5 font-semibold text-orange-800 dark:bg-orange-950 dark:text-orange-300' : change ? SOLVED_TEXT : ESTIMATED_TEXT}`}
+        >
           {line}
         </p>
       )}

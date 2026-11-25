@@ -31,7 +31,7 @@ import {
   Segmented, SwitchRow,
 } from '../../shell/panel'
 import { MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
-import { solverChangeForLabel } from '../solver/lookup'
+import { solverChangeForLabel, wallSolvedSummary } from '../solver/lookup'
 import type { AlignSideChoice } from './cards'
 import {
   alignOfSideChoice, alignSideChoice, deleteStoredWall, patchStoredWall, setStoredWallSide,
@@ -228,7 +228,12 @@ export function StoredWallCard({ doc, wallId, side, face }: {
             }}
           />
         </FieldRow>
-        {centreValue != null && solvedLine(centreLabel, centreValue, view.centreCm)}
+        {centreValue != null
+          ? solvedLine(centreLabel, centreValue, view.centreCm)
+          : (() => {
+              const note = wallSolvedSummary(doc, wall.id)
+              return note ? <p className={`text-xs ${SOLVED_TEXT}`} data-wall-solved={wall.id}>{note}</p> : null
+            })()}
         <SwitchRow
           name="storedWallLocked"
           label="Locked (cannot be moved or resized)"

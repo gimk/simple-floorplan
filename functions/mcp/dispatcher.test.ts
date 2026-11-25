@@ -354,7 +354,7 @@ describe('MCP JSON-RPC dispatcher', () => {
     expect(revoked.isError).toBeUndefined()
     const revResult = first(revoked)
     expect(revResult.revoked as unknown[]).toEqual(
-      expect.arrayContaining([{ kind: change.kind, wallId: change.wallId, by: 'revoke' }]),
+      expect.arrayContaining([expect.objectContaining({ kind: change.kind, wallId: change.wallId, by: 'revoke' })]),
     )
     const restored = await call('solver_restore', { projectId, wallId: change.wallId, kind: change.kind })
     expect(restored.isError).toBeUndefined()

@@ -48,7 +48,13 @@ export function Overview({ doc, rooms }: { doc: PlanDoc; rooms: Room[] }) {
         {rooms.map((r) => {
           const { done, total, state } = roomProgress(doc, r)
           return (
-            <button key={r.id} type="button" onClick={() => goRoom(r.code)} className={`min-h-11 rounded-full border bg-slate-50 px-3 text-[13px] font-medium dark:bg-[#12161b] ${CHIP[state]}`}>
+            <button
+              key={r.id}
+              type="button"
+              data-value-state={state === 'full' ? 'measured' : undefined}
+              onClick={() => goRoom(r.code)}
+              className={`min-h-11 rounded-full border bg-slate-50 px-3 text-[13px] font-medium dark:bg-[#12161b] ${CHIP[state]}`}
+            >
               {r.name} {done}/{total}
             </button>
           )

@@ -4,6 +4,8 @@ import { emptyDoc } from '../../model/store'
 import type { Measurement, PlanDoc, Room, RoomFace, StoredNode, StoredWall } from '../../model/types'
 import { ensureV2 } from '../../model/v2/ensure'
 import { materializeRooms } from '../../model/v2/materialize'
+import { demoRooms } from '../measure/demo'
+import { fitCheck } from '../rooms/fit'
 import { addStorage } from '../storage/actions'
 import { readStorageParams, storageHostWall } from '../storage/geometry'
 import { restoreChange, revokeChange, solverOff, solverOn, userEditedWalls } from './engine'
@@ -141,7 +143,7 @@ describe('solver engine', () => {
     expect(solved.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W4')).toBe(true)
 
     const { doc: revokedDoc } = revokeChange(solved, { kind: 'position', wallId: 'W4' }, { now: FIXED_NOW })
-    expect(revokedDoc.solver!.revoked).toEqual([{ kind: 'position', wallId: 'W4', by: 'revoke' }])
+    expect(revokedDoc.solver!.revoked).toEqual([{ kind: 'position', wallId: 'W4', by: 'revoke', label: 'KI-4' }])
     // W4 kept its base x = 0 and has no position change.
     expect(revokedDoc.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W4')).toBe(false)
     const n1 = revokedDoc.nodes!.find((n) => n.id === 'N1')!
@@ -197,7 +199,7 @@ describe('solver engine', () => {
     const ruled = solverEditRule(solved, userMoved)
     expect(ruled.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W2')).toBe(false)
     expect('N2' in ruled.solver!.baseNodes).toBe(false)
-    expect(ruled.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W2', by: 'edit' })
+    expect(ruled.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W2', by: 'edit', label: 'KI-2' })
 
     // Solver write (new solver object ref) is ignored by solverEditRule and userEditedWalls.
     const solverWrite: PlanDoc = {
@@ -366,7 +368,7 @@ describe('solver engine', () => {
     const ruled = solverEditRule(solved, userMoved)
     expect(ruled.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W2')).toBe(false)
     expect(ruled.solver!.changes.some((c) => c.kind === 'position' && c.wallId === 'W1')).toBe(true)
-    expect(ruled.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W2', by: 'edit' })
+    expect(ruled.solver!.revoked).toContainEqual({ kind: 'position', wallId: 'W2', by: 'edit', label: 'KI-2' })
     expect(ruled.solver!.revoked.some((h) => h.wallId === 'W1')).toBe(false)
   })
 
@@ -408,5 +410,44 @@ describe('solver engine', () => {
     const { doc: solvedB } = solverOn(baseB, { now: FIXED_NOW })
     expect(solvedB.nodes!.find((n) => n.id === 'N1')!.y).not.toBeCloseTo(0, 1)
     expect(solvedB.nodes!.find((n) => n.id === 'N_NEAR')).toEqual({ id: 'N_NEAR', x: 200, y: 0.8 })
+  })
+
+  it('reports doc.solver.rmsCm matching fitCheck on the final solved plan', () => {
+    // Case 1: room with 4 measured walls that cannot all fit (opposite walls KI-1 vs KI-3 differ by 4 cm).
+    const conflictBase = makeSingleRoomV2({ 'KI-1': 390, 'KI-2': 290, 'KI-3': 394, 'KI-4': 290 })
+    const { doc: conflictSolved, report: conflictReport } = solverOn(conflictBase, { now: FIXED_NOW })
+    const conflictFit = fitCheck(conflictSolved, conflictSolved.rooms[0])!
+    expect(conflictFit.count).toBe(4)
+    expect(conflictFit.rmsCm).toBeGreaterThan(1)
+    expect(conflictSolved.solver!.rmsCm).toBeCloseTo(conflictFit.rmsCm, 4)
+    expect(conflictReport.rmsCm).toBeCloseTo(conflictFit.rmsCm, 4)
+
+    // Case 2: snapping after solveGlobal (precisionCm = 1) leaves a 0.4 cm residual on the final plan
+    // even though the unsnapped continuous solve had ~0 cm residual. Both numbers must agree.
+    const snapBase: PlanDoc = {
+      ...makeSingleRoomV2({ 'KI-1': 390.4, 'KI-2': 290.4, 'KI-3': 390.4, 'KI-4': 290.4 }),
+      apartment: { precisionCm: 1 },
+    }
+    const { doc: snapSolved, report: snapReport } = solverOn(snapBase, { now: FIXED_NOW })
+    const snapFit = fitCheck(snapSolved, snapSolved.rooms[0])!
+    expect(snapFit.count).toBe(4)
+    expect(snapFit.rmsCm).toBeGreaterThan(0.3)
+    expect(snapSolved.solver!.rmsCm).toBeCloseTo(snapFit.rmsCm, 4)
+    expect(snapReport.rmsCm).toBeCloseTo(snapFit.rmsCm, 4)
+
+    // Case 3: demo apartment with 4 measured walls in Entrée.
+    const raw: PlanDoc = {
+      ...emptyDoc(),
+      title: 'Demo',
+      rooms: demoRooms(),
+      measurements: meas({ 'EN-1': 250, 'EN-2': 238, 'EN-3': 67, 'EN-4': 140 }),
+    }
+    const demoBase = ensureV2(raw, { now: FIXED_NOW })
+    const { doc: demoSolved, report: demoReport } = solverOn(demoBase, { now: FIXED_NOW })
+    const entree = demoSolved.rooms.find((r) => r.code === 'EN')!
+    const demoFit = fitCheck(demoSolved, entree)!
+    expect(demoFit.count).toBe(4)
+    expect(demoSolved.solver!.rmsCm).toBeCloseTo(demoFit.rmsCm, 4)
+    expect(demoReport.rmsCm).toBeCloseTo(demoFit.rmsCm, 4)
   })
 })

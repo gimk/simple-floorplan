@@ -33,6 +33,11 @@ body { font-family: system-ui, -apple-system, sans-serif; background: #12161b; c
 .sunlight,
 .sunlight [class*="dark:text-"] { color: #000 !important; }
 .sunlight [class*="dark:border-"] { border-color: #000 !important; }
+.sunlight [data-value-state="estimated"] { color: #475569 !important; border-color: #475569 !important; }
+.sunlight [data-value-state="measured"] { color: #047857 !important; border-color: #047857 !important; }
+.sunlight [data-value-state="solved"] { color: #5b21b6 !important; border-color: #5b21b6 !important; }
+.sunlight svg [data-value-state="measured"] { fill: #047857 !important; }
+.sunlight svg [data-value-state="solved"] { fill: #5b21b6 !important; }
 .sunlight input, .sunlight textarea, .sunlight select { font-size: 1.15rem !important; }
 .sunlight input { font-size: 1.4rem !important; } /* bigger digits for the measurement fields */
 .sunlight svg line:not([stroke="transparent"]), .sunlight svg polygon, .sunlight svg path, .sunlight svg rect[stroke], .sunlight svg circle {

@@ -11,7 +11,7 @@ import {
   outsideFaceSide, storedWallOfRoomWall, wallCentreCm, wallOutsidePlanCm, wallValueLabel,
 } from '../../model/wallValues'
 import { setMeasurement } from '../measure/actions'
-import { solverChangeForLabel } from '../solver/lookup'
+import { solverChangeForLabel, wallSolvedSummary } from '../solver/lookup'
 import { EmptyHint, FieldRow, IconButton, NumberField, PanelSection, Segmented, SwitchRow } from '../../shell/panel'
 import { MEASURED_TEXT, SOLVED_TEXT } from '../../shell/panel/styles'
 import {
@@ -221,7 +221,12 @@ function StoredWallValues({ doc, wall }: { doc: PlanDoc; wall: StoredWall }) {
           }}
         />
       </FieldRow>
-      {centreValue != null && solvedLine(centreLabel, centreValue, centreCm)}
+      {centreValue != null
+        ? solvedLine(centreLabel, centreValue, centreCm)
+        : (() => {
+            const note = wallSolvedSummary(doc, wall.id)
+            return note ? <p className={`text-xs ${SOLVED_TEXT}`} data-wall-solved={wall.id}>{note}</p> : null
+          })()}
       {facade && (
         <>
           <FieldRow label="Outside face" htmlFor={`wall-${wall.id}-outside`} hint="corner to corner">

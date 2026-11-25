@@ -334,6 +334,7 @@ export const SolverKeySchema = z.object({
 
 export const SolverHoldSchema = SolverKeySchema.extend({
   by: z.enum(['revoke', 'edit']),
+  label: z.string().optional(),
 })
 
 export const SolverChangeSchema = SolverKeySchema.extend({

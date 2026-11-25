@@ -324,7 +324,8 @@ function KeptWallRow({ doc, hold, onRestore }: {
   hold: SolverHold
   onRestore: (key: SolverKey) => void
 }) {
-  const label = wallLabel(doc, hold.wallId)
+  const live = wallLabel(doc, hold.wallId)
+  const label = live && live !== hold.wallId ? live : (hold.label || live || hold.wallId)
   const hoverLabel = hoverLabelForWall(doc, hold.wallId)
   const hover = useRowHover(hoverLabel)
   const reason = hold.by === 'edit' ? '(you edited it)' : '(revoked)'

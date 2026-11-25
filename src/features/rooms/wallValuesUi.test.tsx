@@ -7,6 +7,7 @@ import { emptyDoc } from '../../model/store'
 import type { Measurement, PlanDoc, Room } from '../../model/types'
 import { FacadeSection } from '../measure/FacadeCard'
 import { RemovedWallsOldValues, oldOfDeletedRooms, oldOfRemovedWalls } from '../measure/OldValues'
+import { SOLVED_TEXT } from '../../shell/panel/styles'
 import { RoomsPanelView } from './RoomsPanel'
 
 const room = (id: string, pts: [number, number][], thicknessOf: Record<number, number> = {}): Room => ({
@@ -74,6 +75,31 @@ describe('Inspect wall card: wall values', () => {
     const htmlOn = renderToString(<RoomsPanelView doc={withSolved} selection={{ kind: 'wall', roomId: 'A', wallStart: 'Av3' }} activeHole={null} />)
     expect(htmlOn).toContain('Measured')
     expect(htmlOn).toContain('Solved')
+  })
+
+  it('shows a purple solved line on WallCard for an unmeasured solved wall and none when Off', () => {
+    const doc = plan()
+    const id = wallIdOf(doc, 'A', 'Av3')
+    expect(
+      renderToString(<RoomsPanelView doc={doc} selection={{ kind: 'wall', roomId: 'A', wallStart: 'Av3' }} activeHole={null} />),
+    ).not.toContain('data-wall-solved=')
+
+    const moved: PlanDoc = {
+      ...doc,
+      solver: {
+        enabled: true,
+        changes: [{ kind: 'position', wallId: id, label: 'A-4', moveCm: 2.5, dir: 'W', lengthFromCm: 400, lengthToCm: 400 }],
+        revoked: [],
+        baseNodes: {},
+        baseThickness: {},
+      },
+    }
+    const htmlMoved = renderToString(
+      <RoomsPanelView doc={moved} selection={{ kind: 'wall', roomId: 'A', wallStart: 'Av3' }} activeHole={null} />,
+    ).replace(/<!-- -->/g, '')
+    expect(htmlMoved).toContain(`data-wall-solved="${id}"`)
+    expect(htmlMoved).toContain(SOLVED_TEXT)
+    expect(htmlMoved).toContain('Solver moved it 2,5 cm west')
   })
 })
 

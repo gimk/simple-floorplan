@@ -326,7 +326,11 @@ export type Apartment = {
 export type SolverKey = { kind: 'position' | 'thickness'; wallId: string }
 
 /** A wall held at its base value: revoked by the user, or edited by hand while the solver is On. */
-export type SolverHold = SolverKey & { by: 'revoke' | 'edit' }
+export type SolverHold = SolverKey & {
+  by: 'revoke' | 'edit'
+  /** Best readable wall label at the time of the hold (e.g. "EN-6 / CO-4 / WC-3"). */
+  label?: string
+}
 
 /** One recorded change made by the solver on a stored wall. */
 export type SolverChange = SolverKey & {
