@@ -9,6 +9,11 @@ import { CalibrateOverlay } from './features/background/CalibrateOverlay'
 import { RefImageInspect } from './features/background/RefImageInspect'
 import { RefImagesLayer } from './features/background/RefImagesLayer'
 import { loadRefImageFile } from './features/background/upload'
+import { deleteOpening } from './features/openings/actions'
+import { ObjectsPanel } from './features/openings/ObjectsPanel'
+import { OpeningInspect } from './features/openings/OpeningInspect'
+import { OpeningsLayer } from './features/openings/OpeningsLayer'
+import { PlaceOpeningOverlay } from './features/openings/PlaceOpeningOverlay'
 import { deleteRooms } from './features/rooms/actions'
 import { PlanToolbar } from './features/rooms/PlanToolbar'
 import { RoomInspect } from './features/rooms/RoomInspect'
@@ -74,7 +79,7 @@ export default function App() {
         else useDoc.getState().undo()
         return
       }
-      // Delete / Backspace removes the selected reference image or rooms in Plan mode.
+      // Delete / Backspace removes the selected opening, reference image or rooms in Plan mode.
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const ui = useUi.getState()
@@ -84,6 +89,12 @@ export default function App() {
         e.preventDefault()
         useDoc.getState().deleteRefImage(sel.imageId)
         useUi.getState().set({ selection: { kind: 'none' }, calibratingImageId: null })
+        return
+      }
+      if (sel.kind === 'opening') {
+        e.preventDefault()
+        deleteOpening(sel.artboardId, sel.openingId)
+        useUi.getState().set({ selection: { kind: 'none' } })
         return
       }
       if (sel.kind === 'room' && sel.roomIds.length > 0) {
@@ -140,8 +151,8 @@ export default function App() {
   }
 
   /**
-   * True while the room or wall of the selection still exists. A deleted room (or an undo of its
-   * creation) leaves a stale selection: the Inspect panel then falls back to the artboard card
+   * True while the room, wall or opening of the selection still exists. A deleted item (or an undo
+   * of its creation) leaves a stale selection: the Inspect panel then falls back to the artboard card
    * instead of showing an empty column.
    */
   const selectionExists =
@@ -153,7 +164,11 @@ export default function App() {
         ? !!artboards
             .find((a) => a.id === selection.artboardId)
             ?.rooms.some((r) => r.id === selection.roomId && selection.edgeIndex < r.vertices.length)
-        : true
+        : selection.kind === 'opening'
+          ? !!artboards
+              .find((a) => a.id === selection.artboardId)
+              ?.openings.some((o) => o.id === selection.openingId)
+          : true
 
   /**
    * The wall-length input only lives while the selection that opened it is still current, and only
@@ -177,7 +192,15 @@ export default function App() {
           ariaLabel="Mode"
           value={mode}
           options={MODES}
-          onChange={(m) => setUi({ mode: m as Mode })}
+          onChange={(m) => {
+            const next = m as Mode
+            // Design mode has none of the Plan-mode placement tools: drop their state.
+            setUi(
+              next === 'design'
+                ? { mode: next, tool: 'select', placingOpeningKind: null, calibratingImageId: null }
+                : { mode: next },
+            )
+          }}
           className="w-44"
         />
         <div className="flex justify-end gap-1">
@@ -217,8 +240,12 @@ export default function App() {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside aria-label="Left panel" data-testid="left-panel" className="hidden w-60 shrink-0 border-r border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 md:block">
-          {mode === 'plan' ? 'Rooms and artboards' : 'Furniture'}
+        <aside aria-label="Left panel" data-testid="left-panel" className="hidden w-60 shrink-0 overflow-y-auto border-r border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 md:block">
+          {mode === 'plan' ? (
+            <ObjectsPanel onUploadImage={() => imageRef.current?.click()} />
+          ) : (
+            <p>Furniture — Phase 4</p>
+          )}
         </aside>
         <main
           data-testid="canvas-container"
@@ -232,6 +259,7 @@ export default function App() {
               <>
                 <CalibrateOverlay />
                 <RoomToolsOverlay />
+                <PlaceOpeningOverlay />
               </>
             }
           >
@@ -255,6 +283,7 @@ export default function App() {
                   artboard={a}
                   onEditWall={(req) => setEditWall({ req, openedWith: useUi.getState().selection })}
                 />
+                <OpeningsLayer artboard={a} />
               </ArtboardContent>
             ))}
           </Viewport>
@@ -271,6 +300,8 @@ export default function App() {
             <RoomInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
           ) : selection.kind === 'wall' && selectionExists ? (
             <WallInspect artboardId={selection.artboardId} roomId={selection.roomId} edgeIndex={selection.edgeIndex} />
+          ) : selection.kind === 'opening' && selectionExists ? (
+            <OpeningInspect artboardId={selection.artboardId} openingId={selection.openingId} />
           ) : selection.kind === 'refImage' ? (
             <RefImageInspect imageId={selection.imageId} />
           ) : (
