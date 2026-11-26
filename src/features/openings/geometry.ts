@@ -274,15 +274,23 @@ export function openingSymbol(op: Opening, u: (px: number) => number): OpeningSy
     }
     // Standard frame: centre line plus one thinner line on each side.
     const o = u(2.5)
-    return {
-      wallLine: false,
-      paths: [
-        { pts: [at(-half, 0), at(half, 0)], weight: FRAME_WEIGHT },
-        { pts: [at(-half, o), at(half, o)], weight: 1, opacity: 0.6 },
-        { pts: [at(-half, -o), at(half, -o)], weight: 1, opacity: 0.6 },
-      ],
-      arcs: [],
+    const frame: OpeningSymbolPath[] = [
+      { pts: [at(-half, 0), at(half, 0)], weight: FRAME_WEIGHT },
+      { pts: [at(-half, o), at(half, o)], weight: 1, opacity: 0.6 },
+      { pts: [at(-half, -o), at(half, -o)], weight: 1, opacity: 0.6 },
+    ]
+    // Casement windows keep the frame and add the swinging sash leaves with their quarter-circle
+    // arcs, exactly like a door leaf: one leaf hinged on one side, or two half-width leaves that
+    // meet in the middle. Defaults when missing: hinge 'left', swing 'in'.
+    if (variant === 'casement' || variant === 'double-casement') {
+      const leaves = variant === 'casement' ? [doorArcGeometry(op)] : frenchDoorGeometry(op)
+      return {
+        wallLine: false,
+        paths: [...frame, ...leaves.map((g): OpeningSymbolPath => ({ pts: [g.hingePt, g.openTipPt], weight: LEAF_WEIGHT }))],
+        arcs: leaves.map(arcOf),
+      }
     }
+    return { wallLine: false, paths: frame, arcs: [] }
   }
 
   // 'opening': the plain wall gap, made visible by the end ticks the renderers add.

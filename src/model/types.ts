@@ -24,8 +24,11 @@ export type OpeningKind = 'door' | 'window' | 'opening'
 
 /** Door styles. 'standard' is the single leaf with a quarter-circle swing arc. */
 export type DoorVariant = 'standard' | 'pocket' | 'bypass' | 'french'
-/** Window styles. 'standard' is the triple-line frame. */
-export type WindowVariant = 'standard' | 'sliding'
+/**
+ * Window styles. 'standard' is the triple-line frame, 'sliding' is two staggered sashes, and the two
+ * casement styles add swinging leaves (with their quarter-circle arcs) on top of the frame.
+ */
+export type WindowVariant = 'standard' | 'sliding' | 'casement' | 'double-casement'
 export type OpeningVariant = DoorVariant | WindowVariant
 
 export type Opening = {

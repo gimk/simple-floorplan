@@ -73,7 +73,7 @@ describe('schema', () => {
       const o = { id: 'o', kind: 'door', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, ...(variant ? { variant } : {}) }
       return parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [o] }] })
     }
-    for (const variant of ['standard', 'pocket', 'bypass', 'french', 'sliding']) {
+    for (const variant of ['standard', 'pocket', 'bypass', 'french', 'sliding', 'casement', 'double-casement']) {
       const r = withVariant(variant)
       expect(r.ok && r.doc.artboards[0].openings[0].variant).toBe(variant)
     }
@@ -81,6 +81,19 @@ describe('schema', () => {
     const none = withVariant()
     expect(none.ok).toBe(true)
     expect(none.ok && none.doc.artboards[0].openings[0].variant).toBeUndefined()
+  })
+
+  it('accepts the casement window variants on a window opening', () => {
+    const d = createDefaultProject()
+    const withWindow = (variant: string) => {
+      const o = { id: 'o', kind: 'window', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, hinge: 'left', swing: 'out', variant }
+      return parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [o] }] })
+    }
+    for (const variant of ['casement', 'double-casement']) {
+      const r = withWindow(variant)
+      expect(r.ok && r.doc.artboards[0].openings[0]).toMatchObject({ kind: 'window', variant })
+    }
+    expect(withWindow('casement-swing').ok).toBe(false)
   })
 
   it('rejects an unknown opening variant', () => {

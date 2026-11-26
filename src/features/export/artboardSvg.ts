@@ -110,8 +110,13 @@ function contentBounds(a: Artboard, includeFurniture: boolean): Bounds | null {
     grow(start.x, start.y); grow(end.x, end.y)
     // A door swinging outwards leaves the wall line: the open tip must stay inside the sheet.
     if (o.kind === 'door') { const g = doorArcGeometry(o); grow(g.openTipPt.x, g.openTipPt.y) }
-    // Sliding panels, pocket receivers and window sashes also leave the wall line.
-    for (const p of openingSymbol(o, (px) => px / BASE_PX_PER_CM).paths) for (const q of p.pts) grow(q.x, q.y)
+    // Sliding panels, pocket receivers, window sashes and casement swing arcs also leave the wall line.
+    const symbol = openingSymbol(o, (px) => px / BASE_PX_PER_CM)
+    for (const p of symbol.paths) for (const q of p.pts) grow(q.x, q.y)
+    // A quarter-circle arc stays inside the box of its centre and its two ends.
+    for (const arc of symbol.arcs) {
+      grow(arc.center.x, arc.center.y); grow(arc.from.x, arc.from.y); grow(arc.to.x, arc.to.y)
+    }
   }
   if (includeFurniture) {
     for (const f of a.furniture) {

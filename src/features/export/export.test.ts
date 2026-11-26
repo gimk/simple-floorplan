@@ -323,6 +323,8 @@ describe('renderArtboardSvg opening variants', () => {
     expect(oneDoor({ variant: 'french' })).toContain('data-variant="french"')
     expect(oneWindow()).toContain('data-opening="w1" data-kind="window" data-variant="standard"')
     expect(oneWindow({ variant: 'sliding' })).toContain('data-variant="sliding"')
+    expect(oneWindow({ variant: 'casement' })).toContain('data-variant="casement"')
+    expect(oneWindow({ variant: 'double-casement' })).toContain('data-variant="double-casement"')
   })
 
   it('draws a standard door with one leaf and one quarter-circle arc', () => {
@@ -389,6 +391,46 @@ describe('renderArtboardSvg opening variants', () => {
     expect(standard).toContain('<line x1="140" y1="-1.25" x2="260" y2="-1.25"')
   })
 
+  it('draws a single casement window with the frame, one sash leaf and one swing arc', () => {
+    const g = groupOf(oneWindow({ variant: 'casement', hinge: 'left', swing: 'in' }), 'w1')
+    // The three frame lines stay, plus one full-width sash leaf of 0.6 cm stroke (1.2 px).
+    expect(count(g, 'stroke-width="0.75"')).toBe(1)
+    expect(g).toContain('<line x1="140" y1="1.25" x2="260" y2="1.25"')
+    expect(g).toContain('<line x1="140" y1="-1.25" x2="260" y2="-1.25"')
+    expect(g).toContain('<line x1="140" y1="0" x2="140" y2="120"')
+    // One quarter-circle arc of radius 120 from the free end to the open tip.
+    expect(count(g, ' A ')).toBe(1)
+    expect(g).toContain('M 260 0 A 120 120 0 0 1 140 120')
+    expect(count(g, '<polygon')).toBe(0)
+  })
+
+  it('draws a double casement window with the frame, two half-width leaves and two arcs', () => {
+    const g = groupOf(oneWindow({ variant: 'double-casement', swing: 'in' }), 'w1')
+    expect(count(g, 'stroke-width="0.75"')).toBe(1)
+    expect(g).toContain('<line x1="140" y1="0" x2="140" y2="60"')
+    expect(g).toContain('<line x1="260" y1="0" x2="260" y2="60"')
+    // Two arcs of radius 60 that both start at the centre of the opening.
+    expect(count(g, ' A ')).toBe(2)
+    expect(count(g, 'M 200 0 A ')).toBe(2)
+    expect(g).toContain('A 60 60 0 0 1 140 60')
+    expect(g).toContain('A 60 60 0 0 0 260 60')
+    expect(count(g, '<polygon')).toBe(0)
+  })
+
+  it('keeps a casement sash that swings outwards inside the sheet', () => {
+    const out = renderArtboardSvg(artboard({
+      rooms: [rect('r1', 'Room', 0, 0, 400, 300)],
+      openings: [windowOp({ xCm: 200, yCm: 0, swing: 'out', variant: 'casement' })],
+    }))
+    // The open sash goes 120 cm above the top wall: the drawing must include its tip.
+    expect(out.heightPx).toBeGreaterThan(2 * (300 + 120 + 40 + 44) - 10)
+    const inSwing = renderArtboardSvg(artboard({
+      rooms: [rect('r1', 'Room', 0, 0, 400, 300)],
+      openings: [windowOp({ xCm: 200, yCm: 0, swing: 'in', variant: 'casement' })],
+    }))
+    expect(out.heightPx).toBeGreaterThan(inSwing.heightPx)
+  })
+
   it('keeps a plain opening unchanged: no symbol, only the jamb ticks', () => {
     const svg = renderArtboardSvg(artboard({
       rooms: [rect('r1', 'Living', 0, 0, 400, 300)],
@@ -406,5 +448,12 @@ describe('renderArtboardSvg opening variants', () => {
     expect(new Set(groups).size).toBe(styles.length)
     // Same input, same output (no hidden state in the renderer).
     expect(oneDoor({ variant: 'french' })).toBe(oneDoor({ variant: 'french' }))
+  })
+
+  it('gives different output for every window style, the casements included', () => {
+    const styles = ['standard', 'sliding', 'casement', 'double-casement'] as const
+    const groups = styles.map((variant) => groupOf(oneWindow({ variant }), 'w1'))
+    expect(new Set(groups).size).toBe(styles.length)
+    expect(oneWindow({ variant: 'casement' })).toBe(oneWindow({ variant: 'casement' }))
   })
 })

@@ -42,9 +42,12 @@ const DOOR_VARIANT_OPTIONS = [
   { value: 'bypass', label: 'Bypass sliding' },
 ] as const
 
+/** Window styles. The two casement styles add swinging leaves to the frame, like a door leaf. */
 const WINDOW_VARIANT_OPTIONS = [
-  { value: 'standard', label: 'Standard' },
+  { value: 'standard', label: 'Standard (fixed)' },
   { value: 'sliding', label: 'Sliding' },
+  { value: 'casement', label: 'Single casement' },
+  { value: 'double-casement', label: 'Double casement' },
 ] as const
 
 /** Clear the selection after a delete, so the Inspect panel falls back to the artboard. */
@@ -80,11 +83,16 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
 
   const kind = opening.kind
   const isDoor = kind === 'door'
+  const isWindow = kind === 'window'
   const variant = openingVariant(opening)
   // French doors swing from both ends (symmetric, no hinge) and the two sliding styles stay in the
-  // plane of the wall, so neither of them uses the hinge or the swing side.
-  const showHinge = isDoor && (variant === 'standard' || variant === 'pocket')
-  const showSwing = isDoor && (variant === 'standard' || variant === 'french')
+  // plane of the wall, so neither of them uses the hinge or the swing side. A single casement
+  // window hinges on one side, a double casement is symmetric like a french door.
+  const showHinge = (isDoor && (variant === 'standard' || variant === 'pocket')) || (isWindow && variant === 'casement')
+  const showSwing =
+    (isDoor && (variant === 'standard' || variant === 'french')) ||
+    (isWindow && (variant === 'casement' || variant === 'double-casement'))
+  const flipTarget = isDoor ? 'door' : 'window'
 
   const setKind = (value: string) => {
     if (value === kind) return
@@ -123,15 +131,9 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
         </FieldRow>
       )}
 
-      {kind === 'window' && (
-        <FieldRow label="Style" stacked>
-          <Segmented
-            ariaLabel="Window style"
-            options={WINDOW_VARIANT_OPTIONS}
-            value={variant}
-            onChange={setVariant}
-            size="sm"
-          />
+      {isWindow && (
+        <FieldRow label="Style">
+          <SelectField ariaLabel="Window style" value={variant} options={WINDOW_VARIANT_OPTIONS} onChange={setVariant} />
         </FieldRow>
       )}
 
@@ -146,14 +148,14 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
         />
       </FieldRow>
 
-      {isDoor && (showHinge || showSwing) && (
+      {(showHinge || showSwing) && (
         <div className="flex flex-col gap-1">
           {showHinge && (
             <button
               type="button"
               className={BTN}
               onClick={() => flipOpeningHinge(artboard.id, opening.id)}
-              title="Move the hinge to the other end of the door"
+              title={`Move the hinge to the other end of the ${flipTarget}`}
             >
               <FlipHorizontal2 size={14} aria-hidden="true" />
               Flip Hinge
@@ -164,7 +166,7 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
               type="button"
               className={BTN}
               onClick={() => flipOpeningSwing(artboard.id, opening.id)}
-              title="Open the door to the other side of the wall"
+              title={`Open the ${flipTarget} to the other side of the wall`}
             >
               <FlipVertical2 size={14} aria-hidden="true" />
               Flip Swing

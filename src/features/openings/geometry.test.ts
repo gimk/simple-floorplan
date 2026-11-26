@@ -376,6 +376,55 @@ describe('openingSymbol', () => {
     expect(Math.min(...second.pts.map((q) => q.x))).toBeCloseTo(90.4)
   })
 
+  it('casement window: the frame plus one sash leaf and its quarter-circle swing arc', () => {
+    const s = openingSymbol(win({ variant: 'casement' }), u)
+    expect(s.wallLine).toBe(false)
+    // The three frame lines stay, and the sash leaf is added after them.
+    expect(s.paths).toHaveLength(4)
+    expect(s.paths[0].weight).toBe(FRAME_WEIGHT)
+    expect(s.paths[0].pts).toEqual([{ x: 60, y: 50 }, { x: 140, y: 50 }])
+    expect(s.paths[3].pts).toEqual([{ x: 60, y: 50 }, { x: 60, y: 130 }])
+    expect(s.paths[3].weight).toBe(LEAF_WEIGHT)
+    // One full-width arc, hinged left and opening on the +normal side by default.
+    expect(s.arcs).toHaveLength(1)
+    expect(s.arcs[0]).toMatchObject({ center: { x: 60, y: 50 }, from: { x: 140, y: 50 }, to: { x: 60, y: 130 }, radius: 80, sweepFlag: 1 })
+  })
+
+  it('casement window: hinge right and swing out, hinge left and swing out', () => {
+    const right = openingSymbol(win({ variant: 'casement', hinge: 'right' }), u)
+    expect(right.paths[3].pts).toEqual([{ x: 140, y: 50 }, { x: 140, y: 130 }])
+    expect(right.arcs[0]).toMatchObject({ center: { x: 140, y: 50 }, from: { x: 60, y: 50 }, to: { x: 140, y: 130 } })
+    const out = openingSymbol(win({ variant: 'casement', swing: 'out' }), u)
+    expect(out.paths[3].pts).toEqual([{ x: 60, y: 50 }, { x: 60, y: -30 }])
+    expect(out.arcs[0].to).toEqual({ x: 60, y: -30 })
+  })
+
+  it('double-casement window: the frame plus two half-width sash leaves and two arcs meeting in the middle', () => {
+    const s = openingSymbol(win({ variant: 'double-casement' }), u)
+    expect(s.wallLine).toBe(false)
+    expect(s.paths).toHaveLength(5)
+    expect(s.paths[0].weight).toBe(FRAME_WEIGHT)
+    expect(s.paths[3].pts).toEqual([{ x: 60, y: 50 }, { x: 60, y: 90 }])
+    expect(s.paths[4].pts).toEqual([{ x: 140, y: 50 }, { x: 140, y: 90 }])
+    for (const p of s.paths.slice(3)) expect(p.weight).toBe(LEAF_WEIGHT)
+    // Two half-width arcs that both start at the centre of the opening.
+    expect(s.arcs).toHaveLength(2)
+    for (const a of s.arcs) expect(a.radius).toBe(40)
+    expect(s.arcs[0].from).toEqual({ x: 100, y: 50 })
+    expect(s.arcs[1].from).toEqual({ x: 100, y: 50 })
+    expect(s.arcs.map((a) => a.sweepFlag)).toEqual([1, 0])
+  })
+
+  it('double-casement window: the hinge field is ignored, only the swing side is used', () => {
+    const base = openingSymbol(win({ variant: 'double-casement' }), u)
+    const hinged = openingSymbol(win({ variant: 'double-casement', hinge: 'right' }), u)
+    expect(hinged).toEqual(base)
+    const out = openingSymbol(win({ variant: 'double-casement', swing: 'out' }), u)
+    // Both leaves open on the other side of the wall.
+    expect(out.arcs[0].to).toEqual({ x: 60, y: 10 })
+    expect(out.arcs[1].to).toEqual({ x: 140, y: 10 })
+  })
+
   it('plain opening: no symbol at all, the ticks alone mark the jambs', () => {
     const s = openingSymbol(op({ kind: 'opening', hinge: undefined, swing: undefined }), u)
     expect(s).toEqual({ wallLine: false, paths: [], arcs: [] })

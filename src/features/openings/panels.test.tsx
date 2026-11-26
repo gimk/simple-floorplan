@@ -9,7 +9,9 @@
 // was created: a document seeded inside a test would not be visible. The store module is therefore
 // replaced by a fixed fake document:
 //   artboard "ab1" (Plan A) -> o1 = standard door, 85 cm wide at (200, 0); o2 = standard window,
-//   120 cm wide at (200, 300); o3 = french door; o4 = pocket door; o5 = sliding window.
+//   120 cm wide at (200, 300); o3 = french door; o4 = pocket door; o5 = sliding window;
+//   o6 = plain opening; o7 = single casement window (hinge right, swing out);
+//   o8 = double casement window (swing out).
 //   Two reference images: img1 visible, img2 hidden.
 // The interactive behaviour (arming the tool, editing, flipping, deleting) is not covered here.
 import { describe, expect, it, vi } from 'vitest'
@@ -77,6 +79,8 @@ const { AB, fakeDoc } = vi.hoisted(() => {
           { id: 'o4', kind: 'door', xCm: 200, yCm: 0, angleDeg: 0, widthCm: 85, hinge: 'left', swing: 'in', variant: 'pocket' },
           { id: 'o5', kind: 'window', xCm: 200, yCm: 300, angleDeg: 0, widthCm: 120, variant: 'sliding' },
           { id: 'o6', kind: 'opening', xCm: 100, yCm: 300, angleDeg: 0, widthCm: 100 },
+          { id: 'o7', kind: 'window', xCm: 200, yCm: 300, angleDeg: 0, widthCm: 120, hinge: 'right', swing: 'out', variant: 'casement' },
+          { id: 'o8', kind: 'window', xCm: 200, yCm: 300, angleDeg: 0, widthCm: 120, swing: 'out', variant: 'double-casement' },
         ],
         furniture: [],
       },
@@ -201,16 +205,43 @@ describe('OpeningInspect', () => {
     expect(html).not.toContain('Flip Swing')
   })
 
-  it('offers the two window styles as a segmented control', () => {
+  it('offers the four window styles in a select and starts on standard', () => {
     const standard = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o2" />)
     expect(standard).toContain('aria-label="Window style"')
-    expect(standard).toContain('>Standard<')
+    expect(standard).toContain('>Standard (fixed)<')
     expect(standard).toContain('>Sliding<')
-    expect(standard).toMatch(/aria-pressed="true"[^>]*>Standard</)
+    expect(standard).toContain('>Single casement<')
+    expect(standard).toContain('>Double casement<')
+    // A window without a variant shows the standard style, stored as no variant at all.
+    expect(standard).toContain('<option value="standard" selected="">')
 
     const sliding = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o5" />)
-    expect(sliding).toMatch(/aria-pressed="true"[^>]*>Sliding</)
+    expect(sliding).toContain('<option value="sliding" selected="">')
     expect(sliding).not.toContain('aria-label="Door style"')
+
+    const casement = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o7" />)
+    expect(casement).toContain('<option value="casement" selected="">')
+
+    const doubleCasement = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o8" />)
+    expect(doubleCasement).toContain('<option value="double-casement" selected="">')
+  })
+
+  it('shows both flips on a single casement window, and only the swing flip on a double casement', () => {
+    const casement = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o7" />)
+    expect(casement).toContain('Flip Hinge')
+    expect(casement).toContain('Flip Swing')
+    expect(casement).toContain('Delete Window')
+
+    const doubleCasement = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o8" />)
+    expect(doubleCasement).toContain('Flip Swing')
+    expect(doubleCasement).not.toContain('Flip Hinge')
+
+    // The fixed and sliding windows keep no flip at all.
+    for (const id of ['o2', 'o5']) {
+      const html = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId={id} />)
+      expect(html).not.toContain('Flip Hinge')
+      expect(html).not.toContain('Flip Swing')
+    }
   })
 
   it('renders nothing for an unknown opening or artboard', () => {
@@ -272,6 +303,30 @@ describe('OpeningShape (canvas)', () => {
     const standard = shape({ kind: 'window', hinge: undefined, swing: undefined })
     expect(countOf(standard, 'Z"')).toBe(0)
     expect(countOf(standard, 'stroke-width="1.5"')).toBe(1)
+  })
+
+  it('draws a single casement window as the frame plus one swinging leaf and one arc', () => {
+    const html = shape({ kind: 'window', variant: 'casement', hinge: undefined, swing: undefined })
+    // Three frame lines, one sash leaf and one quarter-circle arc.
+    expect(countOf(html, 'M ')).toBe(5)
+    expect(countOf(html, 'A 80 80')).toBe(1)
+    expect(html).toContain('d="M 60 50 L 140 50"')
+    expect(html).toContain('d="M 60 50 L 60 130"')
+    expect(html).toContain('A 80 80 0 0 1 60 130')
+    expect(html).not.toContain('Z"')
+  })
+
+  it('draws a double casement window as the frame plus two half-width leaves and two arcs', () => {
+    const html = shape({ kind: 'window', variant: 'double-casement', hinge: undefined, swing: undefined })
+    // Three frame lines, two sash leaves and two arcs.
+    expect(countOf(html, 'M ')).toBe(7)
+    expect(countOf(html, 'A 40 40')).toBe(2)
+    expect(html).toContain('d="M 60 50 L 140 50"')
+    expect(html).toContain('d="M 60 50 L 60 90"')
+    expect(html).toContain('d="M 140 50 L 140 90"')
+    expect(html).toContain('A 40 40 0 0 1 60 90')
+    expect(html).toContain('A 40 40 0 0 0 140 90')
+    expect(html).not.toContain('Z"')
   })
 
   it('keeps a plain opening a bare gap with its jamb ticks', () => {
