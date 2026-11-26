@@ -1,10 +1,13 @@
 // Right-panel Inspect card for one artboard (docs/simple-floorplan-2.md §2.6):
 // name, ceiling height, total area, room list, and the Duplicate / Add / Delete artboard actions.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel.
+// The Export card (Phase 5) stays available in Plan AND Design mode: exporting changes no data.
 import { useId } from 'react'
-import { Copy, Frame, Plus, Trash2 } from 'lucide-react'
+import { Copy, Download, Frame, Image, Plus, Trash2 } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { Artboard, PrecisionCm } from '../../model/types'
+import { downloadArtboardPng, downloadArtboardSvg } from '../export/download'
+import { toast } from '../toast'
 import {
   BTN,
   EmptyHint,
@@ -44,7 +47,9 @@ const PRECISION_OPTIONS = [
 
 export function ArtboardInspect({ artboardId, className, readOnly = false }: ArtboardInspectProps) {
   const artboards = useDoc((s) => s.doc.artboards)
+  const projectTitle = useDoc((s) => s.doc.title)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
+  const mode = useUi((s) => s.mode)
   const selection = useUi((s) => s.selection)
   const nameId = useId()
   const ceilingId = useId()
@@ -105,122 +110,172 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
     if (next) selectArtboard(next.id, 'none')
   }
 
+  // Export options: Design mode always shows the furniture; Plan mode only when there is some.
+  const exportOptions = {
+    projectTitle,
+    includeFurniture: mode === 'design' || artboard.furniture.length > 0,
+    includeWallLabels: true,
+  }
+
+  const exportSvg = () => {
+    downloadArtboardSvg(artboard, exportOptions)
+    toast('Exported SVG')
+  }
+
+  const exportPng = async () => {
+    try {
+      await downloadArtboardPng(artboard, exportOptions)
+      toast('Exported PNG')
+    } catch (err) {
+      toast(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   return (
-    <PanelSection
-      title="Artboard"
-      icon={<Frame size={14} aria-hidden="true" />}
-      className={className}
-    >
-      <FieldRow label="Name" htmlFor={nameId}>
-        <TextField
-          id={nameId}
-          ariaLabel="Artboard name"
-          value={artboard.name}
-          onCommit={commitName}
-          disabled={readOnly}
-          invalidMessage="Type a name for the artboard."
+    <>
+      <PanelSection
+        title="Artboard"
+        icon={<Frame size={14} aria-hidden="true" />}
+        className={className}
+      >
+        <FieldRow label="Name" htmlFor={nameId}>
+          <TextField
+            id={nameId}
+            ariaLabel="Artboard name"
+            value={artboard.name}
+            onCommit={commitName}
+            disabled={readOnly}
+            invalidMessage="Type a name for the artboard."
+          />
+        </FieldRow>
+
+        <FieldRow label="Ceiling" htmlFor={ceilingId} hint="for the 3D view">
+          <NumberField
+            id={ceilingId}
+            ariaLabel="Ceiling height"
+            value={artboard.ceilingHeightCm}
+            unit="cm"
+            min={1}
+            max={1000}
+            disabled={readOnly}
+            onCommit={commitCeiling}
+          />
+        </FieldRow>
+
+        <FieldRow label="Precision" hint="drawing step">
+          <Segmented
+            options={PRECISION_OPTIONS}
+            value={String(artboard.precisionCm)}
+            onChange={setPrecision}
+            ariaLabel="Drawing precision"
+            disabled={readOnly}
+          />
+        </FieldRow>
+
+        <StatGrid
+          items={[
+            { label: 'Total area', value: `${formatM2(areaM2)} m²` },
+            { label: artboard.rooms.length === 1 ? 'Room' : 'Rooms', value: String(artboard.rooms.length) },
+          ]}
         />
-      </FieldRow>
 
-      <FieldRow label="Ceiling" htmlFor={ceilingId} hint="for the 3D view">
-        <NumberField
-          id={ceilingId}
-          ariaLabel="Ceiling height"
-          value={artboard.ceilingHeightCm}
-          unit="cm"
-          min={1}
-          max={1000}
-          disabled={readOnly}
-          onCommit={commitCeiling}
-        />
-      </FieldRow>
+        <div className="flex flex-col gap-1">
+          <h3 className="text-xs font-medium text-slate-500 dark:text-slate-400">Rooms</h3>
+          {artboard.rooms.length === 0 ? (
+            <EmptyHint>No room yet. Draw a room in Plan mode.</EmptyHint>
+          ) : (
+            <ul className="flex flex-col gap-1" aria-label="Rooms of the artboard">
+              {artboard.rooms.map((r) => {
+                const on = selectedRooms.has(r.id)
+                return (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => selectRoom(artboard.id, r.id)}
+                      disabled={readOnly}
+                      aria-pressed={on}
+                      className={`${ROW} ${on ? ROW_ON : ROW_OFF} flex min-h-9 w-full items-center justify-between gap-2 text-left hover:bg-black/5 dark:hover:bg-white/5 pointer-coarse:min-h-11`}
+                    >
+                      <span className="truncate text-sm text-slate-800 dark:text-slate-100">
+                        {r.name.trim() === '' ? 'Untitled room' : r.name}
+                      </span>
+                      <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>
+                        {formatM2(roomAreaM2(r))} m²
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
 
-      <FieldRow label="Precision" hint="drawing step">
-        <Segmented
-          options={PRECISION_OPTIONS}
-          value={String(artboard.precisionCm)}
-          onChange={setPrecision}
-          ariaLabel="Drawing precision"
-          disabled={readOnly}
-        />
-      </FieldRow>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={`${BTN} flex-1`}
+            onClick={duplicate}
+            disabled={readOnly}
+            title={readOnly ? 'Switch to Plan mode to edit the artboard' : 'Duplicate artboard'}
+          >
+            <Copy size={14} aria-hidden="true" />
+            Duplicate
+          </button>
+          <button
+            type="button"
+            className={`${BTN} flex-1`}
+            onClick={add}
+            disabled={readOnly}
+            title={readOnly ? 'Switch to Plan mode to edit the artboard' : 'Add an empty artboard'}
+          >
+            <Plus size={14} aria-hidden="true" />
+            Add
+          </button>
+          <button
+            type="button"
+            className={`${BTN} flex-1 text-red-600 hover:bg-red-500/10 dark:text-red-400`}
+            onClick={remove}
+            disabled={onlyOne || readOnly}
+            title={
+              readOnly
+                ? 'Switch to Plan mode to edit the artboard'
+                : onlyOne
+                  ? 'The document keeps at least one artboard'
+                  : 'Delete artboard'
+            }
+          >
+            <Trash2 size={14} aria-hidden="true" />
+            Delete
+          </button>
+        </div>
+      </PanelSection>
 
-      <StatGrid
-        items={[
-          { label: 'Total area', value: `${formatM2(areaM2)} m²` },
-          { label: artboard.rooms.length === 1 ? 'Room' : 'Rooms', value: String(artboard.rooms.length) },
-        ]}
-      />
-
-      <div className="flex flex-col gap-1">
-        <h3 className="text-xs font-medium text-slate-500 dark:text-slate-400">Rooms</h3>
-        {artboard.rooms.length === 0 ? (
-          <EmptyHint>No room yet. Draw a room in Plan mode.</EmptyHint>
-        ) : (
-          <ul className="flex flex-col gap-1" aria-label="Rooms of the artboard">
-            {artboard.rooms.map((r) => {
-              const on = selectedRooms.has(r.id)
-              return (
-                <li key={r.id}>
-                  <button
-                    type="button"
-                    onClick={() => selectRoom(artboard.id, r.id)}
-                    disabled={readOnly}
-                    aria-pressed={on}
-                    className={`${ROW} ${on ? ROW_ON : ROW_OFF} flex min-h-9 w-full items-center justify-between gap-2 text-left hover:bg-black/5 dark:hover:bg-white/5 pointer-coarse:min-h-11`}
-                  >
-                    <span className="truncate text-sm text-slate-800 dark:text-slate-100">
-                      {r.name.trim() === '' ? 'Untitled room' : r.name}
-                    </span>
-                    <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>
-                      {formatM2(roomAreaM2(r))} m²
-                    </span>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={`${BTN} flex-1`}
-          onClick={duplicate}
-          disabled={readOnly}
-          title={readOnly ? 'Switch to Plan mode to edit the artboard' : 'Duplicate artboard'}
-        >
-          <Copy size={14} aria-hidden="true" />
-          Duplicate
-        </button>
-        <button
-          type="button"
-          className={`${BTN} flex-1`}
-          onClick={add}
-          disabled={readOnly}
-          title={readOnly ? 'Switch to Plan mode to edit the artboard' : 'Add an empty artboard'}
-        >
-          <Plus size={14} aria-hidden="true" />
-          Add
-        </button>
-        <button
-          type="button"
-          className={`${BTN} flex-1 text-red-600 hover:bg-red-500/10 dark:text-red-400`}
-          onClick={remove}
-          disabled={onlyOne || readOnly}
-          title={
-            readOnly
-              ? 'Switch to Plan mode to edit the artboard'
-              : onlyOne
-                ? 'The document keeps at least one artboard'
-                : 'Delete artboard'
-          }
-        >
-          <Trash2 size={14} aria-hidden="true" />
-          Delete
-        </button>
-      </div>
-    </PanelSection>
+      <PanelSection
+        title="Export"
+        icon={<Download size={14} aria-hidden="true" />}
+        className="mt-3"
+      >
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={`${BTN} flex-1 px-2 text-xs`}
+            onClick={exportPng}
+            title="Download this artboard as a PNG picture"
+          >
+            <Image size={14} aria-hidden="true" />
+            Export PNG
+          </button>
+          <button
+            type="button"
+            className={`${BTN} flex-1 px-2 text-xs`}
+            onClick={exportSvg}
+            title="Download this artboard as an SVG file"
+          >
+            <Download size={14} aria-hidden="true" />
+            Export SVG
+          </button>
+        </div>
+      </PanelSection>
+    </>
   )
 }

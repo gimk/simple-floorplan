@@ -114,12 +114,21 @@ export default function App() {
         ui.set(modeUiPatch(key === '1' ? 'plan' : 'design', ui.selection))
         return
       }
-      // Cmd/Ctrl+D duplicates the selected furniture item (Design mode).
+      // Cmd/Ctrl+D duplicates the selected item: furniture in Design mode, the artboard in Plan mode.
       if ((e.metaKey || e.ctrlKey) && key === 'd' && !e.altKey && !e.shiftKey) {
         const ui = useUi.getState()
         if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
           e.preventDefault()
           duplicateFurniture(ui.selection.artboardId, ui.selection.furnitureId)
+        } else if (ui.mode === 'plan' && ui.selection.kind === 'artboard') {
+          e.preventDefault()
+          const copyId = useDoc.getState().duplicateArtboard(ui.selection.artboardId)
+          if (copyId) {
+            useUi.getState().set({
+              activeArtboardId: copyId,
+              selection: { kind: 'artboard', artboardId: copyId },
+            })
+          }
         }
         return
       }
