@@ -60,12 +60,12 @@ function Surface({ kind }: { kind: OpeningKind }) {
     const doc = useDoc.getState().doc
     const activeId = useUi.getState().activeArtboardId
     const width = DEFAULT_OPENING_WIDTH_CM[kind]
-    const thr = px(12)
+    const thr = px(22)
     const round = !getModifiers().cmd // Cmd = exact position
     let best: (Hit & { d: number }) | null = null
     for (const ab of doc.artboards) {
       const lp = { x: world.x - ab.xCm, y: world.y - ab.yCm }
-      const snap = snapToWall(lp, ab.rooms, width, Math.max(10, thr))
+      const snap = snapToWall(lp, ab.rooms, width, thr)
       if (!snap) continue
       const d = Math.hypot(lp.x - snap.xCm, lp.y - snap.yCm)
       const bias = ab.id === activeId ? 0 : 0.5 // active artboard wins ties

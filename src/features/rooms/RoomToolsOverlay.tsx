@@ -90,7 +90,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   }
   const snap = (p: Vec, anchor: Vec | undefined, mods: Modifiers): Vec => {
     const ab = artboardRef.current
-    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: mods.cmd })
+    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10) })
     setGuides(r.guides)
     return r.point
   }
@@ -98,7 +98,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   const penPoint = (raw: Vec, prev: Vec | undefined, mods: Modifiers): Vec => {
     if (mods.shift && prev) {
       const ab = artboardRef.current
-      const r = snapPoint(constrainAngle45(prev, raw), ab.rooms, { precisionCm: ab.precisionCm, disableSnap: true })
+      const r = snapPoint(constrainAngle45(prev, raw), ab.rooms, { precisionCm: ab.precisionCm, disableSnap: true, thresholdCm: px(10) })
       setGuides([])
       return r.point
     }

@@ -18,6 +18,24 @@ describe('smoke', () => {
     expect(html).toContain('x="-40" y="-40" width="600" height="450"')
   })
 
+  it('makes only the frame border clickable and shows no handle until selected', () => {
+    const html = renderToStaticMarkup(<ArtboardsLayer />)
+    // Transparent 10 px stroke around the frame: the border selects the artboard.
+    expect(html).toContain('data-testid="artboard-border-')
+    expect(html).toContain(
+      'fill="none" stroke="transparent" stroke-width="10" pointer-events="stroke" style="cursor:pointer"',
+    )
+    // The frame itself keeps `pointer-events="none"`, so a click inside the frame still reaches
+    // the rooms and the empty background.
+    expect(html).toContain('rx="4" stroke-width="1" pointer-events="none"')
+    // Edge and corner hit zones (Plan mode, select tool).
+    for (const zone of ['right', 'left', 'bottom', 'top', 'tl', 'tr', 'corner', 'bl']) {
+      expect(html).toContain(`data-testid="artboard-resize-${zone}-`)
+    }
+    // No visible corner handle: nothing is selected in the initial document.
+    expect(html).not.toContain('artboard-handle-')
+  })
+
   it('renders the inspect card and follows the active artboard', () => {
     const panel = renderToStaticMarkup(<ArtboardInspect />)
     expect(panel).toContain('aria-label="Artboard"')

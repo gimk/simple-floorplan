@@ -17,7 +17,7 @@ import {
   formatDecimal,
 } from '../../shell/panel'
 import { selectRoom } from '../artboards/selection'
-import { setRoomWallLength } from './actions'
+import { deleteRoomWall, setRoomWallLength } from './actions'
 import { roomWalls } from './ops'
 import type { Wall } from './ops'
 
@@ -110,6 +110,16 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
         />
         {openings.length > 0 && <EmptyHint>{openingsHint(openings)}</EmptyHint>}
       </div>
+
+      <button
+        type="button"
+        disabled={room.vertices.length <= 3}
+        title={room.vertices.length <= 3 ? 'A room needs at least 3 walls' : 'Delete this wall'}
+        onClick={() => { if (deleteRoomWall(artboard.id, room.id, edgeIndex)) selectRoom(artboard.id, room.id) }}
+        className="min-h-9 rounded-md border border-black/10 px-3 text-red-500 hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/15 dark:hover:bg-white/10 pointer-coarse:min-h-11"
+      >
+        Delete Wall
+      </button>
     </PanelSection>
   )
 }

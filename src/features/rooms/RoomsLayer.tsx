@@ -63,6 +63,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   const inArtboard = (s: Selection) => 'artboardId' in s && s.artboardId === artboard.id
   const selectedIds = selection.kind === 'room' && inArtboard(selection) ? selection.roomIds : []
   const selectedWall = selection.kind === 'wall' && inArtboard(selection) ? selection : null
+  const selectedVertex = selection.kind === 'vertex' && inArtboard(selection) ? selection : null
 
   const toLocal = (cx: number, cy: number): Vec => {
     const w = toWorld(cx, cy)
@@ -162,7 +163,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     }
     startGesture(e, (_, d0, mods) => {
       const d = mods.shift ? constrainAxis(d0.x, d0.y) : d0
-      const s = snapRoomDelta(primary, d.x, d.y, mods.alt ? artboard.rooms : others, 12, { disableSnap: mods.cmd, precisionCm: artboard.precisionCm })
+      const s = snapRoomDelta(primary, d.x, d.y, mods.alt ? artboard.rooms : others, px(10), { disableSnap: mods.cmd, precisionCm: artboard.precisionCm })
       setGuides(s.guides)
       dupActive = mods.alt
       write(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), mods.alt)
@@ -186,7 +187,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
         delta = mods.cmd ? c : { x: roundToPrecision(c.x, artboard.precisionCm), y: roundToPrecision(c.y, artboard.precisionCm) }
         setGuides([])
       } else {
-        const snap = snapPoint(add(a, d), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd })
+        const snap = snapPoint(add(a, d), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10) })
         setGuides(snap.guides)
         delta = { x: snap.point.x - a.x, y: snap.point.y - a.y }
       }
@@ -207,10 +208,14 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   const onVertexDown = (e: ReactPointerEvent<SVGCircleElement>, room: Room, idx: number) => {
     if (e.button !== 0 || !interactive) return
     e.stopPropagation()
+    setSelection({ kind: 'vertex', artboardId: artboard.id, roomId: room.id, vertexIndex: idx })
     if (e.altKey) {
       const live = liveRoom(room.id)
       const next = live && deleteVertex(live, idx)
       if (next) writeVertices(new Map([[room.id, next.vertices]]), false)
+      // The index no longer means the same point after the delete: keep only the room selected,
+      // so a later Delete key cannot remove a vertex the user did not pick.
+      if (next) setSelection({ kind: 'room', artboardId: artboard.id, roomIds: [room.id] })
       return
     }
     const others = artboard.rooms.filter((r) => r.id !== room.id)
@@ -223,18 +228,18 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
         writeVertices(new Map([[room.id, scaleRoomFromVertex(room, idx, p, mods.cmd ? 0 : artboard.precisionCm).vertices]]), true, origin)
         return
       }
-      const snap = snapPoint(p, others, { anchor, precisionCm: artboard.precisionCm, disableSnap: mods.cmd })
+      const snap = snapPoint(p, others, { anchor, precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10) })
       setGuides(snap.guides)
       writeVertices(new Map([[room.id, moveVertex(room, idx, snap.point).vertices]]), true, origin)
     })
   }
 
-  const handleRooms = artboard.rooms.filter((r) => selectedIds.includes(r.id) || r.id === selectedWall?.roomId)
+  const handleRooms = artboard.rooms.filter((r) => selectedIds.includes(r.id) || r.id === selectedWall?.roomId || r.id === selectedVertex?.roomId)
 
   return (
     <g data-testid={`rooms-layer-${artboard.id}`}>
       {artboard.rooms.map((room) => {
-        const selected = selectedIds.includes(room.id) || selectedWall?.roomId === room.id
+        const selected = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
         const pts = room.vertices.map((v) => `${v.x},${v.y}`).join(' ')
         const label = room.vertices.length >= 3 ? labelPoint([room.vertices]) : null
         return (
@@ -316,16 +321,19 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
       })}
 
       {interactive && handleRooms.map((room) =>
-        room.vertices.map((v, i) => (
+        room.vertices.map((v, i) => {
+          const isSel = selectedVertex?.roomId === room.id && selectedVertex.vertexIndex === i
+          return (
           <circle
             key={`${room.id}-v${i}`}
             cx={v.x} cy={v.y} r={px(5)}
-            fill="#12161b" stroke={ORANGE} strokeWidth={px(1.5)}
+            fill={isSel ? ORANGE : '#12161b'} stroke={ORANGE} strokeWidth={px(1.5)}
             style={{ cursor: 'grab' }}
             onPointerDown={(e) => onVertexDown(e, room, i)}
             {...gestureProps}
           />
-        )),
+          )
+        }),
       )}
 
       <g pointerEvents="none" data-testid="snap-guides">

@@ -100,6 +100,39 @@ export function deleteVertex(room: Room, idx: number): Room | null {
   return withVertices(room, room.vertices.filter((_, i) => i !== idx).map(cp))
 }
 
+const MIN_WALL_DELETE_AREA_CM2 = 10
+
+/**
+ * Remove wall `edgeIndex` (vertex i to vertex i+1). The neighbour walls are extended until they
+ * meet at their intersection P (A and B are replaced by P). When they are parallel, meet too far
+ * away, or P gives a degenerate polygon, A and B are replaced by their midpoint instead.
+ * Returns null when the room has 3 or fewer vertices or the result would have no area.
+ */
+export function deleteWall(room: Room, edgeIndex: number): Room | null {
+  const v = room.vertices, n = v.length
+  if (n <= 3 || edgeIndex < 0 || edgeIndex >= n) return null
+  // Rotate so that A = r[0], B = r[1]; the rest follows in order.
+  const r = v.map((_, k) => cp(v[(edgeIndex + k) % n]))
+  const a = r[0], b = r[1], prev = r[n - 1], next = r[2]
+  const build = (p: Vec): Room | null => {
+    const vertices = [cp(p), ...r.slice(2)]
+    return area(vertices) > MIN_WALL_DELETE_AREA_CM2 ? withVertices(room, vertices) : null
+  }
+  const d1 = sub(a, prev), d2 = sub(next, b)
+  const den = d1.x * d2.y - d1.y * d2.x
+  if (Math.abs(den) > EPS) {
+    const q = sub(b, prev)
+    const t = (q.x * d2.y - q.y * d2.x) / den
+    const p = { x: prev.x + d1.x * t, y: prev.y + d1.y * t }
+    const mid = lerp(a, b, 0.5)
+    if (dist(p, mid) <= Math.max(dist(a, b) * 4, 500)) {
+      const res = build(p)
+      if (res) return res
+    }
+  }
+  return build(lerp(a, b, 0.5))
+}
+
 /** Rectangle room from two opposite corners. 4 vertices, clockwise on screen, each side at least 10 cm. */
 export function createRectRoom(a: Vec, b: Vec, name: string): Room {
   const w = Math.max(MIN_ROOM_SIDE_CM, Math.abs(b.x - a.x)), h = Math.max(MIN_ROOM_SIDE_CM, Math.abs(b.y - a.y))

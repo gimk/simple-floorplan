@@ -14,7 +14,7 @@ import { ObjectsPanel } from './features/openings/ObjectsPanel'
 import { OpeningInspect } from './features/openings/OpeningInspect'
 import { OpeningsLayer } from './features/openings/OpeningsLayer'
 import { PlaceOpeningOverlay } from './features/openings/PlaceOpeningOverlay'
-import { deleteRooms } from './features/rooms/actions'
+import { deleteRoomVertex, deleteRoomWall, deleteRooms } from './features/rooms/actions'
 import { PlanToolbar } from './features/rooms/PlanToolbar'
 import { RoomInspect } from './features/rooms/RoomInspect'
 import { RoomsLayer, type EditWallRequest } from './features/rooms/RoomsLayer'
@@ -22,6 +22,7 @@ import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
 import { ToastHost, toast } from './features/toast'
+import { selectRoom } from './features/artboards/selection'
 import { useDoc } from './model/store'
 import type { Selection } from './model/types'
 import { CanvasGrid } from './shell/CanvasGrid'
@@ -99,6 +100,18 @@ export default function App() {
         e.preventDefault()
         deleteOpening(sel.artboardId, sel.openingId)
         useUi.getState().set({ selection: { kind: 'none' } })
+        return
+      }
+      if (sel.kind === 'vertex') {
+        e.preventDefault()
+        if (deleteRoomVertex(sel.artboardId, sel.roomId, sel.vertexIndex)) selectRoom(sel.artboardId, sel.roomId)
+        else toast('A room needs at least 3 points')
+        return
+      }
+      if (sel.kind === 'wall') {
+        e.preventDefault()
+        if (deleteRoomWall(sel.artboardId, sel.roomId, sel.edgeIndex)) selectRoom(sel.artboardId, sel.roomId)
+        else toast('A room needs at least 3 walls')
         return
       }
       if (sel.kind === 'room' && sel.roomIds.length > 0) {
@@ -183,6 +196,10 @@ export default function App() {
         ? !!artboards
             .find((a) => a.id === selection.artboardId)
             ?.rooms.some((r) => r.id === selection.roomId && selection.edgeIndex < r.vertices.length)
+        : selection.kind === 'vertex'
+          ? !!artboards
+              .find((a) => a.id === selection.artboardId)
+              ?.rooms.some((r) => r.id === selection.roomId && selection.vertexIndex < r.vertices.length)
         : selection.kind === 'opening'
           ? !!artboards
               .find((a) => a.id === selection.artboardId)
@@ -328,6 +345,8 @@ export default function App() {
             <ArtboardInspect artboardId={activeArtboardId} readOnly />
           ) : selection.kind === 'room' && selectionExists ? (
             <RoomInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
+          ) : selection.kind === 'vertex' && selectionExists ? (
+            <RoomInspect artboardId={selection.artboardId} roomIds={[selection.roomId]} />
           ) : selection.kind === 'wall' && selectionExists ? (
             <WallInspect artboardId={selection.artboardId} roomId={selection.roomId} edgeIndex={selection.edgeIndex} />
           ) : selection.kind === 'opening' && selectionExists ? (

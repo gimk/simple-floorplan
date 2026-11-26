@@ -5,8 +5,14 @@
 // sits above the frame's top-left corner: the name selects the artboard and drags it in Plan
 // mode (one undo step per drag), and a compact button duplicates it.
 //
-// In Plan mode with the select tool, three subtle hit zones on the right edge, the bottom edge
-// and the bottom-right corner resize the frame (`a.widthCm` / `a.heightCm`).
+// In Plan mode with the select tool the border of each frame is a click target (a transparent
+// hit stroke around the frame: a click inside the frame still passes through to the rooms and
+// the empty background). Four hit zones on the edges and the four corners resize the frame
+// (`a.widthCm` / `a.heightCm`). The selected artboard also shows crisp corner handles.
+//
+// A right/bottom drag moves the frame edge under the pointer. A left/top drag moves the artboard
+// origin instead and shifts every room vertex, opening and furniture item the other way, so the
+// drawn content stays where it is on screen while the frame grows or shrinks on that side.
 //
 // Draw the frame and the header OUTSIDE `ArtboardContent`; render the rooms, openings and
 // furniture of the artboard INSIDE `ArtboardContent`, which applies the artboard offset.
@@ -227,18 +233,26 @@ function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; 
   )
 }
 
-/** Edges a resize drag moves: the right edge, the bottom edge, or both (bottom-right corner). */
-type ResizeAxis = 'x' | 'y' | 'xy'
+/** Which frame edges a resize drag moves: -1 = the left / top edge, 0 = fixed, 1 = the right / bottom edge. */
+type HandleSide = -1 | 0 | 1
 
 type ResizeState = {
   pointerId: number
-  axis: ResizeAxis
+  /** Edge the drag moves on each axis. */
+  sx: HandleSide
+  sy: HandleSide
   /** World point where the drag started. */
   wx: number
   wy: number
+  /** Artboard origin (cm) when the drag started. */
+  x0: number
+  y0: number
   /** Frame width and height (cm) when the drag started. */
   w0: number
   h0: number
+  /** Origin shift already written to the content, so each move only shifts it by the difference. */
+  shiftedX: number
+  shiftedY: number
   /** Latest pointer position in screen px (replayed when a modifier changes mid-drag). */
   clientX: number
   clientY: number
@@ -247,45 +261,91 @@ type ResizeState = {
   moved: boolean
 }
 
-const HANDLE_CURSOR: Record<ResizeAxis, string> = {
-  x: 'ew-resize',
-  y: 'ns-resize',
-  xy: 'nwse-resize',
+/** One resize grip of a frame: which edges it moves, its cursor and where it sits on the frame. */
+type Grip = {
+  key: string
+  testId: string
+  sx: HandleSide
+  sy: HandleSide
+  cursor: string
+  /** Frame corner the grip is centered on (0 = left / top edge, 1 = right / bottom edge). */
+  fx: 0 | 1
+  fy: 0 | 1
 }
 
+/** Orange accent of the resize handles, the same one the room and image handles use. */
+const ORANGE = '#f97316'
+/** Fill of a resize handle: dark, so it reads as a grip on the light artboard paper. */
+const HANDLE_FILL = '#18181b'
+
 /**
- * Subtle resize hit zones of one artboard frame, Plan mode with the select tool only: the right
- * edge, the bottom edge and the bottom-right corner. A drag raises `a.widthCm` / `a.heightCm`
- * (one undo step), clamped to the minimum frame size and rounded to `a.precisionCm` unless Cmd is
- * held. The frame never gets smaller than its content, so a shrink stops at the content extent.
+ * Move the local content of an artboard by `(dx, dy)` cm: every room vertex, every opening and
+ * every furniture item. Used when a left / top resize drag moves the artboard origin, so the
+ * content keeps its world position while the frame edge moves.
  */
-function ArtboardResizeHandles({ artboard, frame }: { artboard: Artboard; frame: ArtboardFrame }) {
+function shiftContent(a: Artboard, dx: number, dy: number): void {
+  if (dx === 0 && dy === 0) return
+  for (const r of a.rooms) for (const v of r.vertices) { v.x += dx; v.y += dy }
+  for (const o of a.openings) { o.xCm += dx; o.yCm += dy }
+  for (const f of a.furniture) { f.xCm += dx; f.yCm += dy }
+}
+
+const GRIPS: Grip[] = [
+  { key: 'tl', testId: 'tl', sx: -1, sy: -1, cursor: 'nwse-resize', fx: 0, fy: 0 },
+  { key: 'tr', testId: 'tr', sx: 1, sy: -1, cursor: 'nesw-resize', fx: 1, fy: 0 },
+  { key: 'br', testId: 'corner', sx: 1, sy: 1, cursor: 'nwse-resize', fx: 1, fy: 1 },
+  { key: 'bl', testId: 'bl', sx: -1, sy: 1, cursor: 'nesw-resize', fx: 0, fy: 1 },
+]
+
+/**
+ * Resize hit zones and corner handles of one artboard frame, Plan mode with the select tool only.
+ * A right / bottom drag raises `a.widthCm` / `a.heightCm`; a left / top drag moves `a.xCm` /
+ * `a.yCm` and mirrors the move on the local content, so the rooms stay where they are on screen.
+ * Each drag is one undo step, clamped to the minimum frame size and rounded to `a.precisionCm`
+ * unless Cmd is held. The frame never gets smaller than its content, so a shrink stops there.
+ */
+function ArtboardResizeHandles({ artboard, frame, selected }: { artboard: Artboard; frame: ArtboardFrame; selected: boolean }) {
   const { px, toWorld } = useViewport()
   const drag = useRef<ResizeState | null>(null)
 
-  /** Write the size under the last pointer event. Cmd skips the precision rounding. */
+  /** Write the frame under the last pointer event. Cmd skips the precision rounding. */
   const apply = () => {
     const d = drag.current
     if (!d) return
     const w = toWorld(d.clientX, d.clientY)
-    const dx = w.x - d.wx
-    const dy = w.y - d.wy
-    if (!d.moved && Math.hypot(dx, dy) < px(2)) return
+    const dxp = w.x - d.wx
+    const dyp = w.y - d.wy
+    if (!d.moved && Math.hypot(dxp, dyp) < px(2)) return
     d.moved = true
     const { cmd } = getModifiers()
     const round = (v: number) => (cmd ? v : roundToPrecision(v, d.precisionCm))
-    const width = d.axis === 'y' ? null : Math.max(MIN_ARTBOARD_WIDTH_CM, round(d.w0 + dx))
-    const height = d.axis === 'x' ? null : Math.max(MIN_ARTBOARD_HEIGHT_CM, round(d.h0 + dy))
+    // Origin shift of a left / top drag, measured from the drag start.
+    const x = d.sx === -1 ? round(d.x0 + dxp) : d.x0
+    const y = d.sy === -1 ? round(d.y0 + dyp) : d.y0
+    const ox = x - d.x0
+    const oy = y - d.y0
+    const width = d.sx === 0
+      ? null
+      : Math.max(MIN_ARTBOARD_WIDTH_CM, round(d.sx === 1 ? d.w0 + dxp : d.w0 - ox))
+    const height = d.sy === 0
+      ? null
+      : Math.max(MIN_ARTBOARD_HEIGHT_CM, round(d.sy === 1 ? d.h0 + dyp : d.h0 - oy))
     useDoc.getState().updateSilent((doc) => {
-      const a = doc.artboards.find((x) => x.id === artboard.id)
+      const a = doc.artboards.find((it) => it.id === artboard.id)
       if (!a) return
+      // The content already moved with the previous write: shift it by the difference only.
+      shiftContent(a, -(ox - d.shiftedX), -(oy - d.shiftedY))
+      d.shiftedX = ox
+      d.shiftedY = oy
+      if (d.sx === -1) a.xCm = x
+      if (d.sy === -1) a.yCm = y
       if (width !== null) a.widthCm = width
       if (height !== null) a.heightCm = height
     })
   }
   useModifierReplay(apply)
 
-  const start = (axis: ResizeAxis) => (e: React.PointerEvent<SVGRectElement>) => {
+  const start = (sx: HandleSide, sy: HandleSide) => (e: React.PointerEvent<SVGRectElement>) => {
     if (e.button !== 0) return
     e.stopPropagation()
     selectArtboard(artboard.id)
@@ -293,11 +353,16 @@ function ArtboardResizeHandles({ artboard, frame }: { artboard: Artboard; frame:
     const w = toWorld(e.clientX, e.clientY)
     drag.current = {
       pointerId: e.pointerId,
-      axis,
+      sx,
+      sy,
       wx: w.x,
       wy: w.y,
+      x0: artboard.xCm,
+      y0: artboard.yCm,
       w0: frame.width,
       h0: frame.height,
+      shiftedX: 0,
+      shiftedY: 0,
       clientX: e.clientX,
       clientY: e.clientY,
       precisionCm: artboard.precisionCm,
@@ -326,62 +391,108 @@ function ArtboardResizeHandles({ artboard, frame }: { artboard: Artboard; frame:
     useDoc.getState().endDrag()
   }
 
+  /** Pointer handlers of one grip, shared by the hit zones and the visible corner handles. */
+  const gripProps = (sx: HandleSide, sy: HandleSide) => ({
+    onPointerDown: start(sx, sy),
+    onPointerMove: move,
+    onPointerUp: end,
+    onPointerCancel: end,
+  })
+
   const t = px(7) // hit thickness along the frame edge
-  const c = px(14) // size of the corner hit zone
+  const c = px(14) // size of a corner hit zone
   const corner = Math.min(c, frame.width, frame.height)
-  const zones: { axis: ResizeAxis; x: number; y: number; width: number; height: number; test: string }[] = [
+  const edges: { sx: HandleSide; sy: HandleSide; cursor: string; x: number; y: number; width: number; height: number; test: string }[] = [
     {
-      axis: 'x',
+      sx: 1, sy: 0, cursor: 'ew-resize', test: 'right',
       x: frame.x + frame.width - t,
       y: frame.y + corner,
       width: t,
       height: Math.max(0, frame.height - 2 * corner),
-      test: 'right',
     },
     {
-      axis: 'y',
+      sx: -1, sy: 0, cursor: 'ew-resize', test: 'left',
+      x: frame.x,
+      y: frame.y + corner,
+      width: t,
+      height: Math.max(0, frame.height - 2 * corner),
+    },
+    {
+      sx: 0, sy: 1, cursor: 'ns-resize', test: 'bottom',
       x: frame.x + corner,
       y: frame.y + frame.height - t,
       width: Math.max(0, frame.width - 2 * corner),
       height: t,
-      test: 'bottom',
     },
     {
-      axis: 'xy',
-      x: frame.x + frame.width - corner,
-      y: frame.y + frame.height - corner,
-      width: corner,
-      height: corner,
-      test: 'corner',
+      sx: 0, sy: -1, cursor: 'ns-resize', test: 'top',
+      x: frame.x + corner,
+      y: frame.y,
+      width: Math.max(0, frame.width - 2 * corner),
+      height: t,
     },
   ]
+  const gripSize = px(8)
 
   return (
     <g data-testid={`artboard-resize-${artboard.id}`}>
-      {zones.map((z) => (
+      {edges.map((e) => (
         <rect
-          key={z.test}
-          data-testid={`artboard-resize-${z.test}-${artboard.id}`}
-          x={z.x}
-          y={z.y}
-          width={z.width}
-          height={z.height}
+          key={e.test}
+          data-testid={`artboard-resize-${e.test}-${artboard.id}`}
+          x={e.x}
+          y={e.y}
+          width={e.width}
+          height={e.height}
           rx={px(2)}
-          style={{ cursor: HANDLE_CURSOR[z.axis] }}
+          style={{ cursor: e.cursor }}
           className="fill-transparent hover:fill-orange-500/25"
-          onPointerDown={start(z.axis)}
-          onPointerMove={move}
-          onPointerUp={end}
-          onPointerCancel={end}
+          {...gripProps(e.sx, e.sy)}
         />
       ))}
+      {GRIPS.map((g) => {
+        const x = g.fx === 0 ? frame.x : frame.x + frame.width
+        const y = g.fy === 0 ? frame.y : frame.y + frame.height
+        return (
+          <rect
+            key={`hit-${g.key}`}
+            data-testid={`artboard-resize-${g.testId}-${artboard.id}`}
+            x={x - corner / 2}
+            y={y - corner / 2}
+            width={corner}
+            height={corner}
+            style={{ cursor: g.cursor }}
+            className="fill-transparent"
+            {...gripProps(g.sx, g.sy)}
+          />
+        )
+      })}
+      {selected && GRIPS.map((g) => {
+        const x = g.fx === 0 ? frame.x : frame.x + frame.width
+        const y = g.fy === 0 ? frame.y : frame.y + frame.height
+        return (
+          <rect
+            key={`handle-${g.key}`}
+            data-testid={`artboard-handle-${g.key}-${artboard.id}`}
+            x={x - gripSize / 2}
+            y={y - gripSize / 2}
+            width={gripSize}
+            height={gripSize}
+            fill={HANDLE_FILL}
+            stroke={ORANGE}
+            strokeWidth={px(1.5)}
+            style={{ cursor: g.cursor }}
+            {...gripProps(g.sx, g.sy)}
+          />
+        )
+      })}
     </g>
   )
 }
 
 /**
- * Every artboard of the document as a frame, with its header, duplicate button and (Plan mode,
- * select tool) its resize hit zones.
+ * Every artboard of the document as a frame, with its header, duplicate button, a border click
+ * target and (Plan mode, select tool) its resize hit zones and corner handles.
  * Render it inside the world `<g>` of the Viewport, under the rooms of the artboards.
  */
 export function ArtboardsLayer() {
@@ -397,8 +508,8 @@ export function ArtboardsLayer() {
     <g data-testid="artboards-layer">
       {artboards.map((a) => {
         const frame = artboardFrame(a)
-        const highlighted =
-          activeArtboardId === a.id || (selection.kind === 'artboard' && selection.artboardId === a.id)
+        const isSelection = selection.kind === 'artboard' && selection.artboardId === a.id
+        const highlighted = activeArtboardId === a.id || isSelection
         return (
           <g key={a.id} data-artboard-frame={a.id}>
             <rect
@@ -415,8 +526,30 @@ export function ArtboardsLayer() {
                   : 'fill-transparent stroke-black/15 dark:stroke-white/[0.14]'
               }
             />
+            {/* Border click target: only the 10 px stroke band takes the pointer, so a click
+                inside the frame still reaches the rooms and the empty background. */}
+            {resizable && (
+              <rect
+                data-testid={`artboard-border-${a.id}`}
+                x={frame.x}
+                y={frame.y}
+                width={frame.width}
+                height={frame.height}
+                rx={px(4)}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={px(10)}
+                pointerEvents="stroke"
+                style={{ cursor: 'pointer' }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return
+                  e.stopPropagation()
+                  selectArtboard(a.id)
+                }}
+              />
+            )}
             <ArtboardHeader artboard={a} frame={frame} highlighted={highlighted} />
-            {resizable && <ArtboardResizeHandles artboard={a} frame={frame} />}
+            {resizable && <ArtboardResizeHandles artboard={a} frame={frame} selected={isSelection} />}
           </g>
         )
       })}

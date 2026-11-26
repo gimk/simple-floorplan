@@ -4,11 +4,11 @@ import { createDefaultProject } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import type { Room } from '../../model/types'
 import {
-  constrainAngle45, constrainAxis, constrainWallPerpendicular, createRectRoom, cutoutRoom, formatLengthCm, deleteVertex, insertVertexOnEdge, isAxisAlignedRect, mergeRooms,
+  constrainAngle45, constrainAxis, constrainWallPerpendicular, createRectRoom, cutoutRoom, formatLengthCm, deleteVertex, deleteWall, insertVertexOnEdge, isAxisAlignedRect, mergeRooms,
   moveEdge, moveRoom, moveVertex, nextRoomName, roomWalls, roundToPrecision, scaleRoomFromVertex, setWallLength, wallResizeCursor,
 } from './ops'
 import {
-  addRoom, cutoutArtboardRooms, deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength,
+  addRoom, cutoutArtboardRooms, deleteRoomVertex, deleteRoomWall, deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength,
 } from './actions'
 
 const rect = (id: string, x0: number, y0: number, x1: number, y1: number): Room => ({
@@ -329,5 +329,116 @@ describe('precision and constraints (Phase 3.5A)', () => {
     expect(wallResizeCursor(o, { x: 100, y: -100 })).toBe('nwse-resize')
     expect(wallResizeCursor(o, { x: -100, y: 100 })).toBe('nwse-resize')
     expect(wallResizeCursor(o, { x: 100, y: 10 })).toBe('ns-resize')
+  })
+})
+
+describe('deleteWall', () => {
+  // Square 0..400 with a notch: wall 3->4 is the notch bottom (from (300,100) to (100,100)).
+  const notch: Room = {
+    id: 'n', name: 'n',
+    vertices: [
+      { x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 400 }, { x: 300, y: 400 },
+      { x: 300, y: 100 }, { x: 100, y: 100 }, { x: 100, y: 400 }, { x: 0, y: 400 },
+    ],
+  }
+  it('returns null for a triangle', () => {
+    expect(deleteWall(tri, 0)).toBeNull()
+  })
+  it('returns null for an invalid index', () => {
+    expect(deleteWall(rect('r', 0, 0, 100, 100), 9)).toBeNull()
+    expect(deleteWall(rect('r', 0, 0, 100, 100), -1)).toBeNull()
+  })
+  it('collapses a rectangle to a triangle (parallel neighbours use the midpoint)', () => {
+    const r = rect('r', 0, 0, 400, 300)
+    const out = deleteWall(r, 0)!
+    expect(out.vertices).toHaveLength(3)
+    expect(out.vertices[0]).toEqual({ x: 200, y: 0 })
+    expect(area(out.vertices)).toBeGreaterThan(10)
+  })
+  it('keeps id, name and fill and does not change the input', () => {
+    const r = rect('r', 0, 0, 400, 300)
+    const copy = JSON.stringify(r)
+    const out = deleteWall(r, 1)!
+    expect(out.id).toBe('r')
+    expect(out.fill).toBe('#abc')
+    expect(JSON.stringify(r)).toBe(copy)
+  })
+  it('reconnects a chamfer at the intersection of the neighbour walls', () => {
+    // Square with the corner (400,0) cut: wall 1 is the chamfer (300,0)->(400,100).
+    const c: Room = {
+      id: 'c', name: 'c',
+      vertices: [{ x: 0, y: 0 }, { x: 300, y: 0 }, { x: 400, y: 100 }, { x: 400, y: 400 }, { x: 0, y: 400 }],
+    }
+    const out = deleteWall(c, 1)!
+    expect(out.vertices).toHaveLength(4)
+    expect(out.vertices[0].x).toBeCloseTo(400)
+    expect(out.vertices[0].y).toBeCloseTo(0)
+    expect(area(out.vertices)).toBeCloseTo(160000)
+  })
+  it('removes a notch: neighbour walls meet on their intersection', () => {
+    // Wall 4 (300,100)->(100,100) is parallel to nothing useful: neighbours are vertical, so they
+    // never meet and the midpoint is used.
+    const out = deleteWall(notch, 4)!
+    expect(out.vertices).toHaveLength(7)
+    expect(out.vertices).toContainEqual({ x: 200, y: 100 })
+  })
+  it('handles the closing wall (last vertex to first)', () => {
+    const c: Room = {
+      id: 'c', name: 'c',
+      vertices: [{ x: 400, y: 100 }, { x: 400, y: 400 }, { x: 0, y: 400 }, { x: 0, y: 0 }, { x: 300, y: 0 }],
+    }
+    const out = deleteWall(c, 4)!
+    expect(out.vertices).toHaveLength(4)
+    expect(out.vertices).toContainEqual({ x: 400, y: 0 })
+    expect(area(out.vertices)).toBeCloseTo(160000)
+  })
+  it('falls back to the midpoint when the intersection is too far away', () => {
+    // Neighbours nearly parallel: they meet far from the wall.
+    const r: Room = {
+      id: 'f', name: 'f',
+      vertices: [{ x: 0, y: 0 }, { x: 1000, y: 0 }, { x: 1000, y: 20 }, { x: 0, y: 21 }],
+    }
+    const out = deleteWall(r, 1)
+    expect(out).not.toBeNull()
+    expect(out!.vertices).toContainEqual({ x: 1000, y: 10 })
+  })
+  it('returns null when the result has no area', () => {
+    const flat: Room = {
+      id: 'z', name: 'z',
+      vertices: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 0.1 }, { x: 0, y: 0.1 }],
+    }
+    expect(deleteWall(flat, 0)).toBeNull()
+  })
+})
+
+describe('deleteRoomVertex / deleteRoomWall actions', () => {
+  beforeEach(() => { useDoc.getState().hydrate(createDefaultProject()) })
+  const setup = (room: Room) => {
+    const ab = useDoc.getState().doc.artboards[0]
+    addRoom(ab.id, room)
+    return ab.id
+  }
+  it('deleteRoomVertex removes a vertex in one undo step', () => {
+    const id = setup(rect('r', 0, 0, 400, 300))
+    expect(deleteRoomVertex(id, 'r', 1)).toBe(true)
+    expect(useDoc.getState().doc.artboards[0].rooms[0].vertices).toHaveLength(3)
+    useDoc.getState().undo()
+    expect(useDoc.getState().doc.artboards[0].rooms[0].vertices).toHaveLength(4)
+  })
+  it('deleteRoomVertex returns false for a triangle or unknown room', () => {
+    const id = setup(tri)
+    expect(deleteRoomVertex(id, 't', 0)).toBe(false)
+    expect(deleteRoomVertex(id, 'nope', 0)).toBe(false)
+  })
+  it('deleteRoomWall removes a wall in one undo step', () => {
+    const id = setup(rect('r', 0, 0, 400, 300))
+    expect(deleteRoomWall(id, 'r', 0)).toBe(true)
+    expect(useDoc.getState().doc.artboards[0].rooms[0].vertices).toHaveLength(3)
+    useDoc.getState().undo()
+    expect(useDoc.getState().doc.artboards[0].rooms[0].vertices).toHaveLength(4)
+  })
+  it('deleteRoomWall returns false for a triangle', () => {
+    const id = setup(tri)
+    expect(deleteRoomWall(id, 't', 0)).toBe(false)
   })
 })

@@ -4,7 +4,7 @@ import type { Vec } from '../../model/geometry'
 import { area } from '../../model/geometry'
 import type { Room } from '../../model/types'
 import { syncOpeningsForRoomChange } from '../openings/sync'
-import { cutoutRoom, mergeRooms, setWallLength } from './ops'
+import { cutoutRoom, deleteVertex, deleteWall, mergeRooms, setWallLength } from './ops'
 
 const findArtboard = (artboardId: string) => useDoc.getState().doc.artboards.find((a) => a.id === artboardId)
 
@@ -87,4 +87,28 @@ export function mergeArtboardRooms(artboardId: string, roomIds: string[]): Room 
     a.openings = syncOpeningsForRoomChange(a.openings, prev, a.rooms)
   })
   return merged
+}
+
+function applyRoomEdit(artboardId: string, roomId: string, edit: (room: Room) => Room | null): boolean {
+  const room = findArtboard(artboardId)?.rooms.find((r) => r.id === roomId)
+  if (!room) return false
+  const next = edit(room)
+  if (!next) return false
+  useDoc.getState().update((d) => {
+    const a = d.artboards.find((x) => x.id === artboardId)!
+    const prev = a.rooms
+    a.rooms = a.rooms.map((r) => (r.id === roomId ? next : r))
+    a.openings = syncOpeningsForRoomChange(a.openings, prev, a.rooms)
+  })
+  return true
+}
+
+/** Remove one vertex (one undo step). Returns false when the room would have fewer than 3 points. */
+export function deleteRoomVertex(artboardId: string, roomId: string, vertexIndex: number): boolean {
+  return applyRoomEdit(artboardId, roomId, (r) => deleteVertex(r, vertexIndex))
+}
+
+/** Remove one wall and reconnect its neighbours (one undo step). Returns false when not possible. */
+export function deleteRoomWall(artboardId: string, roomId: string, edgeIndex: number): boolean {
+  return applyRoomEdit(artboardId, roomId, (r) => deleteWall(r, edgeIndex))
 }

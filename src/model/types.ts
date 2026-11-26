@@ -87,6 +87,7 @@ export type Selection =
   | { kind: 'artboard'; artboardId: string }
   | { kind: 'room'; artboardId: string; roomIds: string[] }
   | { kind: 'wall'; artboardId: string; roomId: string; edgeIndex: number }
+  | { kind: 'vertex'; artboardId: string; roomId: string; vertexIndex: number }
   | { kind: 'opening'; artboardId: string; openingId: string }
   | { kind: 'furniture'; artboardId: string; furnitureId: string }
   | { kind: 'refImage'; imageId: string }

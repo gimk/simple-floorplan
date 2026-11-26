@@ -203,7 +203,7 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
       if (!movingId) return
       const cur = live(movingId)
       if (!cur) return
-      const s = snapToWall(p, artboard.rooms, cur.widthCm)
+      const s = snapToWall(p, artboard.rooms, cur.widthCm, px(22))
       if (!s) return
       const c = roundAlongWall(s, cur.widthCm, artboard.precisionCm, !mods.cmd)
       // The wall may be seen from its other end (shared wall of two rooms): keep the hinge/swing side.
