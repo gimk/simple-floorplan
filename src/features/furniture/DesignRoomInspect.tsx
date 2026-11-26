@@ -1,14 +1,17 @@
 // Right-panel Inspect card for one room in Design mode (docs/simple-floorplan-2.md §6, Phase 4):
-// the name, the measured area and the floor colour of the room. The geometry of the room is
-// read-only here: walls and dimensions belong to Plan mode.
+// the name, the measured area, the floor colour of the room, and the furniture that sits in it
+// (front-most first, with the two stack steps). The geometry of the room is read-only here: walls
+// and dimensions belong to Plan mode.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm, m².
 import { useId } from 'react'
-import { PaintBucket, Square } from 'lucide-react'
+import { Armchair, ChevronDown, ChevronUp, PaintBucket, Square } from 'lucide-react'
+import { pointInPolygon } from '../../model/geometry'
 import { useDoc } from '../../model/store'
-import type { Room } from '../../model/types'
-import { EmptyHint, FieldRow, MUTED, PanelSection, TextField, formatM2 } from '../../shell/panel'
+import type { FurnitureItem, Room } from '../../model/types'
+import { EmptyHint, FieldRow, IconButton, MUTED, PanelSection, TextField, formatM2 } from '../../shell/panel'
+import { useUi } from '../../shell/uiStore'
 import { roomAreaM2 } from '../artboards/frame'
-import { setRoomFill } from './actions'
+import { reorderFurniture, setRoomFill } from './actions'
 import { FLOOR_SWATCHES } from './presets'
 
 export type DesignRoomInspectProps = {
@@ -81,6 +84,19 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
     })
   }
 
+  /** Select one furniture item (the Inspect card then shows its own fields). */
+  const selectItem = (item: FurnitureItem) => {
+    useUi.getState().set({
+      activeArtboardId: artboard.id,
+      selection: { kind: 'furniture', artboardId: artboard.id, furnitureId: item.id },
+    })
+  }
+
+  // Items whose centre is inside the room; the list runs front-most (top of the stack) first.
+  const inRoom = artboard.furniture.filter((f) => pointInPolygon({ x: f.xCm, y: f.yCm }, room.vertices))
+  const listed = [...inRoom].reverse()
+  const topIndex = artboard.furniture.length - 1
+
   return (
     <>
       <PanelSection title="Room" icon={<Square size={14} aria-hidden="true" />}>
@@ -122,6 +138,52 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
           })}
         </div>
         <p className={MUTED}>{currentLabel}</p>
+      </PanelSection>
+
+      <PanelSection title="Furniture" icon={<Armchair size={14} aria-hidden="true" />}>
+        {listed.length === 0 ? (
+          <EmptyHint>No furniture in this room yet.</EmptyHint>
+        ) : (
+          <ul className="flex flex-col gap-1" aria-label="Furniture in this room">
+            {listed.map((item) => {
+              const index = artboard.furniture.findIndex((f) => f.id === item.id)
+              return (
+                <li key={item.id} className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Select ${item.name}`}
+                    title={`Select ${item.name}`}
+                    onClick={() => selectItem(item)}
+                    className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-transparent px-2 py-1 text-left transition-colors hover:bg-black/5 pointer-coarse:min-h-11 dark:hover:bg-white/10"
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{ backgroundColor: item.color }}
+                      className={`h-4 w-4 shrink-0 border border-white/25 ${
+                        item.shape === 'circle' ? 'rounded-full' : 'rounded-[4px]'
+                      }`}
+                    />
+                    <span className="truncate text-sm font-medium leading-tight text-slate-800 dark:text-slate-100">
+                      {item.name}
+                    </span>
+                  </button>
+                  <IconButton
+                    label={`Bring ${item.name} forward`}
+                    icon={<ChevronUp size={14} aria-hidden="true" />}
+                    disabled={index === topIndex}
+                    onClick={() => reorderFurniture(artboard.id, item.id, 'forward')}
+                  />
+                  <IconButton
+                    label={`Send ${item.name} backward`}
+                    icon={<ChevronDown size={14} aria-hidden="true" />}
+                    disabled={index <= 0}
+                    onClick={() => reorderFurniture(artboard.id, item.id, 'backward')}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+        )}
       </PanelSection>
     </>
   )

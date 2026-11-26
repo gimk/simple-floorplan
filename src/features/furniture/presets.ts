@@ -40,6 +40,8 @@ export type FurniturePreset = {
   heightCm: number
   /** Directional items (bed, sofa, desk...) draw a subtle front-direction arrow. */
   showDirection?: boolean
+  /** Stack place of a new item: 'bottom' = under the existing items (a rug), default 'top'. */
+  layer?: 'top' | 'bottom'
 }
 
 const DEFAULT_PRESET_COLOR = '#4b5563'
@@ -57,5 +59,5 @@ export const FURNITURE_PRESETS: FurniturePreset[] = [
   { id: 'wardrobe', name: 'Wardrobe', shape: 'rect', widthCm: 150, depthCm: 60, color: DEFAULT_PRESET_COLOR, heightCm: 200, showDirection: true },
   { id: 'bookshelf', name: 'Bookshelf', shape: 'rect', widthCm: 100, depthCm: 35, color: DEFAULT_PRESET_COLOR, heightCm: 180, showDirection: true },
   { id: 'kitchen-counter', name: 'Kitchen Counter', shape: 'rect', widthCm: 240, depthCm: 60, color: DEFAULT_PRESET_COLOR, heightCm: 90, showDirection: true },
-  { id: 'rug', name: 'Rug', shape: 'rect', widthCm: 200, depthCm: 300, color: DEFAULT_PRESET_COLOR, heightCm: 1 },
+  { id: 'rug', name: 'Rug', shape: 'rect', widthCm: 200, depthCm: 300, color: DEFAULT_PRESET_COLOR, heightCm: 1, layer: 'bottom' },
 ]

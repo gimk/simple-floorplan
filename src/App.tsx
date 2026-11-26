@@ -9,7 +9,7 @@ import { CalibrateOverlay } from './features/background/CalibrateOverlay'
 import { RefImageInspect } from './features/background/RefImageInspect'
 import { RefImagesLayer } from './features/background/RefImagesLayer'
 import { loadRefImageFile } from './features/background/upload'
-import { deleteFurniture, duplicateFurniture } from './features/furniture/actions'
+import { deleteFurniture, duplicateFurniture, reorderFurniture } from './features/furniture/actions'
 import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
 import { FurnitureInspect } from './features/furniture/FurnitureInspect'
 import { FurnitureLayer } from './features/furniture/FurnitureLayer'
@@ -131,6 +131,23 @@ export default function App() {
           }
         }
         return
+      }
+      // Cmd/Ctrl+[ / ] send the selected furniture to the back / front; [ and ] step it once.
+      if (!e.altKey && (e.key === '[' || e.key === ']')) {
+        const ui = useUi.getState()
+        if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
+          e.preventDefault()
+          const op =
+            e.key === '['
+              ? e.metaKey || e.ctrlKey
+                ? 'back'
+                : 'backward'
+              : e.metaKey || e.ctrlKey
+                ? 'front'
+                : 'forward'
+          reorderFurniture(ui.selection.artboardId, ui.selection.furnitureId, op)
+          return
+        }
       }
       // Delete / Backspace removes the selected opening, reference image, furniture or rooms.
       if (e.key !== 'Delete' && e.key !== 'Backspace') return

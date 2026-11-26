@@ -154,11 +154,14 @@ export function FurniturePanel() {
 
   const artboard = artboards.find((a) => a.id === activeArtboardId) ?? artboards[0]
 
-  /** Add one item at the centre of the active artboard and select it (addFurniture does both). */
-  const place = (item: NewItem) => {
+  /**
+   * Add one item at the centre of the active artboard and select it (addFurniture does both).
+   * `position` 'bottom' puts a rug under the items that are already there.
+   */
+  const place = (item: NewItem, position?: 'top' | 'bottom') => {
     if (!artboard) return
     const center = centerOfArtboard(artboard)
-    addFurniture(artboard.id, { ...item, xCm: center.xCm, yCm: center.yCm, rotationDeg: 0 })
+    addFurniture(artboard.id, { ...item, xCm: center.xCm, yCm: center.yCm, rotationDeg: 0 }, { position })
   }
 
   const addCustom = () => {
@@ -249,15 +252,18 @@ export function FurniturePanel() {
               key={preset.id}
               item={preset}
               onAdd={() =>
-                place({
-                  name: preset.name,
-                  shape: preset.shape,
-                  widthCm: preset.widthCm,
-                  depthCm: preset.depthCm,
-                  color: preset.color,
-                  heightCm: preset.heightCm,
-                  showDirection: preset.showDirection,
-                })
+                place(
+                  {
+                    name: preset.name,
+                    shape: preset.shape,
+                    widthCm: preset.widthCm,
+                    depthCm: preset.depthCm,
+                    color: preset.color,
+                    heightCm: preset.heightCm,
+                    showDirection: preset.showDirection,
+                  },
+                  preset.layer,
+                )
               }
             />
           ))}

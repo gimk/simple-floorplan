@@ -10,6 +10,7 @@ import { newId } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import type { Artboard, Opening, Room, Selection } from '../../model/types'
 import { syncOpeningsForRoomChange } from '../openings/sync'
+import { furnitureIdsInRooms, translateFurnitureByIds } from '../furniture/roomSync'
 import { subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
@@ -163,13 +164,27 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     const cloneIds = new Map<string, string>()
     const cloneId = (id: string) => { let c = cloneIds.get(id); if (!c) { c = newId(); cloneIds.set(id, c) } return c }
     let dupActive = false
-    const write = (moved: Map<string, Vec[]>, alt: boolean) => {
+    // Furniture of the moved rooms follows the drag. The items and their positions are captured
+    // once here, so every move recomputes them from the start state (no drift, no double move).
+    const furnitureOrigin = artboard.furniture
+    const movedFurnitureIds = furnitureIdsInRooms(artboard, ids)
+    const movedFurniture = (dx: number, dy: number) =>
+      translateFurnitureByIds(furnitureOrigin, movedFurnitureIds, dx, dy)
+    // `dx`/`dy` are the deltas applied to the rooms: the furniture gets exactly the same ones.
+    const write = (moved: Map<string, Vec[]>, alt: boolean, dx = 0, dy = 0) => {
       const fn = (doc: { artboards: Artboard[] }) => {
         const ab = doc.artboards.find((a) => a.id === artboard.id)
         if (!ab) return
         const nextRooms = origin.rooms.map((r) => { const v = moved.get(r.id); return v ? { ...r, vertices: v } : r })
         const synced = syncOpeningsForRoomChange(origin.openings, origin.rooms, nextRooms)
-        if (!alt) { ab.rooms = nextRooms; ab.openings = synced; return }
+        if (!alt) {
+          ab.rooms = nextRooms
+          ab.openings = synced
+          // Only the translation of whole rooms moves furniture: wall, vertex and delete paths below
+          // do not touch it.
+          if (movedFurnitureIds.size > 0) ab.furniture = movedFurniture(dx, dy)
+          return
+        }
         const dups = [...moved].map(([id, v]) => ({ ...origs.get(id)!, id: dupIds.get(id)!, vertices: v }))
         const byId = new Map(origin.openings.map((o) => [o.id, o] as const))
         const clones = synced
@@ -177,6 +192,9 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
           .map((o) => ({ ...o, id: cloneId(o.id) }))
         ab.rooms = [...origin.rooms, ...dups]
         ab.openings = [...origin.openings, ...clones]
+        // The originals did not move, so their furniture stays where it was: a mode switch mid-drag
+        // (back from Alt) puts the items back where they started too.
+        if (movedFurnitureIds.size > 0) ab.furniture = furnitureOrigin
       }
       useDoc.getState().updateSilent(fn)
     }
@@ -185,7 +203,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
       const s = snapRoomDelta(primary, d.x, d.y, mods.alt ? artboard.rooms : others, px(10), { disableSnap: mods.cmd, precisionCm: artboard.precisionCm })
       setGuides(s.guides)
       dupActive = mods.alt
-      write(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), mods.alt)
+      write(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), mods.alt, s.dx, s.dy)
     }, (moved) => {
       if (moved && dupActive) setSelection({ kind: 'room', artboardId: artboard.id, roomIds: [...dupIds.values()] })
     })

@@ -1,9 +1,9 @@
 // Right-panel Inspect card for one selected furniture item in Design mode
-// (docs/simple-floorplan-2.md §6, Phase 4): name, shape, width × depth, rotation (with quick
-// quarter turns), optional height for the future 3D view, colour, Duplicate and Delete.
+// (docs/simple-floorplan-2.md §6, Phase 4): name, shape, stack order, width × depth, rotation (with
+// quick quarter turns), optional height for the future 3D view, colour, Duplicate and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm and degrees.
 import { useId } from 'react'
-import { Armchair, Copy, RotateCw, Trash2 } from 'lucide-react'
+import { Armchair, ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, RotateCw, Trash2 } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import {
@@ -17,7 +17,7 @@ import {
   TextField,
   formatCmInput,
 } from '../../shell/panel'
-import { deleteFurniture, duplicateFurniture, updateFurniture } from './actions'
+import { deleteFurniture, duplicateFurniture, reorderFurniture, updateFurniture, type StackOp } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, normalizeAngle } from './geometry'
 import { FURNITURE_COLORS } from './presets'
 
@@ -27,6 +27,14 @@ export type FurnitureInspectProps = {
   /** Item to inspect. Unknown ids render nothing. */
   furnitureId: string
 }
+
+/** The 4 stack moves, in the order of the Order row (icons and shortcuts). */
+const STACK_BUTTONS: readonly { op: StackOp; label: string; title: string; Icon: typeof ArrowDown }[] = [
+  { op: 'back', label: 'Send to back', title: 'Send to back (Cmd+[)', Icon: ArrowDownToLine },
+  { op: 'backward', label: 'Send backward', title: 'Send backward ([)', Icon: ArrowDown },
+  { op: 'forward', label: 'Bring forward', title: 'Bring forward (])', Icon: ArrowUp },
+  { op: 'front', label: 'Bring to front', title: 'Bring to front (Cmd+])', Icon: ArrowUpToLine },
+]
 
 /** Shape choices of the segmented control. */
 const SHAPE_OPTIONS = [
@@ -81,6 +89,11 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
   const nameId = useId()
   const heightId = useId()
   if (!artboard || !item) return null
+
+  // Stack place of the item: index 0 is the bottom of the pile, the last index is the top.
+  const index = artboard.furniture.findIndex((f) => f.id === item.id)
+  const isBottom = index <= 0
+  const isTop = index === artboard.furniture.length - 1
 
   const patch = (p: Partial<Omit<FurnitureItem, 'id'>>) => updateFurniture(artboard.id, item.id, p)
 
@@ -148,6 +161,29 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
           onCommit={commitName}
           invalidMessage="Type a name for the item."
         />
+      </FieldRow>
+
+      <FieldRow label="Order" hint="stack place" stacked>
+        <div className="grid grid-cols-4 gap-1" role="group" aria-label="Stack order">
+          {STACK_BUTTONS.map(({ op, label, title, Icon }) => {
+            const disabled = op === 'back' || op === 'backward' ? isBottom : isTop
+            return (
+              <button
+                key={op}
+                type="button"
+                className={BTN}
+                title={title}
+                aria-label={label}
+                disabled={disabled}
+                onClick={() => {
+                  reorderFurniture(artboard.id, item.id, op)
+                }}
+              >
+                <Icon size={14} aria-hidden="true" />
+              </button>
+            )
+          })}
+        </div>
       </FieldRow>
 
       <FieldRow label="Shape" stacked>

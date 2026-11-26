@@ -3,7 +3,9 @@ import { createArtboard } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem, Room } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
-import { addFurniture, deleteFurniture, duplicateFurniture, setRoomFill, updateFurniture, updateFurnitureSilent } from './actions'
+import {
+  addFurniture, deleteFurniture, duplicateFurniture, reorderFurniture, setRoomFill, updateFurniture, updateFurnitureSilent,
+} from './actions'
 import {
   computeDistanceGuides, DEFAULT_MAX_GUIDE_DIST_CM, MAX_FURNITURE_CM, MIN_FURNITURE_CM, directionArrowGeometry,
   furnitureAxisBounds, furnitureCornerRadiusCm, furnitureWorldCorners, normalizeAngle, snapFurnitureMove, snapRotation,
@@ -86,6 +88,12 @@ describe('presets and swatches', () => {
     expect(byId.get('bookshelf')).toMatchObject({ widthCm: 100, depthCm: 35 })
     expect(byId.get('kitchen-counter')).toMatchObject({ widthCm: 240, depthCm: 60 })
     expect(byId.get('rug')).toMatchObject({ widthCm: 200, depthCm: 300 })
+  })
+
+  it('layers the Rug preset at the bottom of the stack and leaves the others on top', () => {
+    const byId = new Map(FURNITURE_PRESETS.map((p) => [p.id, p]))
+    expect(byId.get('rug')?.layer).toBe('bottom')
+    for (const p of FURNITURE_PRESETS.filter((x) => x.id !== 'rug')) expect(p.layer).toBeUndefined()
   })
 
   it('marks only the directional presets with showDirection', () => {
@@ -360,6 +368,16 @@ describe('addFurniture', () => {
     expect(s().doc.artboards[0].furniture[0].depthCm).toBe(MAX_FURNITURE_CM)
   })
 
+  it('appends at the top by default and inserts at index 0 with position bottom', () => {
+    const artboardId = s().doc.artboards[0].id
+    const first = addFurniture(artboardId, { name: 'Sofa', shape: 'rect', xCm: 0, yCm: 0, widthCm: 220, depthCm: 95, rotationDeg: 0, color: '#4b5563' })
+    const second = addFurniture(artboardId, { name: 'Desk', shape: 'rect', xCm: 0, yCm: 0, widthCm: 140, depthCm: 70, rotationDeg: 0, color: '#4b5563' }, { position: 'top' })
+    const rug = addFurniture(artboardId, { name: 'Rug', shape: 'rect', xCm: 0, yCm: 0, widthCm: 200, depthCm: 300, rotationDeg: 0, color: '#4b5563' }, { position: 'bottom' })
+    expect(s().doc.artboards[0].furniture.map((f) => f.id)).toEqual([rug, first, second])
+    // The new rug is still the selection, so the rest of the card works on it.
+    expect(ui().selection).toEqual({ kind: 'furniture', artboardId, furnitureId: rug })
+  })
+
   it('does nothing for an unknown artboard', () => {
     const before = past()
     expect(addFurniture('nope', { name: 'X', shape: 'rect', xCm: 0, yCm: 0, widthCm: 50, depthCm: 50, rotationDeg: 0, color: '#4b5563' })).toBe('')
@@ -456,6 +474,63 @@ describe('deleteFurniture', () => {
     const before = past()
     deleteFurniture(artboardId, id)
     expect(past()).toBe(before)
+  })
+})
+
+describe('reorderFurniture', () => {
+  /** Three items a, b, c in one artboard (a = bottom, c = top). */
+  const stack = () => {
+    const artboardId = s().doc.artboards[0].id
+    s().update((d) => {
+      d.artboards[0].furniture.push(
+        item({ id: 'a', yCm: 10 }), item({ id: 'b', yCm: 20 }), item({ id: 'c', yCm: 30 }),
+      )
+    })
+    return artboardId
+  }
+  const order = () => s().doc.artboards[0].furniture.map((f) => f.id)
+
+  it('back sends the item to index 0 and front to the last index', () => {
+    const artboardId = stack()
+    expect(reorderFurniture(artboardId, 'c', 'back')).toBe(true)
+    expect(order()).toEqual(['c', 'a', 'b'])
+    expect(reorderFurniture(artboardId, 'c', 'front')).toBe(true)
+    expect(order()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('backward and forward move one step', () => {
+    const artboardId = stack()
+    expect(reorderFurniture(artboardId, 'b', 'backward')).toBe(true)
+    expect(order()).toEqual(['b', 'a', 'c'])
+    expect(reorderFurniture(artboardId, 'b', 'forward')).toBe(true)
+    expect(order()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('is a no-op without an undo step at the ends and for unknown ids', () => {
+    const artboardId = stack()
+    const before = past()
+    expect(reorderFurniture(artboardId, 'a', 'back')).toBe(false)
+    expect(reorderFurniture(artboardId, 'a', 'backward')).toBe(false)
+    expect(reorderFurniture(artboardId, 'c', 'front')).toBe(false)
+    expect(reorderFurniture(artboardId, 'c', 'forward')).toBe(false)
+    expect(reorderFurniture(artboardId, 'nope', 'forward')).toBe(false)
+    expect(reorderFurniture('nope', 'a', 'front')).toBe(false)
+    expect(order()).toEqual(['a', 'b', 'c'])
+    expect(past()).toBe(before)
+  })
+
+  it('records one undo step and restores the old order on undo / redo', () => {
+    const artboardId = stack()
+    const before = past()
+    expect(reorderFurniture(artboardId, 'a', 'front')).toBe(true)
+    expect(past()).toBe(before + 1)
+    expect(order()).toEqual(['b', 'c', 'a'])
+    s().undo()
+    expect(order()).toEqual(['a', 'b', 'c'])
+    s().redo()
+    expect(order()).toEqual(['b', 'c', 'a'])
+    // The items themselves keep their fields.
+    expect(s().doc.artboards[0].furniture.map((f) => f.yCm)).toEqual([20, 30, 10])
   })
 })
 
