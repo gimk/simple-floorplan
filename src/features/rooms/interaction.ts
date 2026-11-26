@@ -245,11 +245,13 @@ export function moveStoredWall(doc: PlanDoc, wallId: string, delta: Vec): PlanDo
 /**
  * A room drag on the graph: the nodes of the walls of the rooms move, so the neighbours stretch.
  * `thisRoomOnly` (Shift) keeps the walls that another room also uses, and the room gets its own
- * copies of them; the T junctions of the walls that stay do not move either.
+ * copies of them; the T junctions of the walls that stay do not move either. With Shift the T
+ * junctions are not repaired, so a wall end of another room that touched a moved wall stays where
+ * it was and no wall of another room changes length.
  */
 export function moveGraphRooms(doc: PlanDoc, roomIds: string[], delta: Vec, thisRoomOnly: boolean): PlanDoc {
   const moved = roomIds.reduce((acc, id) => roomMove(acc, id, delta, { thisRoomOnly }), doc)
-  return repairJunctions(doc, moved)
+  return thisRoomOnly ? moved : repairJunctions(doc, moved)
 }
 
 /**
