@@ -1,6 +1,6 @@
 // SVG viewport with pan/zoom. World units = cm. Children are drawn in world coordinates.
 //
-// Pan:  wheel/trackpad scroll, middle or right mouse drag, space + drag, 'pan' tool, or two-finger touch.
+// Pan:  wheel/trackpad scroll, middle or right mouse drag, space + drag, or two-finger touch.
 // Zoom: ctrl/cmd + wheel (trackpad pinch; a mouse notch is capped to a small step), or two-finger pinch on touch.
 // The browser context menu is blocked on the canvas.
 //
@@ -27,7 +27,6 @@ export const useViewport = () => useContext(ViewportCtx)
 export function Viewport({ children, overlay }: { children: ReactNode; overlay?: ReactNode }) {
   const ref = useRef<SVGSVGElement>(null)
   const view = useUi((s) => s.view)
-  const tool = useUi((s) => s.tool)
   const setUi = useUi((s) => s.set)
   const [svg, setSvg] = useState<SVGSVGElement | null>(null)
   const [space, setSpace] = useState(false)
@@ -93,7 +92,7 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
       return
     }
     // Middle or right mouse button always pans (tools only use the left button).
-    if (e.button === 1 || e.button === 2 || space || tool === 'pan') {
+    if (e.button === 1 || e.button === 2 || space) {
       panStart.current = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }
       ref.current?.setPointerCapture(e.pointerId)
       e.stopPropagation()
@@ -124,14 +123,14 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
   }
 
   const ctx: Ctx = { zoom: view.zoom, toWorld, px: (p) => p / view.zoom, svg }
-  const cursor = space || tool === 'pan' ? (panStart.current ? 'grabbing' : 'grab') : undefined
+  const cursor = space ? (panStart.current ? 'grabbing' : 'grab') : undefined
 
   return (
     <ViewportCtx.Provider value={ctx}>
       <svg
         ref={ref}
         data-testid="floorplan-canvas"
-        data-pan-ready={space || tool === 'pan' ? '' : undefined}
+        data-pan-ready={space ? '' : undefined}
         className="h-full w-full touch-none select-none"
         style={{ cursor }}
         onPointerDownCapture={onPointerDownCapture}

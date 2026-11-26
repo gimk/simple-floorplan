@@ -2,8 +2,9 @@
 // Fit resets the view to the origin. Rendered as HTML over the canvas, in screen space.
 import { useEffect, useState } from 'react'
 import { Maximize2, Minus, Plus } from 'lucide-react'
+import { docBounds, useDoc } from '../model/store'
 import { useUi } from './uiStore'
-import { clampZoom, fmtScale, MAX_ZOOM, MIN_ZOOM, scaleBarStep } from './viewMath'
+import { clampZoom, fitView, fmtScale, MAX_ZOOM, MIN_ZOOM, scaleBarStep } from './viewMath'
 
 /** Zoom to `targetZoom` centered on the canvas, keeping the world point at the center fixed. */
 function zoomTo(targetZoom: number) {
@@ -18,8 +19,14 @@ function zoomTo(targetZoom: number) {
   useUi.getState().set({ view: { zoom: z, x: wx - (cx - (r?.left ?? 0)) / z, y: wy - (cy - (r?.top ?? 0)) / z } })
 }
 
-/** Reset the view: zoom 100%, origin near the top-left of the canvas. Real fit-to-content comes with the v2 model. */
-const fitHome = () => useUi.getState().set({ view: { zoom: 1, x: -100, y: -100 } })
+/** Fit the view to all artboards, rooms and reference images. */
+function fitAll() {
+  const svg = document.querySelector('svg[data-testid="floorplan-canvas"]')
+  const r = svg?.getBoundingClientRect()
+  const w = r?.width || window.innerWidth
+  const h = r?.height || window.innerHeight
+  useUi.getState().set({ view: fitView(docBounds(useDoc.getState().doc), w, h) })
+}
 
 const zoomBy = (factor: number) => zoomTo(useUi.getState().view.zoom * factor)
 
@@ -56,7 +63,7 @@ export function ZoomControls() {
       <button type="button" className={btn} aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1.25)}>
         <Plus size={16} />
       </button>
-      <button type="button" className={`${btn} gap-1 px-2 text-xs max-sm:px-0`} aria-label="Reset view" title="Reset view" onClick={fitHome}>
+      <button type="button" className={`${btn} gap-1 px-2 text-xs max-sm:px-0`} aria-label="Fit all" title="Fit all" onClick={fitAll}>
         <Maximize2 size={16} /> <span className="hidden sm:inline">Fit</span>
       </button>
       <div className="mx-0.5 h-5 w-px bg-black/10 sm:mx-1 dark:bg-white/15" aria-hidden="true" />
