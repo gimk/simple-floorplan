@@ -8,19 +8,54 @@ export type CloudProjectSummary = { id: string; title: string; updatedAt: string
 export const CLOUD_TOKEN_KEY = 'sfp-cloud-token'
 const IMAGE_PREFIX = '/api/images/'
 
-type FetchFn = typeof fetch
-
-function authHeaders(): Record<string, string> {
-  try {
-    const t = localStorage.getItem(CLOUD_TOKEN_KEY)
-    return t ? { 'x-api-token': t } : {}
-  } catch {
-    return {}
+/** Thrown when the API answers 401: the server wants a passcode (or a valid token). */
+export class CloudUnauthorizedError extends Error {
+  constructor(message = 'Passcode required') {
+    super(message)
+    this.name = 'CloudUnauthorizedError'
   }
 }
 
+/** Saved passcode/token, or null when unset, blank, or storage is not readable. */
+export function getCloudToken(): string | null {
+  try {
+    const t = localStorage.getItem(CLOUD_TOKEN_KEY)
+    return t && t.length > 0 ? t : null
+  } catch {
+    return null
+  }
+}
+
+/** Stores the passcode/token. Silently ignored when storage is blocked (SSR, private mode). */
+export function setCloudToken(token: string): void {
+  try {
+    localStorage.setItem(CLOUD_TOKEN_KEY, token)
+  } catch {
+    // Storage unavailable: cloud calls stay unauthenticated.
+  }
+}
+
+export function clearCloudToken(): void {
+  try {
+    localStorage.removeItem(CLOUD_TOKEN_KEY)
+  } catch {
+    // Storage unavailable: nothing to clear.
+  }
+}
+
+type FetchFn = typeof fetch
+
+function authHeaders(): Record<string, string> {
+  const t = getCloudToken()
+  return t ? { 'x-api-token': t } : {}
+}
+
 async function call(fetchFn: FetchFn, url: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetchFn(url, { ...init, headers: { ...authHeaders(), ...(init.headers as Record<string, string> | undefined) } })
+  const res = await fetchFn(url, {
+    ...init,
+    headers: { ...authHeaders(), ...(init.headers as Record<string, string> | undefined) },
+  })
+  if (res.status === 401) throw new CloudUnauthorizedError('Passcode required')
   if (!res.ok) throw new Error(`Cloud request failed: ${init.method ?? 'GET'} ${url} (${res.status})`)
   return res
 }

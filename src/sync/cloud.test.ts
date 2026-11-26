@@ -1,10 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDefaultProject } from '../model/schema'
 import type { ProjectDoc, RefImage } from '../model/types'
-import { deleteCloudProject, listCloudProjects, loadProjectFromCloud, saveProjectToCloud } from './cloud'
+import {
+  CloudUnauthorizedError,
+  clearCloudToken,
+  deleteCloudProject,
+  getCloudToken,
+  listCloudProjects,
+  loadProjectFromCloud,
+  saveProjectToCloud,
+  setCloudToken,
+} from './cloud'
 
 const PNG_B64 = 'iVBORw0KGgo='
 const DATA_URL = `data:image/png;base64,${PNG_B64}`
+
+/** Minimal in-memory localStorage stand-in for the token helpers. */
+function memoryStorage() {
+  const map = new Map<string, string>()
+  return {
+    getItem: (k: string) => (map.has(k) ? (map.get(k) as string) : null),
+    setItem: (k: string, v: string) => {
+      map.set(k, v)
+    },
+    removeItem: (k: string) => {
+      map.delete(k)
+    },
+  }
+}
 
 const refImage = (src: string): RefImage => ({
   id: 'img1', name: 'plan', src, naturalWidth: 10, naturalHeight: 10,
@@ -87,5 +110,48 @@ describe('cloud sync', () => {
     await listCloudProjects(f as unknown as typeof fetch)
     const init = f.mock.calls[0][1] as RequestInit
     expect((init.headers as Record<string, string>)['x-api-token']).toBe('secret')
+  })
+
+  it('throws CloudUnauthorizedError on a 401 answer', async () => {
+    const f = vi.fn(
+      async (_url: string) => new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }),
+    )
+    const fx = f as unknown as typeof fetch
+    await expect(listCloudProjects(fx)).rejects.toBeInstanceOf(CloudUnauthorizedError)
+    await expect(saveProjectToCloud(docWithImage(DATA_URL), fx)).rejects.toBeInstanceOf(CloudUnauthorizedError)
+    await expect(loadProjectFromCloud('p1', fx)).rejects.toBeInstanceOf(CloudUnauthorizedError)
+    await expect(deleteCloudProject('p1', fx)).rejects.toBeInstanceOf(CloudUnauthorizedError)
+
+    const err = await listCloudProjects(fx).catch((e: unknown) => e as CloudUnauthorizedError)
+    expect(err).toBeInstanceOf(CloudUnauthorizedError)
+    expect((err as CloudUnauthorizedError).name).toBe('CloudUnauthorizedError')
+    expect((err as CloudUnauthorizedError).message).toBe('Passcode required')
+  })
+
+  it('stores, reads and clears the cloud token', () => {
+    vi.stubGlobal('localStorage', memoryStorage())
+    expect(getCloudToken()).toBeNull()
+    setCloudToken('hunter2')
+    expect(getCloudToken()).toBe('hunter2')
+    expect(localStorage.getItem('sfp-cloud-token')).toBe('hunter2')
+    clearCloudToken()
+    expect(getCloudToken()).toBeNull()
+    setCloudToken('')
+    expect(getCloudToken()).toBeNull()
+  })
+
+  it('survives a blocked or missing localStorage', () => {
+    const deny = () => {
+      throw new Error('denied')
+    }
+    vi.stubGlobal('localStorage', { getItem: deny, setItem: deny, removeItem: deny })
+    expect(getCloudToken()).toBeNull()
+    expect(() => setCloudToken('x')).not.toThrow()
+    expect(() => clearCloudToken()).not.toThrow()
+
+    vi.stubGlobal('localStorage', undefined)
+    expect(getCloudToken()).toBeNull()
+    expect(() => setCloudToken('x')).not.toThrow()
+    expect(() => clearCloudToken()).not.toThrow()
   })
 })

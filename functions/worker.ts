@@ -34,6 +34,7 @@ interface Env {
   IMAGES: R2Bucket
   ASSETS: Fetcher
   API_TOKEN?: string
+  PASSCODE?: string
 }
 
 type ProjectRow = { id: string; title: string; doc_json: string; updated_at: string }
@@ -48,10 +49,27 @@ function json(data: unknown, status = 200): Response {
   })
 }
 
-/** Returns an error Response when a token is required and wrong, otherwise null. */
+const encoder = new TextEncoder()
+
+/**
+ * Constant-time string compare: the loop always runs over the longer input, so the
+ * running time does not depend on where (or whether) the two strings differ.
+ */
+function safeEqual(a: string, b: string): boolean {
+  const ab = encoder.encode(a)
+  const bb = encoder.encode(b)
+  let diff = ab.length ^ bb.length
+  const len = Math.max(ab.length, bb.length)
+  for (let i = 0; i < len; i++) diff |= (ab[i] ?? 0) ^ (bb[i] ?? 0)
+  return diff === 0
+}
+
+/** Returns an error Response when a secret is configured and the header does not match it. */
 function checkAuth(request: Request, env: Env): Response | null {
-  if (!env.API_TOKEN) return null
-  if (request.headers.get('x-api-token') === env.API_TOKEN) return null
+  const secret = env.PASSCODE || env.API_TOKEN
+  if (!secret) return null
+  const provided = request.headers.get('x-api-token')
+  if (provided !== null && safeEqual(provided, secret)) return null
   return json({ error: 'Unauthorized' }, 401)
 }
 

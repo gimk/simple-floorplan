@@ -1,15 +1,19 @@
 // Compact cloud-sync popover for the top bar: saves the current project as a D1 snapshot
 // (reference images go to R2) and loads or deletes earlier cloud projects.
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Cloud, CloudUpload, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { Cloud, CloudUpload, Lock, Trash2 } from 'lucide-react'
 import { toast } from '../features/toast'
 import { useDoc } from '../model/store'
 import { useUi } from '../shell/uiStore'
 import {
+  CloudUnauthorizedError,
+  clearCloudToken,
   deleteCloudProject,
+  getCloudToken,
   listCloudProjects,
   loadProjectFromCloud,
   saveProjectToCloud,
+  setCloudToken,
   type CloudProjectSummary,
 } from './cloud'
 
@@ -17,6 +21,8 @@ const MENU_BTN = 'flex h-9 w-9 items-center justify-center rounded-md text-zinc-
 const ROW_BTN = 'min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-white/10 disabled:opacity-50'
 const DEL_BTN =
   'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-white/10 hover:text-red-400 disabled:opacity-40'
+const LOCK_BTN =
+  'flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 hover:bg-white/10 hover:text-zinc-200 disabled:opacity-40'
 
 /** Shown when /api/* is missing, e.g. plain `vite dev` without the Pages Functions runtime. */
 const UNAVAILABLE = 'Cloud API unavailable in local dev. Deploy to Cloudflare Pages to enable.'
@@ -34,21 +40,39 @@ export function CloudMenu() {
   const [open, setOpen] = useState(false)
   const [projects, setProjects] = useState<CloudProjectSummary[] | null>(null)
   const [unavailable, setUnavailable] = useState(false)
+  const [locked, setLocked] = useState(false)
+  const [passcode, setPasscode] = useState('')
+  const [rejected, setRejected] = useState(false)
   const [busy, setBusy] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
   /** No fetched list and no failure yet: a request is in flight (or about to be). */
   const loading = projects === null && !unavailable
+  /** Only offer the Lock button once we hold a saved passcode and the list is usable. */
+  const canLock = !locked && getCloudToken() !== null
+
+  /** A 401 means the server wants a passcode: show the unlock form, not "unavailable". */
+  const showLocked = useCallback(() => {
+    setProjects(null)
+    setUnavailable(false)
+    setRejected(false)
+    setLocked(true)
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
       setProjects(await listCloudProjects())
       setUnavailable(false)
-    } catch {
+      setLocked(false)
+    } catch (err) {
+      if (err instanceof CloudUnauthorizedError) {
+        showLocked()
+        return
+      }
       setProjects(null)
       setUnavailable(true)
     }
-  }, [])
+  }, [showLocked])
 
   // Fetch the list on every open (other tabs may have written new snapshots, and the last
   // request may have failed in local dev). Not an effect: the click is the only trigger.
@@ -83,6 +107,45 @@ export function CloudMenu() {
     }
   }, [open])
 
+  /** Try the typed passcode: keep it on success, drop it and hint on a second 401. */
+  const onSubmitPasscode = async (e: FormEvent) => {
+    e.preventDefault()
+    const value = passcode.trim()
+    if (!value || busy) return
+    setBusy(true)
+    setCloudToken(value)
+    try {
+      setProjects(await listCloudProjects())
+      setUnavailable(false)
+      setLocked(false)
+      setRejected(false)
+      setPasscode('')
+    } catch (err) {
+      clearCloudToken()
+      setProjects(null)
+      if (err instanceof CloudUnauthorizedError) {
+        setLocked(true)
+        setRejected(true)
+      } else {
+        setLocked(false)
+        setUnavailable(true)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Forget the saved passcode, then re-check access: 401 locks, no secret means the list shows. */
+  const onLock = () => {
+    clearCloudToken()
+    setPasscode('')
+    setRejected(false)
+    setProjects(null)
+    setUnavailable(false)
+    setLocked(false)
+    void refresh()
+  }
+
   const onSave = async () => {
     setBusy(true)
     try {
@@ -90,7 +153,8 @@ export function CloudMenu() {
       toast('Saved to cloud')
       await refresh()
     } catch (err) {
-      toast(`Cloud save failed: ${errorText(err)}`)
+      if (err instanceof CloudUnauthorizedError) showLocked()
+      else toast(`Cloud save failed: ${errorText(err)}`)
     } finally {
       setBusy(false)
     }
@@ -105,7 +169,8 @@ export function CloudMenu() {
       setOpen(false)
       toast(`Loaded "${doc.title}"`)
     } catch (err) {
-      toast(`Cloud load failed: ${errorText(err)}`)
+      if (err instanceof CloudUnauthorizedError) showLocked()
+      else toast(`Cloud load failed: ${errorText(err)}`)
     } finally {
       setBusy(false)
     }
@@ -117,7 +182,8 @@ export function CloudMenu() {
       await deleteCloudProject(p.id)
       await refresh()
     } catch (err) {
-      toast(`Cloud delete failed: ${errorText(err)}`)
+      if (err instanceof CloudUnauthorizedError) showLocked()
+      else toast(`Cloud delete failed: ${errorText(err)}`)
     } finally {
       setBusy(false)
     }
@@ -142,53 +208,103 @@ export function CloudMenu() {
           aria-label="Cloud sync"
           className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-white/10 bg-[#1a2028] p-3 shadow-xl"
         >
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void onSave()}
-            className="flex w-full items-center justify-center gap-1.5 rounded-md bg-orange-700 px-2 py-2 text-sm font-semibold text-white hover:bg-orange-800 disabled:opacity-50"
-          >
-            <CloudUpload size={16} />
-            Save current project
-          </button>
-          <div className="my-3 border-t border-white/10" />
-          <p className="pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Cloud projects</p>
-          <div className="max-h-64 overflow-y-auto">
-            {loading ? (
-              <p className="px-2 py-1 text-xs text-zinc-500">Loading…</p>
-            ) : unavailable ? (
-              <p className="px-2 py-1 text-xs leading-snug text-zinc-500">{UNAVAILABLE}</p>
-            ) : !projects || projects.length === 0 ? (
-              <p className="px-2 py-1 text-xs text-zinc-500">No cloud projects yet.</p>
-            ) : (
-              <ul className="space-y-0.5">
-                {projects.map((p) => (
-                  <li key={p.id} className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      title={`Load "${p.title}"`}
-                      onClick={() => void onLoad(p.id)}
-                      className={ROW_BTN}
-                    >
-                      <span className="block truncate text-sm text-zinc-100">{p.title || 'Untitled'}</span>
-                      <span className="block text-[11px] text-zinc-500">{shortDate(p.updatedAt)}</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      aria-label={`Delete "${p.title}"`}
-                      title={`Delete "${p.title}"`}
-                      onClick={() => void onDelete(p)}
-                      className={DEL_BTN}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
+          <div className="flex items-center justify-between pb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Cloud sync</p>
+            {canLock && (
+              <button
+                type="button"
+                disabled={busy}
+                aria-label="Lock cloud saves"
+                title="Lock cloud saves (forget passcode)"
+                onClick={onLock}
+                className={LOCK_BTN}
+              >
+                <Lock size={14} />
+              </button>
             )}
           </div>
+          {locked ? (
+            <form
+              className="space-y-2"
+              onSubmit={(e) => {
+                void onSubmitPasscode(e)
+              }}
+            >
+              <p className="text-xs leading-snug text-zinc-400">Enter the passcode to use cloud saves.</p>
+              <input
+                type="password"
+                value={passcode}
+                disabled={busy}
+                placeholder="Enter passcode"
+                aria-label="Cloud passcode"
+                autoComplete="current-password"
+                onChange={(e) => {
+                  setPasscode(e.target.value)
+                  setRejected(false)
+                }}
+                className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-orange-600 focus:outline-none disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={busy || passcode.trim() === ''}
+                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-orange-700 px-2 py-2 text-sm font-semibold text-white hover:bg-orange-800 disabled:opacity-50"
+              >
+                <Lock size={14} />
+                Unlock
+              </button>
+              {rejected && <p className="text-xs text-red-400">Wrong passcode</p>}
+            </form>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void onSave()}
+                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-orange-700 px-2 py-2 text-sm font-semibold text-white hover:bg-orange-800 disabled:opacity-50"
+              >
+                <CloudUpload size={16} />
+                Save current project
+              </button>
+              <div className="my-3 border-t border-white/10" />
+              <p className="pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Cloud projects</p>
+              <div className="max-h-64 overflow-y-auto">
+                {loading ? (
+                  <p className="px-2 py-1 text-xs text-zinc-500">Loading…</p>
+                ) : unavailable ? (
+                  <p className="px-2 py-1 text-xs leading-snug text-zinc-500">{UNAVAILABLE}</p>
+                ) : !projects || projects.length === 0 ? (
+                  <p className="px-2 py-1 text-xs text-zinc-500">No cloud projects yet.</p>
+                ) : (
+                  <ul className="space-y-0.5">
+                    {projects.map((p) => (
+                      <li key={p.id} className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          title={`Load "${p.title}"`}
+                          onClick={() => void onLoad(p.id)}
+                          className={ROW_BTN}
+                        >
+                          <span className="block truncate text-sm text-zinc-100">{p.title || 'Untitled'}</span>
+                          <span className="block text-[11px] text-zinc-500">{shortDate(p.updatedAt)}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          aria-label={`Delete "${p.title}"`}
+                          title={`Delete "${p.title}"`}
+                          onClick={() => void onDelete(p)}
+                          className={DEL_BTN}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
