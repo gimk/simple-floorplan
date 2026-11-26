@@ -175,3 +175,95 @@ export function mergeRooms(rooms: Room[]): Room | null {
   if (vertices.length < 3) return null
   return { ...rooms[0], vertices }
 }
+
+// ---------- precision, scaling and constraints ----------
+
+/** Round v to the nearest multiple of precisionCm (no rounding when precisionCm <= 0). */
+export function roundToPrecision(v: number, precisionCm: number): number {
+  if (!(precisionCm > 0)) return v
+  const r = Math.round(v / precisionCm) * precisionCm
+  return Math.round(r * 1e6) / 1e6 + 0 // trim float noise; "+ 0" turns -0 into 0
+}
+
+/** Length text: 0 decimals for 1 cm precision (or coarser), 1 decimal for 0.5 and 0.1 cm. */
+export function formatLengthCm(v: number, precisionCm: number): string {
+  const r = roundToPrecision(v, precisionCm)
+  return precisionCm > 0 && precisionCm < 1 ? r.toFixed(1) : r.toFixed(0)
+}
+
+/**
+ * Scale a room uniformly while dragging one vertex. The anchor is the bbox corner opposite to the
+ * dragged vertex (per axis: the side of the bbox that the vertex is not on). All vertices scale about
+ * the anchor by one factor, so the dragged vertex follows cursorPt as closely as a uniform scale allows.
+ * The bbox keeps at least MIN_ROOM_SIDE_CM on each side. Returns the same room for a bad index.
+ */
+export function scaleRoomFromVertex(room: Room, vertexIndex: number, cursorPt: Vec, precisionCm = 0): Room {
+  const vs = room.vertices
+  if (vertexIndex < 0 || vertexIndex >= vs.length) return room
+  const xs = vs.map((p) => p.x), ys = vs.map((p) => p.y)
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys)
+  const w = maxX - minX, h = maxY - minY
+  const d = vs[vertexIndex]
+  const anchor: Vec = {
+    x: Math.abs(d.x - minX) <= Math.abs(d.x - maxX) ? maxX : minX,
+    y: Math.abs(d.y - minY) <= Math.abs(d.y - maxY) ? maxY : minY,
+  }
+  const cursor = { x: roundToPrecision(cursorPt.x, precisionCm), y: roundToPrecision(cursorPt.y, precisionCm) }
+  const vx = d.x - anchor.x, vy = d.y - anchor.y
+  const denom = vx * vx + vy * vy
+  if (denom < EPS) {
+    // Dragged vertex sits on the anchor on both axes (degenerate bbox): no direction to scale along.
+    return withVertices(room, vs.map(cp))
+  }
+  // Least-squares factor: projection of (cursor - anchor) on (dragged - anchor).
+  let k = ((cursor.x - anchor.x) * vx + (cursor.y - anchor.y) * vy) / denom
+  const kMin = Math.max(w > EPS ? MIN_ROOM_SIDE_CM / w : 0, h > EPS ? MIN_ROOM_SIDE_CM / h : 0)
+  if (!Number.isFinite(k)) k = 1
+  k = Math.max(k, kMin)
+  return withVertices(room, vs.map((p) => ({ x: anchor.x + (p.x - anchor.x) * k, y: anchor.y + (p.y - anchor.y) * k })))
+}
+
+/** Lock a drag delta to the dominant axis (Shift): the smaller component becomes 0. A tie keeps x. */
+export function constrainAxis(dx: number, dy: number): Vec {
+  return Math.abs(dx) >= Math.abs(dy) ? { x: dx, y: 0 } : { x: 0, y: dy }
+}
+
+/**
+ * Keep only the part of delta (dx, dy) that is perpendicular to wall a->b (a wall drag).
+ * A zero-length wall returns the delta unchanged.
+ */
+export function constrainWallPerpendicular(a: Vec, b: Vec, dx: number, dy: number): Vec {
+  const L = dist(a, b)
+  if (L < EPS) return { x: dx, y: dy }
+  const nx = -(b.y - a.y) / L, ny = (b.x - a.x) / L
+  const p = dx * nx + dy * ny
+  return { x: nx * p + 0, y: ny * p + 0 }
+}
+
+/** Snap pt to the nearest 45° direction around anchor, keeping the distance. */
+export function constrainAngle45(anchor: Vec, pt: Vec): Vec {
+  const dx = pt.x - anchor.x, dy = pt.y - anchor.y
+  const r = Math.hypot(dx, dy)
+  if (r < EPS) return { x: pt.x, y: pt.y }
+  const step = Math.PI / 4
+  const ang = Math.round(Math.atan2(dy, dx) / step) * step
+  const clean = (v: number) => (Math.abs(v) < 1e-9 ? 0 : v)
+  return { x: anchor.x + clean(r * Math.cos(ang)), y: anchor.y + clean(r * Math.sin(ang)) }
+}
+
+export type WallResizeCursor = 'ns-resize' | 'ew-resize' | 'nesw-resize' | 'nwse-resize'
+
+/**
+ * CSS resize cursor for dragging wall a->b (it moves along the wall normal).
+ * Horizontal wall -> ns-resize, vertical wall -> ew-resize; diagonals pick the nearest diagonal cursor.
+ * Screen y points down: a wall going down-right (angle 45°) has a normal going down-left -> nesw-resize.
+ */
+export function wallResizeCursor(a: Vec, b: Vec): WallResizeCursor {
+  const dx = b.x - a.x, dy = b.y - a.y
+  let deg = (Math.atan2(dy, dx) * 180) / Math.PI // wall direction
+  deg = ((deg % 180) + 180) % 180 // 0..180
+  if (deg < 22.5 || deg >= 157.5) return 'ns-resize'
+  if (deg < 67.5) return 'nesw-resize'
+  if (deg < 112.5) return 'ew-resize'
+  return 'nwse-resize'
+}

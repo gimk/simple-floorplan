@@ -39,12 +39,15 @@ function contentExtent(a: Artboard) {
 /**
  * Frame of an artboard: its content (rooms, openings, furniture, negative local coords too) grown
  * by `ARTBOARD_PAD_CM` on every side, at least `MIN_ARTBOARD_WIDTH_CM` x `MIN_ARTBOARD_HEIGHT_CM`.
- * With the minimum size the extra space goes to the right and bottom.
+ * Explicit `a.widthCm` / `a.heightCm` raise the minimum (still clamped to the global minimum, and
+ * the frame still grows when the content is bigger). Extra space goes to the right and bottom.
  */
 export function artboardFrame(a: Artboard): ArtboardFrame {
   const c = contentExtent(a)
-  const width = Math.max(c.maxX - c.minX + 2 * ARTBOARD_PAD_CM, MIN_ARTBOARD_WIDTH_CM)
-  const height = Math.max(c.maxY - c.minY + 2 * ARTBOARD_PAD_CM, MIN_ARTBOARD_HEIGHT_CM)
+  const minW = Math.max(a.widthCm ?? 0, MIN_ARTBOARD_WIDTH_CM)
+  const minH = Math.max(a.heightCm ?? 0, MIN_ARTBOARD_HEIGHT_CM)
+  const width = Math.max(c.maxX - c.minX + 2 * ARTBOARD_PAD_CM, minW)
+  const height = Math.max(c.maxY - c.minY + 2 * ARTBOARD_PAD_CM, minH)
   const x = a.xCm + c.minX - ARTBOARD_PAD_CM
   const y = a.yCm + c.minY - ARTBOARD_PAD_CM
   return { x, y, width, height, minX: x, minY: y, maxX: x + width, maxY: y + height }

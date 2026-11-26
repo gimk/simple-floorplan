@@ -33,6 +33,32 @@ describe('artboardFrame', () => {
     expect(f.maxY).toBe(f.y + f.height)
   })
 
+  it('uses manual widthCm/heightCm as the minimum frame size', () => {
+    const f = artboardFrame({ ...withRooms([]), widthCm: 1200, heightCm: 900 })
+    expect(f.width).toBe(1200)
+    expect(f.height).toBe(900)
+    expect(f.x).toBe(-ARTBOARD_PAD_CM)
+    expect(f.maxX).toBe(f.x + 1200)
+  })
+
+  it('clamps manual width/height to the global minimum', () => {
+    const f = artboardFrame({ ...withRooms([]), widthCm: 100, heightCm: 50 })
+    expect(f.width).toBe(MIN_ARTBOARD_WIDTH_CM)
+    expect(f.height).toBe(MIN_ARTBOARD_HEIGHT_CM)
+  })
+
+  it('still expands past manual width/height when the content is bigger', () => {
+    const f = artboardFrame({ ...withRooms([rect('r1', 2000, 1500)]), widthCm: 1000, heightCm: 800 })
+    expect(f.width).toBe(2000 + 2 * ARTBOARD_PAD_CM)
+    expect(f.height).toBe(1500 + 2 * ARTBOARD_PAD_CM)
+  })
+
+  it('only one manual dimension: the other keeps the default minimum', () => {
+    const f = artboardFrame({ ...withRooms([]), widthCm: 1000 })
+    expect(f.width).toBe(1000)
+    expect(f.height).toBe(MIN_ARTBOARD_HEIGHT_CM)
+  })
+
   it('grows with the rooms and keeps 40 cm of padding on every side', () => {
     const a = withRooms([rect('r1', 1000, 800)])
     const f = artboardFrame(a)

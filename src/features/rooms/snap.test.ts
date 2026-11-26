@@ -67,3 +67,31 @@ describe('snapRoomDelta', () => {
     expect(snapRoomDelta(room, 0, 0, [other], 25).dx).toBe(-20)
   })
 })
+
+describe('snap disableSnap and precisionCm (Phase 3.5A)', () => {
+  it('uses precisionCm as the grid when gridCm is omitted', () => {
+    expect(snapPoint({ x: 1003.3, y: 1007.2 }, [], { precisionCm: 0.5 }).point).toEqual({ x: 1003.5, y: 1007 })
+    expect(snapPoint({ x: 1003.4, y: 1007.6 }, [], { precisionCm: 1 }).point).toEqual({ x: 1003, y: 1008 })
+  })
+  it('gridCm wins over precisionCm', () => {
+    expect(snapPoint({ x: 1003, y: 1007 }, [], { gridCm: 10, precisionCm: 1 }).point).toEqual({ x: 1000, y: 1010 })
+  })
+  it('disableSnap skips vertex, wall, anchor and grid snapping', () => {
+    const r = snapPoint({ x: 403.26, y: 4.7 }, [other], { disableSnap: true, anchor: { x: 400, y: 0 } })
+    expect(r.point).toEqual({ x: 403.26, y: 4.7 })
+    expect(r.guides).toEqual([])
+  })
+  it('disableSnap rounds to precisionCm when given', () => {
+    const r = snapPoint({ x: 403.26, y: 4.74 }, [other], { disableSnap: true, precisionCm: 0.1 })
+    expect(r.point.x).toBeCloseTo(403.3)
+    expect(r.point.y).toBeCloseTo(4.7)
+    expect(r.guides).toEqual([])
+    expect(snapPoint({ x: 403.6, y: 4.4 }, [other], { disableSnap: true, precisionCm: 1 }).point).toEqual({ x: 404, y: 4 })
+  })
+  it('snapRoomDelta with disableSnap returns the raw or rounded delta and no guides', () => {
+    const room = rect('m', 404, 0, 500, 100)
+    expect(snapRoomDelta(room, -3.7, 2.2, [other]).guides.length).toBeGreaterThan(0)
+    expect(snapRoomDelta(room, -3.7, 2.2, [other], 12, { disableSnap: true })).toEqual({ dx: -3.7, dy: 2.2, guides: [] })
+    expect(snapRoomDelta(room, -3.7, 2.2, [other], 12, { disableSnap: true, precisionCm: 1 })).toEqual({ dx: -4, dy: 2, guides: [] })
+  })
+})

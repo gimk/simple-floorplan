@@ -1,15 +1,21 @@
 // Rooms of one artboard on the canvas (artboard-local cm). Render inside <ArtboardContent>.
 // Plan mode + select tool: select, move, edit walls and vertices. Design mode: geometry is locked.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { add, area, fmtCm, labelPoint, projectOnSegment, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
+import { newId } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import type { Artboard, Opening, Room, Selection } from '../../model/types'
 import { syncOpeningsForRoomChange } from '../openings/sync'
+import { subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
+import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
-import { deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex, roomWalls } from './ops'
+import {
+  constrainAxis, constrainWallPerpendicular, deleteVertex, formatLengthCm, insertVertexOnEdge, moveEdge, moveRoom, moveVertex,
+  roomWalls, roundToPrecision, scaleRoomFromVertex, wallResizeCursor,
+} from './ops'
 import { snapPoint, snapRoomDelta } from './snap'
 import type { SnapGuide } from './snap'
 
@@ -37,7 +43,10 @@ type Gesture = {
   clientY: number
   start: Vec
   moved: boolean
-  onMove: (local: Vec, delta: Vec) => void
+  /** Last pointer position (artboard-local cm), used to re-apply the drag when a modifier changes. */
+  last: Vec
+  unsub?: () => void
+  onMove: (local: Vec, delta: Vec, mods: Modifiers) => void
   onEnd?: (moved: boolean) => void
 }
 
@@ -48,6 +57,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   const selection = useUi((s) => s.selection)
   const [guides, setGuides] = useState<SnapGuide[]>([])
   const gesture = useRef<Gesture | null>(null)
+  useEffect(() => () => { gesture.current?.unsub?.() }, [])
 
   const interactive = mode === 'plan' && tool === 'select'
   const inArtboard = (s: Selection) => 'artboardId' in s && s.artboardId === artboard.id
@@ -76,24 +86,35 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   }
 
   const startGesture = (e: ReactPointerEvent<Element>, onMove: Gesture['onMove'], onEnd?: Gesture['onEnd']) => {
-    gesture.current = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, start: toLocal(e.clientX, e.clientY), moved: false, onMove, onEnd }
+    syncModifiersFromEvent(e)
+    gesture.current?.unsub?.()
+    const start = toLocal(e.clientX, e.clientY)
+    const g: Gesture = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, start, moved: false, last: start, onMove, onEnd }
+    // Pressing or releasing Shift/Alt/Cmd mid-drag re-applies the preview without pointer movement.
+    g.unsub = subscribeModifiers((m) => {
+      if (gesture.current === g && g.moved) g.onMove(g.last, { x: g.last.x - g.start.x, y: g.last.y - g.start.y }, m)
+    })
+    gesture.current = g
     e.currentTarget.setPointerCapture?.(e.pointerId)
   }
   const gestureMove = (e: ReactPointerEvent<Element>) => {
     const g = gesture.current
     if (!g || g.pointerId !== e.pointerId) return
+    const mods = syncModifiersFromEvent(e)
     if (!g.moved) {
       if (Math.hypot(e.clientX - g.clientX, e.clientY - g.clientY) < DRAG_THRESHOLD_PX) return
       g.moved = true
       useDoc.getState().beginDrag()
     }
     const p = toLocal(e.clientX, e.clientY)
-    g.onMove(p, { x: p.x - g.start.x, y: p.y - g.start.y })
+    g.last = p
+    g.onMove(p, { x: p.x - g.start.x, y: p.y - g.start.y }, mods)
   }
   const gestureEnd = (e: ReactPointerEvent<Element>) => {
     const g = gesture.current
     if (!g || g.pointerId !== e.pointerId) return
     gesture.current = null
+    g.unsub?.()
     e.currentTarget.releasePointerCapture?.(e.pointerId)
     if (g.moved) useDoc.getState().endDrag()
     setGuides([])
@@ -117,10 +138,36 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     const primary = origs.get(room.id)!
     const others = artboard.rooms.filter((r) => !origs.has(r.id))
     const origin = { rooms: artboard.rooms, openings: artboard.openings }
-    startGesture(e, (_, d) => {
-      const s = snapRoomDelta(primary, d.x, d.y, others)
+    // Alt: originals stay in place and a copy (stable ids for this drag) follows the pointer.
+    const dupIds = new Map([...origs.keys()].map((id) => [id, newId()] as const))
+    const cloneIds = new Map<string, string>()
+    const cloneId = (id: string) => { let c = cloneIds.get(id); if (!c) { c = newId(); cloneIds.set(id, c) } return c }
+    let dupActive = false
+    const write = (moved: Map<string, Vec[]>, alt: boolean) => {
+      const fn = (doc: { artboards: Artboard[] }) => {
+        const ab = doc.artboards.find((a) => a.id === artboard.id)
+        if (!ab) return
+        const nextRooms = origin.rooms.map((r) => { const v = moved.get(r.id); return v ? { ...r, vertices: v } : r })
+        const synced = syncOpeningsForRoomChange(origin.openings, origin.rooms, nextRooms)
+        if (!alt) { ab.rooms = nextRooms; ab.openings = synced; return }
+        const dups = [...moved].map(([id, v]) => ({ ...origs.get(id)!, id: dupIds.get(id)!, vertices: v }))
+        const byId = new Map(origin.openings.map((o) => [o.id, o] as const))
+        const clones = synced
+          .filter((o) => { const b = byId.get(o.id); return !!b && (b.xCm !== o.xCm || b.yCm !== o.yCm || b.angleDeg !== o.angleDeg) })
+          .map((o) => ({ ...o, id: cloneId(o.id) }))
+        ab.rooms = [...origin.rooms, ...dups]
+        ab.openings = [...origin.openings, ...clones]
+      }
+      useDoc.getState().updateSilent(fn)
+    }
+    startGesture(e, (_, d0, mods) => {
+      const d = mods.shift ? constrainAxis(d0.x, d0.y) : d0
+      const s = snapRoomDelta(primary, d.x, d.y, mods.alt ? artboard.rooms : others, 12, { disableSnap: mods.cmd, precisionCm: artboard.precisionCm })
       setGuides(s.guides)
-      writeVertices(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), true, origin)
+      dupActive = mods.alt
+      write(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), mods.alt)
+    }, (moved) => {
+      if (moved && dupActive) setSelection({ kind: 'room', artboardId: artboard.id, roomIds: [...dupIds.values()] })
     })
   }
 
@@ -130,11 +177,20 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     setSelection({ kind: 'wall', artboardId: artboard.id, roomId: room.id, edgeIndex })
     const others = artboard.rooms.filter((r) => r.id !== room.id)
     const a = room.vertices[edgeIndex]
+    const b = room.vertices[(edgeIndex + 1) % room.vertices.length]
     const origin = { rooms: artboard.rooms, openings: artboard.openings }
-    startGesture(e, (_, d) => {
-      const snap = snapPoint(add(a, d), others)
-      setGuides(snap.guides)
-      writeVertices(new Map([[room.id, moveEdge(room, edgeIndex, { x: snap.point.x - a.x, y: snap.point.y - a.y }).vertices]]), true, origin)
+    startGesture(e, (_, d, mods) => {
+      let delta: Vec
+      if (mods.shift) {
+        const c = constrainWallPerpendicular(a, b, d.x, d.y)
+        delta = mods.cmd ? c : { x: roundToPrecision(c.x, artboard.precisionCm), y: roundToPrecision(c.y, artboard.precisionCm) }
+        setGuides([])
+      } else {
+        const snap = snapPoint(add(a, d), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd })
+        setGuides(snap.guides)
+        delta = { x: snap.point.x - a.x, y: snap.point.y - a.y }
+      }
+      writeVertices(new Map([[room.id, moveEdge(room, edgeIndex, delta).vertices]]), true, origin)
     })
   }
 
@@ -161,8 +217,13 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     const n = room.vertices.length
     const anchor = room.vertices[(idx + n - 1) % n]
     const origin = { rooms: artboard.rooms, openings: artboard.openings }
-    startGesture(e, (p) => {
-      const snap = snapPoint(p, others, { anchor })
+    startGesture(e, (p, _d, mods) => {
+      if (mods.shift) {
+        setGuides([])
+        writeVertices(new Map([[room.id, scaleRoomFromVertex(room, idx, p, mods.cmd ? 0 : artboard.precisionCm).vertices]]), true, origin)
+        return
+      }
+      const snap = snapPoint(p, others, { anchor, precisionCm: artboard.precisionCm, disableSnap: mods.cmd })
       setGuides(snap.guides)
       writeVertices(new Map([[room.id, moveVertex(room, idx, snap.point).vertices]]), true, origin)
     })
@@ -221,7 +282,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
                 <line
                   x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y}
                   stroke="transparent" strokeWidth={px(10)} pointerEvents="stroke"
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: wallResizeCursor(w.a, w.b) }}
                   onPointerDown={(e) => onWallDown(e, room, w.index)}
                   onDoubleClick={(e) => onWallDouble(e, room.id, w.index)}
                   {...gestureProps}
@@ -245,7 +306,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
                     fill={isSel ? ORANGE : 'rgba(226,232,240,0.9)'}
                     stroke="#12161b" strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round"
                   >
-                    {fmtCm(w.lengthCm)}
+                    {formatLengthCm(w.lengthCm, artboard.precisionCm)}
                   </text>
                 </g>
               )}

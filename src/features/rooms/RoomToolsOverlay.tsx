@@ -6,9 +6,11 @@ import { dist, fmtCm, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { newId } from '../../model/schema'
 import { useDoc } from '../../model/store'
+import { subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
+import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import { cutoutArtboardRooms, addRoom } from './actions'
-import { MIN_ROOM_SIDE_CM, createRectRoom, nextRoomName } from './ops'
+import { MIN_ROOM_SIDE_CM, constrainAngle45, createRectRoom, nextRoomName } from './ops'
 import { pickArtboard } from '../artboards/frame'
 import { snapPoint } from './snap'
 import type { SnapGuide } from './snap'
@@ -65,6 +67,8 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   useEffect(() => { artboardRef.current = artboard })
   const [start, setStart] = useState<Vec | null>(null)
   const [cursor, setCursor] = useState<Vec | null>(null)
+  const [box, setBox] = useState<{ a: Vec; b: Vec } | null>(null)
+  const rawRef = useRef<Vec | null>(null)
   const [points, setPoints] = useState<Vec[]>([])
   const [guides, setGuides] = useState<SnapGuide[]>([])
   const pointsRef = useRef<Vec[]>([])
@@ -84,11 +88,50 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     setLockedId(target.id)
     if (useUi.getState().activeArtboardId !== target.id) useUi.getState().set({ activeArtboardId: target.id })
   }
-  const snap = (p: Vec, anchor?: Vec): Vec => {
-    const r = snapPoint(p, artboardRef.current.rooms, { anchor })
+  const snap = (p: Vec, anchor: Vec | undefined, mods: Modifiers): Vec => {
+    const ab = artboardRef.current
+    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: mods.cmd })
     setGuides(r.guides)
     return r.point
   }
+  /** Next pen point: Shift locks to 45° steps from the previous point, Cmd turns snapping off. */
+  const penPoint = (raw: Vec, prev: Vec | undefined, mods: Modifiers): Vec => {
+    if (mods.shift && prev) {
+      const ab = artboardRef.current
+      const r = snapPoint(constrainAngle45(prev, raw), ab.rooms, { precisionCm: ab.precisionCm, disableSnap: true })
+      setGuides([])
+      return r.point
+    }
+    return snap(raw, prev, mods)
+  }
+  /** Rect/cutout corners: Shift = square, Alt = from centre (start is the centre), Cmd = no snap. */
+  const rectCorners = (from: Vec, raw: Vec, mods: Modifiers): { a: Vec; b: Vec } => {
+    let e = snap(raw, undefined, mods)
+    if (mods.shift) {
+      const dx = e.x - from.x, dy = e.y - from.y
+      const side = Math.max(Math.abs(dx), Math.abs(dy))
+      e = { x: from.x + (dx < 0 ? -side : side), y: from.y + (dy < 0 ? -side : side) }
+    }
+    const a = mods.alt ? { x: 2 * from.x - e.x, y: 2 * from.y - e.y } : from
+    return { a, b: e }
+  }
+  // Re-apply the preview when Shift/Alt/Cmd change mid-gesture (no pointer movement needed).
+  const refreshRef = useRef<(m: Modifiers) => void>(() => {})
+  useEffect(() => {
+    refreshRef.current = (m) => {
+      const raw = rawRef.current
+      if (!raw) return
+      if (tool === 'pen') {
+        const pts = pointsRef.current
+        if (pts.length > 0) setCursor(penPoint(raw, pts[pts.length - 1], m))
+      } else if (start) setBox(rectCorners(start, raw, m))
+    }
+  })
+  const gestureActive = start !== null || points.length > 0
+  useEffect(() => {
+    if (!gestureActive) return
+    return subscribeModifiers((m) => refreshRef.current(m))
+  }, [gestureActive])
 
   const closePen = () => {
     let pts = pointsRef.current
@@ -111,7 +154,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]')) return
       if (e.key === 'Escape') {
-        setStart(null); setPoints([]); setGuides([]); setLockedId(null)
+        setStart(null); setBox(null); setPoints([]); setGuides([]); setLockedId(null)
         if (tool === 'pen' && pointsRef.current.length === 0) toSelect()
       } else if (e.key === 'Enter' && tool === 'pen') {
         e.preventDefault()
@@ -125,11 +168,13 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   const onDown = (e: ReactPointerEvent<SVGRectElement>) => {
     if (e.button !== 0) return
     e.stopPropagation()
+    const mods = syncModifiersFromEvent(e)
     if (tool === 'pen') {
       if (pointsRef.current.length === 0) lockTarget(e)
       const pts = pointsRef.current
       if (e.detail >= 2) { closePen(); return }
-      const p = snap(local(e), pts[pts.length - 1])
+      rawRef.current = local(e)
+      const p = penPoint(local(e), pts[pts.length - 1], mods)
       if (pts.length >= 3 && dist(p, pts[0]) <= px(10)) { closePen(); return }
       if (pts.length && dist(p, pts[pts.length - 1]) < 1) return
       setPoints([...pts, p])
@@ -137,28 +182,31 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     }
     e.currentTarget.setPointerCapture?.(e.pointerId)
     lockTarget(e)
-    const p = snap(local(e))
+    const p = snap(local(e), undefined, mods)
+    rawRef.current = local(e)
     setStart(p)
-    setCursor(p)
+    setBox({ a: p, b: p })
   }
 
   const onMove = (e: ReactPointerEvent<SVGRectElement>) => {
+    const mods = syncModifiersFromEvent(e)
     const pts = pointsRef.current
     const raw = local(e)
+    rawRef.current = raw
     if (tool === 'pen') {
       const near = pts.length >= 3 && dist(raw, pts[0]) <= px(10)
-      setCursor(near ? pts[0] : snap(raw, pts[pts.length - 1]))
+      setCursor(near ? pts[0] : penPoint(raw, pts[pts.length - 1], mods))
       return
     }
-    if (start) setCursor(snap(raw))
+    if (start) setBox(rectCorners(start, raw, mods))
   }
 
   const onUp = (e: ReactPointerEvent<SVGRectElement>) => {
     if (tool === 'pen' || !start) return
     e.currentTarget.releasePointerCapture?.(e.pointerId)
-    const end = snap(local(e))
-    const a = start
-    setStart(null); setCursor(null); setGuides([]); setLockedId(null)
+    const { a, b: end } = rectCorners(start, local(e), syncModifiersFromEvent(e))
+    setStart(null); setCursor(null); setBox(null); setGuides([]); setLockedId(null)
+    rawRef.current = null
     if (tool === 'rect') {
       if (Math.abs(end.x - a.x) < MIN_ROOM_SIDE_CM || Math.abs(end.y - a.y) < MIN_ROOM_SIDE_CM) return
       finishRoom(createRectRoom(a, end, nextRoomName(artboardRef.current.rooms)))
@@ -172,8 +220,8 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     }
   }
 
-  const rectBox = start && cursor
-    ? { x: Math.min(start.x, cursor.x), y: Math.min(start.y, cursor.y), w: Math.abs(cursor.x - start.x), h: Math.abs(cursor.y - start.y) }
+  const rectBox = start && box
+    ? { x: Math.min(box.a.x, box.b.x), y: Math.min(box.a.y, box.b.y), w: Math.abs(box.b.x - box.a.x), h: Math.abs(box.b.y - box.a.y) }
     : null
   const color = tool === 'cutout' ? '#f87171' : ORANGE
   const last = points[points.length - 1]
@@ -185,7 +233,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
-        onPointerCancel={() => { setStart(null); setCursor(null); setGuides([]) }}
+        onPointerCancel={() => { setStart(null); setCursor(null); setBox(null); setGuides([]) }}
       />
       <g pointerEvents="none">
         {rectBox && (

@@ -33,6 +33,7 @@ const { AB, fakeDoc } = vi.hoisted(() => {
         xCm: 0,
         yCm: 0,
         ceilingHeightCm: 250,
+        precisionCm: 1,
         rooms: [
           rect('r1', 0, 0, 400, 300),
           rect('r2', 400, 0, 700, 300),

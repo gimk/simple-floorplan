@@ -105,6 +105,15 @@ export default function App() {
         e.preventDefault()
         deleteRooms(sel.artboardId, sel.roomIds)
         useUi.getState().set({ selection: { kind: 'none' } })
+        return
+      }
+      // An artboard delete keeps at least one artboard; the first remaining one becomes active.
+      if (sel.kind === 'artboard') {
+        if (useDoc.getState().doc.artboards.length <= 1) return
+        e.preventDefault()
+        useDoc.getState().deleteArtboard(sel.artboardId)
+        const next = useDoc.getState().doc.artboards[0]
+        if (next) useUi.getState().set({ activeArtboardId: next.id, selection: { kind: 'artboard', artboardId: next.id } })
       }
     }
     window.addEventListener('keydown', onKey)

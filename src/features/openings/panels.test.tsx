@@ -66,6 +66,7 @@ const { AB, fakeDoc } = vi.hoisted(() => {
         xCm: 0,
         yCm: 0,
         ceilingHeightCm: 250,
+        precisionCm: 1,
         rooms: [rect('r1')],
         openings: [
           { id: 'o1', kind: 'door', xCm: 200, yCm: 0, angleDeg: 0, widthCm: 85, hinge: 'left', swing: 'in' },

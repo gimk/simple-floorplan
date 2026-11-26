@@ -6,6 +6,9 @@ export type { Vec }
 export type RoomShape = { id: string; name: string; vertices: Vec[]; fill?: string }
 export type Room = RoomShape
 
+/** Drawing precision of an artboard, in cm. */
+export type PrecisionCm = 0.1 | 0.5 | 1
+
 export type OpeningKind = 'door' | 'window' | 'opening'
 
 export type Opening = {
@@ -20,6 +23,8 @@ export type Opening = {
   swing?: 'in' | 'out'
   heightCm?: number
   sillCm?: number
+  /** Style variant (for example 'pocket-sliding'); reserved for future door/window variants. */
+  variant?: string
 }
 
 export type FurnitureItem = {
@@ -41,6 +46,11 @@ export type Artboard = {
   xCm: number
   yCm: number
   ceilingHeightCm: number
+  /** Drawing precision (snap and rounding step) in cm. */
+  precisionCm: PrecisionCm
+  /** Optional manual frame width/height in cm. They act as the minimum frame size. */
+  widthCm?: number
+  heightCm?: number
   rooms: Room[]
   openings: Opening[]
   furniture: FurnitureItem[]

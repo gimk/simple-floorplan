@@ -4,7 +4,7 @@
 import { useId } from 'react'
 import { Copy, Frame, Plus, Trash2 } from 'lucide-react'
 import { useDoc } from '../../model/store'
-import type { Artboard } from '../../model/types'
+import type { Artboard, PrecisionCm } from '../../model/types'
 import {
   BTN,
   EmptyHint,
@@ -15,6 +15,7 @@ import {
   ROW,
   ROW_OFF,
   ROW_ON,
+  Segmented,
   StatGrid,
   TextField,
   formatM2,
@@ -28,11 +29,18 @@ export type ArtboardInspectProps = {
   artboardId?: string | null
   className?: string
   /**
-   * Read-only card (Design mode): no name, ceiling, room selection, duplicate, add or delete edit.
-   * The measured values (area, room list) stay visible.
+   * Read-only card (Design mode): no name, ceiling, precision, room selection, duplicate, add or
+   * delete edit. The measured values (area, room list) stay visible.
    */
   readOnly?: boolean
 }
+
+/** Drawing precision choices, in cm: fine (1 mm), half and whole centimetre. */
+const PRECISION_OPTIONS = [
+  { value: '0.1', label: '0.1', title: 'Draw to 1 mm' },
+  { value: '0.5', label: '0.5', title: 'Draw to 5 mm' },
+  { value: '1', label: '1', title: 'Draw to 1 cm' },
+] as const
 
 export function ArtboardInspect({ artboardId, className, readOnly = false }: ArtboardInspectProps) {
   const artboards = useDoc((s) => s.doc.artboards)
@@ -69,6 +77,12 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
     if (value == null || !(value > 0)) return false
     if (value === artboard.ceilingHeightCm) return
     patch((a) => { a.ceilingHeightCm = value })
+  }
+
+  const setPrecision = (value: string) => {
+    const precisionCm = Number(value) as PrecisionCm
+    if (precisionCm === artboard.precisionCm) return
+    patch((a) => { a.precisionCm = precisionCm })
   }
 
   const duplicate = () => {
@@ -118,6 +132,16 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
           max={1000}
           disabled={readOnly}
           onCommit={commitCeiling}
+        />
+      </FieldRow>
+
+      <FieldRow label="Precision" hint="drawing step">
+        <Segmented
+          options={PRECISION_OPTIONS}
+          value={String(artboard.precisionCm)}
+          onChange={setPrecision}
+          ariaLabel="Drawing precision"
+          disabled={readOnly}
         />
       </FieldRow>
 

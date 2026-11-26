@@ -210,6 +210,10 @@ Based on the current repo (~450 files in `src/`, plus `functions/`, `cli/`, `mcp
 - Render doors and windows at 1px thickness (white/background gap in wall line + 1px door leaf + 1px swing arc; 1px double-line or tick frame for windows).
 - Allow selecting placed openings to drag along the wall, drag endpoints to resize width, or edit width/flip/delete in the Inspect panel.
 - Verify: Place, flip, move, and resize doors and windows across multiple rooms and artboards.
+- **Future enhancement — door & window variants** (stored in the optional `Opening.variant` field):
+  - Doors: pocket sliding door, bypass sliding doors, French (double) doors.
+  - Windows: sliding windows.
+  - Each variant needs its own 1px symbol and its own Inspect options.
 
 ### Phase 4 — Design Mode: Furniture & Simple Colors
 **Goal:** Lock the floorplan and enable interior layout exploration.

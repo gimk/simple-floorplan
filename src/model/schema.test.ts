@@ -41,4 +41,36 @@ describe('schema', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.length).toBeGreaterThan(0)
   })
+
+  it('defaults precisionCm to 1 and leaves widthCm/heightCm unset', () => {
+    const d = createDefaultProject()
+    expect(d.artboards[0].precisionCm).toBe(1)
+    expect(d.artboards[0].widthCm).toBeUndefined()
+    expect(d.artboards[0].heightCm).toBeUndefined()
+    const legacy = { ...d, artboards: [{ ...d.artboards[0], precisionCm: undefined }] }
+    const r = parseProjectDoc(legacy)
+    expect(r.ok && r.doc.artboards[0].precisionCm).toBe(1)
+  })
+
+  it('accepts precision 0.1, 0.5, 1 and rejects others', () => {
+    const d = createDefaultProject()
+    for (const p of [0.1, 0.5, 1]) {
+      expect(parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], precisionCm: p }] }).ok).toBe(true)
+    }
+    expect(parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], precisionCm: 2 }] }).ok).toBe(false)
+  })
+
+  it('accepts manual widthCm/heightCm and rejects non-positive ones', () => {
+    const d = createDefaultProject()
+    const ok = parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], widthCm: 900, heightCm: 700 }] })
+    expect(ok.ok && ok.doc.artboards[0]).toMatchObject({ widthCm: 900, heightCm: 700 })
+    expect(parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], widthCm: 0 }] }).ok).toBe(false)
+  })
+
+  it('accepts an optional opening variant', () => {
+    const d = createDefaultProject()
+    const o = { id: 'o', kind: 'door', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, variant: 'pocket-sliding' }
+    const r = parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [o] }] })
+    expect(r.ok && r.doc.artboards[0].openings[0].variant).toBe('pocket-sliding')
+  })
 })

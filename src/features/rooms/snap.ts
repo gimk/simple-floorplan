@@ -2,22 +2,33 @@
 import { dist, projectOnSegment } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import type { Room } from '../../model/types'
+import { roundToPrecision } from './ops'
 
 export type SnapGuide = { kind: 'point' | 'line'; a: Vec; b?: Vec }
 export type SnapResult = { point: Vec; guides: SnapGuide[] }
-export type SnapOpts = { gridCm?: number; thresholdCm?: number; anchor?: Vec }
+export type SnapOpts = {
+  gridCm?: number
+  thresholdCm?: number
+  anchor?: Vec
+  /** Skip all snapping (Alt held): return the point rounded to precisionCm (or raw when not set). */
+  disableSnap?: boolean
+  /** Drawing precision in cm. Used as the grid when gridCm is omitted. */
+  precisionCm?: number
+}
 
 export const DEFAULT_GRID_CM = 5
 export const DEFAULT_SNAP_THRESHOLD_CM = 10
 
 const snapToGrid = (v: number, grid: number) => (grid > 0 ? Math.round(v / grid) * grid : v)
+const roundP = (v: number, p?: number) => (p && p > 0 ? roundToPrecision(v, p) : v)
 
 /**
  * Snap pt. Priority: 1) vertex of another room, 2) wall of another room (closest point),
  * 3) horizontal/vertical alignment with opts.anchor, each axis then the grid (default 5 cm; 0 = off).
  */
 export function snapPoint(pt: Vec, otherRooms: Room[], opts: SnapOpts = {}): SnapResult {
-  const grid = opts.gridCm ?? DEFAULT_GRID_CM
+  if (opts.disableSnap) return { point: { x: roundP(pt.x, opts.precisionCm), y: roundP(pt.y, opts.precisionCm) }, guides: [] }
+  const grid = opts.gridCm ?? opts.precisionCm ?? DEFAULT_GRID_CM
   const thr = opts.thresholdCm ?? DEFAULT_SNAP_THRESHOLD_CM
 
   let bestV: Vec | null = null, bestVd = thr
@@ -68,7 +79,9 @@ export function snapRoomDelta(
   dy: number,
   otherRooms: Room[],
   thresholdCm = 12,
+  opts: { disableSnap?: boolean; precisionCm?: number } = {},
 ): { dx: number; dy: number; guides: SnapGuide[] } {
+  if (opts.disableSnap) return { dx: roundP(dx, opts.precisionCm), dy: roundP(dy, opts.precisionCm), guides: [] }
   const others = otherRooms.flatMap((r) => r.vertices)
   if (!room.vertices.length || !others.length) return { dx, dy, guides: [] }
   const sx = bestShift(room.vertices.map((v) => v.x + dx), others.map((v) => v.x), thresholdCm)

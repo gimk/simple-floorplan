@@ -5,14 +5,24 @@
 // sits above the frame's top-left corner: the name selects the artboard and drags it in Plan
 // mode (one undo step per drag), and a compact button duplicates it.
 //
+// In Plan mode with the select tool, three subtle hit zones on the right edge, the bottom edge
+// and the bottom-right corner resize the frame (`a.widthCm` / `a.heightCm`).
+//
 // Draw the frame and the header OUTSIDE `ArtboardContent`; render the rooms, openings and
 // furniture of the artboard INSIDE `ArtboardContent`, which applies the artboard offset.
-import { useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { useDoc } from '../../model/store'
 import type { Artboard } from '../../model/types'
+import { getModifiers, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
-import { artboardFrame, type ArtboardFrame } from './frame'
+import { constrainAxis, roundToPrecision } from '../rooms/ops'
+import {
+  MIN_ARTBOARD_HEIGHT_CM,
+  MIN_ARTBOARD_WIDTH_CM,
+  artboardFrame,
+  type ArtboardFrame,
+} from './frame'
 import { selectArtboard } from './selection'
 
 /**
@@ -44,6 +54,18 @@ function DuplicateGlyph({ size }: { size: number }) {
   )
 }
 
+/**
+ * Replay `fn` whenever a keyboard modifier changes, so a drag in progress follows Shift / Cmd
+ * without waiting for the next pointer move. `fn` may change on every render.
+ */
+function useModifierReplay(fn: () => void) {
+  const latest = useRef(fn)
+  useEffect(() => {
+    latest.current = fn
+  })
+  useEffect(() => subscribeModifiers(() => latest.current()), [])
+}
+
 type DragState = {
   pointerId: number
   /** World point where the drag started. */
@@ -52,6 +74,11 @@ type DragState = {
   /** Artboard origin when the drag started. */
   ax: number
   ay: number
+  /** Latest pointer position in screen px (replayed when a modifier changes mid-drag). */
+  clientX: number
+  clientY: number
+  /** Drawing precision of the artboard, captured at the drag start. */
+  precisionCm: number
   moved: boolean
 }
 
@@ -78,13 +105,47 @@ function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; 
     })
   }
 
+  /**
+   * Move the artboard to the position under the last pointer event. Shift locks the drag to its
+   * dominant axis (`constrainAxis`), Cmd skips the rounding to `a.precisionCm`.
+   */
+  const apply = () => {
+    const d = drag.current
+    if (!d) return
+    const w = toWorld(d.clientX, d.clientY)
+    let dx = w.x - d.wx
+    let dy = w.y - d.wy
+    const mods = getModifiers()
+    if (mods.shift) {
+      const c = constrainAxis(dx, dy)
+      dx = c.x
+      dy = c.y
+    }
+    if (!d.moved && Math.hypot(dx, dy) < px(2)) return
+    d.moved = true
+    const snap = (v: number) => (mods.cmd ? v : roundToPrecision(v, d.precisionCm))
+    moveTo(snap(d.ax + dx), snap(d.ay + dy))
+  }
+  useModifierReplay(apply)
+
   const onPointerDown = (e: React.PointerEvent<SVGGElement>) => {
     if (e.button !== 0) return
     e.stopPropagation()
     selectArtboard(artboard.id)
     if (mode !== 'plan') return
+    syncModifiersFromEvent(e)
     const w = toWorld(e.clientX, e.clientY)
-    drag.current = { pointerId: e.pointerId, wx: w.x, wy: w.y, ax: artboard.xCm, ay: artboard.yCm, moved: false }
+    drag.current = {
+      pointerId: e.pointerId,
+      wx: w.x,
+      wy: w.y,
+      ax: artboard.xCm,
+      ay: artboard.yCm,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      precisionCm: artboard.precisionCm,
+      moved: false,
+    }
     e.currentTarget.setPointerCapture?.(e.pointerId)
     useDoc.getState().beginDrag()
   }
@@ -92,13 +153,11 @@ function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; 
   const onPointerMove = (e: React.PointerEvent<SVGGElement>) => {
     const d = drag.current
     if (!d || d.pointerId !== e.pointerId) return
-    const w = toWorld(e.clientX, e.clientY)
-    const dx = w.x - d.wx
-    const dy = w.y - d.wy
-    if (!d.moved && Math.hypot(dx, dy) < px(2)) return
-    d.moved = true
-    e.stopPropagation()
-    moveTo(d.ax + dx, d.ay + dy)
+    syncModifiersFromEvent(e)
+    d.clientX = e.clientX
+    d.clientY = e.clientY
+    apply()
+    if (d.moved) e.stopPropagation()
   }
 
   const onPointerUp = (e: React.PointerEvent<SVGGElement>) => {
@@ -168,15 +227,171 @@ function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; 
   )
 }
 
+/** Edges a resize drag moves: the right edge, the bottom edge, or both (bottom-right corner). */
+type ResizeAxis = 'x' | 'y' | 'xy'
+
+type ResizeState = {
+  pointerId: number
+  axis: ResizeAxis
+  /** World point where the drag started. */
+  wx: number
+  wy: number
+  /** Frame width and height (cm) when the drag started. */
+  w0: number
+  h0: number
+  /** Latest pointer position in screen px (replayed when a modifier changes mid-drag). */
+  clientX: number
+  clientY: number
+  /** Drawing precision of the artboard, captured at the drag start. */
+  precisionCm: number
+  moved: boolean
+}
+
+const HANDLE_CURSOR: Record<ResizeAxis, string> = {
+  x: 'ew-resize',
+  y: 'ns-resize',
+  xy: 'nwse-resize',
+}
+
 /**
- * Every artboard of the document as a frame, with its header and duplicate button.
+ * Subtle resize hit zones of one artboard frame, Plan mode with the select tool only: the right
+ * edge, the bottom edge and the bottom-right corner. A drag raises `a.widthCm` / `a.heightCm`
+ * (one undo step), clamped to the minimum frame size and rounded to `a.precisionCm` unless Cmd is
+ * held. The frame never gets smaller than its content, so a shrink stops at the content extent.
+ */
+function ArtboardResizeHandles({ artboard, frame }: { artboard: Artboard; frame: ArtboardFrame }) {
+  const { px, toWorld } = useViewport()
+  const drag = useRef<ResizeState | null>(null)
+
+  /** Write the size under the last pointer event. Cmd skips the precision rounding. */
+  const apply = () => {
+    const d = drag.current
+    if (!d) return
+    const w = toWorld(d.clientX, d.clientY)
+    const dx = w.x - d.wx
+    const dy = w.y - d.wy
+    if (!d.moved && Math.hypot(dx, dy) < px(2)) return
+    d.moved = true
+    const { cmd } = getModifiers()
+    const round = (v: number) => (cmd ? v : roundToPrecision(v, d.precisionCm))
+    const width = d.axis === 'y' ? null : Math.max(MIN_ARTBOARD_WIDTH_CM, round(d.w0 + dx))
+    const height = d.axis === 'x' ? null : Math.max(MIN_ARTBOARD_HEIGHT_CM, round(d.h0 + dy))
+    useDoc.getState().updateSilent((doc) => {
+      const a = doc.artboards.find((x) => x.id === artboard.id)
+      if (!a) return
+      if (width !== null) a.widthCm = width
+      if (height !== null) a.heightCm = height
+    })
+  }
+  useModifierReplay(apply)
+
+  const start = (axis: ResizeAxis) => (e: React.PointerEvent<SVGRectElement>) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    selectArtboard(artboard.id)
+    syncModifiersFromEvent(e)
+    const w = toWorld(e.clientX, e.clientY)
+    drag.current = {
+      pointerId: e.pointerId,
+      axis,
+      wx: w.x,
+      wy: w.y,
+      w0: frame.width,
+      h0: frame.height,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      precisionCm: artboard.precisionCm,
+      moved: false,
+    }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    useDoc.getState().beginDrag()
+  }
+
+  const move = (e: React.PointerEvent<SVGRectElement>) => {
+    const d = drag.current
+    if (!d || d.pointerId !== e.pointerId) return
+    syncModifiersFromEvent(e)
+    d.clientX = e.clientX
+    d.clientY = e.clientY
+    apply()
+    if (d.moved) e.stopPropagation()
+  }
+
+  const end = (e: React.PointerEvent<SVGRectElement>) => {
+    const d = drag.current
+    if (!d || d.pointerId !== e.pointerId) return
+    drag.current = null
+    e.currentTarget.releasePointerCapture?.(e.pointerId)
+    // One undo step for the whole drag (nothing is pushed when the frame did not change).
+    useDoc.getState().endDrag()
+  }
+
+  const t = px(7) // hit thickness along the frame edge
+  const c = px(14) // size of the corner hit zone
+  const corner = Math.min(c, frame.width, frame.height)
+  const zones: { axis: ResizeAxis; x: number; y: number; width: number; height: number; test: string }[] = [
+    {
+      axis: 'x',
+      x: frame.x + frame.width - t,
+      y: frame.y + corner,
+      width: t,
+      height: Math.max(0, frame.height - 2 * corner),
+      test: 'right',
+    },
+    {
+      axis: 'y',
+      x: frame.x + corner,
+      y: frame.y + frame.height - t,
+      width: Math.max(0, frame.width - 2 * corner),
+      height: t,
+      test: 'bottom',
+    },
+    {
+      axis: 'xy',
+      x: frame.x + frame.width - corner,
+      y: frame.y + frame.height - corner,
+      width: corner,
+      height: corner,
+      test: 'corner',
+    },
+  ]
+
+  return (
+    <g data-testid={`artboard-resize-${artboard.id}`}>
+      {zones.map((z) => (
+        <rect
+          key={z.test}
+          data-testid={`artboard-resize-${z.test}-${artboard.id}`}
+          x={z.x}
+          y={z.y}
+          width={z.width}
+          height={z.height}
+          rx={px(2)}
+          style={{ cursor: HANDLE_CURSOR[z.axis] }}
+          className="fill-transparent hover:fill-orange-500/25"
+          onPointerDown={start(z.axis)}
+          onPointerMove={move}
+          onPointerUp={end}
+          onPointerCancel={end}
+        />
+      ))}
+    </g>
+  )
+}
+
+/**
+ * Every artboard of the document as a frame, with its header, duplicate button and (Plan mode,
+ * select tool) its resize hit zones.
  * Render it inside the world `<g>` of the Viewport, under the rooms of the artboards.
  */
 export function ArtboardsLayer() {
   const artboards = useDoc((s) => s.doc.artboards)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
   const selection = useUi((s) => s.selection)
+  const mode = useUi((s) => s.mode)
+  const tool = useUi((s) => s.tool)
   const { px } = useViewport()
+  const resizable = mode === 'plan' && tool === 'select'
 
   return (
     <g data-testid="artboards-layer">
@@ -201,6 +416,7 @@ export function ArtboardsLayer() {
               }
             />
             <ArtboardHeader artboard={a} frame={frame} highlighted={highlighted} />
+            {resizable && <ArtboardResizeHandles artboard={a} frame={frame} />}
           </g>
         )
       })}

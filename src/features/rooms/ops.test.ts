@@ -4,8 +4,8 @@ import { createDefaultProject } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import type { Room } from '../../model/types'
 import {
-  createRectRoom, cutoutRoom, deleteVertex, insertVertexOnEdge, isAxisAlignedRect, mergeRooms,
-  moveEdge, moveRoom, moveVertex, nextRoomName, roomWalls, setWallLength,
+  constrainAngle45, constrainAxis, constrainWallPerpendicular, createRectRoom, cutoutRoom, formatLengthCm, deleteVertex, insertVertexOnEdge, isAxisAlignedRect, mergeRooms,
+  moveEdge, moveRoom, moveVertex, nextRoomName, roomWalls, roundToPrecision, scaleRoomFromVertex, setWallLength, wallResizeCursor,
 } from './ops'
 import {
   addRoom, cutoutArtboardRooms, deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength,
@@ -220,5 +220,114 @@ describe('store actions', () => {
     expect(rooms().map((r) => r.id)).toEqual(['a', 'c'])
     expect(mergeArtboardRooms(ab, ['a', 'c'])).toBeNull()
     expect(rooms()).toHaveLength(2)
+  })
+})
+
+describe('precision and constraints (Phase 3.5A)', () => {
+  const sq = (x0: number, y0: number, x1: number, y1: number) => ({
+    id: 'r', name: 'r',
+    vertices: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }],
+  })
+
+  it('roundToPrecision', () => {
+    expect(roundToPrecision(12.4, 1)).toBe(12)
+    expect(roundToPrecision(12.6, 1)).toBe(13)
+    expect(roundToPrecision(12.26, 0.5)).toBe(12.5)
+    expect(roundToPrecision(12.04, 0.1)).toBe(12)
+    expect(roundToPrecision(0.3, 0.1)).toBe(0.3)
+    expect(roundToPrecision(-0.2, 1)).toBe(0)
+    expect(Object.is(roundToPrecision(-0.2, 1), 0)).toBe(true)
+    expect(roundToPrecision(7.77, 0)).toBe(7.77)
+  })
+
+  it('formatLengthCm', () => {
+    expect(formatLengthCm(123.4, 1)).toBe('123')
+    expect(formatLengthCm(123.6, 1)).toBe('124')
+    expect(formatLengthCm(123.26, 0.5)).toBe('123.5')
+    expect(formatLengthCm(123, 0.5)).toBe('123.0')
+    expect(formatLengthCm(123.04, 0.1)).toBe('123.0')
+    expect(formatLengthCm(123.14, 0.1)).toBe('123.1')
+  })
+
+  it('scaleRoomFromVertex scales about the opposite corner and tracks the cursor', () => {
+    const r = scaleRoomFromVertex(sq(0, 0, 100, 100), 2, { x: 200, y: 200 })
+    expect(r.vertices[0]).toEqual({ x: 0, y: 0 })
+    expect(r.vertices[2]).toEqual({ x: 200, y: 200 })
+    expect(r.vertices[1]).toEqual({ x: 200, y: 0 })
+    expect(r.vertices[3]).toEqual({ x: 0, y: 200 })
+  })
+  it('scaleRoomFromVertex anchors per corner', () => {
+    const r = scaleRoomFromVertex(sq(0, 0, 100, 100), 0, { x: -100, y: -100 })
+    expect(r.vertices[2]).toEqual({ x: 100, y: 100 })
+    expect(r.vertices[0]).toEqual({ x: -100, y: -100 })
+    // vertex 1 (top-right) drags: the anchor is the bottom-left corner (0, 50); k = 0.6
+    const t = scaleRoomFromVertex(sq(0, 0, 100, 50), 1, { x: 50, y: 0 })
+    expect(t.vertices[3]).toEqual({ x: 0, y: 50 })
+    expect(t.vertices[1].x).toBeCloseTo(60)
+    expect(t.vertices[1].y).toBeCloseTo(20)
+    expect(t.vertices[2].x).toBeCloseTo(60)
+  })
+  it('scaleRoomFromVertex is uniform (keeps the aspect ratio) and handles a non-rect room', () => {
+    const tri: Room = { id: 't', name: 't', vertices: [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 0, y: 100 }] }
+    // anchor (0, 100); k = 2
+    const r = scaleRoomFromVertex(tri, 1, { x: 400, y: -100 })
+    expect(r.vertices[1].x).toBeCloseTo(400)
+    expect(r.vertices[1].y).toBeCloseTo(-100)
+    expect(r.vertices[0].y).toBeCloseTo(-100)
+    expect(r.vertices[2]).toEqual({ x: 0, y: 100 })
+  })
+  it('scaleRoomFromVertex enforces a 10 cm minimum bbox', () => {
+    const r = scaleRoomFromVertex(sq(0, 0, 100, 200), 2, { x: -500, y: -500 })
+    const xs = r.vertices.map((v) => v.x), ys = r.vertices.map((v) => v.y)
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThanOrEqual(10 - 1e-9)
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThanOrEqual(10 - 1e-9)
+    expect(r.vertices.every((v) => Number.isFinite(v.x) && Number.isFinite(v.y))).toBe(true)
+  })
+  it('scaleRoomFromVertex rounds the cursor to the precision and ignores bad indexes', () => {
+    const base = sq(0, 0, 100, 100)
+    const r = scaleRoomFromVertex(base, 2, { x: 200.4, y: 200.4 }, 1)
+    expect(r.vertices[2]).toEqual({ x: 200, y: 200 })
+    expect(scaleRoomFromVertex(base, 9, { x: 1, y: 1 })).toBe(base)
+    expect(scaleRoomFromVertex(base, -1, { x: 1, y: 1 })).toBe(base)
+    expect(base.vertices[2]).toEqual({ x: 100, y: 100 }) // input not changed
+  })
+
+  it('constrainAxis keeps the dominant axis', () => {
+    expect(constrainAxis(10, 3)).toEqual({ x: 10, y: 0 })
+    expect(constrainAxis(-3, 10)).toEqual({ x: 0, y: 10 })
+    expect(constrainAxis(5, -5)).toEqual({ x: 5, y: 0 })
+    expect(constrainAxis(0, 0)).toEqual({ x: 0, y: 0 })
+  })
+
+  it('constrainWallPerpendicular keeps only the normal component', () => {
+    expect(constrainWallPerpendicular({ x: 0, y: 0 }, { x: 100, y: 0 }, 30, 20)).toEqual({ x: 0, y: 20 })
+    expect(constrainWallPerpendicular({ x: 0, y: 0 }, { x: 0, y: 100 }, 30, 20)).toEqual({ x: 30, y: 0 })
+    const d = constrainWallPerpendicular({ x: 0, y: 0 }, { x: 100, y: 100 }, 10, 0)
+    expect(d.x).toBeCloseTo(5); expect(d.y).toBeCloseTo(-5)
+    expect(constrainWallPerpendicular({ x: 1, y: 1 }, { x: 1, y: 1 }, 4, 5)).toEqual({ x: 4, y: 5 })
+  })
+
+  it('constrainAngle45 snaps the direction and keeps the distance', () => {
+    const a = { x: 10, y: 10 }
+    const h = constrainAngle45(a, { x: 110, y: 20 })
+    expect(h.y).toBeCloseTo(10)
+    expect(h.x).toBeCloseTo(10 + Math.hypot(100, 10))
+    const diag = constrainAngle45(a, { x: 60, y: 45 })
+    expect(diag.x - a.x).toBeCloseTo(diag.y - a.y)
+    expect(Math.hypot(diag.x - a.x, diag.y - a.y)).toBeCloseTo(Math.hypot(50, 35))
+    const up = constrainAngle45(a, { x: 12, y: -90 })
+    expect(up.x).toBeCloseTo(10); expect(up.y).toBeCloseTo(10 - Math.hypot(2, 100))
+    expect(constrainAngle45(a, a)).toEqual(a)
+  })
+
+  it('wallResizeCursor', () => {
+    const o = { x: 0, y: 0 }
+    expect(wallResizeCursor(o, { x: 100, y: 0 })).toBe('ns-resize')
+    expect(wallResizeCursor({ x: 100, y: 0 }, o)).toBe('ns-resize')
+    expect(wallResizeCursor(o, { x: 0, y: 100 })).toBe('ew-resize')
+    expect(wallResizeCursor(o, { x: 100, y: 100 })).toBe('nesw-resize')
+    expect(wallResizeCursor(o, { x: 100, y: -100 })).toBe('nwse-resize')
+    expect(wallResizeCursor(o, { x: -100, y: 100 })).toBe('nwse-resize')
+    expect(wallResizeCursor(o, { x: 100, y: 10 })).toBe('ns-resize')
   })
 })
