@@ -1,7 +1,14 @@
-# Cloudflare Pages: serves dist/ and the Pages Functions in functions/api/*.
+# Cloudflare Worker + Static Assets: the Worker in functions/worker.ts serves /api/*,
+# everything else is served from the ./dist static assets build.
 name = "simple-floorplan"
+main = "functions/worker.ts"
 compatibility_date = "2025-06-01"
-pages_build_output_dir = "dist"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
 
 [[d1_databases]]
 binding = "DB"
@@ -12,5 +19,5 @@ database_id = "d550597a-3646-4324-8959-8fcfa741cd1c"
 binding = "IMAGES"
 bucket_name = "simple-floorplan-images"
 
-# Optional secret: wrangler pages secret put API_TOKEN
+# Optional secret: npx wrangler secret put API_TOKEN
 # If API_TOKEN is unset, the API allows all requests.
