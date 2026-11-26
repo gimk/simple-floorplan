@@ -1,5 +1,5 @@
 // Basic 2D helpers shared by all features. Units: cm. Feature-specific math goes in the feature folder.
-import type { Room, Vec, Vertex } from './types'
+export type Vec = { x: number; y: number }
 
 export const add = (a: Vec, b: Vec): Vec => ({ x: a.x + b.x, y: a.y + b.y })
 export const sub = (a: Vec, b: Vec): Vec => ({ x: a.x - b.x, y: a.y - b.y })
@@ -19,10 +19,6 @@ export const signedArea = (pts: Vec[]) => {
 }
 export const area = (pts: Vec[]) => Math.abs(signedArea(pts))
 
-/** Room floor area in m²: inside the walls (inside faces), holes subtracted. */
-export const roomAreaM2 = (r: Room) =>
-  (area(roomInnerRing(r)) - r.holes.reduce((s, h) => s + area(h), 0)) / 10000
-
 export const centroid = (pts: Vec[]): Vec => {
   const a = signedArea(pts)
   if (Math.abs(a) < 1e-9) return mul(pts.reduce(add, { x: 0, y: 0 }), 1 / pts.length)
@@ -33,19 +29,6 @@ export const centroid = (pts: Vec[]): Vec => {
   })
   return { x: cx / (6 * a), y: cy / (6 * a) }
 }
-
-export type Wall = { index: number; start: Vertex; end: Vertex; length: number; dir: Vec; /** points INTO the room */ inward: Vec }
-
-/** Walls of a room in polygon order. Wall i = vertices[i] -> vertices[i+1]. */
-export const roomWalls = (r: Room): Wall[] => {
-  const v = r.vertices, s = signedArea(v) > 0 ? 1 : -1
-  return v.map((a, i) => {
-    const b = v[(i + 1) % v.length], d = norm(sub(b, a))
-    return { index: i, start: a, end: b, length: dist(a, b), dir: d, inward: { x: -d.y * s, y: d.x * s } }
-  })
-}
-
-export const wallByStart = (r: Room, startId: string) => roomWalls(r).find((w) => w.start.id === startId)
 
 /** Closest point on segment ab to p, with t in [0,1]. */
 export const projectOnSegment = (p: Vec, a: Vec, b: Vec) => {
@@ -159,16 +142,7 @@ export function labelPlacement(rings: Vec[][], w: number, h: number, m = 0): { p
 }
 
 // ---------- inside faces ----------
-// A room outline is the centre line of its walls. On site, walls are measured on their face
-// inside the room: each wall line moved into the room by half its thickness. The inside
-// outline joins these moved lines at their crossings.
-
-/** Thickness of a wall when the room has no props for it (partition). */
-export const DEFAULT_WALL_CM = 10
-
-/** Half thickness of each wall of the room, in wall order. */
-export const halfThicknesses = (r: Room): number[] =>
-  r.vertices.map((v) => (r.walls[v.id]?.thicknessCm ?? DEFAULT_WALL_CM) / 2)
+// Inside outline of a polygon: each edge moved into the polygon by a given offset.
 
 /**
  * Inside outline of a polygon whose edge i (pts[i] -> pts[i+1]) is moved into the polygon by
@@ -204,13 +178,4 @@ export function innerRing(pts: Vec[], half: number[]): Vec[] {
     if (degenerate[k]) out[(k + 1) % n] = out[k]
   }
   return out
-}
-
-/** Inside outline of a room (its vertices moved in by half the wall thicknesses). */
-export const roomInnerRing = (r: Room): Vec[] => innerRing(r.vertices, halfThicknesses(r))
-
-/** Length of each wall on its inside face, in wall order. */
-export const innerWallLengths = (r: Room): number[] => {
-  const q = roomInnerRing(r)
-  return q.map((p, i) => dist(p, q[(i + 1) % q.length]))
 }

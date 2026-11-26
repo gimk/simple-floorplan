@@ -1,6 +1,5 @@
 // Pure viewport math for the app shell. World units = cm, zoom = screen px per cm.
 // Kept free of React/DOM so it can be unit-tested.
-import type { BackgroundImage, PlanDoc, Vec } from '../model/types'
 
 export const MIN_ZOOM = 0.05
 export const MAX_ZOOM = 40
@@ -24,24 +23,6 @@ export function wheelZoomFactor(deltaY: number, deltaMode = 0): number {
 export type Bounds = { minX: number; minY: number; maxX: number; maxY: number }
 
 export const EMPTY_BOUNDS: Bounds = { minX: 0, minY: 0, maxX: 400, maxY: 300 }
-
-/** Bounds of all rooms plus the background image (when visible). */
-export function docBounds(doc: PlanDoc): Bounds {
-  const pts: Vec[] = doc.rooms.flatMap((r) => r.vertices)
-  const bg: BackgroundImage | undefined = doc.background
-  if (bg && bg.visible) {
-    const w = bg.naturalWidth * bg.cmPerPx
-    const h = bg.naturalHeight * bg.cmPerPx
-    pts.push({ x: bg.xCm, y: bg.yCm }, { x: bg.xCm + w, y: bg.yCm + h })
-  }
-  if (!pts.length) return { ...EMPTY_BOUNDS }
-  return {
-    minX: Math.min(...pts.map((p) => p.x)),
-    maxX: Math.max(...pts.map((p) => p.x)),
-    minY: Math.min(...pts.map((p) => p.y)),
-    maxY: Math.max(...pts.map((p) => p.y)),
-  }
-}
 
 export type View = { x: number; y: number; zoom: number }
 

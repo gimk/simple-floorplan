@@ -1,9 +1,8 @@
-// Bottom-left zoom pill + live metric scale bar (plan 7.2 #3). Fit (key 0) frames all
-// rooms + the background. Rendered as HTML over the canvas, in screen space.
+// Bottom-left zoom pill + live metric scale bar (plan 7.2 #3).
+// Fit resets the view to the origin. Rendered as HTML over the canvas, in screen space.
 import { useEffect, useState } from 'react'
 import { Maximize2, Minus, Plus } from 'lucide-react'
-import { useUi } from '../model/store'
-import { fitToDoc } from './fit'
+import { useUi } from './uiStore'
 import { clampZoom, fmtScale, MAX_ZOOM, MIN_ZOOM, scaleBarStep } from './viewMath'
 
 /** Zoom to `targetZoom` centered on the canvas, keeping the world point at the center fixed. */
@@ -18,6 +17,9 @@ function zoomTo(targetZoom: number) {
   const wy = v.y + (cy - (r?.top ?? 0)) / v.zoom
   useUi.getState().set({ view: { zoom: z, x: wx - (cx - (r?.left ?? 0)) / z, y: wy - (cy - (r?.top ?? 0)) / z } })
 }
+
+/** Reset the view: zoom 100%, origin near the top-left of the canvas. Real fit-to-content comes with the v2 model. */
+const fitHome = () => useUi.getState().set({ view: { zoom: 1, x: -100, y: -100 } })
 
 const zoomBy = (factor: number) => zoomTo(useUi.getState().view.zoom * factor)
 
@@ -54,7 +56,7 @@ export function ZoomControls() {
       <button type="button" className={btn} aria-label="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(1.25)}>
         <Plus size={16} />
       </button>
-      <button type="button" className={`${btn} gap-1 px-2 text-xs max-sm:px-0`} aria-label="Fit plan to view (0)" title="Fit plan to view (0)" onClick={() => fitToDoc()}>
+      <button type="button" className={`${btn} gap-1 px-2 text-xs max-sm:px-0`} aria-label="Reset view" title="Reset view" onClick={fitHome}>
         <Maximize2 size={16} /> <span className="hidden sm:inline">Fit</span>
       </button>
       <div className="mx-0.5 h-5 w-px bg-black/10 sm:mx-1 dark:bg-white/15" aria-hidden="true" />

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampZoom, docBounds, EMPTY_BOUNDS, fitView, fmtScale, gridStep, MAX_ZOOM, MIN_ZOOM, scaleBarStep, wheelZoomFactor } from './viewMath'
+import { clampZoom, fitView, fmtScale, gridStep, MAX_ZOOM, MIN_ZOOM, scaleBarStep, wheelZoomFactor } from './viewMath'
 
 describe('wheelZoomFactor', () => {
   it('caps a mouse notch to a small step', () => {
@@ -16,63 +16,12 @@ describe('wheelZoomFactor', () => {
     expect(wheelZoomFactor(1, 2)).toBeCloseTo(Math.exp(-0.15))
   })
 })
-import type { PlanDoc } from '../model/types'
-
-const docWithRoom = (xs: number[], ys: number[]): PlanDoc => ({
-  projectId: 't',
-  title: 't',
-  rooms: [
-    {
-      id: 'r1',
-      code: 'R1',
-      name: 'Room',
-      vertices: xs.map((x, i) => ({ id: `v${i}`, x, y: ys[i] })),
-      holes: [],
-      walls: {},
-      walkOrder: 0,
-    },
-  ],
-  elements: [],
-  measurements: {},
-  roomNotes: {},
-  tapes: [],
-})
 
 describe('clampZoom', () => {
   it('clamps to the allowed range', () => {
     expect(clampZoom(0.001)).toBe(MIN_ZOOM)
     expect(clampZoom(1000)).toBe(MAX_ZOOM)
     expect(clampZoom(2)).toBe(2)
-  })
-})
-
-describe('docBounds', () => {
-  it('returns empty bounds for an empty doc', () => {
-    expect(docBounds({ ...docWithRoom([], []), rooms: [] })).toEqual(EMPTY_BOUNDS)
-  })
-  it('covers all room vertices', () => {
-    const b = docBounds(docWithRoom([100, 500, 300], [50, 200, 400]))
-    expect(b).toEqual({ minX: 100, minY: 50, maxX: 500, maxY: 400 })
-  })
-  it('includes a visible background image', () => {
-    const doc = docWithRoom([0, 100], [0, 100])
-    doc.background = {
-      src: 'data:,', naturalWidth: 200, naturalHeight: 100, xCm: -50, yCm: 1000,
-      cmPerPx: 2, rotationDeg: 0, opacity: 0.5, visible: true, locked: false,
-    }
-    const b = docBounds(doc)
-    expect(b.minX).toBe(-50)
-    expect(b.maxX).toBe(350) // -50 + 200 px * 2 cm/px
-    expect(b.minY).toBe(0)
-    expect(b.maxY).toBe(1200) // 1000 + 100 px * 2 cm/px
-  })
-  it('ignores a hidden background', () => {
-    const doc = docWithRoom([0, 100], [0, 100])
-    doc.background = {
-      src: 'data:,', naturalWidth: 2000, naturalHeight: 2000, xCm: -5000, yCm: -5000,
-      cmPerPx: 2, rotationDeg: 0, opacity: 0.5, visible: false, locked: false,
-    }
-    expect(docBounds(doc)).toEqual({ minX: 0, minY: 0, maxX: 100, maxY: 100 })
   })
 })
 

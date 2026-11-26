@@ -1,9 +1,8 @@
 // Titled block used by every sidebar panel. Optional icon, optional collapsible body
 // (open state is remembered per viewer in localStorage) and optional header actions.
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { useSectionOpen } from '../sidebar/store'
 import { HEADING, MUTED, PANEL_CARD, SECTION_PAD } from './styles'
 
 export type PanelSectionProps = {
@@ -13,10 +12,8 @@ export type PanelSectionProps = {
   icon?: ReactNode
   /** Right-hand header content, e.g. `<IconButton label="Delete room" … />`. */
   actions?: ReactNode
-  /** Renders a toggle button and remembers the open/closed state. */
+  /** Renders a toggle button. */
   collapsible?: boolean
-  /** Memory key for the open state. Two sections must not share a key. */
-  id?: string
   /** Open state on the very first visit (default: open). */
   defaultOpen?: boolean
   /** Muted line under the heading. */
@@ -32,7 +29,6 @@ export function PanelSection({
   icon,
   actions,
   collapsible = false,
-  id,
   defaultOpen = true,
   description,
   children,
@@ -40,7 +36,7 @@ export function PanelSection({
   contentClassName,
 }: PanelSectionProps) {
   const autoId = useId()
-  const [storedOpen, setStoredOpen] = useSectionOpen(id ?? title, defaultOpen)
+  const [storedOpen, setStoredOpen] = useState(defaultOpen)
   const open = collapsible ? storedOpen : true
   const bodyId = `${autoId}-body`
   return (

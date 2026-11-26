@@ -1,6 +1,5 @@
 // Pure calibration math for the background image. World units: cm, y points down.
-import { dist } from '../../model/geometry'
-import type { Vec } from '../../model/types'
+import { dist, type Vec } from '../../model/geometry'
 
 export type BgGeom = {
   xCm: number

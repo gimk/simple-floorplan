@@ -1,7 +1,10 @@
 // IndexedDB persistence for plan documents: one record per projectId.
 // If IndexedDB fails, the current doc is kept in localStorage (legacy key) instead.
-import type { PlanDoc } from '../model/types'
-import { LAST_PROJECT_KEY } from './projects'
+
+/** Stored project document. Phase 1 replaces this with the v2 ProjectDoc. */
+export type PlanDoc = { projectId: string; [key: string]: unknown }
+
+const LAST_PROJECT_KEY = 'simple-floorplan:last-project'
 
 const DB_NAME = 'simple-floorplan-docs'
 const STORE = 'docs'

@@ -1,7 +1,7 @@
-// Subtle canvas grid drawn in world space (plan 7.2 #2). Spacing adapts to zoom so
+// Subtle canvas grid drawn in world space . Spacing adapts to zoom so
 // lines stay ~32 screen px apart. Rendered inside the world <g>, pointer-events off.
 import { useViewport } from '../canvas/Viewport'
-import { useUi } from '../model/store'
+import { useUi } from './uiStore'
 import { gridStep } from './viewMath'
 
 export function CanvasGrid() {
