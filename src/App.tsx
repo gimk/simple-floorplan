@@ -14,6 +14,7 @@ import { ObjectsPanel } from './features/openings/ObjectsPanel'
 import { OpeningInspect } from './features/openings/OpeningInspect'
 import { OpeningsLayer } from './features/openings/OpeningsLayer'
 import { PlaceOpeningOverlay } from './features/openings/PlaceOpeningOverlay'
+import { CanvasSelectLayer, MarqueeOverlay } from './features/rooms/CanvasSelectLayer'
 import { deleteRoomVertex, deleteRoomWall, deleteRooms } from './features/rooms/actions'
 import { PlanToolbar } from './features/rooms/PlanToolbar'
 import { RoomInspect } from './features/rooms/RoomInspect'
@@ -304,20 +305,11 @@ export default function App() {
                 <CalibrateOverlay key={calibratingImageId ?? 'none'} />
                 <RoomToolsOverlay />
                 <PlaceOpeningOverlay />
+                <MarqueeOverlay />
               </>
             }
           >
-            {tool === 'select' && (
-              <rect
-                data-testid="canvas-background"
-                x={-1e6}
-                y={-1e6}
-                width={2e6}
-                height={2e6}
-                fill="transparent"
-                onPointerDown={() => useUi.getState().set({ selection: { kind: 'none' } })}
-              />
-            )}
+            <CanvasSelectLayer />
             <CanvasGrid />
             <RefImagesLayer />
             <ArtboardsLayer />
