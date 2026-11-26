@@ -9,6 +9,11 @@ import { CalibrateOverlay } from './features/background/CalibrateOverlay'
 import { RefImageInspect } from './features/background/RefImageInspect'
 import { RefImagesLayer } from './features/background/RefImagesLayer'
 import { loadRefImageFile } from './features/background/upload'
+import { deleteFurniture, duplicateFurniture } from './features/furniture/actions'
+import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
+import { FurnitureInspect } from './features/furniture/FurnitureInspect'
+import { FurnitureLayer } from './features/furniture/FurnitureLayer'
+import { FurniturePanel } from './features/furniture/FurniturePanel'
 import { deleteOpening } from './features/openings/actions'
 import { ObjectsPanel } from './features/openings/ObjectsPanel'
 import { OpeningInspect } from './features/openings/OpeningInspect'
@@ -46,6 +51,23 @@ const isEditable = (t: EventTarget | null) => {
   const el = t as HTMLElement | null
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
 }
+
+/**
+ * UI state of a mode switch, shared by the Mode control and the plain '1' / '2' shortcuts.
+ * Design mode has none of the Plan-mode placement tools, so their state is dropped; Plan mode drops
+ * a Design-mode furniture selection, because nothing in Plan mode can edit a furniture item (the
+ * Inspect panel would keep an empty column and Delete would hit furniture from a locked plan).
+ */
+const modeUiPatch = (mode: Mode, selection: Selection) =>
+  mode === 'design'
+    ? {
+        mode,
+        tool: 'select' as const,
+        selection: { kind: 'none' } as Selection,
+        placingOpeningKind: null,
+        calibratingImageId: null,
+      }
+    : { mode, ...(selection.kind === 'furniture' ? { selection: { kind: 'none' } as Selection } : {}) }
 
 /** World point (cm) at the centre of the visible canvas. */
 const canvasCenterWorld = () => {
@@ -85,11 +107,35 @@ export default function App() {
         else useDoc.getState().undo()
         return
       }
-      // Delete / Backspace removes the selected opening, reference image or rooms in Plan mode.
+      // Plain '1' / '2' switch the mode (same state reset as the Mode control).
+      if ((key === '1' || key === '2') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        const ui = useUi.getState()
+        ui.set(modeUiPatch(key === '1' ? 'plan' : 'design', ui.selection))
+        return
+      }
+      // Cmd/Ctrl+D duplicates the selected furniture item (Design mode).
+      if ((e.metaKey || e.ctrlKey) && key === 'd' && !e.altKey && !e.shiftKey) {
+        const ui = useUi.getState()
+        if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
+          e.preventDefault()
+          duplicateFurniture(ui.selection.artboardId, ui.selection.furnitureId)
+        }
+        return
+      }
+      // Delete / Backspace removes the selected opening, reference image, furniture or rooms.
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const ui = useUi.getState()
-      if (ui.mode !== 'plan' || ui.tool === 'calibrate-image') return
+      // Design mode: only furniture can be deleted (the room geometry is locked).
+      if (ui.mode === 'design') {
+        if (ui.selection.kind === 'furniture') {
+          e.preventDefault()
+          deleteFurniture(ui.selection.artboardId, ui.selection.furnitureId)
+        }
+        return
+      }
+      if (ui.tool === 'calibrate-image') return
       const sel = ui.selection
       if (sel.kind === 'refImage') {
         e.preventDefault()
@@ -207,7 +253,11 @@ export default function App() {
               ?.openings.some((o) => o.id === selection.openingId)
           : selection.kind === 'refImage'
             ? refImages.some((i) => i.id === selection.imageId)
-            : true
+            : selection.kind === 'furniture'
+              ? !!artboards
+                  .find((a) => a.id === selection.artboardId)
+                  ?.furniture.some((f) => f.id === selection.furnitureId)
+              : true
 
   /**
    * The wall-length input only lives while the selection that opened it is still current, and only
@@ -232,19 +282,8 @@ export default function App() {
           value={mode}
           options={MODES}
           onChange={(m) => {
-            const next = m as Mode
-            // Design mode has none of the Plan-mode placement tools: drop their state.
-            setUi(
-              next === 'design'
-                ? {
-                    mode: next,
-                    tool: 'select',
-                    selection: { kind: 'none' },
-                    placingOpeningKind: null,
-                    calibratingImageId: null,
-                  }
-                : { mode: next },
-            )
+            // Design mode drops the Plan-mode placement tools; Plan mode drops a furniture selection.
+            setUi(modeUiPatch(m as Mode, selection))
           }}
           className="w-44"
         />
@@ -289,7 +328,7 @@ export default function App() {
           {mode === 'plan' ? (
             <ObjectsPanel onUploadImage={() => imageRef.current?.click()} />
           ) : (
-            <p>Furniture — Phase 4</p>
+            <FurniturePanel />
           )}
         </aside>
         <main
@@ -319,6 +358,8 @@ export default function App() {
                   artboard={a}
                   onEditWall={(req) => setEditWall({ req, openedWith: useUi.getState().selection })}
                 />
+                {/* Furniture sits above the floors; the 1 px opening arcs stay above both. */}
+                <FurnitureLayer artboard={a} />
                 <OpeningsLayer artboard={a} />
               </ArtboardContent>
             ))}
@@ -333,8 +374,14 @@ export default function App() {
         </main>
         <aside aria-label="Inspect" data-testid="inspect-panel" className="hidden w-70 shrink-0 border-l border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 lg:block">
           {mode === 'design' ? (
-            // Design mode edits nothing geometric: the artboard card is read-only here.
-            <ArtboardInspect artboardId={activeArtboardId} readOnly />
+            // Design mode edits no geometry: furniture and room floors only.
+            selection.kind === 'furniture' && selectionExists ? (
+              <FurnitureInspect artboardId={selection.artboardId} furnitureId={selection.furnitureId} />
+            ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 0 ? (
+              <DesignRoomInspect artboardId={selection.artboardId} roomId={selection.roomIds[0]} />
+            ) : (
+              <ArtboardInspect artboardId={selection.kind === 'artboard' ? selection.artboardId : activeArtboardId} readOnly />
+            )
           ) : selection.kind === 'room' && selectionExists ? (
             <RoomInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
           ) : selection.kind === 'vertex' && selectionExists ? (

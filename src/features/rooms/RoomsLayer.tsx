@@ -1,5 +1,6 @@
 // Rooms of one artboard on the canvas (artboard-local cm). Render inside <ArtboardContent>.
-// Plan mode + select tool: select, move, edit walls and vertices. Design mode: geometry is locked.
+// Plan mode + select tool: select, move, edit walls and vertices. Design mode: geometry is locked,
+// a room click only selects it (the Inspect panel then edits its floor colour).
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
@@ -60,6 +61,10 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   useEffect(() => () => { gesture.current?.unsub?.() }, [])
 
   const interactive = mode === 'plan' && tool === 'select'
+  // Design mode keeps every geometric handle out of reach: a room only takes the pointer there, so a
+  // click can pick the room whose floor colour the Inspect panel edits.
+  const design = mode === 'design'
+  const selectable = interactive || design
   const inArtboard = (s: Selection) => 'artboardId' in s && s.artboardId === artboard.id
   const selectedIds = selection.kind === 'room' && inArtboard(selection) ? selection.roomIds : []
   const selectedWall = selection.kind === 'wall' && inArtboard(selection) ? selection : null
@@ -123,9 +128,23 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   }
   const gestureProps = { onPointerMove: gestureMove, onPointerUp: gestureEnd, onPointerCancel: gestureEnd }
 
-  const onRoomDown = (e: ReactPointerEvent<SVGPolygonElement>, room: Room) => {
-    if (e.button !== 0 || !interactive) return
+  /** Design mode: a click picks the room so the Inspect panel can edit its floor colour. */
+  const onRoomClick = (e: React.MouseEvent, room: Room) => {
+    if (!design) return
     e.stopPropagation()
+    useUi.getState().set({
+      selection: { kind: 'room', artboardId: artboard.id, roomIds: [room.id] },
+      activeArtboardId: artboard.id,
+    })
+  }
+
+  const onRoomDown = (e: ReactPointerEvent<SVGPolygonElement>, room: Room) => {
+    if (e.button !== 0) return
+    // Always swallow the pointer. In Design mode this keeps the canvas background hit rect
+    // (CanvasSelectLayer) from receiving the press and clearing the selection; `onRoomClick` then
+    // picks this room for the Inspect panel.
+    e.stopPropagation()
+    if (!interactive) return
     let ids = selectedIds
     if (e.shiftKey) {
       ids = ids.includes(room.id) ? ids.filter((i) => i !== room.id) : [...ids, room.id]
@@ -247,12 +266,14 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
             <polygon
               points={pts}
               fill={room.fill ?? 'rgba(255,255,255,0.04)'}
+              fillOpacity={room.fill ? 0.28 : undefined}
               stroke={selected ? ORANGE : STROKE}
-              strokeWidth={px(1)}
+              strokeWidth={px(design && selected ? 1.5 : 1)}
               strokeLinejoin="round"
-              pointerEvents={interactive ? 'all' : 'none'}
-              style={{ cursor: interactive ? 'move' : undefined }}
+              pointerEvents={selectable ? 'all' : 'none'}
+              style={{ cursor: interactive ? 'move' : design ? 'pointer' : undefined }}
               onPointerDown={(e) => onRoomDown(e, room)}
+              onClick={(e) => onRoomClick(e, room)}
               {...gestureProps}
             />
             {label && (

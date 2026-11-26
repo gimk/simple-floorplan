@@ -229,6 +229,8 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
   }
 
   return (
+    // Design mode: the arcs stay visible above the furniture but never take the pointer, so drags
+    // and clicks reach the furniture drawn underneath them.
     <g data-testid={`openings-layer-${artboard.id}`} pointerEvents={interactive ? undefined : 'none'}>
       {artboard.openings.map((op) => {
         const { start: a, end: b } = openingEndpoints(op)

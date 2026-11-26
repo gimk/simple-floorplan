@@ -1,5 +1,6 @@
 // Canvas background hit target (select tool): click selects the artboard under the pointer or
 // clears the selection; a Plan-mode drag draws a marquee that selects the rooms it touches.
+// Design mode: a click only selects the artboard (or clears the selection) — no marquee.
 // `MarqueeOverlay` draws the live box. Render it ABOVE the rooms (Viewport overlay).
 import { useEffect, useRef } from 'react'
 import { useViewport } from '../../canvas/Viewport'
@@ -72,6 +73,14 @@ export function CanvasSelectLayer() {
     useMarquee.getState().set(null)
     if (cancelled) return
     const artboards = useDoc.getState().doc.artboards
+    // Design mode edits no geometry: a click only selects the artboard under the pointer (or clears
+    // the selection), and no marquee ever selects rooms.
+    if (useUi.getState().mode === 'design') {
+      const hit = findArtboardAtPoint(g.startWorld, artboards)
+      if (hit) selectArtboard(hit.id)
+      else useUi.getState().set({ selection: { kind: 'none' } })
+      return
+    }
     if (!g.marquee) {
       const hit = findArtboardAtPoint(g.startWorld, artboards)
       if (hit) selectArtboard(hit.id)
