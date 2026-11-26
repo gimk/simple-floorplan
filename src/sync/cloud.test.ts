@@ -1,0 +1,91 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createDefaultProject } from '../model/schema'
+import type { ProjectDoc, RefImage } from '../model/types'
+import { deleteCloudProject, listCloudProjects, loadProjectFromCloud, saveProjectToCloud } from './cloud'
+
+const PNG_B64 = 'iVBORw0KGgo='
+const DATA_URL = `data:image/png;base64,${PNG_B64}`
+
+const refImage = (src: string): RefImage => ({
+  id: 'img1', name: 'plan', src, naturalWidth: 10, naturalHeight: 10,
+  xCm: 0, yCm: 0, cmPerPx: 1, rotationDeg: 0, opacity: 1, visible: true, locked: false,
+})
+
+const docWithImage = (src: string): ProjectDoc => ({ ...createDefaultProject(), id: 'p1', title: 'Flat', refImages: [refImage(src)] })
+
+const ok = (body: unknown, init?: ResponseInit) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
+
+afterEach(() => { vi.unstubAllGlobals() })
+
+describe('cloud sync', () => {
+  it('lists projects', async () => {
+    const f = vi.fn(async (_url: string) => ok({ projects: [{ id: 'a', title: 'A', updatedAt: 't' }] }))
+    const list = await listCloudProjects(f as unknown as typeof fetch)
+    expect(list).toEqual([{ id: 'a', title: 'A', updatedAt: 't' }])
+    expect(f.mock.calls[0][0]).toBe('/api/projects')
+  })
+
+  it('uploads data: images to R2 and sends stripped URLs to D1', async () => {
+    const f = vi.fn(async (url: string) =>
+      url.startsWith('/api/images/') ? ok({ ok: true }) : ok({ ok: true, updatedAt: '2026-01-01T00:00:00Z' }))
+    const doc = docWithImage(DATA_URL)
+    const res = await saveProjectToCloud(doc, f as unknown as typeof fetch)
+    expect(res.updatedAt).toBe('2026-01-01T00:00:00Z')
+
+    const [imgUrl, imgInit] = f.mock.calls[0] as unknown as [string, RequestInit]
+    expect(imgUrl).toBe('/api/images/p1/img1')
+    expect(imgInit.method).toBe('PUT')
+    expect((imgInit.body as Blob).type).toBe('image/png')
+
+    const [projUrl, projInit] = f.mock.calls[1] as unknown as [string, RequestInit]
+    expect(projUrl).toBe('/api/projects/p1')
+    const body = String(projInit.body)
+    expect(body).not.toContain('base64')
+    const parsed = JSON.parse(body) as { title: string; doc: ProjectDoc }
+    expect(parsed.title).toBe('Flat')
+    expect(parsed.doc.refImages[0].src).toBe('/api/images/p1/img1')
+    expect(doc.refImages[0].src).toBe(DATA_URL)
+  })
+
+  it('loads a project and restores images as data URLs', async () => {
+    const stored = docWithImage('/api/images/p1/img1')
+    const f = vi.fn(async (url: string) =>
+      url === '/api/projects/p1'
+        ? ok({ id: 'p1', title: 'Flat', doc: stored, updatedAt: 't' })
+        : new Response(Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0)), { headers: { 'Content-Type': 'image/png' } }))
+    const doc = await loadProjectFromCloud('p1', f as unknown as typeof fetch)
+    expect(doc.refImages[0].src).toBe(DATA_URL)
+    expect(f).toHaveBeenCalledWith('/api/images/p1/img1', expect.anything())
+  })
+
+  it('rejects an invalid cloud document', async () => {
+    const f = vi.fn(async () => ok({ doc: { nope: true } }))
+    await expect(loadProjectFromCloud('p1', f as unknown as typeof fetch)).rejects.toThrow(/Invalid cloud project/)
+  })
+
+  it('deletes a project', async () => {
+    const f = vi.fn(async () => ok({ ok: true }))
+    await deleteCloudProject('p1', f as unknown as typeof fetch)
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/projects/p1')
+    expect(init.method).toBe('DELETE')
+  })
+
+  it('throws on non-2xx responses', async () => {
+    const f = vi.fn(async () => new Response('x', { status: 500 }))
+    const fx = f as unknown as typeof fetch
+    await expect(listCloudProjects(fx)).rejects.toThrow(/500/)
+    await expect(deleteCloudProject('p1', fx)).rejects.toThrow(/500/)
+    await expect(saveProjectToCloud(docWithImage(DATA_URL), fx)).rejects.toThrow(/500/)
+    await expect(loadProjectFromCloud('p1', fx)).rejects.toThrow(/500/)
+  })
+
+  it('sends x-api-token when set', async () => {
+    vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'sfp-cloud-token' ? 'secret' : null) })
+    const f = vi.fn(async (_url: string, _init?: RequestInit) => ok({ projects: [] }))
+    await listCloudProjects(f as unknown as typeof fetch)
+    const init = f.mock.calls[0][1] as RequestInit
+    expect((init.headers as Record<string, string>)['x-api-token']).toBe('secret')
+  })
+})

@@ -37,6 +37,7 @@ import { Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
 import { useUi, type Mode } from './shell/uiStore'
 import { ZoomControls } from './shell/ZoomControls'
+import { CloudMenu } from './sync/CloudMenu'
 import { exportProjectJson, importProjectJson } from './sync/jsonFile'
 
 initTheme()
@@ -354,6 +355,7 @@ export default function App() {
           <button type="button" className={BAR_BTN} aria-label="Redo" title="Redo (Cmd/Ctrl+Shift+Z or Ctrl+Y)" disabled={!canRedo} onClick={() => useDoc.getState().redo()}><Redo2 size={18} /></button>
           <button type="button" className={BAR_BTN} aria-label="Export JSON" title="Export JSON" onClick={() => exportProjectJson(useDoc.getState().doc)}><Download size={18} /></button>
           <button type="button" className={BAR_BTN} aria-label="Import JSON" title="Import JSON" onClick={() => fileRef.current?.click()}><Upload size={18} /></button>
+          <CloudMenu />
           <input
             ref={fileRef}
             type="file"

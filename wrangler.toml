@@ -1,0 +1,16 @@
+# Cloudflare Pages: serves dist/ and the Pages Functions in functions/api/*.
+name = "simple-floorplan"
+compatibility_date = "2025-06-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "simple-floorplan"
+database_id = "d550597a-3646-4324-8959-8fcfa741cd1c"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "simple-floorplan-images"
+
+# Optional secret: wrangler pages secret put API_TOKEN
+# If API_TOKEN is unset, the API allows all requests.
