@@ -5,7 +5,7 @@
 // when the artboard has rooms, else the centre of its frame. Units: cm.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel.
 import { useId, useState } from 'react'
-import { Circle, LayoutGrid, Plus, Shapes, Square } from 'lucide-react'
+import { LayoutGrid, Plus, Shapes } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem } from '../../model/types'
 import {
@@ -15,8 +15,6 @@ import {
   MUTED,
   NumberField,
   PanelSection,
-  ROW,
-  ROW_OFF,
   Segmented,
   TextField,
 } from '../../shell/panel'
@@ -105,7 +103,7 @@ function ColorRow({ value, onPick }: { value: string; onPick: (color: string) =>
   )
 }
 
-/** One preset button: colour dot, shape icon, name and "W × D cm". */
+/** One preset button: one shape+colour swatch, the name over the size, and a plus hint. */
 function PresetButton({ item, onAdd }: { item: (typeof FURNITURE_PRESETS)[number]; onAdd: () => void }) {
   return (
     <li>
@@ -114,22 +112,28 @@ function PresetButton({ item, onAdd }: { item: (typeof FURNITURE_PRESETS)[number
         aria-label={`Add ${item.name}`}
         title={`Add ${item.name} (${item.widthCm} × ${item.depthCm} cm)`}
         onClick={onAdd}
-        className={`${ROW} ${ROW_OFF} flex min-h-9 w-full items-center gap-2 text-left hover:bg-black/5 pointer-coarse:min-h-11 dark:hover:bg-white/10`}
+        className="group flex min-h-9 w-full items-center gap-2 rounded-md border border-transparent px-2.5 py-2 text-left transition-colors hover:bg-black/5 pointer-coarse:min-h-11 dark:hover:bg-white/10"
       >
         <span
           aria-hidden="true"
           style={{ backgroundColor: item.color }}
-          className="h-3.5 w-3.5 shrink-0 rounded-full border border-black/20 dark:border-white/25"
+          className={`h-4 w-4 shrink-0 border border-white/25 ${
+            item.shape === 'circle' ? 'rounded-full' : 'rounded-[4px]'
+          }`}
         />
-        <span aria-hidden="true" className="shrink-0 text-slate-500 dark:text-slate-400">
-          {item.shape === 'circle' ? <Circle size={12} /> : <Square size={12} />}
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate text-sm font-medium leading-tight text-slate-800 dark:text-slate-100">
+            {item.name}
+          </span>
+          <span className="mt-0.5 font-mono text-[11px] leading-tight tabular-nums text-slate-500 dark:text-slate-400">
+            {`${item.widthCm} × ${item.depthCm} cm`}
+          </span>
         </span>
-        <span className="min-w-0 flex-1 truncate text-sm text-slate-800 dark:text-slate-100">
-          {item.name}
-        </span>
-        <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>
-          {`${item.widthCm} × ${item.depthCm} cm`}
-        </span>
+        <Plus
+          size={14}
+          aria-hidden="true"
+          className="shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-200"
+        />
       </button>
     </li>
   )
@@ -239,7 +243,7 @@ export function FurniturePanel() {
       </PanelSection>
 
       <PanelSection title="Presets" icon={<LayoutGrid size={14} aria-hidden="true" />}>
-        <ul className="flex flex-col gap-1" aria-label="Furniture presets">
+        <ul className="flex flex-col gap-1.5" aria-label="Furniture presets">
           {FURNITURE_PRESETS.map((preset) => (
             <PresetButton
               key={preset.id}

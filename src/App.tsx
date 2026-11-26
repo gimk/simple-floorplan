@@ -333,7 +333,7 @@ export default function App() {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside aria-label="Left panel" data-testid="left-panel" className="hidden w-60 shrink-0 overflow-y-auto border-r border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 md:block">
+        <aside aria-label="Left panel" data-testid="left-panel" className="hidden w-60 shrink-0 space-y-3 overflow-y-auto border-r border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 md:block">
           {mode === 'plan' ? (
             <ObjectsPanel onUploadImage={() => imageRef.current?.click()} />
           ) : (
@@ -381,7 +381,7 @@ export default function App() {
             <WallLengthEditor {...wallEditor} onClose={() => setEditWall(null)} />
           )}
         </main>
-        <aside aria-label="Inspect" data-testid="inspect-panel" className="hidden w-70 shrink-0 border-l border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 lg:block">
+        <aside aria-label="Inspect" data-testid="inspect-panel" className="hidden w-70 shrink-0 space-y-3 overflow-y-auto border-l border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 lg:block">
           {mode === 'design' ? (
             // Design mode edits no geometry: furniture and room floors only.
             selection.kind === 'furniture' && selectionExists ? (

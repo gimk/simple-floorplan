@@ -250,11 +250,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
         </div>
       </PanelSection>
 
-      <PanelSection
-        title="Export"
-        icon={<Download size={14} aria-hidden="true" />}
-        className="mt-3"
-      >
+      <PanelSection title="Export" icon={<Download size={14} aria-hidden="true" />}>
         <div className="flex gap-2">
           <button
             type="button"
