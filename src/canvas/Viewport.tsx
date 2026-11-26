@@ -30,6 +30,10 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
   const setUi = useUi((s) => s.set)
   const [svg, setSvg] = useState<SVGSVGElement | null>(null)
   const [space, setSpace] = useState(false)
+  /** True from pointer down to pointer up of a pan drag (middle, right, Space + left). */
+  const [panning, setPanning] = useState(false)
+  /** True when the last right-button drag moved: its context menu event must not reach a tool. */
+  const rightMoved = useRef(false)
   const pointers = useRef(new Map<number, Vec>())
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
   const pinch = useRef<{ d: number; zoom: number; world: Vec } | null>(null)
@@ -93,6 +97,8 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
     }
     // Middle or right mouse button always pans (tools only use the left button).
     if (e.button === 1 || e.button === 2 || space) {
+      if (e.button === 2) rightMoved.current = false
+      setPanning(true)
       panStart.current = { x: e.clientX, y: e.clientY, vx: v.x, vy: v.y }
       ref.current?.setPointerCapture(e.pointerId)
       e.stopPropagation()
@@ -111,6 +117,7 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
     }
     const p = panStart.current
     if (p) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > 3) rightMoved.current = true
       const z = useUi.getState().view.zoom
       setUi({ view: { zoom: z, x: p.vx - (e.clientX - p.x) / z, y: p.vy - (e.clientY - p.y) / z } })
       e.stopPropagation()
@@ -119,11 +126,11 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
   const onPointerUpCapture = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId)
     if (pointers.current.size < 2) pinch.current = null
-    if (panStart.current) { panStart.current = null; e.stopPropagation() }
+    if (panStart.current) { panStart.current = null; setPanning(false); e.stopPropagation() }
   }
 
   const ctx: Ctx = { zoom: view.zoom, toWorld, px: (p) => p / view.zoom, svg }
-  const cursor = space ? (panStart.current ? 'grabbing' : 'grab') : undefined
+  const cursor = panning ? 'grabbing' : space ? 'grab' : undefined
 
   return (
     <ViewportCtx.Provider value={ctx}>
@@ -131,12 +138,18 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
         ref={ref}
         data-testid="floorplan-canvas"
         data-pan-ready={space ? '' : undefined}
+        data-panning={panning ? '' : undefined}
         className="h-full w-full touch-none select-none"
         style={{ cursor }}
         onPointerDownCapture={onPointerDownCapture}
         onPointerMoveCapture={onPointerMoveCapture}
         onPointerUpCapture={onPointerUpCapture}
         onPointerCancelCapture={onPointerUpCapture}
+        onContextMenuCapture={(e) => {
+          e.preventDefault()
+          // A right-drag pan ends with a context menu event: keep it away from tool cancel handlers.
+          if (rightMoved.current) { rightMoved.current = false; e.stopPropagation() }
+        }}
         onContextMenu={(e) => e.preventDefault()}
       >
         <g transform={`scale(${view.zoom}) translate(${-view.x} ${-view.y})`}>

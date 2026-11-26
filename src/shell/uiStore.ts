@@ -18,6 +18,14 @@ type UiData = {
   placingOpeningKind: OpeningKind | null
   /** Reference image being calibrated while tool = 'calibrate-image'. */
   calibratingImageId: string | null
+  /** Left panel (Objects / Furniture) hidden on desktop to reclaim canvas width. */
+  leftCollapsed: boolean
+  /** Inspect panel hidden on desktop to reclaim canvas width. */
+  inspectCollapsed: boolean
+  /** Panel shown as a drawer (tablet) or bottom sheet (phone) over the canvas; null = none. */
+  drawer: 'left' | 'inspect' | null
+  /** Keyboard shortcuts cheat-sheet is open. */
+  shortcutsOpen: boolean
 }
 
 type UiState = UiData & {
@@ -32,6 +40,10 @@ export const useUi = create<UiState>((set) => ({
   selection: { kind: 'none' },
   placingOpeningKind: null,
   calibratingImageId: null,
+  leftCollapsed: false,
+  inspectCollapsed: false,
+  drawer: null,
+  shortcutsOpen: false,
   set: (patch) => set(patch),
 }))
 

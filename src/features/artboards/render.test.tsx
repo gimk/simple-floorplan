@@ -38,14 +38,16 @@ describe('smoke', () => {
 
   it('renders the inspect card and follows the active artboard', () => {
     const panel = renderToStaticMarkup(<ArtboardInspect />)
-    expect(panel).toContain('aria-label="Artboard"')
+    // PanelSection renders the title as an <h2> heading (no aria-label on the section any more).
+    expect(panel).toContain('>Artboard<')
     expect(panel).toContain('Total area')
     expect(panel).toContain('0,00 m²')
     expect(panel).toContain('No room yet')
     expect(panel).toContain('Duplicate')
     expect(panel).toContain('Add')
-    // one artboard only: Delete is disabled
-    expect(panel).toMatch(/<button[^>]*disabled=""[^>]*title="The document keeps at least one artboard"/)
+    // one artboard only: Delete is disabled and the hint under it explains why
+    expect(panel).toMatch(/<button[^>]*disabled=""(?:(?!<\/button>).)*Delete artboard/)
+    expect(panel).toContain('The document keeps at least one artboard.')
   })
 
   it('renders children in the artboard offset', () => {

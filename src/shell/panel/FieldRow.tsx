@@ -8,7 +8,7 @@ export type FieldRowProps = {
   htmlFor?: string
   /** Second, muted line under the label. */
   hint?: string
-  /** Label width on wide panels (default `w-24`). */
+  /** Label width on wide panels (default `w-20`). */
   labelWidth?: string
   children: ReactNode
   className?: string
@@ -16,7 +16,7 @@ export type FieldRowProps = {
   stacked?: boolean
 }
 
-export function FieldRow({ label, htmlFor, hint, labelWidth = 'w-24', children, className, stacked }: FieldRowProps) {
+export function FieldRow({ label, htmlFor, hint, labelWidth = 'w-20', children, className, stacked }: FieldRowProps) {
   const labelCls = `shrink-0 text-xs text-slate-500 dark:text-slate-400 ${stacked ? 'w-full' : labelWidth}`
   const labelContent = (
     <>
@@ -33,7 +33,7 @@ export function FieldRow({ label, htmlFor, hint, labelWidth = 'w-24', children, 
       ) : (
         <span className={labelCls}>{labelContent}</span>
       )}
-      <div className={stacked ? 'w-full' : 'min-w-32 flex-1'}>{children}</div>
+      <div className={stacked ? 'w-full' : 'min-w-0 flex-1 basis-24'}>{children}</div>
     </div>
   )
 }

@@ -14,6 +14,18 @@ function set(next: Modifiers): Modifiers {
   return current
 }
 
+/**
+ * The single "no snap" modifier for every tool: Cmd (macOS) or Ctrl (elsewhere).
+ * Alt is NOT used: in the rect tool Alt means "from centre".
+ */
+export const isFreeSnap = (m: Pick<Modifiers, 'cmd'>): boolean => m.cmd
+
+/** Human-readable label of the no-snap key, for tool hints. Same text in every tool. */
+export const FREE_SNAP_LABEL: string =
+  typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || '')
+    ? '⌘'
+    : 'Ctrl'
+
 /** Read the modifier state from a keyboard or pointer event, update the tracker and notify. */
 export function syncModifiersFromEvent(e: ModEvent): Modifiers {
   return set({ shift: e.shiftKey, alt: e.altKey, cmd: e.metaKey || e.ctrlKey })

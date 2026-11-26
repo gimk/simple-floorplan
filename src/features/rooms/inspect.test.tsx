@@ -64,8 +64,8 @@ import { WallInspect } from './WallInspect'
 describe('RoomInspect', () => {
   it('renders the single-room card: breadcrumb, name, area, perimeter, walls, delete', () => {
     const html = renderToStaticMarkup(<RoomInspect artboardId={AB} roomIds={['r1']} />)
-    expect(html).toContain('aria-label="Room"')
-    expect(html).toContain('aria-label="Back to artboard"')
+    expect(html).toContain('>Room<')
+    expect(html).toContain('aria-label="Back to Artboard: Plan A"')
     expect(html).toContain('Plan A')
     expect(html).toContain('aria-label="Room name"')
     // 400 x 300 cm = 12 m², perimeter 4 x 3 m = 14 m
@@ -73,7 +73,7 @@ describe('RoomInspect', () => {
     expect(html).toContain('14,00 m')
     expect(html).toContain('aria-label="Select wall 1"')
     expect(html).toContain('aria-label="Select wall 4"')
-    expect(html).toContain('aria-label="Length of wall 1"')
+    expect(html).toContain('aria-label="Length of wall 1 (cm)"')
     expect(html).toContain('Delete Room')
     // the multi-selection actions are not shown
     expect(html).not.toContain('Merge Rooms')
@@ -81,19 +81,19 @@ describe('RoomInspect', () => {
 
   it('renders the multi-selection card: count, combined area, merge, delete selected', () => {
     const html = renderToStaticMarkup(<RoomInspect artboardId={AB} roomIds={['r1', 'r2']} />)
-    expect(html).toContain('aria-label="Rooms"')
+    expect(html).toContain('>Rooms<')
     expect(html).toContain('Combined area')
     // 12 m² + 9 m²
     expect(html).toContain('21,00 m²')
     expect(html).toContain('Merge Rooms')
     expect(html).toContain('Delete Selected')
     // no per-wall length fields in a multi-selection
-    expect(html).not.toContain('aria-label="Length of wall 1"')
+    expect(html).not.toContain('aria-label="Length of wall 1 (cm)"')
   })
 
   it('counts a repeated id once and falls back to the single-room card', () => {
     const html = renderToStaticMarkup(<RoomInspect artboardId={AB} roomIds={['r1', 'r1', 'missing']} />)
-    expect(html).toContain('aria-label="Room"')
+    expect(html).toContain('>Room<')
     expect(html).not.toContain('Merge Rooms')
   })
 
@@ -107,9 +107,9 @@ describe('RoomInspect', () => {
 describe('WallInspect', () => {
   it('renders heading, length field, endpoints, angle and the door on the wall', () => {
     const html = renderToStaticMarkup(<WallInspect artboardId={AB} roomId="r1" edgeIndex={0} />)
-    expect(html).toContain('aria-label="Wall 1"')
-    expect(html).toContain('aria-label="Back to room"')
-    expect(html).toContain('aria-label="Wall length"')
+    expect(html).toContain('>Wall 1<')
+    expect(html).toContain('aria-label="Back to Room: R1"')
+    expect(html).toContain('aria-label="Wall length (cm)"')
     // the exact length of the first wall, in cm
     expect(html).toContain('value="400"')
     // (0, 0) -> (400, 0), horizontal
@@ -121,7 +121,7 @@ describe('WallInspect', () => {
 
   it('renders a vertical wall with no opening', () => {
     const html = renderToStaticMarkup(<WallInspect artboardId={AB} roomId="r1" edgeIndex={1} />)
-    expect(html).toContain('aria-label="Wall 2"')
+    expect(html).toContain('>Wall 2<')
     expect(html).toContain('90,0°')
     expect(html).toContain('value="300"')
     expect(html).not.toContain('opening on this wall')

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_DURATION_MS, dismiss, toast, undoToast, useToast } from './index'
+import { ACTION_DURATION_MS, DEFAULT_DURATION_MS, ERROR_DURATION_MS, MAX_TOASTS, dismiss, pauseToast, resumeToast, toast, undoToast, useToast } from './index'
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -51,5 +51,47 @@ describe('toast store', () => {
     vi.advanceTimersByTime(8000)
     expect(useToast.getState().toasts).toHaveLength(0)
     expect(a).not.toBe(b)
+  })
+
+  it('defaults kind to info and sets longer durations for errors and actions', () => {
+    const a = useToast.getState().toasts
+    expect(a).toHaveLength(0)
+    const i = toast('i')
+    const e = toast('e', { kind: 'error' })
+    const u = undoToast('u', () => {})
+    const get = (id: number) => useToast.getState().toasts.find((x) => x.id === id)
+    expect(get(i)?.kind).toBe('info')
+    expect(get(e)?.durationMs).toBe(ERROR_DURATION_MS)
+    expect(get(u)?.durationMs).toBe(ACTION_DURATION_MS)
+  })
+
+  it('caps the stack at 3, dropping the oldest', () => {
+    for (let n = 0; n < 5; n++) toast(`m${n}`)
+    const msgs = useToast.getState().toasts.map((t) => t.message)
+    expect(msgs).toHaveLength(MAX_TOASTS)
+    expect(msgs).toEqual(['m2', 'm3', 'm4'])
+  })
+
+  it('collapses consecutive duplicates and restarts the timer', () => {
+    const a = toast('same')
+    vi.advanceTimersByTime(4000)
+    const b = toast('same')
+    expect(b).toBe(a)
+    expect(useToast.getState().toasts).toHaveLength(1)
+    vi.advanceTimersByTime(4000)
+    expect(useToast.getState().toasts).toHaveLength(1)
+    vi.advanceTimersByTime(1000)
+    expect(useToast.getState().toasts).toHaveLength(0)
+  })
+
+  it('pauses and resumes the timer', () => {
+    const id = toast('hover', { durationMs: 5000 })
+    vi.advanceTimersByTime(2000)
+    pauseToast(id)
+    vi.advanceTimersByTime(60000)
+    expect(useToast.getState().toasts).toHaveLength(1)
+    resumeToast(id)
+    vi.advanceTimersByTime(3000)
+    expect(useToast.getState().toasts).toHaveLength(0)
   })
 })

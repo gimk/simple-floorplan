@@ -2,14 +2,31 @@
 // breadcrumb back to the artboard, the kind (door / window / opening), the style variant, the width
 // in cm, the hinge and swing flips (only where the style has them) and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm.
-import { ChevronLeft, DoorOpen, FlipHorizontal2, FlipVertical2, Frame, RectangleHorizontal, Trash2 } from 'lucide-react'
+import { Copy, DoorOpen, Frame, RectangleHorizontal } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { projectOnSegment } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { Artboard, Opening, OpeningKind, OpeningVariant } from '../../model/types'
-import { BTN, FieldRow, MUTED, NumberField, PanelSection, Segmented, SelectField } from '../../shell/panel'
+import {
+  BTN,
+  BackLink,
+  DangerButton,
+  EmptyHint,
+  FieldRow,
+  NumberField,
+  PanelSection,
+  Segmented,
+  SelectField,
+  ROW,
+  ROW_OFF,
+  ROW_ON,
+} from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { selectArtboard } from '../artboards/selection'
-import { deleteOpening, flipOpeningHinge, flipOpeningSwing, updateOpening } from './actions'
+import { roomWalls } from '../rooms/ops'
+import type { Wall } from '../rooms/ops'
+import { toast } from '../toast'
+import { addOpening, deleteOpening, updateOpening } from './actions'
 import { MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM, openingVariant } from './geometry'
 
 export type OpeningInspectProps = {
@@ -50,24 +67,54 @@ const WINDOW_VARIANT_OPTIONS = [
   { value: 'double-casement', label: 'Double casement' },
 ] as const
 
-/** Clear the selection after a delete, so the Inspect panel falls back to the artboard. */
-function clearSelection(): void {
-  useUi.getState().set({ selection: { kind: 'none' } })
+/** An opening is hosted on a wall when its centre is within 1 cm of the wall segment. */
+const WALL_TOLERANCE_CM = 1
+
+/** The wall that hosts the opening, with the distance of the opening centre from the wall start. */
+function hostWall(artboard: Artboard, opening: Opening): { wall: Wall; centreCm: number } | null {
+  const c = { x: opening.xCm, y: opening.yCm }
+  for (const room of artboard.rooms) {
+    for (const wall of roomWalls(room)) {
+      if (wall.lengthCm < 1e-6) continue
+      const hit = projectOnSegment(c, wall.a, wall.b)
+      if (hit.distance <= WALL_TOLERANCE_CM) return { wall, centreCm: hit.t * wall.lengthCm }
+    }
+  }
+  return null
 }
 
-/** Small "back" line above the card: the artboard name, one click back to the Artboard card. */
-function BackToArtboard({ artboard }: { artboard: Artboard }) {
-  const label = artboard.name.trim() === '' ? 'Untitled artboard' : artboard.name
+type Hinge = 'left' | 'right'
+type Swing = 'in' | 'out'
+
+/** Mini top-view diagram of a door leaf: the wall, the leaf in its open position and the swing arc. */
+function SwingDiagram({ hinge, swing }: { hinge: Hinge; swing: Swing }) {
+  const hx = hinge === 'left' ? 7 : 17
+  const far = hinge === 'left' ? 17 : 7
+  const tipY = swing === 'in' ? 4 : 24
+  // Screen sweep: left+in clockwise, left+out counter-clockwise, right+in counter-clockwise, right+out clockwise.
+  const sweep = (hinge === 'left') === (swing === 'in') ? 1 : 0
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 28" aria-hidden="true" className="shrink-0">
+      <line x1="1" y1="14" x2="23" y2="14" stroke="currentColor" strokeWidth="1" opacity="0.4" />
+      <path d={`M ${hx} 14 L ${hx} ${tipY}`} stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none" />
+      <path d={`M ${hx} ${tipY} A 10 10 0 0 ${sweep} ${far} 14`} stroke="currentColor" strokeWidth="1" strokeDasharray="2 2" fill="none" />
+      <circle cx={hx} cy="14" r="1.8" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** Icon button of the swing / hinge picker. */
+function PickButton({ label, active, onClick, hinge, swing }: { label: string; active: boolean; onClick: () => void; hinge: Hinge; swing: Swing }) {
   return (
     <button
       type="button"
-      aria-label="Back to artboard"
-      title="Back to artboard"
-      onClick={() => selectArtboard(artboard.id)}
-      className={`flex min-h-9 w-fit max-w-full items-center gap-1 rounded-md px-1 hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11 ${MUTED}`}
+      aria-label={label}
+      title={label}
+      aria-pressed={active}
+      onClick={onClick}
+      className={`${ROW} flex min-h-11 items-center justify-center ${active ? `${ROW_ON} text-orange-700 dark:text-orange-300` : `${ROW_OFF} text-slate-600 hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10`}`}
     >
-      <ChevronLeft size={12} aria-hidden="true" />
-      <span className="truncate">{label}</span>
+      <SwingDiagram hinge={hinge} swing={swing} />
     </button>
   )
 }
@@ -92,7 +139,6 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
   const showSwing =
     (isDoor && (variant === 'standard' || variant === 'french')) ||
     (isWindow && (variant === 'casement' || variant === 'double-casement'))
-  const flipTarget = isDoor ? 'door' : 'window'
 
   const setKind = (value: string) => {
     if (value === kind) return
@@ -112,14 +158,53 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
     updateOpening(artboard.id, opening.id, { widthCm: value })
   }
 
+  const hinge: Hinge = opening.hinge ?? 'left'
+  const swing: Swing = opening.swing ?? 'in'
+  const host = hostWall(artboard, opening)
+  const nearEdgeCm = host ? host.centreCm - opening.widthCm / 2 : 0
+  const farEdgeCm = host ? host.wall.lengthCm - host.centreCm - opening.widthCm / 2 : 0
+
+  /** Move the opening so its near edge is `fromStartCm` from the wall start (centre slides along the wall). */
+  const placeFromStart = (fromStartCm: number | null): boolean | void => {
+    if (!host || fromStartCm == null) return false
+    const maxStart = Math.max(0, host.wall.lengthCm - opening.widthCm)
+    const start = Math.min(maxStart, Math.max(0, fromStartCm))
+    const t = (start + opening.widthCm / 2) / host.wall.lengthCm
+    const xCm = host.wall.a.x + (host.wall.b.x - host.wall.a.x) * t
+    const yCm = host.wall.a.y + (host.wall.b.y - host.wall.a.y) * t
+    if (Math.abs(xCm - opening.xCm) < 1e-9 && Math.abs(yCm - opening.yCm) < 1e-9) return
+    updateOpening(artboard.id, opening.id, { xCm, yCm })
+  }
+
+  const duplicate = () => {
+    const step = opening.widthCm + 10
+    let xCm = opening.xCm + 20
+    let yCm = opening.yCm + 20
+    if (host) {
+      const wantStart = nearEdgeCm + step
+      const start = wantStart + opening.widthCm <= host.wall.lengthCm ? wantStart : Math.max(0, nearEdgeCm - step)
+      const t = (start + opening.widthCm / 2) / host.wall.lengthCm
+      xCm = host.wall.a.x + (host.wall.b.x - host.wall.a.x) * t
+      yCm = host.wall.a.y + (host.wall.b.y - host.wall.a.y) * t
+    }
+    const id = crypto.randomUUID()
+    addOpening(artboard.id, { ...opening, id, xCm, yCm })
+    useUi.getState().set({ activeArtboardId: artboard.id, selection: { kind: 'opening', artboardId: artboard.id, openingId: id } })
+  }
+
   const remove = () => {
     deleteOpening(artboard.id, opening.id)
-    clearSelection()
+    useUi.getState().set({ selection: { kind: 'none' } })
+    toast(`Deleted ${KIND_LABEL[kind].toLowerCase()}`, {
+      kind: 'info',
+      actionLabel: 'Undo',
+      onAction: () => useDoc.getState().undo(),
+    })
   }
 
   return (
     <PanelSection title={KIND_LABEL[kind]} icon={KIND_ICON[kind]} className={className}>
-      <BackToArtboard artboard={artboard} />
+      <BackLink name={artboard.name.trim() === '' ? 'Untitled artboard' : artboard.name} onClick={() => selectArtboard(artboard.id)} />
 
       <FieldRow label="Type" stacked>
         <Segmented options={KIND_OPTIONS} value={kind} onChange={setKind} ariaLabel="Opening type" />
@@ -148,42 +233,89 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
         />
       </FieldRow>
 
-      {(showHinge || showSwing) && (
-        <div className="flex flex-col gap-1">
-          {showHinge && (
-            <button
-              type="button"
-              className={BTN}
-              onClick={() => flipOpeningHinge(artboard.id, opening.id)}
-              title={`Move the hinge to the other end of the ${flipTarget}`}
-            >
-              <FlipHorizontal2 size={14} aria-hidden="true" />
-              Flip Hinge
-            </button>
-          )}
-          {showSwing && (
-            <button
-              type="button"
-              className={BTN}
-              onClick={() => flipOpeningSwing(artboard.id, opening.id)}
-              title={`Open the ${flipTarget} to the other side of the wall`}
-            >
-              <FlipVertical2 size={14} aria-hidden="true" />
-              Flip Swing
-            </button>
-          )}
-        </div>
+      <FieldRow label="Position" hint="along the wall" stacked>
+        {host ? (
+          <div className="grid grid-cols-2 gap-2">
+            <NumberField
+              ariaLabel="Distance from wall start"
+              unit="cm"
+              min={0}
+              value={Math.round(nearEdgeCm * 10) / 10}
+              onCommit={placeFromStart}
+            />
+            <NumberField
+              ariaLabel="Distance from wall end"
+              unit="cm"
+              min={0}
+              value={Math.round(farEdgeCm * 10) / 10}
+              onCommit={(v) => (v == null ? false : placeFromStart(host.wall.lengthCm - opening.widthCm - v))}
+            />
+          </div>
+        ) : (
+          <EmptyHint>This opening is not on a wall.</EmptyHint>
+        )}
+      </FieldRow>
+      {host && <EmptyHint>From wall start (left) and from wall end (right), edge to edge.</EmptyHint>}
+
+      {showHinge && showSwing && (
+        <FieldRow label="Hinge & swing" stacked>
+          <div className="grid grid-cols-4 gap-1" role="group" aria-label="Hinge and swing">
+            {(['left', 'right'] as const).flatMap((h) =>
+              (['in', 'out'] as const).map((sw) => (
+                <PickButton
+                  key={`${h}-${sw}`}
+                  label={`Hinge ${h}, swing ${sw}`}
+                  active={hinge === h && swing === sw}
+                  hinge={h}
+                  swing={sw}
+                  onClick={() => updateOpening(artboard.id, opening.id, { hinge: h, swing: sw })}
+                />
+              )),
+            )}
+          </div>
+        </FieldRow>
+      )}
+      {showHinge && !showSwing && (
+        <FieldRow label="Hinge" stacked>
+          <div className="grid grid-cols-2 gap-1" role="group" aria-label="Hinge side">
+            {(['left', 'right'] as const).map((h) => (
+              <PickButton
+                key={h}
+                label={`Hinge ${h}`}
+                active={hinge === h}
+                hinge={h}
+                swing={swing}
+                onClick={() => updateOpening(artboard.id, opening.id, { hinge: h })}
+              />
+            ))}
+          </div>
+        </FieldRow>
+      )}
+      {showSwing && !showHinge && (
+        <FieldRow label="Swing" stacked>
+          <div className="grid grid-cols-2 gap-1" role="group" aria-label="Swing side">
+            {(['in', 'out'] as const).map((sw) => (
+              <PickButton
+                key={sw}
+                label={`Swing ${sw}`}
+                active={swing === sw}
+                hinge={hinge}
+                swing={sw}
+                onClick={() => updateOpening(artboard.id, opening.id, { swing: sw })}
+              />
+            ))}
+          </div>
+        </FieldRow>
       )}
 
-      <button
-        type="button"
-        className={`${BTN} text-red-600 hover:bg-red-500/10 dark:text-red-400`}
-        onClick={remove}
-        title={`Delete this ${KIND_LABEL[kind].toLowerCase()}`}
-      >
-        <Trash2 size={14} aria-hidden="true" />
-        {`Delete ${KIND_LABEL[kind]}`}
+      <button type="button" className={BTN} onClick={duplicate} title={`Duplicate this ${KIND_LABEL[kind].toLowerCase()} next to the original`}>
+        <Copy size={14} aria-hidden="true" />
+        Duplicate
       </button>
+
+      <DangerButton onClick={remove} shortcut="Del">
+        {`Delete ${KIND_LABEL[kind]}`}
+      </DangerButton>
     </PanelSection>
   )
 }

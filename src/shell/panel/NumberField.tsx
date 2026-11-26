@@ -58,7 +58,8 @@ export function NumberField({
   const errId = useId()
   const shown = formatCmInput(value)
   const text = draft ?? shown
-  const label = ariaLabel ?? ariaLabelProp
+  const baseLabel = ariaLabel ?? ariaLabelProp
+  const label = baseLabel && unit && !baseLabel.includes(unit) ? `${baseLabel} (${unit})` : baseLabel
   const error = rejected && rejected.text === text ? rejected.message : null
 
   const withUnit = (n: number) => `${formatCmInput(n)}${unit ? ` ${unit}` : ''}`
@@ -123,7 +124,10 @@ export function NumberField({
           disabled={disabled}
           value={text}
           className={`${INPUT_BARE} tabular-nums ${inputClassName ?? ''}`}
-          onFocus={() => setDraft(shown)}
+          onFocus={(e) => {
+            setDraft(shown)
+            e.currentTarget.select()
+          }}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
             commit()
@@ -132,6 +136,17 @@ export function NumberField({
             if (e.key === 'Enter') {
               e.preventDefault()
               if (commit()) ref.current?.blur()
+            } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+              e.preventDefault()
+              const step = (e.shiftKey ? 10 : e.altKey ? 0.1 : 1) * (e.key === 'ArrowUp' ? 1 : -1)
+              const cur = parseDecimal((draftRef.current ?? shown).trim()) ?? value ?? 0
+              let n = Math.round((cur + step) * 100) / 100
+              if (min !== undefined) n = Math.max(min, n)
+              if (max !== undefined) n = Math.min(max, n)
+              setDraft(formatCmInput(n))
+              commit()
+              // Keep editing: show the new value as the draft again.
+              setDraft(formatCmInput(n))
             } else if (e.key === 'Escape') {
               e.preventDefault()
               setDraft(null)

@@ -2,13 +2,16 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
+import { ToolHint } from '../../canvas/ToolHint'
 import { dist, fmtCm, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { newId } from '../../model/schema'
 import { useDoc } from '../../model/store'
-import { subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
+import { FREE_SNAP_LABEL, getModifiers, isFreeSnap, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
+import { toast } from '../toast'
+import { measureSegment } from '../tape/geometry'
 import { cutoutArtboardRooms, addRoom } from './actions'
 import { MIN_ROOM_SIDE_CM, constrainAngle45, createRectRoom, nextRoomName } from './ops'
 import { pickArtboard } from '../artboards/frame'
@@ -27,10 +30,34 @@ export function RoomToolsOverlay() {
 
 const toSelect = () => useUi.getState().set({ tool: 'select' })
 
+/** Small label for the kind of snap, when it is known from the guides. */
+function guideTag(guides: SnapGuide[]): { text: string; at: Vec } | null {
+  if (guides.length === 0) return null
+  const pts = guides.filter((g) => g.kind === 'point')
+  const lines = guides.filter((g) => g.kind === 'line' && g.b)
+  if (lines.length === 0 && pts.length === 1) return { text: 'corner', at: pts[0].a }
+  if (lines.length === 1 && pts.length === 1) {
+    const g = lines[0]
+    const mid = { x: (g.a.x + g.b!.x) / 2, y: (g.a.y + g.b!.y) / 2 }
+    return dist(pts[0].a, mid) < 1 ? { text: 'midpoint', at: pts[0].a } : null
+  }
+  if (lines.length > 0 && pts.length === 0) return { text: 'aligned', at: lines[lines.length - 1].b! }
+  return null
+}
+
 function Guides({ guides }: { guides: SnapGuide[] }) {
   const { px } = useViewport()
+  const tag = guideTag(guides)
   return (
     <>
+      {tag && (
+        <text
+          x={tag.at.x + px(8)} y={tag.at.y - px(8)} fontSize={px(10)} fill="#fdba74" opacity={0.85}
+          stroke="#12161b" strokeWidth={px(2.5)} paintOrder="stroke" pointerEvents="none"
+        >
+          {tag.text}
+        </text>
+      )}
       {guides.map((g, i) =>
         g.kind === 'line' && g.b ? (
           <line key={i} x1={g.a.x} y1={g.a.y} x2={g.b.x} y2={g.b.y} stroke={ORANGE} strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`} />
@@ -69,6 +96,8 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   const [cursor, setCursor] = useState<Vec | null>(null)
   const [box, setBox] = useState<{ a: Vec; b: Vec } | null>(null)
   const rawRef = useRef<Vec | null>(null)
+  const startRef = useRef<Vec | null>(null)
+  useEffect(() => { startRef.current = start }, [start])
   const [points, setPoints] = useState<Vec[]>([])
   const [guides, setGuides] = useState<SnapGuide[]>([])
   const pointsRef = useRef<Vec[]>([])
@@ -90,7 +119,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   }
   const snap = (p: Vec, anchor: Vec | undefined, mods: Modifiers): Vec => {
     const ab = artboardRef.current
-    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10) })
+    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: isFreeSnap(mods), thresholdCm: px(10) })
     setGuides(r.guides)
     return r.point
   }
@@ -141,12 +170,13 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     const room = { id: newId(), name: nextRoomName(artboardRef.current.rooms), vertices: pts }
     finishRoom(room)
   }
+  /** The rect tool stays armed (draw several rooms in a row); the pen tool returns to Select. */
   const finishRoom = (room: { id: string; name: string; vertices: Vec[] }) => {
     addRoom(artboardRef.current.id, room)
     useUi.getState().set({
       activeArtboardId: artboardRef.current.id,
       selection: { kind: 'room', artboardId: artboardRef.current.id, roomIds: [room.id] },
-      tool: 'select',
+      ...(tool === 'rect' ? {} : { tool: 'select' as const }),
     })
   }
 
@@ -154,8 +184,20 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]')) return
       if (e.key === 'Escape') {
-        setStart(null); setBox(null); setPoints([]); setGuides([]); setLockedId(null)
-        if (tool === 'pen' && pointsRef.current.length === 0) toSelect()
+        // First Esc cancels the gesture in progress, Esc with nothing in progress exits the tool.
+        const idle = tool === 'pen' ? pointsRef.current.length === 0 : startRef.current === null
+        setStart(null); setBox(null); setPoints([]); setCursor(null); setGuides([]); setLockedId(null)
+        rawRef.current = null
+        if (idle) toSelect()
+      } else if (e.key === 'Backspace' && tool === 'pen') {
+        const pts = pointsRef.current
+        if (pts.length === 0) return
+        e.preventDefault()
+        const next = pts.slice(0, -1)
+        pointsRef.current = next
+        setPoints(next)
+        if (next.length === 0) { setCursor(null); setGuides([]); setLockedId(null); rawRef.current = null }
+        else if (rawRef.current) setCursor(penPoint(rawRef.current, next[next.length - 1], getModifiers()))
       } else if (e.key === 'Enter' && tool === 'pen') {
         e.preventDefault()
         closePen()
@@ -208,7 +250,11 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     setStart(null); setCursor(null); setBox(null); setGuides([]); setLockedId(null)
     rawRef.current = null
     if (tool === 'rect') {
-      if (Math.abs(end.x - a.x) < MIN_ROOM_SIDE_CM || Math.abs(end.y - a.y) < MIN_ROOM_SIDE_CM) return
+      if (Math.abs(end.x - a.x) < MIN_ROOM_SIDE_CM || Math.abs(end.y - a.y) < MIN_ROOM_SIDE_CM) {
+        // A plain click (no drag) is not an attempt to draw a room: stay silent for it.
+        if (Math.abs(end.x - a.x) > 2 || Math.abs(end.y - a.y) > 2) toast(`Room too small · minimum side ${MIN_ROOM_SIDE_CM} cm`)
+        return
+      }
       finishRoom(createRectRoom(a, end, nextRoomName(artboardRef.current.rooms)))
     } else {
       if (Math.abs(end.x - a.x) < 1 || Math.abs(end.y - a.y) < 1) return
@@ -223,8 +269,29 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   const rectBox = start && box
     ? { x: Math.min(box.a.x, box.b.x), y: Math.min(box.a.y, box.b.y), w: Math.abs(box.b.x - box.a.x), h: Math.abs(box.b.y - box.a.y) }
     : null
-  const color = tool === 'cutout' ? '#f87171' : ORANGE
+  const tooSmall = tool === 'rect' && !!rectBox && (rectBox.w < MIN_ROOM_SIDE_CM || rectBox.h < MIN_ROOM_SIDE_CM)
+  const color = tool === 'cutout' || tooSmall ? '#f87171' : ORANGE
   const last = points[points.length - 1]
+  const nearClose = tool === 'pen' && points.length >= 3 && !!cursor && dist(cursor, points[0]) < 0.5
+  const perimeter = points.reduce((sum, p, i) => (i === 0 ? 0 : sum + dist(points[i - 1], p)), 0) + (last && cursor ? dist(last, cursor) : 0)
+  const seg = last && cursor ? measureSegment(last, cursor) : null
+  // Cutout: rooms the cut will touch (selected rooms, or all rooms when none is selected).
+  const sel = useUi.getState().selection
+  const cutIds = sel.kind === 'room' && sel.artboardId === artboard.id ? sel.roomIds : undefined
+  const cutTargets = tool === 'cutout' && rectBox
+    ? artboard.rooms.filter((r) => {
+        if (cutIds && !cutIds.includes(r.id)) return false
+        const xs = r.vertices.map((v) => v.x), ys = r.vertices.map((v) => v.y)
+        return Math.min(...xs) < rectBox.x + rectBox.w && Math.max(...xs) > rectBox.x
+          && Math.min(...ys) < rectBox.y + rectBox.h && Math.max(...ys) > rectBox.y
+      })
+    : []
+  const hint =
+    tool === 'rect'
+      ? `Rect: Drag to draw rooms · Shift square · Alt from centre · ${FREE_SNAP_LABEL} no snap · Esc exit`
+      : tool === 'pen'
+        ? `Pen: Click corners · Click first point or Enter to close · Shift 45° · ${FREE_SNAP_LABEL} no snap · Backspace undo point · Esc cancel`
+        : `Cutout: Drag a box · Highlighted rooms are cut (select rooms to limit it) · Shift square · Alt from centre · ${FREE_SNAP_LABEL} no snap · Esc exit`
 
   return (
     <g data-testid="room-tools-overlay" transform={`translate(${artboard.xCm} ${artboard.yCm})`}>
@@ -235,7 +302,15 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
         onPointerUp={onUp}
         onPointerCancel={() => { setStart(null); setCursor(null); setBox(null); setGuides([]) }}
       />
+      <ToolHint text={hint} />
       <g pointerEvents="none">
+        {cutTargets.map((r) => (
+          <polygon
+            key={r.id} data-testid="cutout-target"
+            points={r.vertices.map((v) => `${v.x},${v.y}`).join(' ')}
+            fill="rgba(248,113,113,0.18)" stroke="#f87171" strokeWidth={px(2)}
+          />
+        ))}
         {rectBox && (
           <>
             <rect
@@ -243,7 +318,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
               fill={tool === 'cutout' ? 'rgba(248,113,113,0.15)' : 'rgba(251,146,60,0.12)'}
               stroke={color} strokeWidth={px(1)} strokeDasharray={tool === 'cutout' ? `${px(5)} ${px(3)}` : undefined}
             />
-            <Tag x={rectBox.x + rectBox.w / 2} y={rectBox.y + rectBox.h + px(14)} text={`${fmtCm(rectBox.w)} × ${fmtCm(rectBox.h)} cm`} />
+            <Tag x={rectBox.x + rectBox.w / 2} y={rectBox.y + rectBox.h + px(14)} text={`${fmtCm(rectBox.w)} × ${fmtCm(rectBox.h)} cm${tool === 'rect' ? ` · ${(rectBox.w * rectBox.h / 10000).toFixed(2).replace('.', ',')} m²` : ''}${tooSmall ? ` · min ${MIN_ROOM_SIDE_CM}` : ''}`} />
           </>
         )}
         {tool === 'pen' && points.length > 0 && (
@@ -253,10 +328,14 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
               fill="none" stroke={ORANGE} strokeWidth={px(1)} strokeLinejoin="round"
             />
             {points.map((p, i) => (
-              <circle key={i} cx={p.x} cy={p.y} r={px(i === 0 && points.length >= 3 ? 5 : 3)} fill="#12161b" stroke={ORANGE} strokeWidth={px(1.5)} />
+              <circle key={i} cx={p.x} cy={p.y} r={px(i === 0 && points.length >= 3 ? (nearClose ? 9 : 5) : 3)} fill={i === 0 && nearClose ? 'rgba(251,146,60,0.3)' : '#12161b'} stroke={ORANGE} strokeWidth={px(1.5)} />
             ))}
-            {cursor && last && dist(cursor, last) > 0.5 && (
-              <Tag x={(cursor.x + last.x) / 2} y={(cursor.y + last.y) / 2 - px(12)} text={`${fmtCm(dist(cursor, last))} cm`} />
+            {nearClose && <Tag x={points[0].x} y={points[0].y - px(18)} text="Close" />}
+            {cursor && last && seg && seg.distCm > 0.5 && (
+              <>
+                <Tag x={(cursor.x + last.x) / 2} y={(cursor.y + last.y) / 2 - px(12)} text={`${fmtCm(seg.distCm)} cm · ${Math.round(seg.angleDeg)}°`} />
+                <Tag x={cursor.x} y={cursor.y + px(18)} text={`Perimeter ${fmtCm(perimeter)} cm`} />
+              </>
             )}
           </>
         )}

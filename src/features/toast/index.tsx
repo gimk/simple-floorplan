@@ -1,92 +1,123 @@
-// Tiny toast store + host. Mount <ToastHost /> once from any layer/panel; it renders
-// into document.body via a portal, so it works from inside the SVG tree.
+// Tiny toast store. Mount <ToastHost /> (./ToastHost) once from any layer/panel.
 // Used for destructive-action feedback (docs/plan.md 7.2 #15): "Room deleted · Undo".
-import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
 import { create } from 'zustand'
+
+export type ToastKind = 'info' | 'success' | 'error'
 
 export type Toast = {
   id: number
   message: string
+  kind: ToastKind
   actionLabel?: string
+  actionShortcut?: string
   onAction?: () => void
   durationMs: number
+}
+
+export type ToastOptions = {
+  kind?: ToastKind
+  actionLabel?: string
+  /** Faint shortcut hint next to the action. Defaults to the platform Undo key when the label is Undo. */
+  actionShortcut?: string
+  onAction?: () => void
+  durationMs?: number
 }
 
 type ToastState = { toasts: Toast[] }
 
 export const DEFAULT_DURATION_MS = 5000
+export const ERROR_DURATION_MS = 7000
+export const ACTION_DURATION_MS = 8000
+export const MAX_TOASTS = 3
 
 let nextId = 1
 const timers = new Map<number, ReturnType<typeof setTimeout>>()
+/** Remaining time and start of the running timer, to pause and resume. */
+const clocks = new Map<number, { remaining: number; startedAt: number }>()
 
 export const useToast = create<ToastState>(() => ({ toasts: [] }))
 
-/** Show a toast (default 5 s). Pass actionLabel/onAction for e.g. an Undo button. */
-export function toast(message: string, opts?: { actionLabel?: string; onAction?: () => void; durationMs?: number }): number {
+function startTimer(id: number, ms: number) {
+  const tm = timers.get(id)
+  if (tm) clearTimeout(tm)
+  clocks.set(id, { remaining: ms, startedAt: Date.now() })
+  timers.set(id, setTimeout(() => dismiss(id), ms))
+}
+
+/** Pause the auto-dismiss timer (pointer hover, keyboard focus). */
+export function pauseToast(id: number) {
+  const tm = timers.get(id)
+  const c = clocks.get(id)
+  if (!tm || !c) return
+  clearTimeout(tm)
+  timers.delete(id)
+  clocks.set(id, { remaining: Math.max(0, c.remaining - (Date.now() - c.startedAt)), startedAt: 0 })
+}
+
+/** Resume a paused timer with the time that is left. */
+export function resumeToast(id: number) {
+  const c = clocks.get(id)
+  if (!c || timers.has(id)) return
+  startTimer(id, Math.max(c.remaining, 1000))
+}
+
+/** Shortcut text for Undo on this platform. */
+export function undoShortcut(): string {
+  const nav = typeof navigator !== 'undefined' ? navigator : undefined
+  return /mac|iphone|ipad/i.test(nav?.platform || nav?.userAgent || '') ? '⌘Z' : 'Ctrl+Z'
+}
+
+function defaultDuration(kind: ToastKind, hasAction: boolean): number {
+  if (hasAction) return ACTION_DURATION_MS
+  return kind === 'error' ? ERROR_DURATION_MS : DEFAULT_DURATION_MS
+}
+
+/**
+ * Show a toast (info 5 s, error 7 s, with action 8 s). Pass actionLabel/onAction for e.g. an Undo button.
+ * Max 3 visible (oldest dropped). A repeat of the newest message restarts that toast instead of stacking.
+ */
+export function toast(message: string, opts?: ToastOptions): number {
+  const kind = opts?.kind ?? 'info'
+  const durationMs = opts?.durationMs ?? defaultDuration(kind, !!opts?.actionLabel)
+  const list = useToast.getState().toasts
+  const last = list[list.length - 1]
+  if (last && last.message === message && last.kind === kind) {
+    const merged: Toast = {
+      ...last,
+      actionLabel: opts?.actionLabel,
+      actionShortcut: opts?.actionShortcut,
+      onAction: opts?.onAction,
+      durationMs,
+    }
+    useToast.setState({ toasts: [...list.slice(0, -1), merged] })
+    startTimer(last.id, durationMs)
+    return last.id
+  }
   const t: Toast = {
     id: nextId++,
     message,
+    kind,
     actionLabel: opts?.actionLabel,
+    actionShortcut: opts?.actionShortcut,
     onAction: opts?.onAction,
-    durationMs: opts?.durationMs ?? DEFAULT_DURATION_MS,
+    durationMs,
   }
-  useToast.setState((s) => ({ toasts: [...s.toasts, t] }))
-  timers.set(t.id, setTimeout(() => dismiss(t.id), t.durationMs))
+  const next = [...list, t]
+  for (const old of next.slice(0, Math.max(0, next.length - MAX_TOASTS))) dismiss(old.id)
+  useToast.setState((s) => ({ toasts: [...s.toasts, t].slice(-MAX_TOASTS) }))
+  startTimer(t.id, durationMs)
   return t.id
 }
 
 export function dismiss(id: number) {
   const tm = timers.get(id)
-  if (tm) {
-    clearTimeout(tm)
-    timers.delete(id)
-  }
+  if (tm) clearTimeout(tm)
+  timers.delete(id)
+  clocks.delete(id)
   useToast.setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
 }
 
 /** Destructive-action toast whose Undo button calls the given undo function. */
 export function undoToast(message: string, undo: () => void): number {
   return toast(message, { actionLabel: 'Undo', onAction: undo })
-}
-
-/** Fixed bottom-center toast stack, rendered in document.body. aria-live for screen readers. */
-export function ToastHost() {
-  const toasts = useToast((s) => s.toasts)
-  return createPortal(
-    <div
-      aria-live="polite"
-      className="pointer-events-none fixed bottom-16 left-1/2 z-50 flex w-auto max-w-[95vw] -translate-x-1/2 flex-col items-center gap-2"
-    >
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          className="pointer-events-auto flex min-h-9 items-center gap-3 rounded-lg border border-black/10 bg-white px-3 py-1.5 text-sm shadow-lg dark:border-white/15 dark:bg-[#1b2128]"
-        >
-          <span className="text-zinc-900 dark:text-zinc-100">{t.message}</span>
-          {t.actionLabel && (
-            <button
-              type="button"
-              className="min-h-9 rounded-md bg-orange-700 px-3 text-sm font-semibold text-white hover:bg-orange-800"
-              onClick={() => {
-                t.onAction?.()
-                dismiss(t.id)
-              }}
-            >
-              {t.actionLabel}
-            </button>
-          )}
-          <button
-            type="button"
-            aria-label="Dismiss notification"
-            className="flex h-9 w-9 items-center justify-center rounded-md text-zinc-500 hover:bg-black/5 dark:text-zinc-400 dark:hover:bg-white/10"
-            onClick={() => dismiss(t.id)}
-          >
-            <X size={14} />
-          </button>
-        </div>
-      ))}
-    </div>,
-    document.body,
-  )
 }

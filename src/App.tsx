@@ -1,7 +1,7 @@
 // v2 shell: top bar (title, mode, undo/redo, JSON export/import, add image), left panel,
 // SVG canvas (grid, reference images, artboard frames), right Inspect panel.
 import { useEffect, useRef, useState } from 'react'
-import { Download, ImagePlus, Redo2, Undo2, Upload } from 'lucide-react'
+import { Download, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, Redo2, Undo2, Upload, X } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Viewport } from './canvas/Viewport'
 import { ArtboardContent, ArtboardInspect, ArtboardsLayer } from './features/artboards'
@@ -28,30 +28,120 @@ import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
 import { TapeOverlay } from './features/tape/TapeOverlay'
-import { ToastHost, toast } from './features/toast'
+import { toast, undoShortcut } from './features/toast'
+import { ToastHost } from './features/toast/ToastHost'
 import { selectRoom } from './features/artboards/selection'
 import { useDoc } from './model/store'
 import type { Selection } from './model/types'
 import { CanvasGrid } from './shell/CanvasGrid'
-import { Segmented } from './shell/panel'
+import { IconButton, Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
 import { useUi, type Mode } from './shell/uiStore'
+import { useMediaQuery } from './shell/useDesktop'
 import { ZoomControls } from './shell/ZoomControls'
+import { fitAll, zoomIn, zoomOut, zoomReset } from './shell/zoom'
 import { CloudMenu } from './sync/CloudMenu'
 import { exportProjectJson, importProjectJson } from './sync/jsonFile'
 
 initTheme()
 
-const MODES: { value: Mode; label: string }[] = [
-  { value: 'plan', label: 'Plan' },
-  { value: 'design', label: 'Design' },
+const MODES: { value: Mode; label: string; title: string }[] = [
+  { value: 'plan', label: 'Plan', title: 'Plan (1)' },
+  { value: 'design', label: 'Design', title: 'Design (2)' },
 ]
 
-const BAR_BTN = 'flex h-9 items-center justify-center rounded-md text-zinc-300 hover:bg-white/10 disabled:opacity-40'
+/** Text button of the top bar (Add image). 36 px high, 44 px on a coarse pointer. */
+const BAR_BTN =
+  'flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-surface-2 px-2 text-xs text-slate-200 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-surface-2 pointer-coarse:h-11'
+
+/** Thin divider between the groups of the top bar. */
+const DIVIDER = <div className="mx-1 hidden h-5 w-px bg-white/15 md:block" aria-hidden="true" />
+
+const isMac = undoShortcut() === '⌘Z'
+const REDO_KEYS = isMac ? '⌘⇧Z' : 'Ctrl+Y'
 
 const isEditable = (t: EventTarget | null) => {
   const el = t as HTMLElement | null
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+  return (
+    !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+  )
+}
+
+const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
+  {
+    group: 'General',
+    rows: [
+      ['Undo', undoShortcut()],
+      ['Redo', REDO_KEYS],
+      ['Plan / Design mode', '1 / 2'],
+      ['Close panel or dialog', 'Esc'],
+      ['This cheat sheet', '?'],
+    ],
+  },
+  {
+    group: 'Tools',
+    rows: [
+      ['Select', 'V'],
+      ['Rectangle', 'R'],
+      ['Pen', 'P'],
+      ['Cutout', 'X'],
+      ['Tape measure', 'M'],
+    ],
+  },
+  {
+    group: 'View',
+    rows: [
+      ['Zoom in', '+'],
+      ['Zoom out', '-'],
+      ['Zoom to 100%', '0'],
+      ['Fit all', 'F or Shift+1'],
+    ],
+  },
+  {
+    group: 'Edit',
+    rows: [
+      ['Delete selection', 'Del'],
+      ['Duplicate', isMac ? '⌘D' : 'Ctrl+D'],
+      ['Furniture back / front', '[ / ]'],
+    ],
+  },
+]
+
+/** Cheat-sheet modal for the keyboard shortcuts. Closes with Esc (global handler), the button or the backdrop. */
+function ShortcutsModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" data-testid="shortcuts-modal">
+      <button type="button" aria-label="Close keyboard shortcuts" tabIndex={-1} className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+        className="relative max-h-full w-full max-w-md overflow-y-auto rounded-xl border border-white/10 bg-surface-2 p-4 text-sm text-slate-200 shadow-2xl"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-slate-100">Keyboard shortcuts</h2>
+          <IconButton label="Close" icon={<X size={16} />} onClick={onClose} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {SHORTCUTS.map((g) => (
+            <section key={g.group}>
+              <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{g.group}</h3>
+              <dl className="space-y-1">
+                {g.rows.map(([what, keys]) => (
+                  <div key={what} className="flex items-center justify-between gap-3">
+                    <dt className="text-slate-300">{what}</dt>
+                    <dd>
+                      <kbd className="rounded border border-white/15 bg-white/5 px-1.5 py-0.5 font-mono text-xs text-slate-100">{keys}</kbd>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -70,6 +160,8 @@ const modeUiPatch = (mode: Mode, selection: Selection) =>
         calibratingImageId: null,
       }
     : { mode, ...(selection.kind === 'furniture' ? { selection: { kind: 'none' } as Selection } : {}) }
+
+const key0 = (e: KeyboardEvent) => e.key.toLowerCase()
 
 /** World point (cm) at the centre of the visible canvas. */
 const canvasCenterWorld = () => {
@@ -95,12 +187,46 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null)
   const imageRef = useRef<HTMLInputElement>(null)
   const [dropping, setDropping] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
+  const drawer = useUi((s) => s.drawer)
+  const leftCollapsed = useUi((s) => s.leftCollapsed)
+  const inspectCollapsed = useUi((s) => s.inspectCollapsed)
+  const shortcutsOpen = useUi((s) => s.shortcutsOpen)
+  const isMd = useMediaQuery('(min-width: 768px)')
+  const isLg = useMediaQuery('(min-width: 1024px)')
   // Wall-length editor request + the selection object that opened it (see `wallEditor` below).
   const [editWall, setEditWall] = useState<{ req: EditWallRequest; openedWith: Selection } | null>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isEditable(e.target)) return
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey
+      // Escape closes the cheat sheet first, then an open panel drawer / bottom sheet.
+      if (e.key === 'Escape') {
+        const ui = useUi.getState()
+        if (ui.shortcutsOpen) {
+          e.preventDefault()
+          ui.set({ shortcutsOpen: false })
+          return
+        }
+        if (ui.drawer) {
+          e.preventDefault()
+          ui.set({ drawer: null })
+          return
+        }
+      }
+      // '?' toggles the keyboard shortcuts cheat sheet.
+      if (plain && e.key === '?') {
+        e.preventDefault()
+        useUi.getState().set({ shortcutsOpen: !useUi.getState().shortcutsOpen })
+        return
+      }
+      // Zoom: + / = in, - out, 0 = 100%, F or Shift+1 = fit all.
+      if (plain && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomIn(); return }
+      if (plain && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); return }
+      if (plain && e.key === '0') { e.preventDefault(); zoomReset(); return }
+      if (plain && (key0(e) === 'f' || (e.shiftKey && e.code === 'Digit1'))) { e.preventDefault(); fitAll(); return }
       // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z, or Ctrl+Y on Windows/Linux.
       const key = e.key.toLowerCase()
       if ((e.metaKey || e.ctrlKey) && !e.altKey && (key === 'z' || key === 'y')) {
@@ -228,6 +354,28 @@ export default function App() {
     if (tool !== 'calibrate-image' && calibratingImageId) useUi.getState().set({ calibratingImageId: null })
   }, [tool, calibratingImageId])
 
+  // Close the overflow menu on Escape or a press outside it.
+  useEffect(() => {
+    if (!moreOpen) return
+    const onDown = (e: PointerEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [moreOpen])
+
+  // A drawer / bottom sheet gets out of the way once the user picks a tool to work on the canvas.
+  useEffect(() => {
+    if (tool !== 'select' && useUi.getState().drawer === 'left') useUi.getState().set({ drawer: null })
+  }, [tool])
+
   const onImport = async (file: File | undefined) => {
     if (!file) return
     const r = await importProjectJson(file)
@@ -260,14 +408,17 @@ export default function App() {
     if (!e.dataTransfer.types.includes('Files')) return
     // Always swallow the file drag: otherwise the browser opens the file by itself.
     e.preventDefault()
-    if (mode !== 'plan') return
+    // 'copy' in both modes, so the drop event fires and Design mode can explain why nothing was added.
     e.dataTransfer.dropEffect = 'copy'
     setDropping(true)
   }
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDropping(false)
-    if (mode !== 'plan') return
+    if (mode !== 'plan') {
+      toast('Reference images can only be added in Plan mode. Press 1 to switch.')
+      return
+    }
     void addRefImages(e.dataTransfer.files)
   }
 
@@ -309,16 +460,49 @@ export default function App() {
   const wallEditor =
     editWall && mode === 'plan' && tool === 'select' && editWall.openedWith === selection ? editWall.req : null
 
+  const leftInline = isMd && !leftCollapsed
+  const inspectInline = isLg && !inspectCollapsed
+  const leftSheet = !isMd && drawer === 'left'
+  const inspectSheet = !isLg && drawer === 'inspect'
+  const closeDrawer = () => setUi({ drawer: null })
+  const hasSelection = selection.kind !== 'none' && selectionExists
+  const leftName = mode === 'plan' ? 'Objects panel' : 'Furniture panel'
+  const leftShown = isMd ? !leftCollapsed : drawer === 'left'
+  const inspectShown = isLg ? !inspectCollapsed : drawer === 'inspect'
+  const toggleLeft = () => (isMd ? setUi({ leftCollapsed: !leftCollapsed }) : setUi({ drawer: drawer === 'left' ? null : 'left' }))
+  const toggleInspect = () =>
+    isLg ? setUi({ inspectCollapsed: !inspectCollapsed }) : setUi({ drawer: drawer === 'inspect' ? null : 'inspect' })
+
+  /** Phone: bottom sheet. Tablet: Inspect slides over from the right. */
+  const sheetClass = () =>
+    isMd
+      ? 'fixed bottom-0 right-0 top-12 z-50 w-72 max-w-[85vw] border-l border-white/10 shadow-2xl'
+      : `fixed inset-x-0 bottom-0 z-50 max-h-[75dvh] rounded-t-xl border-t border-white/10 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl`
+  const asideBase = 'space-y-3 overflow-y-auto bg-surface-1 p-3 text-sm text-slate-400'
+  const sheetHeader = (name: string) => (
+    <div className="-mt-1 flex items-center justify-between">
+      <h2 className="text-sm font-semibold text-slate-100">{name}</h2>
+      <IconButton label={`Close ${name.toLowerCase()}`} icon={<X size={16} />} onClick={closeDrawer} />
+    </div>
+  )
+
+  const moreItem =
+    'flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-slate-200 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent pointer-coarse:h-11'
+
   return (
-    <div className="flex h-full flex-col bg-[#12161b] text-zinc-100">
-      <header className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-white/10 bg-[#161b21] px-3">
-        <input
-          aria-label="Project title"
-          data-testid="project-title"
-          value={title}
-          onChange={(e) => useDoc.getState().setTitle(e.target.value)}
-          className="h-8 w-full max-w-64 rounded-md bg-transparent px-2 text-sm font-semibold hover:bg-white/5 focus:bg-white/10 focus:outline-none"
-        />
+    <div className="flex h-dvh flex-col bg-surface-0 text-zinc-100">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/10 bg-surface-1 px-3">
+        <div className="group relative flex min-w-0 flex-1 basis-0 items-center">
+          <input
+            aria-label="Project title"
+            data-testid="project-title"
+            placeholder="Untitled plan"
+            value={title}
+            onChange={(e) => useDoc.getState().setTitle(e.target.value)}
+            className="h-8 w-full max-w-64 min-w-0 truncate rounded-t-md border-b border-transparent bg-transparent px-2 text-sm font-semibold placeholder:font-normal placeholder:text-slate-500 hover:border-white/30 hover:bg-white/5 focus:border-orange-500 focus:bg-white/10 pointer-coarse:h-11"
+          />
+          <Pencil size={12} aria-hidden="true" className="pointer-events-none -ml-5 shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-70 group-focus-within:opacity-0 max-md:hidden" />
+        </div>
         <Segmented
           ariaLabel="Mode"
           value={mode}
@@ -327,21 +511,64 @@ export default function App() {
             // Design mode drops the Plan-mode placement tools; Plan mode drops a furniture selection.
             setUi(modeUiPatch(m as Mode, selection))
           }}
-          className="w-44"
+          className="w-44 shrink-0 max-md:w-32"
         />
-        <div className="flex justify-end gap-1">
-          {mode === 'plan' && (
-            <button
-              type="button"
-              className={`${BAR_BTN} gap-1.5 px-2 text-xs`}
-              aria-label="Add reference image"
-              title="Add reference image (PNG, JPG, WebP, SVG, PDF)"
-              onClick={() => imageRef.current?.click()}
-            >
-              <ImagePlus size={18} />
-              <span className="hidden sm:inline">Add image</span>
-            </button>
-          )}
+        <div className="flex shrink-0 items-center justify-end gap-1 lg:flex-1 lg:basis-0">
+          <button
+            type="button"
+            className={`${BAR_BTN} max-md:hidden`}
+            aria-label="Add reference image"
+            title={mode === 'plan' ? 'Add reference image (PNG, JPG, WebP, SVG, PDF)' : 'Switch to Plan mode (1) to add reference images'}
+            disabled={mode !== 'plan'}
+            onClick={() => imageRef.current?.click()}
+          >
+            <ImagePlus size={18} />
+            <span className="hidden lg:inline">Add image</span>
+          </button>
+          {DIVIDER}
+          <IconButton label={`Undo (${undoShortcut()})`} variant="bar" icon={<Undo2 size={18} />} disabled={!canUndo} onClick={() => useDoc.getState().undo()} />
+          <IconButton label={`Redo (${REDO_KEYS})`} variant="bar" icon={<Redo2 size={18} />} disabled={!canRedo} onClick={() => useDoc.getState().redo()} />
+          {DIVIDER}
+          <div className="flex items-center gap-1 max-md:hidden">
+            <IconButton label="Export JSON" variant="bar" icon={<Download size={18} />} onClick={() => exportProjectJson(useDoc.getState().doc)} />
+            <IconButton label="Import JSON" variant="bar" icon={<Upload size={18} />} onClick={() => fileRef.current?.click()} />
+          </div>
+          {DIVIDER}
+          <div className="max-md:hidden">
+            <CloudMenu />
+          </div>
+          <div className="max-lg:hidden">
+            <IconButton label="Keyboard shortcuts (?)" variant="bar" icon={<Keyboard size={18} />} onClick={() => setUi({ shortcutsOpen: true })} />
+          </div>
+          <div ref={moreRef} className="relative md:hidden">
+            <IconButton label="More actions" variant="bar" icon={<Ellipsis size={18} />} pressed={moreOpen} onClick={() => setMoreOpen((o) => !o)} />
+            {moreOpen && (
+              <div
+                role="menu"
+                aria-label="More actions"
+                className="absolute right-0 top-full z-50 mt-1 w-56 max-w-[calc(100vw-1rem)] rounded-lg border border-white/10 bg-surface-2 p-1 shadow-xl"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={moreItem}
+                  disabled={mode !== 'plan'}
+                  title={mode === 'plan' ? undefined : 'Switch to Plan mode to add reference images'}
+                  onClick={() => { setMoreOpen(false); imageRef.current?.click() }}
+                >
+                  <ImagePlus size={18} aria-hidden="true" /> Add image
+                </button>
+                <button type="button" role="menuitem" className={moreItem} onClick={() => { setMoreOpen(false); exportProjectJson(useDoc.getState().doc) }}>
+                  <Download size={18} aria-hidden="true" /> Export JSON
+                </button>
+                <button type="button" role="menuitem" className={moreItem} onClick={() => { setMoreOpen(false); fileRef.current?.click() }}>
+                  <Upload size={18} aria-hidden="true" /> Import JSON
+                </button>
+                <div className="my-1 border-t border-white/10" />
+                <CloudMenu showLabel />
+              </div>
+            )}
+          </div>
           <input
             ref={imageRef}
             type="file"
@@ -351,11 +578,6 @@ export default function App() {
             data-testid="add-ref-image"
             onChange={(e) => { void addRefImages(e.target.files); e.target.value = '' }}
           />
-          <button type="button" className={BAR_BTN} aria-label="Undo" title="Undo (Cmd/Ctrl+Z)" disabled={!canUndo} onClick={() => useDoc.getState().undo()}><Undo2 size={18} /></button>
-          <button type="button" className={BAR_BTN} aria-label="Redo" title="Redo (Cmd/Ctrl+Shift+Z or Ctrl+Y)" disabled={!canRedo} onClick={() => useDoc.getState().redo()}><Redo2 size={18} /></button>
-          <button type="button" className={BAR_BTN} aria-label="Export JSON" title="Export JSON" onClick={() => exportProjectJson(useDoc.getState().doc)}><Download size={18} /></button>
-          <button type="button" className={BAR_BTN} aria-label="Import JSON" title="Import JSON" onClick={() => fileRef.current?.click()}><Upload size={18} /></button>
-          <CloudMenu />
           <input
             ref={fileRef}
             type="file"
@@ -367,7 +589,15 @@ export default function App() {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside aria-label="Left panel" data-testid="left-panel" className="hidden w-60 shrink-0 space-y-3 overflow-y-auto border-r border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 md:block">
+        {(leftSheet || inspectSheet) && (
+          <button type="button" aria-label="Close panel" tabIndex={-1} className="fixed inset-0 z-40 bg-black/50" onClick={closeDrawer} />
+        )}
+        <aside
+          aria-label="Left panel"
+          data-testid="left-panel"
+          className={`${asideBase} ${leftInline ? 'w-60 shrink-0 border-r border-white/10' : leftSheet ? sheetClass() : 'hidden'}`}
+        >
+          {leftSheet && sheetHeader(leftName)}
           {mode === 'plan' ? (
             <ObjectsPanel onUploadImage={() => imageRef.current?.click()} />
           ) : (
@@ -378,7 +608,9 @@ export default function App() {
           data-testid="canvas-container"
           className={`relative min-w-0 flex-1 ${dropping ? 'ring-2 ring-orange-500/70 ring-inset' : ''}`}
           onDragOver={onDragOver}
-          onDragLeave={() => setDropping(false)}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropping(false)
+          }}
           onDrop={onDrop}
         >
           <Viewport
@@ -408,15 +640,54 @@ export default function App() {
               </ArtboardContent>
             ))}
           </Viewport>
-          <div className="pointer-events-none absolute bottom-3 left-3">
+          <div className="pointer-events-none absolute left-2 top-2 z-30">
+            <IconButton
+              label={`${leftShown ? 'Hide' : 'Show'} ${leftName.toLowerCase()}`}
+              variant="bar"
+              icon={<PanelLeft size={18} />}
+              pressed={leftShown}
+              onClick={toggleLeft}
+              className="pointer-events-auto"
+            />
+          </div>
+          <div className="pointer-events-none absolute right-2 top-2 z-30">
+            <IconButton
+              label={`${inspectShown ? 'Hide' : 'Show'} inspect panel`}
+              variant="bar"
+              icon={
+                <span className="relative flex">
+                  <PanelRight size={18} />
+                  {hasSelection && !inspectShown && (
+                    <span data-testid="inspect-badge" className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-orange-500 ring-2 ring-surface-2" aria-hidden="true" />
+                  )}
+                </span>
+              }
+              pressed={inspectShown}
+              onClick={toggleInspect}
+              className="pointer-events-auto"
+            />
+          </div>
+          <div className="pointer-events-none absolute bottom-3 left-3 max-md:bottom-[calc(4.75rem+env(safe-area-inset-bottom))]">
             <ZoomControls />
           </div>
           <PlanToolbar />
           {wallEditor && (
             <WallLengthEditor {...wallEditor} onClose={() => setEditWall(null)} />
           )}
+          {dropping && (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/40" data-testid="drop-overlay">
+              <p className="rounded-xl border border-orange-500/60 bg-surface-2 px-5 py-3 text-center text-sm font-medium text-slate-100 shadow-xl">
+                {mode === 'plan' ? 'Drop image to add as reference' : 'Reference images need Plan mode (press 1)'}
+              </p>
+            </div>
+          )}
         </main>
-        <aside aria-label="Inspect" data-testid="inspect-panel" className="hidden w-70 shrink-0 space-y-3 overflow-y-auto border-l border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 lg:block">
+        <aside
+          aria-label="Inspect"
+          data-testid="inspect-panel"
+          className={`${asideBase} ${inspectInline ? 'w-70 shrink-0 border-l border-white/10' : inspectSheet ? sheetClass() : 'hidden'}`}
+        >
+          {inspectSheet && sheetHeader('Inspect')}
           {mode === 'design' ? (
             // Design mode edits no geometry: furniture and room floors only.
             selection.kind === 'furniture' && selectionExists ? (
@@ -441,6 +712,7 @@ export default function App() {
           )}
         </aside>
       </div>
+      {shortcutsOpen && <ShortcutsModal onClose={() => setUi({ shortcutsOpen: false })} />}
       <ToastHost />
     </div>
   )

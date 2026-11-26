@@ -20,7 +20,7 @@ type Size = { w: number; h: number }
 const FALLBACK: Size = { w: 800, h: 600 }
 
 /** Opacity of the grid outside the artboards, relative to its normal contrast. */
-const OUTSIDE_OPACITY = 0.28
+const OUTSIDE_OPACITY = 0.42
 
 /** Id of the clip path that keeps the crisp grid inside the active artboard frame. */
 const ACTIVE_CLIP_ID = 'active-artboard-grid-clip'
@@ -163,7 +163,7 @@ function GridLines({
           key={`x${x}`}
           x1={x} y1={y0} x2={x} y2={y1}
           strokeWidth={unit}
-          className={major ? 'stroke-black/[0.10] dark:stroke-white/[0.14]' : 'stroke-black/[0.045] dark:stroke-white/[0.07]'}
+          className={major ? 'stroke-white/[0.14]' : 'stroke-white/[0.07]'}
         />
       ))}
       {ys.map(({ y, major }) => (
@@ -171,7 +171,7 @@ function GridLines({
           key={`y${y}`}
           x1={x0} y1={y} x2={x1} y2={y}
           strokeWidth={unit}
-          className={major ? 'stroke-black/[0.10] dark:stroke-white/[0.14]' : 'stroke-black/[0.045] dark:stroke-white/[0.07]'}
+          className={major ? 'stroke-white/[0.14]' : 'stroke-white/[0.07]'}
         />
       ))}
     </>

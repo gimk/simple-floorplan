@@ -4,11 +4,13 @@
 //   - two or more rooms: room count, combined area, Merge Rooms and Delete Selected.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm, m, m².
 import { useId } from 'react'
-import { ChevronLeft, Layers, Merge, Square, Trash2 } from 'lucide-react'
+import { Layers, Merge, Square } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { Artboard, Room } from '../../model/types'
 import {
   BTN,
+  BackLink,
+  DangerButton,
   EmptyHint,
   FieldRow,
   MUTED,
@@ -27,7 +29,7 @@ import { roomAreaM2 } from '../artboards/frame'
 import { selectArtboard, selectRoom } from '../artboards/selection'
 import { toast } from '../toast'
 import { deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength } from './actions'
-import { roomWalls } from './ops'
+import { mergeRooms, roomWalls } from './ops'
 
 export type RoomInspectProps = {
   /** Artboard that holds the selected rooms. */
@@ -50,21 +52,19 @@ function clearSelection(): void {
   useUi.getState().set({ selection: { kind: 'none' } })
 }
 
-/** Small "back" line above a card: the artboard name, one click back to the Artboard card. */
+/** Back link to the artboard card. */
 function BackToArtboard({ artboard }: { artboard: Artboard }) {
-  const label = artboard.name.trim() === '' ? 'Untitled artboard' : artboard.name
   return (
-    <button
-      type="button"
-      aria-label="Back to artboard"
-      title="Back to artboard"
+    <BackLink
+      name={artboard.name.trim() === '' ? 'Untitled artboard' : artboard.name}
       onClick={() => selectArtboard(artboard.id)}
-      className={`flex min-h-9 w-fit max-w-full items-center gap-1 rounded-md px-1 hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11 ${MUTED}`}
-    >
-      <ChevronLeft size={12} aria-hidden="true" />
-      <span className="truncate">{label}</span>
-    </button>
+    />
   )
+}
+
+/** Toast with an Undo button after a delete. */
+function deletedToast(message: string): void {
+  toast(message, { kind: 'info', actionLabel: 'Undo', onAction: () => useDoc.getState().undo() })
 }
 
 /** One room selected: name, area, perimeter, walls with an exact length field, Delete Room. */
@@ -88,6 +88,7 @@ function SingleRoomCard({ artboard, room, className }: { artboard: Artboard; roo
   const remove = () => {
     deleteRooms(artboard.id, [room.id])
     clearSelection()
+    deletedToast(`Deleted ${room.name.trim() === '' ? 'room' : room.name}`)
   }
 
   return (
@@ -120,18 +121,18 @@ function SingleRoomCard({ artboard, room, className }: { artboard: Artboard; roo
         {walls.length === 0 ? (
           <EmptyHint>This room has no wall yet.</EmptyHint>
         ) : (
-          <ul className="flex flex-col gap-1" aria-label="Walls of the room">
-            {walls.map((wall) => {
-              const on = wall.index === activeWall
-              return (
-                <li key={wall.index}>
-                  <div className={`${ROW} ${on ? ROW_ON : ROW_OFF} flex items-center gap-2`}>
+          <>
+            <ul className="flex flex-col gap-0.5" aria-label="Walls of the room">
+              {walls.map((wall) => {
+                const on = wall.index === activeWall
+                return (
+                  <li key={wall.index} className={`flex items-center gap-2 rounded-md border px-1 py-0.5 ${on ? ROW_ON : ROW_OFF}`}>
                     <button
                       type="button"
                       aria-pressed={on}
                       aria-label={`Select wall ${wall.index + 1}`}
                       onClick={() => selectWall(artboard.id, room.id, wall.index)}
-                      className="flex min-h-9 min-w-16 shrink-0 items-center rounded-md px-1 text-left text-sm text-slate-800 hover:bg-black/5 dark:text-slate-100 dark:hover:bg-white/10 pointer-coarse:min-h-11"
+                      className="flex min-h-9 w-14 shrink-0 items-center rounded-md px-1 text-left text-sm text-slate-800 hover:bg-black/5 dark:text-slate-100 dark:hover:bg-white/10 pointer-coarse:min-h-11"
                     >
                       Wall {wall.index + 1}
                     </button>
@@ -146,23 +147,21 @@ function SingleRoomCard({ artboard, room, className }: { artboard: Artboard; roo
                         return setRoomWallLength(artboard.id, room.id, wall.index, value) ? undefined : false
                       }}
                     />
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+                  </li>
+                )
+              })}
+            </ul>
+            <EmptyHint>
+              Wall N runs from corner N to corner N + 1. A new length moves the end corner (corner N + 1); in a plain
+              rectangle the opposite wall moves too.
+            </EmptyHint>
+          </>
         )}
       </div>
 
-      <button
-        type="button"
-        className={`${BTN} text-red-600 hover:bg-red-500/10 dark:text-red-400`}
-        onClick={remove}
-        title="Delete this room"
-      >
-        <Trash2 size={14} aria-hidden="true" />
+      <DangerButton onClick={remove} shortcut="Del">
         Delete Room
-      </button>
+      </DangerButton>
     </PanelSection>
   )
 }
@@ -180,10 +179,14 @@ function MultiRoomCard({
   const totalM2 = rooms.reduce((sum, r) => sum + roomAreaM2(r), 0)
   const ids = rooms.map((r) => r.id)
 
+  // Rooms can be merged only when their union is one outline (they touch or overlap).
+  const canMerge = mergeRooms(rooms) !== null
+  const mergeHint = 'Rooms must touch or overlap to be merged. Move them next to each other first.'
+
   const merge = () => {
     const merged = mergeArtboardRooms(artboard.id, ids)
     if (!merged) {
-      toast('Rooms do not touch, so they cannot be merged.')
+      toast('Rooms do not touch, so they cannot be merged.', { kind: 'error' })
       return
     }
     selectRoom(artboard.id, merged.id)
@@ -192,6 +195,7 @@ function MultiRoomCard({
   const removeSelected = () => {
     deleteRooms(artboard.id, ids)
     clearSelection()
+    deletedToast(`Deleted ${ids.length} rooms`)
   }
 
   return (
@@ -211,13 +215,20 @@ function MultiRoomCard({
 
       <ul className="flex flex-col gap-1" aria-label="Selected rooms">
         {rooms.map((room) => (
-          <li key={room.id} className={`${ROW} ${ROW_OFF} flex items-center justify-between gap-2`}>
-            <span className="truncate text-sm text-slate-800 dark:text-slate-100">
-              {room.name.trim() === '' ? 'Untitled room' : room.name}
-            </span>
-            <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>
-              {formatM2(roomAreaM2(room))} m²
-            </span>
+          <li key={room.id}>
+            <button
+              type="button"
+              title="Select only this room"
+              onClick={() => selectRoom(artboard.id, room.id)}
+              className={`${ROW} ${ROW_OFF} flex min-h-9 w-full items-center justify-between gap-2 text-left hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11`}
+            >
+              <span className="truncate text-sm text-slate-800 dark:text-slate-100">
+                {room.name.trim() === '' ? 'Untitled room' : room.name}
+              </span>
+              <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>
+                {formatM2(roomAreaM2(room))} m²
+              </span>
+            </button>
           </li>
         ))}
       </ul>
@@ -226,21 +237,17 @@ function MultiRoomCard({
         type="button"
         className={BTN}
         onClick={merge}
-        title="Merge the selected rooms into one"
+        disabled={!canMerge}
+        title={canMerge ? 'Merge the selected rooms into one' : mergeHint}
       >
         <Merge size={14} aria-hidden="true" />
         Merge Rooms
       </button>
+      {!canMerge && <EmptyHint>{mergeHint}</EmptyHint>}
 
-      <button
-        type="button"
-        className={`${BTN} text-red-600 hover:bg-red-500/10 dark:text-red-400`}
-        onClick={removeSelected}
-        title="Delete the selected rooms"
-      >
-        <Trash2 size={14} aria-hidden="true" />
+      <DangerButton onClick={removeSelected} shortcut="Del">
         Delete Selected
-      </button>
+      </DangerButton>
     </PanelSection>
   )
 }

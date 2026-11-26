@@ -4,32 +4,36 @@
 // - click-drag: pointer down sets the first point, the drag sets the second, pointer up locks it.
 // - two clicks: the first click sets the first point, the second click locks the measurement.
 // A locked measurement stays on screen until the next pointer down or Escape.
-// Shift locks the second point to 45 degree steps from the first, Alt turns snapping off.
+// Shift (or the 45° toggle button, for touch) locks the second point to 45 degree steps from the first.
+// The no-snap key (see FREE_SNAP_LABEL) turns snapping off. A locked measurement has a solid line,
+// filled dots, a dismiss button, and a label you can click to copy the distance.
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { CaptureRect, useViewport } from '../../canvas/Viewport'
+import { ToolHint } from '../../canvas/ToolHint'
 import { dist } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { useDoc } from '../../model/store'
-import { subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
+import { FREE_SNAP_LABEL, getModifiers, isFreeSnap, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
+import { toast } from '../toast'
 import { fmtTapeCm, measureSegment, snapTapePoint } from './geometry'
 import type { TapeSnap } from './geometry'
 
 const SKY = '#38bdf8'
 const ORANGE = '#fb923c'
-const HINT = 'Tape (M): Click or drag to measure · Shift 45° · Alt free · Esc exit'
 
 /** Screen pixels of pointer travel that turn a click into a drag. */
 const DRAG_PX = 5
 
 /** Snap the second point of a measurement, from the live document and the current modifiers. */
-const snapEndpoint = (raw: Vec, anchor: Vec, mods: Modifiers, thresholdCm: number): TapeSnap =>
+const snapEndpoint = (raw: Vec, anchor: Vec, mods: Modifiers, thresholdCm: number, lock45 = false): TapeSnap =>
   snapTapePoint(raw, useDoc.getState().doc.artboards, thresholdCm, {
     anchor,
-    shift: mods.shift,
-    disableSnap: mods.alt,
+    shift: mods.shift || lock45,
+    disableSnap: isFreeSnap(mods),
   })
 
 export function TapeOverlay() {
@@ -38,54 +42,53 @@ export function TapeOverlay() {
   return <Surface />
 }
 
-/** Dark rounded pill with a text label, drawn in world cm from screen-constant sizes. */
-function WorldLabel({ cx, cy, text }: { cx: number; cy: number; text: string }) {
+/** Dark rounded pill with one or two text lines, drawn in world cm from screen-constant sizes. */
+function WorldLabel({ cx, cy, text, sub, onClick }: { cx: number; cy: number; text: string; sub?: string; onClick?: () => void }) {
   const { px } = useViewport()
-  const h = px(18)
-  const w = px(text.length * 6.6 + 14)
+  const h = px(sub ? 34 : 18)
+  const chars = Math.max(text.length, sub?.length ?? 0)
+  const w = px(chars * 6.6 + 14)
   return (
-    <g pointerEvents="none">
+    <g
+      pointerEvents={onClick ? 'all' : 'none'}
+      style={onClick ? { cursor: 'copy' } : undefined}
+      data-testid="tape-label"
+      onPointerDown={onClick ? (e) => e.stopPropagation() : undefined}
+      onClick={onClick}
+    >
+      <title>{onClick ? 'Click to copy the distance' : ''}</title>
       <rect
-        x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={h / 2}
+        x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={Math.min(h / 2, px(12))}
         fill="#0d1216" fillOpacity={0.94} stroke={SKY} strokeOpacity={0.45} strokeWidth={px(1)}
       />
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill="#e0f2fe">
+      <text x={cx} y={sub ? cy - px(7) : cy} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill="#e0f2fe">
         {text}
       </text>
+      {sub && (
+        <text x={cx} y={cy + px(8)} textAnchor="middle" dominantBaseline="central" fontSize={px(10)} fill="#94a3b8">
+          {sub}
+        </text>
+      )}
     </g>
   )
 }
 
 /** Endpoint dot: a hollow orange ring when the point is snapped to something. */
-function EndDot({ p, snapped }: { p: Vec; snapped: boolean }) {
+function EndDot({ p, snapped, locked }: { p: Vec; snapped: boolean; locked: boolean }) {
   const { px } = useViewport()
+  if (locked) return <circle cx={p.x} cy={p.y} r={px(4.5)} fill={snapped ? ORANGE : SKY} stroke="#0d1216" strokeWidth={px(1.2)} />
   return snapped
     ? <circle cx={p.x} cy={p.y} r={px(4.5)} fill="none" stroke={ORANGE} strokeWidth={px(1.8)} />
     : <circle cx={p.x} cy={p.y} r={px(3)} fill={SKY} />
 }
 
-/** Top-centre hint pill. Drawn in a screen-space group, so the sizes are plain screen px. */
-function HintPill({ cx, cy }: { cx: number; cy: number }) {
-  const h = 22
-  const w = HINT.length * 5.6 + 20
-  return (
-    <g pointerEvents="none">
-      <rect
-        x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={h / 2}
-        fill="#0d1216" fillOpacity={0.9} stroke="#ffffff" strokeOpacity={0.12} strokeWidth={1}
-      />
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={11} fill="#cbd5e1">
-        {HINT}
-      </text>
-    </g>
-  )
-}
-
 type Phase = 'idle' | 'measuring' | 'locked'
 
 function Surface() {
-  const { px, toWorld, svg } = useViewport()
-  const view = useUi((s) => s.view)
+  const { px, toWorld } = useViewport()
+  const [lock45, setLock45] = useState(false)
+  const lockRef = useRef(false)
+  useEffect(() => { lockRef.current = lock45 }, [lock45])
   const [phase, setPhase] = useState<Phase>('idle')
   const [a, setA] = useState<TapeSnap | null>(null)
   const [b, setB] = useState<TapeSnap | null>(null)
@@ -99,18 +102,27 @@ function Surface() {
   const awaitingRef = useRef(false)
 
   /** Second point for a raw pointer position: Shift = 45 degrees, Alt = no snap. */
-  const endpoint = (raw: Vec, anchor: Vec, mods: Modifiers): TapeSnap => snapEndpoint(raw, anchor, mods, px(10))
+  const endpoint = (raw: Vec, anchor: Vec, mods: Modifiers): TapeSnap => snapEndpoint(raw, anchor, mods, px(10), lockRef.current)
 
-  // Re-apply the preview when Shift/Alt change mid-gesture (no pointer movement needed).
+  // Re-apply the preview when Shift/no-snap change mid-gesture (no pointer movement needed).
   useEffect(() => {
     if (phase !== 'measuring') return
     return subscribeModifiers((m) => {
       const raw = rawRef.current
       const anchor = aRef.current
       if (!raw || !anchor) return
-      setB(snapEndpoint(raw, anchor.point, m, px(10)))
+      setB(snapEndpoint(raw, anchor.point, m, px(10), lockRef.current))
     })
   }, [phase, px])
+
+  // Re-apply the preview when the 45° toggle changes.
+  useEffect(() => {
+    const raw = rawRef.current
+    const anchor = aRef.current
+    if (phase !== 'measuring' || !raw || !anchor) return
+    setB(snapEndpoint(raw, anchor.point, getModifiers(), px(10), lock45))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lock45])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -144,7 +156,7 @@ function Surface() {
       return
     }
     e.currentTarget.setPointerCapture?.(e.pointerId)
-    const first = snapTapePoint(raw, useDoc.getState().doc.artboards, px(10), { disableSnap: mods.alt })
+    const first = snapTapePoint(raw, useDoc.getState().doc.artboards, px(10), { disableSnap: isFreeSnap(mods) })
     aRef.current = first
     setA(first); setB(null)
     setPhase('measuring')
@@ -187,10 +199,41 @@ function Surface() {
   const show = !!a && !!b && !!seg && seg.distCm > 0
   const midX = a && b ? (a.point.x + b.point.x) / 2 : 0
   const midY = a && b ? (a.point.y + b.point.y) / 2 : 0
-  const wPx = svg?.clientWidth ?? 800
+  const locked = phase === 'locked'
+
+  const copyDistance = () => {
+    if (!seg) return
+    const text = fmtTapeCm(seg.distCm)
+    const done = () => toast(`Copied ${text}`, { kind: 'success' })
+    const fail = () => toast('Copy not available', { kind: 'error' })
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, fail)
+    else fail()
+  }
+
+  const hint =
+    phase === 'idle'
+      ? `Tape (M): Click or drag to measure · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`
+      : locked
+        ? `Tape: Click the label to copy · × or click to measure again · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`
+        : `Tape: Click or drag the second point · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`
 
   return (
     <g data-testid="tape-overlay">
+      <ToolHint text={hint} />
+      {createPortal(
+        <button
+          type="button"
+          data-testid="tape-lock45"
+          aria-pressed={lock45}
+          className={`pointer-events-auto fixed bottom-24 right-3 z-30 hidden h-11 min-w-11 items-center justify-center rounded-full border px-3 text-xs font-semibold shadow-lg pointer-coarse:flex ${
+            lock45 ? 'border-sky-400 bg-sky-500 text-white' : 'border-white/20 bg-surface-2 text-slate-200'
+          }`}
+          onClick={() => setLock45((v) => !v)}
+        >
+          45°
+        </button>,
+        document.body,
+      )}
       <CaptureRect
         style={{ cursor: 'crosshair' }}
         onPointerDown={onDown}
@@ -199,19 +242,38 @@ function Surface() {
         onPointerCancel={reset}
       />
       {show && a && b && seg && (
-        <g pointerEvents="none">
-          <line
-            x1={a.point.x} y1={a.point.y} x2={b.point.x} y2={b.point.y}
-            stroke={SKY} strokeWidth={px(1.5)} strokeDasharray={`${px(6)} ${px(4)}`} strokeLinecap="round"
+        <>
+          <g pointerEvents="none" data-testid="tape-measure" data-locked={locked ? '' : undefined}>
+            <line
+              x1={a.point.x} y1={a.point.y} x2={b.point.x} y2={b.point.y}
+              stroke={SKY} strokeWidth={px(locked ? 2 : 1.5)} strokeDasharray={locked ? undefined : `${px(6)} ${px(4)}`} strokeLinecap="round"
+            />
+            <EndDot p={a.point} snapped={a.snapped} locked={locked} />
+            <EndDot p={b.point} snapped={b.snapped} locked={locked} />
+          </g>
+          <WorldLabel
+            cx={midX} cy={midY - px(locked ? 24 : 14)}
+            text={fmtTapeCm(seg.distCm)}
+            sub={`Δx ${fmtTapeCm(Math.abs(seg.dxCm))} · Δy ${fmtTapeCm(Math.abs(seg.dyCm))} · ${Math.round(seg.angleDeg * 10) / 10}°`}
+            onClick={locked ? copyDistance : undefined}
           />
-          <EndDot p={a.point} snapped={a.snapped} />
-          <EndDot p={b.point} snapped={b.snapped} />
-          <WorldLabel cx={midX} cy={midY - px(14)} text={fmtTapeCm(seg.distCm)} />
-        </g>
+          {locked && (
+            <g
+              data-testid="tape-dismiss"
+              role="button"
+              aria-label="Dismiss measurement"
+              style={{ cursor: 'pointer' }}
+              onPointerDown={(e) => { e.stopPropagation(); reset() }}
+            >
+              <circle cx={b.point.x + px(14)} cy={b.point.y - px(14)} r={px(9)} fill="#0d1216" stroke={SKY} strokeOpacity={0.6} strokeWidth={px(1)} />
+              <path
+                d={`M${b.point.x + px(11)} ${b.point.y - px(17)} l${px(6)} ${px(6)} m${-px(6)} 0 l${px(6)} ${-px(6)}`}
+                stroke="#e0f2fe" strokeWidth={px(1.5)} strokeLinecap="round" fill="none"
+              />
+            </g>
+          )}
+        </>
       )}
-      <g transform={`translate(${view.x} ${view.y}) scale(${1 / view.zoom})`}>
-        <HintPill cx={wPx / 2} cy={20} />
-      </g>
     </g>
   )
 }

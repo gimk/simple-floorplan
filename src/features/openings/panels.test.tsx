@@ -101,14 +101,15 @@ vi.mock('../../model/store', () => {
 
 // Imported after the mock so the fake store is the one the panels see.
 import type { Opening } from '../../model/types'
-import { ObjectsPanel, PLACE_HINT } from './ObjectsPanel'
+import { ObjectsPanel } from './ObjectsPanel'
+import { PLACE_HINTS } from './placeHints'
 import { OpeningInspect } from './OpeningInspect'
 import { OpeningShape } from './OpeningsLayer'
 
 describe('ObjectsPanel', () => {
   it('renders the three architectural pickers with their default widths', () => {
     const html = renderToStaticMarkup(<ObjectsPanel />)
-    expect(html).toContain('aria-label="Architectural Objects"')
+    expect(html).toContain('>Architectural Objects<')
     expect(html).toContain('aria-label="Architectural objects"')
     expect(html).toContain('aria-label="Place door"')
     expect(html).toContain('aria-label="Place window"')
@@ -121,13 +122,13 @@ describe('ObjectsPanel', () => {
     expect(html).toContain('120 cm')
     expect(html).toContain('100 cm')
     // nothing is armed with the default tool = select
-    expect(html).not.toContain('aria-pressed="true"')
-    expect(html).not.toContain(PLACE_HINT)
+    expect(html.slice(0, html.indexOf('>Reference Images<'))).not.toContain('aria-pressed="true"')
+    for (const hint of Object.values(PLACE_HINTS)) expect(html).not.toContain(hint)
   })
 
   it('lists the reference images and the upload button', () => {
     const html = renderToStaticMarkup(<ObjectsPanel onUploadImage={() => {}} />)
-    expect(html).toContain('aria-label="Reference Images"')
+    expect(html).toContain('>Reference Images<')
     expect(html).toContain('aria-label="Select reference image Ground floor scan"')
     // a nameless image falls back to a placeholder, and a hidden one is marked
     expect(html).toContain('Untitled image')
@@ -146,25 +147,25 @@ describe('ObjectsPanel', () => {
 describe('OpeningInspect', () => {
   it('renders the door card: type, width, flip hinge, flip swing, delete', () => {
     const html = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o1" />)
-    expect(html).toContain('aria-label="Door"')
-    expect(html).toContain('aria-label="Back to artboard"')
+    expect(html).toContain('>Door<')
+    expect(html).toContain('aria-label="Back to Artboard: Plan A"')
     expect(html).toContain('Plan A')
     expect(html).toContain('aria-label="Opening type"')
     // the door choice is the active one
     expect(html).toContain('aria-pressed="true"')
     expect(html).toContain('value="85"')
     expect(html).toContain('cm')
-    expect(html).toContain('Flip Hinge')
-    expect(html).toContain('Flip Swing')
+    expect(html).toContain('Hinge left')
+    expect(html).toContain('wing in')
     expect(html).toContain('Delete Door')
   })
 
   it('renders the window card without the door flips', () => {
     const html = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o2" />)
-    expect(html).toContain('aria-label="Window"')
+    expect(html).toContain('>Window<')
     expect(html).toContain('value="120"')
-    expect(html).not.toContain('Flip Hinge')
-    expect(html).not.toContain('Flip Swing')
+    expect(html).not.toContain('Hinge left')
+    expect(html).not.toContain('wing in')
     expect(html).toContain('Delete Window')
   })
 
@@ -182,27 +183,27 @@ describe('OpeningInspect', () => {
     expect(gap).toContain('Delete Opening')
     expect(gap).not.toContain('aria-label="Door style"')
     expect(gap).not.toContain('aria-label="Window style"')
-    expect(gap).not.toContain('Flip Hinge')
+    expect(gap).not.toContain('Hinge left')
   })
 
   it('keeps the hinge and the swing flips on a standard door', () => {
     const html = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o1" />)
-    expect(html).toContain('Flip Hinge')
-    expect(html).toContain('Flip Swing')
+    expect(html).toContain('Hinge left')
+    expect(html).toContain('wing in')
   })
 
   it('hides the hinge flip on a french door: the pair is symmetric', () => {
     const html = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o3" />)
     expect(html).toContain('<option value="french" selected="">')
-    expect(html).not.toContain('Flip Hinge')
-    expect(html).toContain('Flip Swing')
+    expect(html).not.toContain('Hinge left')
+    expect(html).toContain('wing in')
   })
 
   it('keeps the hinge flip but hides the swing flip on a pocket door', () => {
     const html = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o4" />)
     expect(html).toContain('<option value="pocket" selected="">')
-    expect(html).toContain('Flip Hinge')
-    expect(html).not.toContain('Flip Swing')
+    expect(html).toContain('Hinge left')
+    expect(html).not.toContain('wing in')
   })
 
   it('offers the four window styles in a select and starts on standard', () => {
@@ -228,19 +229,19 @@ describe('OpeningInspect', () => {
 
   it('shows both flips on a single casement window, and only the swing flip on a double casement', () => {
     const casement = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o7" />)
-    expect(casement).toContain('Flip Hinge')
-    expect(casement).toContain('Flip Swing')
+    expect(casement).toContain('Hinge left')
+    expect(casement).toContain('wing in')
     expect(casement).toContain('Delete Window')
 
     const doubleCasement = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId="o8" />)
-    expect(doubleCasement).toContain('Flip Swing')
-    expect(doubleCasement).not.toContain('Flip Hinge')
+    expect(doubleCasement).toContain('wing in')
+    expect(doubleCasement).not.toContain('Hinge left')
 
     // The fixed and sliding windows keep no flip at all.
     for (const id of ['o2', 'o5']) {
       const html = renderToStaticMarkup(<OpeningInspect artboardId={AB} openingId={id} />)
-      expect(html).not.toContain('Flip Hinge')
-      expect(html).not.toContain('Flip Swing')
+      expect(html).not.toContain('Hinge left')
+      expect(html).not.toContain('wing in')
     }
   })
 

@@ -2,14 +2,15 @@
 // name, ceiling height, total area, room list, and the Duplicate / Add / Delete artboard actions.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel.
 // The Export card (Phase 5) stays available in Plan AND Design mode: exporting changes no data.
-import { useId } from 'react'
-import { Copy, Download, Frame, Image, Plus, Trash2 } from 'lucide-react'
+import { useId, useState } from 'react'
+import { Copy, Download, Frame, Image, Plus } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { Artboard, PrecisionCm } from '../../model/types'
 import { downloadArtboardPng, downloadArtboardSvg } from '../export/download'
 import { toast } from '../toast'
 import {
   BTN,
+  DangerButton,
   EmptyHint,
   FieldRow,
   MUTED,
@@ -40,9 +41,9 @@ export type ArtboardInspectProps = {
 
 /** Drawing precision choices, in cm: fine (1 mm), half and whole centimetre. */
 const PRECISION_OPTIONS = [
-  { value: '0.1', label: '0.1', title: 'Draw to 1 mm' },
-  { value: '0.5', label: '0.5', title: 'Draw to 5 mm' },
-  { value: '1', label: '1', title: 'Draw to 1 cm' },
+  { value: '0.1', label: '1 mm', title: 'Draw to 1 mm' },
+  { value: '0.5', label: '5 mm', title: 'Draw to 5 mm' },
+  { value: '1', label: '1 cm', title: 'Draw to 1 cm' },
 ] as const
 
 export function ArtboardInspect({ artboardId, className, readOnly = false }: ArtboardInspectProps) {
@@ -53,6 +54,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
   const selection = useUi((s) => s.selection)
   const nameId = useId()
   const ceilingId = useId()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const wanted = artboardId ?? activeArtboardId
   const artboard: Artboard | undefined = artboards.find((a) => a.id === wanted) ?? artboards[0]
@@ -103,7 +105,10 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
   const remove = () => {
     const doc = useDoc.getState()
     if (doc.doc.artboards.length <= 1) return
+    const deletedName = artboard.name.trim() === '' ? 'artboard' : artboard.name
     doc.deleteArtboard(artboard.id)
+    setConfirmingDelete(false)
+    toast(`Deleted ${deletedName}`, { kind: 'info', actionLabel: 'Undo', onAction: () => useDoc.getState().undo() })
     // Read the artboards AFTER the delete: `doc.doc` is the document before it, so the old code
     // always selected the deleted artboard again (and the card showed nothing useful).
     const next = useDoc.getState().doc.artboards[0]
@@ -210,6 +215,10 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
           )}
         </div>
 
+        {readOnly && (
+          <EmptyHint>Read-only in Design mode. Switch to Plan mode to rename, duplicate, add or delete artboards.</EmptyHint>
+        )}
+
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -231,22 +240,33 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
             <Plus size={14} aria-hidden="true" />
             Add
           </button>
-          <button
-            type="button"
-            className={`${BTN} flex-1 text-red-600 hover:bg-red-500/10 dark:text-red-400`}
-            onClick={remove}
-            disabled={onlyOne || readOnly}
-            title={
-              readOnly
-                ? 'Switch to Plan mode to edit the artboard'
-                : onlyOne
-                  ? 'The document keeps at least one artboard'
-                  : 'Delete artboard'
-            }
-          >
-            <Trash2 size={14} aria-hidden="true" />
-            Delete
-          </button>
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-black/10 pt-3 dark:border-white/10">
+          {confirmingDelete && !readOnly && !onlyOne ? (
+            <div role="group" aria-label="Confirm artboard delete" className="flex flex-col gap-2">
+              <p className="text-sm text-slate-800 dark:text-slate-100">Delete artboard?</p>
+              <EmptyHint>
+                {`This also deletes its ${artboard.rooms.length} room${artboard.rooms.length === 1 ? '' : 's'}, ${artboard.openings.length} opening${artboard.openings.length === 1 ? '' : 's'} and ${artboard.furniture.length} furniture item${artboard.furniture.length === 1 ? '' : 's'}. You can undo it.`}
+              </EmptyHint>
+              <div className="flex gap-2">
+                <DangerButton className="flex-1" onClick={remove}>
+                  Yes
+                </DangerButton>
+                <button type="button" className={`${BTN} flex-1`} onClick={() => setConfirmingDelete(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <DangerButton
+              onClick={() => setConfirmingDelete(true)}
+              disabled={onlyOne || readOnly}
+            >
+              Delete artboard
+            </DangerButton>
+          )}
+          {onlyOne && !readOnly && <EmptyHint>The document keeps at least one artboard.</EmptyHint>}
         </div>
       </PanelSection>
 
@@ -254,7 +274,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
         <div className="flex gap-2">
           <button
             type="button"
-            className={`${BTN} flex-1 px-2 text-xs`}
+            className={`${BTN} flex-1`}
             onClick={exportPng}
             title="Download this artboard as a PNG picture"
           >
@@ -263,7 +283,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
           </button>
           <button
             type="button"
-            className={`${BTN} flex-1 px-2 text-xs`}
+            className={`${BTN} flex-1`}
             onClick={exportSvg}
             title="Download this artboard as an SVG file"
           >

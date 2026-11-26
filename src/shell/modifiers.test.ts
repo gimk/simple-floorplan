@@ -33,6 +33,16 @@ describe('modifiers (no window)', () => {
   })
 })
 
+describe('free snap', () => {
+  it('uses cmd/ctrl only and exports a label', async () => {
+    vi.resetModules()
+    const m = await import('./modifiers')
+    expect(m.isFreeSnap({ cmd: true })).toBe(true)
+    expect(m.isFreeSnap({ cmd: false })).toBe(false)
+    expect(['⌘', 'Ctrl']).toContain(m.FREE_SNAP_LABEL)
+  })
+})
+
 describe('modifiers (fake window)', () => {
   it('tracks keydown, keyup and blur, and removes listeners on last unsubscribe', async () => {
     const handlers: Record<string, Array<(e: unknown) => void>> = {}

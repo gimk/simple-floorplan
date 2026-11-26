@@ -4,16 +4,18 @@
 // and dimensions belong to Plan mode.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm, m².
 import { useId, useState } from 'react'
-import { Armchair, ChevronDown, ChevronUp, PaintBucket, Paintbrush, Square } from 'lucide-react'
+import { Armchair, ChevronDown, ChevronUp, PaintBucket, Paintbrush, Plus, Square } from 'lucide-react'
 import { pointInPolygon } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem, Room } from '../../model/types'
-import { EmptyHint, FieldRow, IconButton, MUTED, PanelSection, TextField, formatM2 } from '../../shell/panel'
+import { BTN, BackLink, EmptyHint, FieldRow, IconButton, MUTED, PanelSection, TextField, formatM2 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { roomAreaM2 } from '../artboards/frame'
+import { selectArtboard } from '../artboards/selection'
+import { renameRoom } from '../rooms/actions'
 import { roomWalls, formatLengthCm } from '../rooms/ops'
-import { reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomWallColor } from './actions'
-import { FLOOR_PATTERNS, FLOOR_SWATCHES, WALL_ACCENT_COLORS } from './presets'
+import { addFurniture, reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomWallColor } from './actions'
+import { FLOOR_PATTERNS, FLOOR_SWATCHES, FURNITURE_COLORS, WALL_ACCENT_COLORS } from './presets'
 
 export type DesignRoomInspectProps = {
   /** Artboard that holds the room. */
@@ -80,9 +82,35 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
     const name = value.trim()
     if (name === '') return false
     if (name === room.name) return
+    renameRoom(artboard.id, room.id, name)
+  }
+
+  /** Paint every wall of the room with one colour (undefined clears them): one undo step. */
+  const paintAllWalls = (color: string | undefined) => {
     useDoc.getState().update((d) => {
       const target = d.artboards.find((a) => a.id === artboard.id)?.rooms.find((r) => r.id === room.id)
-      if (target) target.name = name
+      if (!target) return
+      if (color === undefined) {
+        delete target.wallColors
+        return
+      }
+      target.wallColors = Object.fromEntries(target.vertices.map((_, i) => [String(i), color]))
+    })
+  }
+
+  /** Add a first item (a 120 × 60 cm custom shape) at the centre of the room and select it. */
+  const addFirstItem = () => {
+    const xs = room.vertices.map((v) => v.x)
+    const ys = room.vertices.map((v) => v.y)
+    addFurniture(artboard.id, {
+      name: 'Custom',
+      shape: 'rect',
+      widthCm: 120,
+      depthCm: 60,
+      color: FURNITURE_COLORS[0].color,
+      xCm: (Math.min(...xs) + Math.max(...xs)) / 2,
+      yCm: (Math.min(...ys) + Math.max(...ys)) / 2,
+      rotationDeg: 0,
     })
   }
 
@@ -102,6 +130,11 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
   return (
     <>
       <PanelSection title="Room" icon={<Square size={14} aria-hidden="true" />}>
+        <BackLink
+          name={artboard.name.trim() === '' ? 'Untitled artboard' : artboard.name}
+          onClick={() => selectArtboard(artboard.id)}
+        />
+
         <FieldRow label="Name" htmlFor={nameId}>
           <TextField
             id={nameId}
@@ -118,7 +151,14 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
           </span>
         </FieldRow>
 
-        <EmptyHint>Switch to Plan mode to edit walls and dimensions.</EmptyHint>
+        <button
+          type="button"
+          className={BTN}
+          onClick={() => useUi.getState().set({ mode: 'plan' })}
+          title="Walls and dimensions are edited in Plan mode"
+        >
+          Switch to Plan mode to edit walls
+        </button>
       </PanelSection>
 
       <PanelSection title="Floor color" icon={<PaintBucket size={14} aria-hidden="true" />}>
@@ -197,6 +237,13 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
                         onPick={() => setRoomWallColor(artboard.id, room.id, w.index, sw.color)}
                       />
                     ))}
+                    <button
+                      type="button"
+                      className={`${BTN} col-span-5 mt-1`}
+                      onClick={() => paintAllWalls(paint)}
+                    >
+                      {paint === undefined ? 'Clear paint on all walls' : 'Apply to all walls'}
+                    </button>
                   </div>
                 )}
               </li>
@@ -207,7 +254,13 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
 
       <PanelSection title="Furniture" icon={<Armchair size={14} aria-hidden="true" />}>
         {listed.length === 0 ? (
-          <EmptyHint>No furniture in this room yet.</EmptyHint>
+          <>
+            <EmptyHint>No furniture in this room yet.</EmptyHint>
+            <button type="button" className={BTN} onClick={addFirstItem}>
+              <Plus size={14} aria-hidden="true" />
+              Add furniture
+            </button>
+          </>
         ) : (
           <ul className="flex flex-col gap-1" aria-label="Furniture in this room">
             {listed.map((item) => {

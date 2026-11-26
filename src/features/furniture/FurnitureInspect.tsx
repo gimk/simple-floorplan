@@ -3,11 +3,14 @@
 // quick quarter turns), optional height for the future 3D view, colour, Duplicate and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm and degrees.
 import { useId } from 'react'
-import { Armchair, ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, RotateCw, Trash2 } from 'lucide-react'
+import { Armchair, ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, Move, Palette, RotateCcw, RotateCw, Ruler, Layers } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import {
   BTN,
+  BackLink,
+  ColorRow,
+  DangerButton,
   FieldRow,
   MUTED,
   NumberField,
@@ -15,8 +18,9 @@ import {
   Segmented,
   SwitchRow,
   TextField,
-  formatCmInput,
 } from '../../shell/panel'
+import { selectArtboard } from '../artboards/selection'
+import { toast } from '../toast'
 import { deleteFurniture, duplicateFurniture, reorderFurniture, updateFurniture, type StackOp } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, normalizeAngle } from './geometry'
 import { FURNITURE_COLORS } from './presets'
@@ -42,42 +46,18 @@ const SHAPE_OPTIONS = [
   { value: 'circle', label: 'Circle', title: 'Circle or oval' },
 ] as const
 
-/** Quick turns, in degrees. */
+/** Quick turns, in degrees (symmetric). */
 const TURNS: readonly { label: string; delta: number; title: string }[] = [
+  { label: '-90°', delta: -90, title: 'Turn 90° counter-clockwise' },
   { label: '-45°', delta: -45, title: 'Turn 45° counter-clockwise' },
   { label: '+45°', delta: 45, title: 'Turn 45° clockwise' },
   { label: '+90°', delta: 90, title: 'Turn 90° clockwise' },
 ]
 
-const clampCm = (v: number): number => Math.min(MAX_FURNITURE_CM, Math.max(MIN_FURNITURE_CM, v))
+/** Furniture colour swatches for the shared ColorRow. */
+const COLOR_VALUES = FURNITURE_COLORS.map((c) => c.color)
 
-/** One row of colour circles; the current colour gets an orange ring. */
-function ColorRow({ value, onPick }: { value: string; onPick: (color: string) => void }) {
-  const current = value.toLowerCase()
-  return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Furniture color">
-      {FURNITURE_COLORS.map((c) => {
-        const on = c.color.toLowerCase() === current
-        return (
-          <button
-            key={c.id}
-            type="button"
-            aria-pressed={on}
-            aria-label={c.label}
-            title={c.label}
-            onClick={() => onPick(c.color)}
-            style={{ backgroundColor: c.color }}
-            className={`h-6 w-6 shrink-0 rounded-full border border-black/20 pointer-coarse:h-8 pointer-coarse:w-8 dark:border-white/25 ${
-              on
-                ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-white dark:ring-orange-400 dark:ring-offset-[#161b21]'
-                : 'hover:opacity-80'
-            }`}
-          />
-        )
-      })}
-    </div>
-  )
-}
+const clampCm = (v: number): number => Math.min(MAX_FURNITURE_CM, Math.max(MIN_FURNITURE_CM, v))
 
 /**
  * Inspect card of one furniture item. Renders nothing when the artboard or the item is unknown,
@@ -151,144 +131,194 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
     patch({ cornerRadiusCm: next })
   }
 
+  const commitX = (value: number | null): boolean | void => {
+    if (value == null) return false
+    if (value === item.xCm) return
+    patch({ xCm: value })
+  }
+
+  const commitY = (value: number | null): boolean | void => {
+    if (value == null) return false
+    if (value === item.yCm) return
+    patch({ yCm: value })
+  }
+
+  const remove = () => {
+    const label = item.name.trim() === '' ? 'furniture' : item.name
+    deleteFurniture(artboard.id, item.id)
+    toast(`Deleted ${label}`, {
+      kind: 'info',
+      actionLabel: 'Undo',
+      onAction: () => useDoc.getState().undo(),
+    })
+  }
+
+  const label = 'text-xs text-slate-500 dark:text-slate-400'
+
   return (
-    <PanelSection title="Furniture" icon={<Armchair size={14} aria-hidden="true" />}>
-      <FieldRow label="Name" htmlFor={nameId}>
-        <TextField
-          id={nameId}
-          ariaLabel="Furniture name"
-          value={item.name}
-          onCommit={commitName}
-          invalidMessage="Type a name for the item."
-        />
-      </FieldRow>
+    <>
+      <PanelSection title="Furniture" icon={<Armchair size={14} aria-hidden="true" />}>
+        <BackLink name={artboard.name.trim() === '' ? 'Untitled artboard' : artboard.name} onClick={() => selectArtboard(artboard.id)} />
 
-      <FieldRow label="Order" hint="stack place" stacked>
-        <div className="grid grid-cols-4 gap-1" role="group" aria-label="Stack order">
-          {STACK_BUTTONS.map(({ op, label, title, Icon }) => {
-            const disabled = op === 'back' || op === 'backward' ? isBottom : isTop
-            return (
-              <button
-                key={op}
-                type="button"
-                className={BTN}
-                title={title}
-                aria-label={label}
-                disabled={disabled}
-                onClick={() => {
-                  reorderFurniture(artboard.id, item.id, op)
-                }}
-              >
-                <Icon size={14} aria-hidden="true" />
-              </button>
-            )
-          })}
-        </div>
-      </FieldRow>
-
-      <FieldRow label="Shape" stacked>
-        <Segmented
-          ariaLabel="Furniture shape"
-          options={SHAPE_OPTIONS}
-          value={item.shape}
-          onChange={(value) => {
-            const shape = value === 'circle' ? 'circle' : 'rect'
-            if (shape !== item.shape) patch({ shape })
-          }}
-        />
-      </FieldRow>
-
-      <FieldRow label="Width">
-        <NumberField
-          ariaLabel="Furniture width"
-          unit="cm"
-          min={MIN_FURNITURE_CM}
-          max={MAX_FURNITURE_CM}
-          value={item.widthCm}
-          onCommit={commitWidth}
-        />
-      </FieldRow>
-
-      <FieldRow label="Depth">
-        <NumberField
-          ariaLabel="Furniture depth"
-          unit="cm"
-          min={MIN_FURNITURE_CM}
-          max={MAX_FURNITURE_CM}
-          value={item.depthCm}
-          onCommit={commitDepth}
-        />
-      </FieldRow>
-
-      {item.shape === 'rect' && (
-        <FieldRow label="Corner radius" hint="rounded corners">
-          <NumberField
-            ariaLabel="Furniture corner radius"
-            unit="cm"
-            min={0}
-            max={maxRadiusCm}
-            value={item.cornerRadiusCm ?? 4}
-            onCommit={commitRadius}
+        <FieldRow label="Name" htmlFor={nameId}>
+          <TextField
+            id={nameId}
+            ariaLabel="Furniture name"
+            value={item.name}
+            onCommit={commitName}
+            invalidMessage="Type a name for the item."
           />
         </FieldRow>
-      )}
 
-      <SwitchRow
-        label="Direction arrow"
-        name="furniture-direction"
-        checked={!!item.showDirection}
-        onChange={(next) => patch({ showDirection: next })}
-      />
+        <FieldRow label="Shape" stacked>
+          <Segmented
+            ariaLabel="Furniture shape"
+            options={SHAPE_OPTIONS}
+            value={item.shape}
+            onChange={(value) => {
+              const shape = value === 'circle' ? 'circle' : 'rect'
+              if (shape !== item.shape) patch({ shape })
+            }}
+          />
+        </FieldRow>
+      </PanelSection>
 
-      <FieldRow label="Rotation" hint="clockwise">
-        <NumberField
-          ariaLabel="Furniture rotation"
-          unit="°"
-          value={normalizeAngle(item.rotationDeg)}
-          onCommit={commitRotation}
+      <PanelSection title="Size" icon={<Ruler size={14} aria-hidden="true" />}>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className={label}>Width</span>
+            <NumberField
+              ariaLabel="Furniture width"
+              unit="cm"
+              min={MIN_FURNITURE_CM}
+              max={MAX_FURNITURE_CM}
+              value={item.widthCm}
+              onCommit={commitWidth}
+            />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className={label}>Depth</span>
+            <NumberField
+              ariaLabel="Furniture depth"
+              unit="cm"
+              min={MIN_FURNITURE_CM}
+              max={MAX_FURNITURE_CM}
+              value={item.depthCm}
+              onCommit={commitDepth}
+            />
+          </div>
+        </div>
+
+        {item.shape === 'rect' && (
+          <FieldRow label="Corner radius" hint="rounded corners">
+            <NumberField
+              ariaLabel="Furniture corner radius"
+              unit="cm"
+              min={0}
+              max={maxRadiusCm}
+              value={item.cornerRadiusCm ?? 4}
+              onCommit={commitRadius}
+            />
+          </FieldRow>
+        )}
+
+        <FieldRow label="Height" hint="for 3D" htmlFor={heightId}>
+          <NumberField
+            id={heightId}
+            ariaLabel="Furniture height"
+            unit="cm"
+            min={1}
+            placeholder="e.g. 80"
+            value={item.heightCm ?? null}
+            onCommit={commitHeight}
+          />
+        </FieldRow>
+      </PanelSection>
+
+      <PanelSection title="Position & Rotation" icon={<Move size={14} aria-hidden="true" />}>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className={label}>X</span>
+            <NumberField ariaLabel="Furniture X position" unit="cm" value={item.xCm} onCommit={commitX} />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className={label}>Y</span>
+            <NumberField ariaLabel="Furniture Y position" unit="cm" value={item.yCm} onCommit={commitY} />
+          </div>
+        </div>
+        <p className={MUTED}>Centre of the item, from the artboard origin.</p>
+
+        <FieldRow label="Rotation" hint="clockwise">
+          <NumberField
+            ariaLabel="Furniture rotation"
+            unit="°"
+            value={normalizeAngle(item.rotationDeg)}
+            onCommit={commitRotation}
+          />
+        </FieldRow>
+
+        <div className="grid grid-cols-4 gap-1" role="group" aria-label="Quick rotation">
+          {TURNS.map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              className={`${BTN} px-1 text-xs`}
+              title={t.title}
+              aria-label={`Rotate ${t.label}`}
+              onClick={() => turn(t.delta)}
+            >
+              {t.delta < 0 ? <RotateCcw size={12} aria-hidden="true" /> : <RotateCw size={12} aria-hidden="true" />}
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </PanelSection>
+
+      <PanelSection title="Appearance" icon={<Palette size={14} aria-hidden="true" />}>
+        <div className="flex flex-col gap-1">
+          <span className={label}>Color</span>
+          <ColorRow
+            label="Furniture color"
+            colors={COLOR_VALUES}
+            value={item.color}
+            onChange={(color) => {
+              if (color === item.color) return
+              patch({ color })
+            }}
+          />
+        </div>
+        <SwitchRow
+          label="Direction arrow"
+          name="furniture-direction"
+          checked={!!item.showDirection}
+          onChange={(next) => patch({ showDirection: next })}
         />
-      </FieldRow>
+      </PanelSection>
 
-      <div className="grid grid-cols-3 gap-1" aria-label="Quick rotation">
-        {TURNS.map((t) => (
-          <button
-            key={t.label}
-            type="button"
-            className={`${BTN} text-xs`}
-            title={t.title}
-            aria-label={`Rotate ${t.label}`}
-            onClick={() => turn(t.delta)}
-          >
-            <RotateCw size={12} aria-hidden="true" />
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <PanelSection title="Arrange" icon={<Layers size={14} aria-hidden="true" />}>
+        <FieldRow label="Order" hint="stack place" stacked>
+          <div className="grid grid-cols-4 gap-1" role="group" aria-label="Stack order">
+            {STACK_BUTTONS.map(({ op, label: opLabel, title, Icon }) => {
+              const disabled = op === 'back' || op === 'backward' ? isBottom : isTop
+              return (
+                <button
+                  key={op}
+                  type="button"
+                  className={BTN}
+                  title={title}
+                  aria-label={opLabel}
+                  disabled={disabled}
+                  onClick={() => {
+                    reorderFurniture(artboard.id, item.id, op)
+                  }}
+                >
+                  <Icon size={14} aria-hidden="true" />
+                </button>
+              )
+            })}
+          </div>
+        </FieldRow>
 
-      <FieldRow label="Height" hint="for 3D" htmlFor={heightId}>
-        <NumberField
-          id={heightId}
-          ariaLabel="Furniture height"
-          unit="cm"
-          min={1}
-          placeholder="80"
-          value={item.heightCm ?? null}
-          onCommit={commitHeight}
-        />
-      </FieldRow>
-
-      <div className="flex flex-col gap-1">
-        <span className={`text-xs ${MUTED}`}>Color</span>
-        <ColorRow
-          value={item.color}
-          onPick={(color) => {
-            if (color === item.color) return
-            patch({ color })
-          }}
-        />
-      </div>
-
-      <div className="flex flex-col gap-1">
         <button
           type="button"
           className={BTN}
@@ -300,22 +330,10 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
           <Copy size={14} aria-hidden="true" />
           Duplicate
         </button>
-        <button
-          type="button"
-          className={`${BTN} text-red-600 hover:bg-red-500/10 dark:text-red-400`}
-          onClick={() => {
-            deleteFurniture(artboard.id, item.id)
-          }}
-          title={`Delete ${item.name.trim() === '' ? 'this item' : item.name}`}
-        >
-          <Trash2 size={14} aria-hidden="true" />
+        <DangerButton onClick={remove} shortcut="Del">
           Delete
-        </button>
-      </div>
-
-      <p className={`text-xs tabular-nums ${MUTED}`}>
-        {`${formatCmInput(item.widthCm)} × ${formatCmInput(item.depthCm)} cm`}
-      </p>
-    </PanelSection>
+        </DangerButton>
+      </PanelSection>
+    </>
   )
 }

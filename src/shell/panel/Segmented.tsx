@@ -20,7 +20,19 @@ export function Segmented({ options, value, onChange, ariaLabel, disabled, class
     <div
       role="group"
       aria-label={ariaLabel}
-      className={`flex overflow-hidden rounded-md border border-black/15 dark:border-white/15 ${className ?? ''}`}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+        const enabled = options.filter((o) => !(disabled || o.disabled))
+        if (enabled.length === 0) return
+        const cur = enabled.findIndex((o) => o.value === value)
+        const step = e.key === 'ArrowRight' ? 1 : -1
+        const next = enabled[(cur + step + enabled.length) % enabled.length]
+        e.preventDefault()
+        onChange(next.value)
+        const buttons = e.currentTarget.querySelectorAll<HTMLButtonElement>('button')
+        buttons[options.indexOf(next)]?.focus()
+      }}
+      className={`flex overflow-hidden rounded-md border border-black/30 dark:border-white/30 ${className ?? ''}`}
     >
       {options.map((o) => {
         const active = o.value === value

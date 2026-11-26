@@ -1,12 +1,13 @@
 // One look for every sidebar block, field and button (docs/sidebar-plan.md §3).
 // One border colour, one radius, one padding, one heading style, light + dark.
+// Surfaces use the tokens of src/index.css (bg-surface-0/1/2); grays are the slate family.
 // Focus rings are NOT repeated here: the base layer of src/index.css already draws
 // `outline: 2px solid #ea580c; outline-offset: 1px` on :focus-visible for button,
 // input, select, textarea, summary and [tabindex] — that is the app-wide orange-700 ring.
 // Touch targets: h-9 (36 px) on fine pointers, `pointer-coarse:h-11` (44 px) on coarse ones.
 
 /** Bordered block used by every panel section. */
-export const PANEL_CARD = 'rounded-lg border border-black/10 text-sm dark:border-white/10'
+export const PANEL_CARD = 'rounded-lg border border-black/10 text-sm dark:border-white/10 dark:bg-surface-1'
 
 /**
  * Spacing scale of the panel: card padding p-3, gap between blocks gap-3, gap between rows gap-2,
@@ -36,7 +37,7 @@ export const MUTED = 'text-xs text-slate-500 dark:text-slate-400'
 
 /** Text/number/select input. */
 export const INPUT =
-  'h-9 w-full min-w-0 rounded-md border border-black/15 bg-white px-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-white/15 dark:bg-[#12161b] dark:text-slate-100 dark:placeholder:text-slate-500 pointer-coarse:h-11'
+  'h-9 w-full min-w-0 rounded-md border border-black/30 bg-white px-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-white/30 dark:hover:border-white/50 dark:bg-surface-0 dark:text-slate-100 dark:placeholder:text-slate-500 pointer-coarse:h-11'
 
 /** Added to an input whose current text is rejected. */
 export const INPUT_INVALID = 'border-red-500 dark:border-red-400'
@@ -47,15 +48,23 @@ export const INPUT_BARE =
 
 /** Bordered wrapper of a bare input: orange focus ring on focus-within, red when invalid. */
 export const inputGroup = (invalid: boolean) =>
-  `flex items-center rounded-md border bg-white dark:bg-[#12161b] ${
+  `flex items-center rounded-md border bg-white dark:bg-surface-0 ${
     invalid
       ? 'border-red-500 dark:border-red-400'
-      : 'border-black/15 focus-within:border-orange-700 focus-within:ring-2 focus-within:ring-orange-700/25 dark:border-white/15 dark:focus-within:border-orange-400 dark:focus-within:ring-orange-400/25'
+      : 'border-black/30 focus-within:border-orange-700 focus-within:ring-2 focus-within:ring-orange-700/25 dark:border-white/30 dark:hover:border-white/50 dark:focus-within:border-orange-400 dark:focus-within:ring-orange-400/25'
   }`
 
 /** Bordered action button. */
 export const BTN =
   'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-black/10 px-2 text-sm hover:bg-black/5 disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/10 pointer-coarse:min-h-11'
+
+/** Filled primary action button (accent colour). */
+export const BTN_PRIMARY =
+  'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-transparent bg-accent px-3 text-sm font-medium text-white hover:bg-accent-bright disabled:opacity-50 pointer-coarse:min-h-11'
+
+/** Red danger action button (delete). */
+export const BTN_DANGER =
+  'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-red-500/50 px-3 text-sm font-medium text-red-600 hover:bg-red-500/10 disabled:opacity-50 dark:border-red-400/50 dark:text-red-400 pointer-coarse:min-h-11'
 
 /** Inline error text under a field. */
 export const ERROR = 'text-xs text-red-600 dark:text-red-400'

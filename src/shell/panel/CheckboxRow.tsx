@@ -60,7 +60,7 @@ export function SwitchRow({ label, checked, onChange, id, name, disabled, descri
         />
         <span
           aria-hidden="true"
-          className="relative h-5 w-9 shrink-0 rounded-full bg-black/20 transition-colors peer-checked:bg-orange-700 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-orange-700 peer-disabled:opacity-50 dark:bg-white/25 after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
+          className="relative h-5 w-9 shrink-0 rounded-full bg-black/30 transition-colors peer-checked:bg-orange-700 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-orange-500 peer-disabled:opacity-50 dark:bg-white/35 after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-transform after:content-[''] peer-checked:after:translate-x-4"
         />
         <span className="min-w-0">{label}</span>
       </label>

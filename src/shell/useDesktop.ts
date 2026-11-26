@@ -23,3 +23,19 @@ const subscribe = (onChange: () => void) => {
 export function useIsDesktop(): boolean {
   return useSyncExternalStore(subscribe, () => isDesktopMatch(getMedia()), () => true)
 }
+
+/** Reusable media query hook. Without matchMedia (server render, test) the result is false. */
+export function useMediaQuery(query: string): boolean {
+  const getMq = () =>
+    typeof window === 'undefined' || typeof window.matchMedia !== 'function' ? null : window.matchMedia(query)
+  return useSyncExternalStore(
+    (onChange) => {
+      const mq = getMq()
+      if (!mq) return () => {}
+      mq.addEventListener('change', onChange)
+      return () => mq.removeEventListener('change', onChange)
+    },
+    () => getMq()?.matches ?? false,
+    () => false,
+  )
+}

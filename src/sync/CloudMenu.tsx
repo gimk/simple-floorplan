@@ -1,9 +1,11 @@
 // Compact cloud-sync popover for the top bar: saves the current project as a D1 snapshot
 // (reference images go to R2) and loads or deletes earlier cloud projects.
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { Cloud, CloudUpload, Lock, Trash2 } from 'lucide-react'
+import { Cloud, CloudAlert, CloudOff, CloudUpload, Loader2, Lock, Trash2 } from 'lucide-react'
 import { toast } from '../features/toast'
 import { useDoc } from '../model/store'
+import type { ProjectDoc } from '../model/types'
+import { BTN, BTN_DANGER, BTN_PRIMARY, IconButton, INPUT } from '../shell/panel'
 import { useUi } from '../shell/uiStore'
 import {
   CloudUnauthorizedError,
@@ -16,27 +18,34 @@ import {
   setCloudToken,
   type CloudProjectSummary,
 } from './cloud'
+import { relativeTime } from './relativeTime'
 
-const MENU_BTN = 'flex h-9 w-9 items-center justify-center rounded-md text-zinc-300 hover:bg-white/10 disabled:opacity-40'
-const ROW_BTN = 'min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-white/10 disabled:opacity-50'
+const ROW_BTN = 'min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-white/10 disabled:opacity-50 pointer-coarse:min-h-11'
 const DEL_BTN =
-  'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-white/10 hover:text-red-400 disabled:opacity-40'
+  'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-white/10 hover:text-red-400 disabled:opacity-40 pointer-coarse:h-11 pointer-coarse:w-11'
 const LOCK_BTN =
-  'flex h-6 w-6 items-center justify-center rounded-md text-zinc-500 hover:bg-white/10 hover:text-zinc-200 disabled:opacity-40'
+  'flex h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:bg-white/10 hover:text-slate-200 disabled:opacity-40 pointer-coarse:h-11 pointer-coarse:w-11'
+const HEAD = 'text-[11px] font-semibold uppercase tracking-wide text-slate-400'
 
-/** Shown when /api/* is missing, e.g. plain `vite dev` without the Pages Functions runtime. */
-const UNAVAILABLE = 'Cloud API unavailable in local dev. Deploy to Cloudflare Pages to enable.'
+/** Shown when /api/* is missing, e.g. plain `vite dev` without the Worker runtime. */
+const UNAVAILABLE =
+  'Cloud API unavailable. It needs the Cloudflare Worker deployment (or `wrangler dev`); a static-only deployment or plain `vite dev` has no /api.'
 
-/** Short, local, human date for a project row; empty string when the stamp is unparsable. */
-function shortDate(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+/** The document that was last saved to or loaded from the cloud (identity compare = "unsaved changes"). */
+let syncedDoc: ProjectDoc | null = null
+
+/** True when the open plan differs from the last cloud sync (or was edited and never synced). */
+function hasUnsavedChanges(): boolean {
+  const doc = useDoc.getState().doc
+  if (syncedDoc) return doc !== syncedDoc
+  return useDoc.temporal.getState().pastStates.length > 0
 }
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : 'unknown error')
 
-export function CloudMenu() {
+type Pending = { kind: 'load' | 'delete'; id: string }
+
+export function CloudMenu({ showLabel = false }: { /** Render the trigger as a full-width labelled row (for the overflow menu). */ showLabel?: boolean }) {
   const [open, setOpen] = useState(false)
   const [projects, setProjects] = useState<CloudProjectSummary[] | null>(null)
   const [unavailable, setUnavailable] = useState(false)
@@ -44,12 +53,26 @@ export function CloudMenu() {
   const [passcode, setPasscode] = useState('')
   const [rejected, setRejected] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [synced, setSynced] = useState(false)
+  const [pending, setPending] = useState<Pending | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const saveRef = useRef<HTMLButtonElement>(null)
+  const passRef = useRef<HTMLInputElement>(null)
+  const title = useDoc((s) => s.doc.title)
 
   /** No fetched list and no failure yet: a request is in flight (or about to be). */
   const loading = projects === null && !unavailable
   /** Only offer the Lock button once we hold a saved passcode and the list is usable. */
   const canLock = !locked && getCloudToken() !== null
+
+  const triggerEl = () => rootRef.current?.querySelector<HTMLButtonElement>('button') ?? null
+  const close = useCallback((returnFocus = true) => {
+    setOpen(false)
+    setPending(null)
+    if (returnFocus) requestAnimationFrame(() => triggerEl()?.focus())
+  }, [])
 
   /** A 401 means the server wants a passcode: show the unlock form, not "unavailable". */
   const showLocked = useCallback(() => {
@@ -57,6 +80,7 @@ export function CloudMenu() {
     setUnavailable(false)
     setRejected(false)
     setLocked(true)
+    setSynced(false)
   }, [])
 
   const refresh = useCallback(async () => {
@@ -64,6 +88,7 @@ export function CloudMenu() {
       setProjects(await listCloudProjects())
       setUnavailable(false)
       setLocked(false)
+      setSynced(true)
     } catch (err) {
       if (err instanceof CloudUnauthorizedError) {
         showLocked()
@@ -71,6 +96,7 @@ export function CloudMenu() {
       }
       setProjects(null)
       setUnavailable(true)
+      setSynced(false)
     }
   }, [showLocked])
 
@@ -78,26 +104,34 @@ export function CloudMenu() {
   // request may have failed in local dev). Not an effect: the click is the only trigger.
   const toggle = () => {
     if (open) {
-      setOpen(false)
+      close()
       return
     }
     setOpen(true)
     setProjects(null)
     setUnavailable(false)
+    setPending(null)
     void refresh()
   }
+
+  // Focus: the passcode input when locked, else the Save button.
+  useEffect(() => {
+    if (!open) return
+    if (locked) passRef.current?.focus()
+    else saveRef.current?.focus()
+  }, [open, locked])
 
   // Close on Escape or on a pointer press outside the button + popover.
   useEffect(() => {
     if (!open) return
     const onDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close(false)
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       // Do not let the global shortcut handler also act on this Escape.
       e.stopPropagation()
-      setOpen(false)
+      close()
     }
     document.addEventListener('pointerdown', onDown)
     document.addEventListener('keydown', onKey)
@@ -105,7 +139,7 @@ export function CloudMenu() {
       document.removeEventListener('pointerdown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, close])
 
   /** Try the typed passcode: keep it on success, drop it and hint on a second 401. */
   const onSubmitPasscode = async (e: FormEvent) => {
@@ -119,6 +153,7 @@ export function CloudMenu() {
       setUnavailable(false)
       setLocked(false)
       setRejected(false)
+      setSynced(true)
       setPasscode('')
     } catch (err) {
       clearCloudToken()
@@ -126,6 +161,7 @@ export function CloudMenu() {
       if (err instanceof CloudUnauthorizedError) {
         setLocked(true)
         setRejected(true)
+        passRef.current?.focus()
       } else {
         setLocked(false)
         setUnavailable(true)
@@ -143,73 +179,129 @@ export function CloudMenu() {
     setProjects(null)
     setUnavailable(false)
     setLocked(false)
+    setSynced(false)
     void refresh()
   }
 
   const onSave = async () => {
     setBusy(true)
+    setSaving(true)
+    const doc = useDoc.getState().doc
     try {
-      await saveProjectToCloud(useDoc.getState().doc)
-      toast('Saved to cloud')
+      await saveProjectToCloud(doc)
+      syncedDoc = doc
+      setFailed(false)
+      toast(`Saved "${doc.title || 'Untitled plan'}" to cloud`, { kind: 'success' })
       await refresh()
     } catch (err) {
       if (err instanceof CloudUnauthorizedError) showLocked()
-      else toast(`Cloud save failed: ${errorText(err)}`)
+      else {
+        setFailed(true)
+        toast(`Cloud save failed: ${errorText(err)}`, { kind: 'error' })
+      }
     } finally {
+      setSaving(false)
       setBusy(false)
     }
   }
 
-  const onLoad = async (id: string) => {
+  const doLoad = async (id: string) => {
     setBusy(true)
+    setPending(null)
     try {
       const doc = await loadProjectFromCloud(id)
       useDoc.getState().hydrate(doc)
+      syncedDoc = useDoc.getState().doc
       useUi.getState().set({ activeArtboardId: null, selection: { kind: 'none' } })
-      setOpen(false)
-      toast(`Loaded "${doc.title}"`)
+      setFailed(false)
+      close()
+      toast(`Loaded "${doc.title}"`, { kind: 'success' })
     } catch (err) {
       if (err instanceof CloudUnauthorizedError) showLocked()
-      else toast(`Cloud load failed: ${errorText(err)}`)
+      else {
+        setFailed(true)
+        toast(`Cloud load failed: ${errorText(err)}`, { kind: 'error' })
+      }
     } finally {
       setBusy(false)
     }
   }
 
-  const onDelete = async (p: CloudProjectSummary) => {
+  /** Loading replaces the open plan: ask first when it has unsaved changes. */
+  const onLoad = (id: string) => {
+    if (hasUnsavedChanges()) setPending({ kind: 'load', id })
+    else void doLoad(id)
+  }
+
+  const doDelete = async (p: CloudProjectSummary) => {
     setBusy(true)
+    setPending(null)
     try {
       await deleteCloudProject(p.id)
+      setFailed(false)
+      toast(`Deleted "${p.title || 'Untitled'}" from cloud`, { kind: 'success' })
       await refresh()
     } catch (err) {
       if (err instanceof CloudUnauthorizedError) showLocked()
-      else toast(`Cloud delete failed: ${errorText(err)}`)
+      else {
+        setFailed(true)
+        toast(`Cloud delete failed: ${errorText(err)}`, { kind: 'error' })
+      }
     } finally {
       setBusy(false)
     }
   }
 
+  const statusText = busy
+    ? 'working'
+    : locked
+      ? 'locked'
+      : unavailable
+        ? 'unavailable'
+        : failed
+          ? 'last action failed'
+          : synced
+            ? 'connected'
+            : ''
+  const StatusIcon = locked || unavailable ? CloudOff : failed ? CloudAlert : Cloud
+  const dot = busy ? 'animate-pulse bg-amber-400' : synced && !failed && !locked && !unavailable ? 'bg-emerald-400' : ''
+  const triggerIcon = (
+    <span className="relative flex">
+      <StatusIcon size={18} aria-hidden="true" />
+      {dot && <span className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ring-2 ring-surface-1 ${dot}`} aria-hidden="true" />}
+      {statusText && <span className="sr-only">{statusText}</span>}
+    </span>
+  )
+
+  const saveName = title.trim() || 'Untitled plan'
+
   return (
     <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        className={MENU_BTN}
-        aria-label="Cloud sync"
-        title="Cloud sync (save/load)"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={toggle}
-      >
-        <Cloud size={18} />
-      </button>
+      {showLabel ? (
+        <button
+          type="button"
+          title="Cloud sync (save/load)"
+          aria-label="Cloud sync"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={toggle}
+          className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-slate-200 hover:bg-white/10 pointer-coarse:h-11"
+        >
+          {triggerIcon}
+          <span>Cloud sync</span>
+        </button>
+      ) : (
+        <IconButton label="Cloud sync" variant="bar" icon={triggerIcon} pressed={open} onClick={toggle} />
+      )}
       {open && (
         <div
           role="dialog"
           aria-label="Cloud sync"
-          className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-white/10 bg-[#1a2028] p-3 shadow-xl"
+          aria-busy={busy}
+          className="absolute right-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-white/10 bg-surface-2 p-3 text-slate-200 shadow-xl"
         >
           <div className="flex items-center justify-between pb-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Cloud sync</p>
+            <h2 className={HEAD}>Cloud sync</h2>
             {canLock && (
               <button
                 type="button"
@@ -230,76 +322,109 @@ export function CloudMenu() {
                 void onSubmitPasscode(e)
               }}
             >
-              <p className="text-xs leading-snug text-zinc-400">Enter the passcode to use cloud saves.</p>
+              <p className="text-xs leading-snug text-slate-400">Enter the passcode to use cloud saves.</p>
               <input
+                ref={passRef}
                 type="password"
                 value={passcode}
                 disabled={busy}
                 placeholder="Enter passcode"
                 aria-label="Cloud passcode"
+                aria-invalid={rejected}
                 autoComplete="current-password"
                 onChange={(e) => {
                   setPasscode(e.target.value)
                   setRejected(false)
                 }}
-                className="w-full rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-orange-600 focus:outline-none disabled:opacity-50"
+                className={`${INPUT} disabled:opacity-50`}
               />
-              <button
-                type="submit"
-                disabled={busy || passcode.trim() === ''}
-                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-orange-700 px-2 py-2 text-sm font-semibold text-white hover:bg-orange-800 disabled:opacity-50"
-              >
+              <button type="submit" disabled={busy || passcode.trim() === ''} className={`${BTN_PRIMARY} w-full`}>
                 <Lock size={14} />
                 Unlock
               </button>
-              {rejected && <p className="text-xs text-red-400">Wrong passcode</p>}
+              {rejected && (
+                <p role="alert" className="text-xs text-red-400">
+                  Wrong passcode
+                </p>
+              )}
             </form>
           ) : (
             <>
               <button
+                ref={saveRef}
                 type="button"
                 disabled={busy}
+                aria-busy={saving}
                 onClick={() => void onSave()}
-                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-orange-700 px-2 py-2 text-sm font-semibold text-white hover:bg-orange-800 disabled:opacity-50"
+                className={`${BTN_PRIMARY} w-full min-w-0`}
               >
-                <CloudUpload size={16} />
-                Save current project
+                {saving ? <Loader2 size={16} className="shrink-0 animate-spin" aria-hidden="true" /> : <CloudUpload size={16} className="shrink-0" aria-hidden="true" />}
+                <span className="truncate">{saving ? 'Saving…' : `Save "${saveName}"`}</span>
               </button>
               <div className="my-3 border-t border-white/10" />
-              <p className="pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Cloud projects</p>
+              <h2 className={`${HEAD} pb-1`}>Cloud projects</h2>
               <div className="max-h-64 overflow-y-auto">
                 {loading ? (
-                  <p className="px-2 py-1 text-xs text-zinc-500">Loading…</p>
+                  <p role="status" className="px-2 py-1 text-xs text-slate-400">Loading…</p>
                 ) : unavailable ? (
-                  <p className="px-2 py-1 text-xs leading-snug text-zinc-500">{UNAVAILABLE}</p>
+                  <p className="px-2 py-1 text-xs leading-snug text-slate-400">{UNAVAILABLE}</p>
                 ) : !projects || projects.length === 0 ? (
-                  <p className="px-2 py-1 text-xs text-zinc-500">No cloud projects yet.</p>
+                  <p className="px-2 py-1 text-xs text-slate-400">No cloud projects yet.</p>
                 ) : (
                   <ul className="space-y-0.5">
-                    {projects.map((p) => (
-                      <li key={p.id} className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          disabled={busy}
-                          title={`Load "${p.title}"`}
-                          onClick={() => void onLoad(p.id)}
-                          className={ROW_BTN}
-                        >
-                          <span className="block truncate text-sm text-zinc-100">{p.title || 'Untitled'}</span>
-                          <span className="block text-[11px] text-zinc-500">{shortDate(p.updatedAt)}</span>
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          aria-label={`Delete "${p.title}"`}
-                          title={`Delete "${p.title}"`}
-                          onClick={() => void onDelete(p)}
-                          className={DEL_BTN}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </li>
-                    ))}
+                    {projects.map((p) => {
+                      const name = p.title || 'Untitled'
+                      if (pending?.id === p.id) {
+                        const isLoad = pending.kind === 'load'
+                        return (
+                          <li key={p.id} className="space-y-1.5 rounded-md bg-white/5 p-2">
+                            <p className="text-xs leading-snug text-slate-200">
+                              {isLoad ? `Replace the open plan with "${name}"? Unsaved changes are lost.` : `Delete "${name}"?`}
+                            </p>
+                            <div className="flex gap-1.5">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                autoFocus
+                                onClick={() => void (isLoad ? doLoad(p.id) : doDelete(p))}
+                                className={`${isLoad ? BTN_PRIMARY : BTN_DANGER} flex-1`}
+                              >
+                                {isLoad ? 'Load' : 'Yes'}
+                              </button>
+                              <button type="button" disabled={busy} onClick={() => setPending(null)} className={`${BTN} flex-1`}>
+                                {isLoad ? 'Cancel' : 'No'}
+                              </button>
+                            </div>
+                          </li>
+                        )
+                      }
+                      return (
+                        <li key={p.id} className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            title={`Load "${name}"`}
+                            onClick={() => onLoad(p.id)}
+                            className={ROW_BTN}
+                          >
+                            <span className="block truncate text-sm text-slate-100">{name}</span>
+                            <span className="block text-[11px] text-slate-400" title={p.updatedAt}>
+                              {relativeTime(p.updatedAt)}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            aria-label={`Delete "${name}"`}
+                            title={`Delete "${name}"`}
+                            onClick={() => setPending({ kind: 'delete', id: p.id })}
+                            className={DEL_BTN}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </li>
+                      )
+                    })}
                   </ul>
                 )}
               </div>

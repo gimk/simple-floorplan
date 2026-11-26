@@ -4,25 +4,27 @@
 // A new item lands at the centre of the active artboard: the centre of the rooms bounding box
 // when the artboard has rooms, else the centre of its frame. Units: cm.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel.
-import { useId, useState } from 'react'
-import { LayoutGrid, Plus, Shapes } from 'lucide-react'
+import { useId, useRef, useState } from 'react'
+import { LayoutGrid, Plus, Search, Shapes } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem } from '../../model/types'
 import {
-  CheckboxRow,
+  ColorRow,
   EmptyHint,
   FieldRow,
+  INPUT,
   MUTED,
   NumberField,
   PanelSection,
   Segmented,
+  SwitchRow,
   TextField,
 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { artboardFrame } from '../artboards/frame'
 import { addFurniture } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
-import { FURNITURE_COLORS, FURNITURE_PRESETS } from './presets'
+import { FURNITURE_COLORS, FURNITURE_PRESETS, type FurniturePreset } from './presets'
 
 /** Shape of a new item. */
 type Shape = FurnitureItem['shape']
@@ -75,52 +77,69 @@ function centerOfArtboard(artboard: Artboard): { xCm: number; yCm: number } {
   }
 }
 
-/** One row of colour circles; the current colour gets an orange ring. */
-function ColorRow({ value, onPick }: { value: string; onPick: (color: string) => void }) {
-  const current = value.toLowerCase()
+/** Category of each preset id. presets.ts has no category field, so the list is derived here. */
+const CATEGORY_BY_ID: Record<string, string> = {
+  bed: 'Beds',
+  'single-bed': 'Beds',
+  sofa: 'Seating',
+  armchair: 'Seating',
+  'dining-table': 'Tables',
+  'round-table': 'Tables',
+  'coffee-table': 'Tables',
+  desk: 'Tables',
+  wardrobe: 'Storage',
+  bookshelf: 'Storage',
+  'kitchen-counter': 'Storage',
+  rug: 'Rugs',
+}
+
+const categoryOf = (preset: FurniturePreset): string => CATEGORY_BY_ID[preset.id] ?? 'Other'
+
+/** Category chips, in the order of the preset list (unique). */
+const CATEGORIES: readonly string[] = [...new Set(FURNITURE_PRESETS.map(categoryOf))]
+
+/** Distance between two items added one after the other, and how many steps before the cycle restarts. */
+const CASCADE_STEP_CM = 20
+const CASCADE_STEPS = 5
+
+/** Furniture colour swatches for the shared ColorRow. */
+const COLOR_VALUES = FURNITURE_COLORS.map((c) => c.color)
+
+/** Side of the thumbnail box, in px. */
+const THUMB = 32
+
+/** Top-down thumbnail: the shape at its true aspect ratio, in the item colour. */
+function PresetThumb({ item }: { item: FurniturePreset }) {
+  const max = Math.max(item.widthCm, item.depthCm)
+  const w = Math.max(4, (item.widthCm / max) * (THUMB - 4))
+  const h = Math.max(4, (item.depthCm / max) * (THUMB - 4))
+  const x = (THUMB - w) / 2
+  const y = (THUMB - h) / 2
+  const stroke = 'rgba(255,255,255,0.35)'
   return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Furniture color">
-      {FURNITURE_COLORS.map((c) => {
-        const on = c.color.toLowerCase() === current
-        return (
-          <button
-            key={c.id}
-            type="button"
-            aria-pressed={on}
-            aria-label={c.label}
-            title={c.label}
-            onClick={() => onPick(c.color)}
-            style={{ backgroundColor: c.color }}
-            className={`h-6 w-6 shrink-0 rounded-full border border-black/20 pointer-coarse:h-8 pointer-coarse:w-8 dark:border-white/25 ${
-              on
-                ? 'ring-2 ring-orange-500 ring-offset-2 ring-offset-white dark:ring-orange-400 dark:ring-offset-[#161b21]'
-                : 'hover:opacity-80'
-            }`}
-          />
-        )
-      })}
-    </div>
+    <svg width={THUMB} height={THUMB} viewBox={`0 0 ${THUMB} ${THUMB}`} aria-hidden="true" className="shrink-0">
+      {item.shape === 'circle' ? (
+        <ellipse cx={THUMB / 2} cy={THUMB / 2} rx={w / 2} ry={h / 2} fill={item.color} stroke={stroke} />
+      ) : (
+        <rect x={x} y={y} width={w} height={h} rx={Math.min(3, w / 4, h / 4)} fill={item.color} stroke={stroke} />
+      )}
+    </svg>
   )
 }
 
-/** One preset button: one shape+colour swatch, the name over the size, and a plus hint. */
-function PresetButton({ item, onAdd }: { item: (typeof FURNITURE_PRESETS)[number]; onAdd: () => void }) {
+/** One preset button: top-down thumbnail, the name over the size, and an always visible plus. */
+function PresetButton({ item, onAdd, disabled }: { item: FurniturePreset; onAdd: () => void; disabled: boolean }) {
   return (
     <li>
       <button
         type="button"
         aria-label={`Add ${item.name}`}
-        title={`Add ${item.name} (${item.widthCm} × ${item.depthCm} cm)`}
+        title={disabled ? 'Add an artboard first' : `Add ${item.name} (${item.widthCm} × ${item.depthCm} cm)`}
+        disabled={disabled}
         onClick={onAdd}
-        className="group flex min-h-9 w-full items-center gap-2 rounded-md border border-transparent px-2.5 py-2 text-left transition-colors hover:bg-black/5 pointer-coarse:min-h-11 dark:hover:bg-white/10"
+        className="group flex min-h-11 w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10"
       >
-        <span
-          aria-hidden="true"
-          style={{ backgroundColor: item.color }}
-          className={`h-4 w-4 shrink-0 border border-white/25 ${
-            item.shape === 'circle' ? 'rounded-full' : 'rounded-[4px]'
-          }`}
-        />
+        <PresetThumb item={item} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-sm font-medium leading-tight text-slate-800 dark:text-slate-100">
             {item.name}
@@ -129,11 +148,7 @@ function PresetButton({ item, onAdd }: { item: (typeof FURNITURE_PRESETS)[number
             {`${item.widthCm} × ${item.depthCm} cm`}
           </span>
         </span>
-        <Plus
-          size={14}
-          aria-hidden="true"
-          className="shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-200"
-        />
+        <Plus size={16} aria-hidden="true" className="shrink-0 text-slate-500 dark:text-slate-400" />
       </button>
     </li>
   )
@@ -151,6 +166,11 @@ export function FurniturePanel() {
   const [depthCm, setDepthCm] = useState(DEFAULT_DEPTH_CM)
   const [color, setColor] = useState(FURNITURE_COLORS[0].color)
   const [showDirection, setShowDirection] = useState(false)
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState<string | null>(null)
+  // Number of items added by this panel: each new item is shifted a little, so repeated adds do not stack.
+  const addCount = useRef(0)
+  const searchId = useId()
 
   const artboard = artboards.find((a) => a.id === activeArtboardId) ?? artboards[0]
 
@@ -161,7 +181,13 @@ export function FurniturePanel() {
   const place = (item: NewItem, position?: 'top' | 'bottom') => {
     if (!artboard) return
     const center = centerOfArtboard(artboard)
-    addFurniture(artboard.id, { ...item, xCm: center.xCm, yCm: center.yCm, rotationDeg: 0 }, { position })
+    const shift = (addCount.current % CASCADE_STEPS) * CASCADE_STEP_CM
+    addCount.current += 1
+    addFurniture(
+      artboard.id,
+      { ...item, xCm: center.xCm + shift, yCm: center.yCm + shift, rotationDeg: 0 },
+      { position },
+    )
   }
 
   const addCustom = () => {
@@ -176,9 +202,83 @@ export function FurniturePanel() {
     })
   }
 
+  const needle = query.trim().toLowerCase()
+  const shown = FURNITURE_PRESETS.filter(
+    (p) => (category === null || categoryOf(p) === category) && (needle === '' || p.name.toLowerCase().includes(needle)),
+  )
+
   return (
     <>
-      <PanelSection title="Custom shape" icon={<Shapes size={14} aria-hidden="true" />}>
+      <PanelSection title="Presets" icon={<LayoutGrid size={14} aria-hidden="true" />}>
+        <div className="relative">
+          <Search
+            size={14}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
+          />
+          <input
+            id={searchId}
+            type="search"
+            aria-label="Search furniture presets"
+            placeholder="Search furniture"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className={`${INPUT} pl-8`}
+          />
+        </div>
+        <div role="group" aria-label="Preset categories" className="flex flex-wrap gap-1">
+          {[null, ...CATEGORIES].map((c) => {
+            const active = category === c
+            return (
+              <button
+                key={c ?? 'all'}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setCategory(c)}
+                className={`min-h-7 rounded-full border px-2.5 text-xs font-medium pointer-coarse:min-h-10 ${
+                  active
+                    ? 'border-orange-500 bg-orange-500/15 text-orange-700 dark:text-orange-300'
+                    : 'border-black/15 text-slate-700 hover:bg-black/5 dark:border-white/20 dark:text-slate-200 dark:hover:bg-white/10'
+                }`}
+              >
+                {c ?? 'All'}
+              </button>
+            )
+          })}
+        </div>
+        {shown.length === 0 ? (
+          <EmptyHint>No preset matches your search.</EmptyHint>
+        ) : (
+          <ul className="flex flex-col gap-1" aria-label="Furniture presets">
+            {shown.map((preset) => (
+              <PresetButton
+                key={preset.id}
+                item={preset}
+                disabled={!artboard}
+                onAdd={() =>
+                  place(
+                    {
+                      name: preset.name,
+                      shape: preset.shape,
+                      widthCm: preset.widthCm,
+                      depthCm: preset.depthCm,
+                      color: preset.color,
+                      heightCm: preset.heightCm,
+                      showDirection: preset.showDirection,
+                    },
+                    preset.layer,
+                  )
+                }
+              />
+            ))}
+          </ul>
+        )}
+        <EmptyHint>
+          {artboard ? 'New items land at the centre of the active artboard.' : 'Add an artboard in Plan mode to place furniture.'}
+        </EmptyHint>
+      </PanelSection>
+
+      <PanelSection title="Custom shape" icon={<Shapes size={14} aria-hidden="true" />} collapsible defaultOpen={false}>
         <FieldRow label="Name" htmlFor={nameId}>
           <TextField
             id={nameId}
@@ -228,10 +328,10 @@ export function FurniturePanel() {
 
         <div className="flex flex-col gap-1">
           <span className={`text-xs ${MUTED}`}>Color</span>
-          <ColorRow value={color} onPick={setColor} />
+          <ColorRow label="Furniture color" colors={COLOR_VALUES} value={color} onChange={setColor} />
         </div>
 
-        <CheckboxRow label="Direction arrow" checked={showDirection} onChange={setShowDirection} />
+        <SwitchRow label="Direction arrow" checked={showDirection} onChange={setShowDirection} />
 
         <button
           type="button"
@@ -243,32 +343,6 @@ export function FurniturePanel() {
           <Plus size={14} aria-hidden="true" />
           Add shape
         </button>
-      </PanelSection>
-
-      <PanelSection title="Presets" icon={<LayoutGrid size={14} aria-hidden="true" />}>
-        <ul className="flex flex-col gap-1.5" aria-label="Furniture presets">
-          {FURNITURE_PRESETS.map((preset) => (
-            <PresetButton
-              key={preset.id}
-              item={preset}
-              onAdd={() =>
-                place(
-                  {
-                    name: preset.name,
-                    shape: preset.shape,
-                    widthCm: preset.widthCm,
-                    depthCm: preset.depthCm,
-                    color: preset.color,
-                    heightCm: preset.heightCm,
-                    showDirection: preset.showDirection,
-                  },
-                  preset.layer,
-                )
-              }
-            />
-          ))}
-        </ul>
-        <EmptyHint>New items land at the centre of the active artboard.</EmptyHint>
       </PanelSection>
     </>
   )
