@@ -288,3 +288,107 @@ describe('renderArtboardSvg', () => {
     expect(a.widthPx).toBe(b.widthPx)
   })
 })
+
+/** The markup of one opening group, from its data-opening attribute to the next opening. */
+const groupOf = (svg: string, id: string): string => {
+  const from = svg.indexOf(`data-opening="${id}"`)
+  const to = svg.indexOf('data-opening="', from + 1)
+  return svg.slice(from, to < 0 ? undefined : to)
+}
+
+describe('renderArtboardSvg opening variants', () => {
+  const oneDoor = (p: Partial<Opening> = {}) =>
+    renderArtboardSvg(artboard({ rooms: [rect('r1', 'Living', 0, 0, 400, 300)], openings: [door(p)] })).svg
+  const oneWindow = (p: Partial<Opening> = {}) =>
+    renderArtboardSvg(artboard({ rooms: [rect('r1', 'Living', 0, 0, 400, 300)], openings: [windowOp({ xCm: 200, ...p })] })).svg
+
+  it('writes the style of the opening in the group', () => {
+    expect(oneDoor()).toContain('data-opening="d1" data-kind="door" data-variant="standard"')
+    expect(oneDoor({ variant: 'french' })).toContain('data-variant="french"')
+    expect(oneWindow()).toContain('data-opening="w1" data-kind="window" data-variant="standard"')
+    expect(oneWindow({ variant: 'sliding' })).toContain('data-variant="sliding"')
+  })
+
+  it('draws a standard door with one leaf and one quarter-circle arc', () => {
+    const g = groupOf(oneDoor(), 'd1')
+    expect(count(g, ' A ')).toBe(1)
+    expect(count(g, '<polygon')).toBe(0)
+    expect(g).toContain('A 85 85 0 0 1 157.5 85')
+  })
+
+  it('draws a french door with two half-width leaves and two arcs meeting in the middle', () => {
+    const g = groupOf(oneDoor({ variant: 'french' }), 'd1')
+    // Two leaves, each half the 85 cm width, hinged at the two ends of the opening.
+    expect(count(g, 'stroke-linecap="round"')).toBe(2)
+    expect(g).toContain('<line x1="157.5" y1="0" x2="157.5" y2="42.5"')
+    expect(g).toContain('<line x1="242.5" y1="0" x2="242.5" y2="42.5"')
+    // Two quarter-circle arcs of radius 42.5 that both start at the centre (200, 0).
+    expect(count(g, ' A ')).toBe(2)
+    expect(g).toContain('A 42.5 42.5 0 0 1 157.5 42.5')
+    expect(g).toContain('A 42.5 42.5 0 0 0 242.5 42.5')
+    expect(count(g, 'M 200 0 A ')).toBe(2)
+    // A french door has no single full-width leaf and no wall line.
+    expect(g).not.toContain('A 85 85')
+  })
+
+  it('draws a pocket door with a sliding leaf, a dashed pocket receiver and a slide line', () => {
+    const g = groupOf(oneDoor({ variant: 'pocket' }), 'd1')
+    // The 1px line of the gap through the wall stays, as on the canvas.
+    expect(g).toContain('<line x1="157.5" y1="0" x2="242.5" y2="0" stroke="#e4e4e7" stroke-width="0.5" />')
+    // One panel and one dashed receiver box, on the hinge side of the opening.
+    expect(count(g, '<polygon')).toBe(2)
+    expect(count(g, 'stroke-dasharray')).toBe(1)
+    expect(g).toContain('<polygon points="157.5,1.25 204.25,1.25 204.25,2.75 157.5,2.75"')
+    expect(g).toContain('<polygon points="157.5,0.95 132,0.95 132,3.05 157.5,3.05" fill="none"')
+    // The dashed box belongs to the pocket, not to the leaf.
+    expect(g.indexOf('stroke-dasharray')).toBeGreaterThan(g.indexOf('157.5,1.25'))
+    // A short slide-direction line inside the pocket, parallel to the wall.
+    expect(g).toContain('<line x1="154.44" y1="2" x2="139.14" y2="2"')
+    // No swing arc on a sliding door.
+    expect(count(g, ' A ')).toBe(0)
+  })
+
+  it('draws a bypass door with two parallel panels that overlap in the middle', () => {
+    const g = groupOf(oneDoor({ variant: 'bypass' }), 'd1')
+    expect(count(g, '<polygon')).toBe(2)
+    expect(count(g, 'stroke-dasharray')).toBe(0)
+    // 55% of 85 cm = 46.75 cm per panel, one on each side of the wall line.
+    expect(g).toContain('<polygon points="157.5,0.75 204.25,0.75 204.25,2.25 157.5,2.25"')
+    expect(g).toContain('<polygon points="195.75,-2.25 242.5,-2.25 242.5,-0.75 195.75,-0.75"')
+    expect(count(g, ' A ')).toBe(0)
+  })
+
+  it('draws a sliding window with two staggered sashes, and a standard window with three lines', () => {
+    const sliding = groupOf(oneWindow({ variant: 'sliding' }), 'w1')
+    expect(count(sliding, '<polygon')).toBe(2)
+    // 62% of 120 cm = 74.4 cm per sash, staggered on either side of the wall line.
+    expect(sliding).toContain('<polygon points="140,1 214.4,1 214.4,2.5 140,2.5"')
+    expect(sliding).toContain('<polygon points="185.6,-2.5 260,-2.5 260,-1 185.6,-1"')
+    expect(sliding).toContain('<line x1="140" y1="0" x2="260" y2="0" stroke="#e4e4e7" stroke-width="0.5" />')
+
+    const standard = groupOf(oneWindow(), 'w1')
+    expect(count(standard, '<polygon')).toBe(0)
+    expect(count(standard, 'stroke-width="0.75"')).toBe(1)
+    expect(standard).toContain('<line x1="140" y1="1.25" x2="260" y2="1.25"')
+    expect(standard).toContain('<line x1="140" y1="-1.25" x2="260" y2="-1.25"')
+  })
+
+  it('keeps a plain opening unchanged: no symbol, only the jamb ticks', () => {
+    const svg = renderArtboardSvg(artboard({
+      rooms: [rect('r1', 'Living', 0, 0, 400, 300)],
+      openings: [gap({ xCm: 200, yCm: 300, angleDeg: 0 })],
+    })).svg
+    const g = groupOf(svg, 'g1')
+    expect(g).toContain('data-variant="standard"')
+    expect(count(g, '<polygon')).toBe(0)
+    expect(count(g, '<line')).toBe(3) // background gap plus the two jamb ticks
+  })
+
+  it('gives different output for every door style and keeps the drawing stable', () => {
+    const styles = ['standard', 'french', 'pocket', 'bypass'] as const
+    const groups = styles.map((variant) => groupOf(oneDoor({ variant }), 'd1'))
+    expect(new Set(groups).size).toBe(styles.length)
+    // Same input, same output (no hidden state in the renderer).
+    expect(oneDoor({ variant: 'french' })).toBe(oneDoor({ variant: 'french' }))
+  })
+})

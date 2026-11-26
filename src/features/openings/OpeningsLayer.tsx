@@ -11,8 +11,8 @@ import type { Artboard, Opening } from '../../model/types'
 import { getModifiers, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import { formatLengthCm, roundToPrecision } from '../rooms/ops'
-import { doorArcGeometry, keepOpeningOrientation, openingEndpoints, resizeOpeningFromEnd, snapToWall } from './geometry'
-import type { WallSnap } from './geometry'
+import { keepOpeningOrientation, openingEndpoints, openingSymbol, resizeOpeningFromEnd, snapToWall } from './geometry'
+import type { OpeningSymbolArc, OpeningSymbolPath, WallSnap } from './geometry'
 
 export type { Opening }
 
@@ -50,57 +50,66 @@ type Gesture = {
   onEnd?: () => void
 }
 
+/** SVG path of one 1px symbol stroke (open polyline or closed panel outline). */
+function pathD(p: OpeningSymbolPath): string {
+  const head = `M ${p.pts.map((q) => `${q.x} ${q.y}`).join(' L ')}`
+  return p.closed ? `${head} Z` : head
+}
+
+/** SVG path of one quarter-circle swing arc: `M from A r r 0 0 sweep to`. */
+function arcD(a: OpeningSymbolArc): string {
+  return `M ${a.from.x} ${a.from.y} A ${a.radius} ${a.radius} 0 0 ${a.sweepFlag} ${a.to.x} ${a.to.y}`
+}
+
 /** Pure drawing of one opening (no events). Reused by the placement overlay for previews. */
 export function OpeningShape({ op, selected = false, ghost = false }: { op: Opening; selected?: boolean; ghost?: boolean }) {
   const { px } = useViewport()
   const { start, end } = openingEndpoints(op)
   const color = selected ? ORANGE : ghost ? ORANGE : LINE
-  const sw = px(selected ? 1.5 : 1)
+  const line = op.kind === 'window' && !selected && !ghost ? SKY : color
   const rad = (op.angleDeg * Math.PI) / 180
   const nx = -Math.sin(rad), ny = Math.cos(rad)
   const tick = px(4)
+  const symbol = openingSymbol(op, px)
+  // A selected opening gets every stroke a bit heavier, so it stands out of the plan.
+  const weight = (m: number) => px(m * (selected ? 1.5 : 1))
   const ticks = (c: string) => (
     <>
       <line x1={start.x - nx * tick} y1={start.y - ny * tick} x2={start.x + nx * tick} y2={start.y + ny * tick} stroke={c} strokeWidth={px(1)} />
       <line x1={end.x - nx * tick} y1={end.y - ny * tick} x2={end.x + nx * tick} y2={end.y + ny * tick} stroke={c} strokeWidth={px(1)} />
     </>
   )
-  let body: React.ReactNode = null
-  if (op.kind === 'door') {
-    const g = doorArcGeometry(op)
-    body = (
-      <>
-        <line x1={g.hingePt.x} y1={g.hingePt.y} x2={g.openTipPt.x} y2={g.openTipPt.y} stroke={color} strokeWidth={sw} />
-        <path
-          d={`M ${g.closedTipPt.x} ${g.closedTipPt.y} A ${g.radius} ${g.radius} 0 0 ${g.sweepFlag} ${g.openTipPt.x} ${g.openTipPt.y}`}
-          fill="none" stroke={color} strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`} opacity={0.8}
-        />
-      </>
-    )
-  } else if (op.kind === 'window') {
-    const wc = selected || ghost ? color : SKY
-    const o = px(2.5)
-    body = (
-      <>
-        <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={wc} strokeWidth={sw} />
-        <line x1={start.x + nx * o} y1={start.y + ny * o} x2={end.x + nx * o} y2={end.y + ny * o} stroke={wc} strokeWidth={px(1)} opacity={0.6} />
-        <line x1={start.x - nx * o} y1={start.y - ny * o} x2={end.x - nx * o} y2={end.y - ny * o} stroke={wc} strokeWidth={px(1)} opacity={0.6} />
-        {ticks(wc)}
-      </>
-    )
-  } else {
-    body = (
-      <>
-        <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={color} strokeWidth={px(1)} strokeDasharray={`${px(3)} ${px(3)}`} opacity={0.7} />
-        {ticks(color)}
-      </>
-    )
-  }
   return (
     <g pointerEvents="none">
       <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={BG} strokeWidth={px(3)} />
-      {body}
-      {op.kind === 'door' && ticks(color)}
+      {symbol.wallLine && (
+        <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={line} strokeWidth={px(1)} />
+      )}
+      {symbol.paths.map((p, i) => (
+        <path
+          key={`p${i}`}
+          d={pathD(p)}
+          fill="none"
+          stroke={line}
+          strokeWidth={weight(p.weight ?? 1)}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray={p.dashed ? `${px(3)} ${px(3)}` : undefined}
+          opacity={p.opacity}
+        />
+      ))}
+      {symbol.arcs.map((a, i) => (
+        <path
+          key={`a${i}`}
+          d={arcD(a)}
+          fill="none"
+          stroke={color}
+          strokeWidth={px(1)}
+          strokeDasharray={`${px(4)} ${px(3)}`}
+          opacity={0.8}
+        />
+      ))}
+      {ticks(op.kind === 'window' && !selected && !ghost ? SKY : color)}
     </g>
   )
 }

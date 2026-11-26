@@ -1,16 +1,16 @@
 // Right-panel Inspect card for one selected opening (docs/simple-floorplan-2.md §2.6):
-// breadcrumb back to the artboard, the kind (door / window / opening), the width in cm,
-// the hinge and swing flips (doors only) and Delete.
+// breadcrumb back to the artboard, the kind (door / window / opening), the style variant, the width
+// in cm, the hinge and swing flips (only where the style has them) and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm.
 import { ChevronLeft, DoorOpen, FlipHorizontal2, FlipVertical2, Frame, RectangleHorizontal, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useDoc } from '../../model/store'
-import type { Artboard, Opening, OpeningKind } from '../../model/types'
-import { BTN, FieldRow, MUTED, NumberField, PanelSection, Segmented } from '../../shell/panel'
+import type { Artboard, Opening, OpeningKind, OpeningVariant } from '../../model/types'
+import { BTN, FieldRow, MUTED, NumberField, PanelSection, Segmented, SelectField } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { selectArtboard } from '../artboards/selection'
 import { deleteOpening, flipOpeningHinge, flipOpeningSwing, updateOpening } from './actions'
-import { MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM } from './geometry'
+import { MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM, openingVariant } from './geometry'
 
 export type OpeningInspectProps = {
   /** Artboard that holds the opening. */
@@ -32,6 +32,19 @@ const KIND_OPTIONS = [
   { value: 'door', label: 'Door' },
   { value: 'window', label: 'Window' },
   { value: 'opening', label: 'Opening' },
+] as const
+
+/** Door styles. French doors are symmetric, the two sliding styles slide in the plane of the wall. */
+const DOOR_VARIANT_OPTIONS = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'french', label: 'French (double)' },
+  { value: 'pocket', label: 'Pocket sliding' },
+  { value: 'bypass', label: 'Bypass sliding' },
+] as const
+
+const WINDOW_VARIANT_OPTIONS = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'sliding', label: 'Sliding' },
 ] as const
 
 /** Clear the selection after a delete, so the Inspect panel falls back to the artboard. */
@@ -67,10 +80,22 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
 
   const kind = opening.kind
   const isDoor = kind === 'door'
+  const variant = openingVariant(opening)
+  // French doors swing from both ends (symmetric, no hinge) and the two sliding styles stay in the
+  // plane of the wall, so neither of them uses the hinge or the swing side.
+  const showHinge = isDoor && (variant === 'standard' || variant === 'pocket')
+  const showSwing = isDoor && (variant === 'standard' || variant === 'french')
 
   const setKind = (value: string) => {
     if (value === kind) return
     updateOpening(artboard.id, opening.id, { kind: value as OpeningKind })
+  }
+
+  // 'standard' is stored as no variant at all, so old and new documents stay equivalent.
+  const setVariant = (value: string) => {
+    if (value === variant) return
+    const next: OpeningVariant | undefined = value === 'standard' ? undefined : (value as OpeningVariant)
+    updateOpening(artboard.id, opening.id, { variant: next })
   }
 
   const setWidth = (value: number | null): boolean | void => {
@@ -92,6 +117,24 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
         <Segmented options={KIND_OPTIONS} value={kind} onChange={setKind} ariaLabel="Opening type" />
       </FieldRow>
 
+      {isDoor && (
+        <FieldRow label="Style">
+          <SelectField ariaLabel="Door style" value={variant} options={DOOR_VARIANT_OPTIONS} onChange={setVariant} />
+        </FieldRow>
+      )}
+
+      {kind === 'window' && (
+        <FieldRow label="Style" stacked>
+          <Segmented
+            ariaLabel="Window style"
+            options={WINDOW_VARIANT_OPTIONS}
+            value={variant}
+            onChange={setVariant}
+            size="sm"
+          />
+        </FieldRow>
+      )}
+
       <FieldRow label="Width" hint="wall to wall">
         <NumberField
           ariaLabel="Opening width"
@@ -103,26 +146,30 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
         />
       </FieldRow>
 
-      {isDoor && (
+      {isDoor && (showHinge || showSwing) && (
         <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            className={BTN}
-            onClick={() => flipOpeningHinge(artboard.id, opening.id)}
-            title="Move the hinge to the other end of the door"
-          >
-            <FlipHorizontal2 size={14} aria-hidden="true" />
-            Flip Hinge
-          </button>
-          <button
-            type="button"
-            className={BTN}
-            onClick={() => flipOpeningSwing(artboard.id, opening.id)}
-            title="Open the door to the other side of the wall"
-          >
-            <FlipVertical2 size={14} aria-hidden="true" />
-            Flip Swing
-          </button>
+          {showHinge && (
+            <button
+              type="button"
+              className={BTN}
+              onClick={() => flipOpeningHinge(artboard.id, opening.id)}
+              title="Move the hinge to the other end of the door"
+            >
+              <FlipHorizontal2 size={14} aria-hidden="true" />
+              Flip Hinge
+            </button>
+          )}
+          {showSwing && (
+            <button
+              type="button"
+              className={BTN}
+              onClick={() => flipOpeningSwing(artboard.id, opening.id)}
+              title="Open the door to the other side of the wall"
+            >
+              <FlipVertical2 size={14} aria-hidden="true" />
+              Flip Swing
+            </button>
+          )}
         </div>
       )}
 

@@ -7,7 +7,7 @@ import type { Vec } from '../../model/geometry'
 import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
 import { directionArrowGeometry, furnitureCornerRadiusCm } from '../furniture/geometry'
-import { doorArcGeometry, openingEndpoints } from '../openings/geometry'
+import { doorArcGeometry, openingEndpoints, openingSymbol, openingVariant } from '../openings/geometry'
 
 export type ExportOptions = {
   /** Draw the furniture of the artboard. Default: true. */
@@ -109,6 +109,8 @@ function contentBounds(a: Artboard, includeFurniture: boolean): Bounds | null {
     grow(start.x, start.y); grow(end.x, end.y)
     // A door swinging outwards leaves the wall line: the open tip must stay inside the sheet.
     if (o.kind === 'door') { const g = doorArcGeometry(o); grow(g.openTipPt.x, g.openTipPt.y) }
+    // Sliding panels, pocket receivers and window sashes also leave the wall line.
+    for (const p of openingSymbol(o, (px) => px / BASE_PX_PER_CM).paths) for (const q of p.pts) grow(q.x, q.y)
   }
   if (includeFurniture) {
     for (const f of a.furniture) {
@@ -217,14 +219,15 @@ function furnitureSvg(f: FurnitureItem, ctx: Ctx): string[] {
   return out
 }
 
-/** Openings on top of the walls: background gap line, then the door, window or plain gap drawing. */
+/** Openings on top of the walls: background gap line, then the 1px symbol of the kind and its style. */
 function openingSvg(op: Opening, ctx: Ctx): string[] {
   const { start, end } = openingEndpoints(op)
   const nx = -Math.sin(op.angleDeg * RAD), ny = Math.cos(op.angleDeg * RAD)
   const tick = ctx.u(4)
+  const symbol = openingSymbol(op, ctx.u)
   const out: string[] = []
   out.push(
-    `    <g data-opening="${esc(op.id)}" data-kind="${esc(op.kind)}">`,
+    `    <g data-opening="${esc(op.id)}" data-kind="${esc(op.kind)}" data-variant="${esc(openingVariant(op))}">`,
     `      <line x1="${num(start.x)}" y1="${num(start.y)}" x2="${num(end.x)}" y2="${num(end.y)}" ` +
       `stroke="${BG}" stroke-width="${num(ctx.u(3))}" />`,
   )
@@ -234,31 +237,40 @@ function openingSvg(op: Opening, ctx: Ctx): string[] {
     `      <line x1="${num(end.x - nx * tick)}" y1="${num(end.y - ny * tick)}" x2="${num(end.x + nx * tick)}" ` +
       `y2="${num(end.y + ny * tick)}" stroke="${color}" stroke-width="${num(ctx.u(1))}" />`,
   ]
-  if (op.kind === 'door') {
-    const g = doorArcGeometry(op)
-    out.push(
-      `      <line x1="${num(g.hingePt.x)}" y1="${num(g.hingePt.y)}" x2="${num(g.openTipPt.x)}" y2="${num(g.openTipPt.y)}" ` +
-        `stroke="${LINE}" stroke-width="${num(ctx.u(1.2))}" stroke-linecap="round" />`,
-      `      <path d="M ${num(g.closedTipPt.x)} ${num(g.closedTipPt.y)} A ${num(g.radius)} ${num(g.radius)} 0 0 ` +
-        `${g.sweepFlag} ${num(g.openTipPt.x)} ${num(g.openTipPt.y)}" fill="none" stroke="${LINE}" ` +
-        `stroke-width="${num(ctx.u(1))}" stroke-opacity="0.8" />`,
-      ...ticks(LINE),
-    )
-  } else if (op.kind === 'window') {
-    const o = ctx.u(2.5)
+  // Sliding and pocket styles keep a 1px line through the wall, with the panels offset from it.
+  if (symbol.wallLine) {
     out.push(
       `      <line x1="${num(start.x)}" y1="${num(start.y)}" x2="${num(end.x)}" y2="${num(end.y)}" ` +
-        `stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" />`,
-      `      <line x1="${num(start.x + nx * o)}" y1="${num(start.y + ny * o)}" x2="${num(end.x + nx * o)}" ` +
-        `y2="${num(end.y + ny * o)}" stroke="${LINE}" stroke-width="${num(ctx.u(1))}" stroke-opacity="0.6" />`,
-      `      <line x1="${num(start.x - nx * o)}" y1="${num(start.y - ny * o)}" x2="${num(end.x - nx * o)}" ` +
-        `y2="${num(end.y - ny * o)}" stroke="${LINE}" stroke-width="${num(ctx.u(1))}" stroke-opacity="0.6" />`,
-      ...ticks(LINE),
+        `stroke="${LINE}" stroke-width="${num(ctx.u(1))}" />`,
     )
-  } else {
-    // Plain gap: the background line already breaks the wall, the end ticks show the jambs.
-    out.push(...ticks(LINE))
   }
+  for (const p of symbol.paths) {
+    const attrs =
+      `stroke="${LINE}" stroke-width="${num(ctx.u(p.weight ?? 1))}"` +
+      (p.opacity === undefined ? '' : ` stroke-opacity="${num(p.opacity)}"`) +
+      (p.dashed ? ` stroke-dasharray="${num(ctx.u(3))} ${num(ctx.u(3))}"` : '')
+    if (p.closed) {
+      out.push(
+        `      <polygon points="${p.pts.map((q) => `${num(q.x)},${num(q.y)}`).join(' ')}" ` +
+          `fill="none" ${attrs} stroke-linejoin="round" />`,
+      )
+    } else {
+      const a = p.pts[0], b = p.pts[p.pts.length - 1]
+      out.push(
+        `      <line x1="${num(a.x)}" y1="${num(a.y)}" x2="${num(b.x)}" y2="${num(b.y)}" ` +
+          `${attrs} stroke-linecap="round" />`,
+      )
+    }
+  }
+  for (const a of symbol.arcs) {
+    out.push(
+      `      <path d="M ${num(a.from.x)} ${num(a.from.y)} A ${num(a.radius)} ${num(a.radius)} 0 0 ` +
+        `${a.sweepFlag} ${num(a.to.x)} ${num(a.to.y)}" fill="none" stroke="${LINE}" ` +
+        `stroke-width="${num(ctx.u(1))}" stroke-opacity="0.8" />`,
+    )
+  }
+  // Openings keep their jamb ticks on every style, as on the canvas.
+  out.push(...ticks(LINE))
   out.push('    </g>')
   return out
 }

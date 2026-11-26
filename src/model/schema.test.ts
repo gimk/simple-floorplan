@@ -67,10 +67,27 @@ describe('schema', () => {
     expect(parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], widthCm: 0 }] }).ok).toBe(false)
   })
 
-  it('accepts an optional opening variant', () => {
+  it('accepts the door and window variants and an omitted one', () => {
+    const d = createDefaultProject()
+    const withVariant = (variant?: string) => {
+      const o = { id: 'o', kind: 'door', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, ...(variant ? { variant } : {}) }
+      return parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [o] }] })
+    }
+    for (const variant of ['standard', 'pocket', 'bypass', 'french', 'sliding']) {
+      const r = withVariant(variant)
+      expect(r.ok && r.doc.artboards[0].openings[0].variant).toBe(variant)
+    }
+    // No variant at all is valid: a door without a variant is a standard door.
+    const none = withVariant()
+    expect(none.ok).toBe(true)
+    expect(none.ok && none.doc.artboards[0].openings[0].variant).toBeUndefined()
+  })
+
+  it('rejects an unknown opening variant', () => {
     const d = createDefaultProject()
     const o = { id: 'o', kind: 'door', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, variant: 'pocket-sliding' }
     const r = parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [o] }] })
-    expect(r.ok && r.doc.artboards[0].openings[0].variant).toBe('pocket-sliding')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('variant')
   })
 })

@@ -23,7 +23,7 @@ export const openingSchema = z.object({
   swing: z.enum(['in', 'out']).optional(),
   heightCm: num.positive().optional(),
   sillCm: num.min(0).optional(),
-  variant: z.string().optional(),
+  variant: z.enum(['standard', 'pocket', 'bypass', 'french', 'sliding']).optional(),
 })
 
 export const furnitureSchema = z.object({

@@ -5,11 +5,14 @@
 import { add, dist, dot, mul, projectOnSegment, sub } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { newId } from '../../model/schema'
-import type { Opening, OpeningKind, Room } from '../../model/types'
+import type { Opening, OpeningKind, OpeningVariant, Room } from '../../model/types'
 
 export const DEFAULT_OPENING_WIDTH_CM: Record<OpeningKind, number> = { door: 85, window: 120, opening: 100 }
 export const MIN_OPENING_WIDTH_CM = 30
 export const MAX_OPENING_WIDTH_CM = 400
+
+/** One door leaf: its hinge, its closed tip, its open tip and the quarter-circle swing arc. */
+export type DoorLeaf = { hingePt: Vec; closedTipPt: Vec; openTipPt: Vec; radius: number; sweepFlag: 0 | 1 }
 
 export type WallSnap = {
   xCm: number
@@ -116,7 +119,7 @@ export function resizeOpeningFromEnd(op: Opening, end: 'start' | 'end', cursorPt
  * centre = hingePt and goes from closedTipPt to openTipPt: SVG `A r r 0 0 sweepFlag x y`.
  * Defaults when missing: hinge 'left', swing 'in'.
  */
-export function doorArcGeometry(op: Opening): { hingePt: Vec; closedTipPt: Vec; openTipPt: Vec; radius: number; sweepFlag: 0 | 1 } {
+export function doorArcGeometry(op: Opening): DoorLeaf {
   const { start, end } = openingEndpoints(op)
   const left = (op.hinge ?? 'left') === 'left'
   const hingePt = left ? start : end
@@ -126,6 +129,164 @@ export function doorArcGeometry(op: Opening): { hingePt: Vec; closedTipPt: Vec; 
   const u = sub(closedTipPt, hingePt), w = sub(openTipPt, hingePt)
   const crossUW = u.x * w.y - u.y * w.x
   return { hingePt, closedTipPt, openTipPt, radius: op.widthCm, sweepFlag: crossUW > 0 ? 1 : 0 }
+}
+
+/**
+ * French (double) door: two symmetric leaves of half the width, hinged at the two ends and both
+ * swinging to the same side. Each arc runs from the middle of the opening to its own open tip, so
+ * the two arcs meet at the centre. The hinge field is ignored (the pair is symmetric) and only the
+ * swing side is used.
+ */
+export function frenchDoorGeometry(op: Opening): [DoorLeaf, DoorLeaf] {
+  const { start, end } = openingEndpoints(op)
+  const halfWidth = op.widthCm / 2
+  const half = { ...op, widthCm: halfWidth }
+  // Left leaf: hinge at the start end, its closed tip is the middle of the opening.
+  const leftOp: Opening = { ...half, xCm: (start.x + op.xCm) / 2, yCm: (start.y + op.yCm) / 2, hinge: 'left' }
+  // Right leaf: hinge at the end, its closed tip is the middle too.
+  const rightOp: Opening = { ...half, xCm: (op.xCm + end.x) / 2, yCm: (op.yCm + end.y) / 2, hinge: 'right' }
+  return [doorArcGeometry(leftOp), doorArcGeometry(rightOp)]
+}
+
+/** Style of an opening: a missing variant is the 'standard' one (old documents). */
+export function openingVariant(op: Pick<Opening, 'variant'>): OpeningVariant {
+  return op.variant ?? 'standard'
+}
+
+/** One 1px stroke of an opening symbol, in artboard-local cm. */
+export type OpeningSymbolPath = {
+  /** Polyline points; the last point joins the first when `closed`. */
+  pts: Vec[]
+  closed?: boolean
+  /** Stroke width as a multiple of 1px on the screen: 1 = thin symbol line, 1.2 = door leaf. */
+  weight?: number
+  opacity?: number
+  dashed?: boolean
+}
+
+/** Quarter-circle door swing arc: `M from A radius radius 0 0 sweepFlag to`. */
+export type OpeningSymbolArc = {
+  center: Vec
+  radius: number
+  from: Vec
+  to: Vec
+  sweepFlag: 0 | 1
+}
+
+/** 1px symbol of one opening, in artboard-local cm. Shared by the canvas and the SVG export. */
+export type OpeningSymbol = {
+  /** Draw the 1px line of the gap through the wall (pocket, bypass and sliding styles). */
+  wallLine: boolean
+  paths: OpeningSymbolPath[]
+  arcs: OpeningSymbolArc[]
+}
+
+/** Stroke width of a door leaf, in px. */
+export const LEAF_WEIGHT = 1.2
+/** Stroke width of a window frame centre line, in px. */
+export const FRAME_WEIGHT = 1.5
+
+/**
+ * 1px symbol of one opening, in artboard-local cm, so the canvas and the SVG export draw exactly
+ * the same picture. `u` converts px to cm (the canvas passes its viewport scale, the export its
+ * sheet scale), so the small offsets (panels, panes) keep the same look at any size.
+ * A missing variant is 'standard'; the 'opening' kind stays a plain gap (ticks only).
+ */
+export function openingSymbol(op: Opening, u: (px: number) => number): OpeningSymbol {
+  const w = op.widthCm
+  const half = w / 2
+  const rad = op.angleDeg * RAD
+  const c: Vec = { x: op.xCm, y: op.yCm }
+  const d: Vec = { x: Math.cos(rad), y: Math.sin(rad) }
+  const n: Vec = { x: -Math.sin(rad), y: Math.cos(rad) }
+  /** Point at `t` along the wall (0 = centre) and `s` across it (+n = the inside). */
+  const at = (t: number, s: number): Vec => ({ x: c.x + d.x * t + n.x * s, y: c.y + d.y * t + n.y * s })
+  const seg = (t0: number, s0: number, t1: number, s1: number, extra: Partial<OpeningSymbolPath> = {}): OpeningSymbolPath =>
+    ({ pts: [at(t0, s0), at(t1, s1)], ...extra })
+  const box = (t0: number, t1: number, s0: number, s1: number, extra: Partial<OpeningSymbolPath> = {}): OpeningSymbolPath =>
+    ({ pts: [at(t0, s0), at(t1, s0), at(t1, s1), at(t0, s1)], closed: true, ...extra })
+  const arcOf = (g: DoorLeaf): OpeningSymbolArc =>
+    ({ center: g.hingePt, radius: g.radius, from: g.closedTipPt, to: g.openTipPt, sweepFlag: g.sweepFlag })
+  const variant = openingVariant(op)
+
+  if (op.kind === 'door') {
+    if (variant === 'french') {
+      const leaves = frenchDoorGeometry(op)
+      return {
+        wallLine: false,
+        paths: leaves.map((g) => ({ pts: [g.hingePt, g.openTipPt], weight: LEAF_WEIGHT })),
+        arcs: leaves.map(arcOf),
+      }
+    }
+    if (variant === 'pocket') {
+      // One leaf partially slid into a dashed receiver box that sits along the wall on the hinge side.
+      const side = (op.hinge ?? 'left') === 'left' ? -1 : 1
+      const thickness = u(3)
+      const offset = u(2.5)
+      const panelLen = w * 0.55
+      const pocketLen = w * 0.3
+      const edge = side * half
+      const inner = side * (half - panelLen)
+      const outer = side * (half + pocketLen)
+      const mid = offset + thickness / 2
+      return {
+        wallLine: true,
+        paths: [
+          box(edge, inner, offset, offset + thickness),
+          box(edge, outer, offset - thickness * 0.2, offset + thickness * 1.2, { dashed: true, opacity: 0.75 }),
+          seg(side * (half + pocketLen * 0.12), mid, side * (half + pocketLen * 0.72), mid, { opacity: 0.85 }),
+        ],
+        arcs: [],
+      }
+    }
+    if (variant === 'bypass') {
+      // Two parallel panels that overlap in the middle, each on its own track across the wall line.
+      const thickness = u(3)
+      const offset = u(1.5)
+      const panelLen = w * 0.55
+      return {
+        wallLine: true,
+        paths: [
+          box(-half, -half + panelLen, offset, offset + thickness),
+          box(half - panelLen, half, -offset - thickness, -offset),
+        ],
+        arcs: [],
+      }
+    }
+    const g = doorArcGeometry(op)
+    return { wallLine: false, paths: [{ pts: [g.hingePt, g.openTipPt], weight: LEAF_WEIGHT }], arcs: [arcOf(g)] }
+  }
+
+  if (op.kind === 'window') {
+    if (variant === 'sliding') {
+      // Two staggered glass sashes that overlap a little in the middle, on either side of the wall line.
+      const thickness = u(3)
+      const offset = u(2)
+      const paneLen = w * 0.62
+      return {
+        wallLine: true,
+        paths: [
+          box(-half, -half + paneLen, offset, offset + thickness),
+          box(half - paneLen, half, -offset - thickness, -offset),
+        ],
+        arcs: [],
+      }
+    }
+    // Standard frame: centre line plus one thinner line on each side.
+    const o = u(2.5)
+    return {
+      wallLine: false,
+      paths: [
+        { pts: [at(-half, 0), at(half, 0)], weight: FRAME_WEIGHT },
+        { pts: [at(-half, o), at(half, o)], weight: 1, opacity: 0.6 },
+        { pts: [at(-half, -o), at(half, -o)], weight: 1, opacity: 0.6 },
+      ],
+      arcs: [],
+    }
+  }
+
+  // 'opening': the plain wall gap, made visible by the end ticks the renderers add.
+  return { wallLine: false, paths: [], arcs: [] }
 }
 
 /** New opening at a wall snap. Doors get hinge/swing (default 'left'/'in'); other kinds get none. */

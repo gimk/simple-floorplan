@@ -11,6 +11,12 @@ export type PrecisionCm = 0.1 | 0.5 | 1
 
 export type OpeningKind = 'door' | 'window' | 'opening'
 
+/** Door styles. 'standard' is the single leaf with a quarter-circle swing arc. */
+export type DoorVariant = 'standard' | 'pocket' | 'bypass' | 'french'
+/** Window styles. 'standard' is the triple-line frame. */
+export type WindowVariant = 'standard' | 'sliding'
+export type OpeningVariant = DoorVariant | WindowVariant
+
 export type Opening = {
   id: string
   kind: OpeningKind
@@ -23,8 +29,8 @@ export type Opening = {
   swing?: 'in' | 'out'
   heightCm?: number
   sillCm?: number
-  /** Style variant (for example 'pocket-sliding'); reserved for future door/window variants. */
-  variant?: string
+  /** Style variant: a DoorVariant for doors, a WindowVariant for windows. Omitted = 'standard'. */
+  variant?: OpeningVariant
 }
 
 export type FurnitureItem = {

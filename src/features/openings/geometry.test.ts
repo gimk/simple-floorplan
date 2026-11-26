@@ -4,8 +4,9 @@ import { createDefaultProject } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import { addOpening, deleteOpening, flipOpeningHinge, flipOpeningSwing, updateOpening } from './actions'
 import {
-  computeDoorFlip, createOpening, DEFAULT_OPENING_WIDTH_CM, doorArcGeometry, keepOpeningOrientation,
-  MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM, openingEndpoints, resizeOpeningFromEnd, snapToWall,
+  computeDoorFlip, createOpening, DEFAULT_OPENING_WIDTH_CM, doorArcGeometry, FRAME_WEIGHT,
+  frenchDoorGeometry, keepOpeningOrientation, LEAF_WEIGHT, MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM,
+  openingEndpoints, openingSymbol, openingVariant, resizeOpeningFromEnd, snapToWall,
 } from './geometry'
 
 const rect = (id: string, x0: number, y0: number, x1: number, y1: number): Room => ({
@@ -208,5 +209,189 @@ describe('store actions', () => {
     addOpening(abId, op({ hinge: undefined, swing: undefined }))
     flipOpeningHinge(abId, 'o1'); flipOpeningSwing(abId, 'o1')
     expect(ab().openings[0]).toMatchObject({ hinge: 'right', swing: 'out' })
+  })
+})
+
+describe('frenchDoorGeometry', () => {
+  it('splits the opening into two symmetric half-width leaves hinged at the two ends', () => {
+    const [left, right] = frenchDoorGeometry(op()) // 60..140 on y = 50
+    expect(left.hingePt).toEqual({ x: 60, y: 50 })
+    expect(left.closedTipPt).toEqual({ x: 100, y: 50 })
+    expect(left.openTipPt.x).toBeCloseTo(60); expect(left.openTipPt.y).toBeCloseTo(90)
+    expect(left.radius).toBe(40); expect(left.sweepFlag).toBe(1)
+    expect(right.hingePt).toEqual({ x: 140, y: 50 })
+    expect(right.closedTipPt).toEqual({ x: 100, y: 50 })
+    expect(right.openTipPt.x).toBeCloseTo(140); expect(right.openTipPt.y).toBeCloseTo(90)
+    expect(right.radius).toBe(40); expect(right.sweepFlag).toBe(0)
+    // Both arcs start in the middle of the opening, so they meet at the centre.
+    expect(left.closedTipPt).toEqual(right.closedTipPt)
+  })
+
+  it('keeps both leaves on the same side of the wall, and ignores the hinge field', () => {
+    const out = frenchDoorGeometry(op({ swing: 'out' }))
+    for (const g of out) expect(g.openTipPt.y).toBeLessThan(50)
+    expect(frenchDoorGeometry(op({ hinge: 'right' }))).toEqual(frenchDoorGeometry(op({ hinge: 'left' })))
+  })
+
+  it('is perpendicular to the wall on any angle, with half the opening width', () => {
+    for (const angleDeg of [0, 37, 90, 180, -125]) {
+      const [left, right] = frenchDoorGeometry(op({ angleDeg, widthCm: 90 }))
+      for (const g of [left, right]) {
+        const u = { x: g.closedTipPt.x - g.hingePt.x, y: g.closedTipPt.y - g.hingePt.y }
+        const w = { x: g.openTipPt.x - g.hingePt.x, y: g.openTipPt.y - g.hingePt.y }
+        expect(u.x * w.x + u.y * w.y).toBeCloseTo(0, 6)
+        expect(Math.hypot(u.x, u.y)).toBeCloseTo(45, 6)
+        expect(Math.hypot(w.x, w.y)).toBeCloseTo(45, 6)
+        expect(g.sweepFlag).toBe(u.x * w.y - u.y * w.x > 0 ? 1 : 0)
+      }
+    }
+  })
+})
+
+describe('openingVariant', () => {
+  it('treats a missing variant as standard (old documents)', () => {
+    expect(openingVariant({})).toBe('standard')
+    expect(openingVariant({ variant: undefined })).toBe('standard')
+    expect(openingVariant({ variant: 'french' })).toBe('french')
+    expect(openingVariant({ variant: 'sliding' })).toBe('sliding')
+  })
+})
+
+describe('openingSymbol', () => {
+  // 2 px per cm, so the px offsets of the drawing are easy to read in cm.
+  const u = (px: number) => px / 2
+  const door = op() // 60..140 on y = 50, width 80, hinge left, swing in
+  const win = (p: Partial<Opening> = {}) =>
+    op({ kind: 'window', widthCm: 80, hinge: undefined, swing: undefined, ...p })
+
+  it('standard door: one leaf plus one quarter-circle arc', () => {
+    const s = openingSymbol(door, u)
+    expect(s.wallLine).toBe(false)
+    expect(s.paths).toHaveLength(1)
+    expect(s.paths[0].pts).toEqual([{ x: 60, y: 50 }, { x: 60, y: 130 }])
+    expect(s.paths[0].weight).toBe(LEAF_WEIGHT)
+    expect(s.arcs).toHaveLength(1)
+    expect(s.arcs[0]).toMatchObject({ center: { x: 60, y: 50 }, from: { x: 140, y: 50 }, to: { x: 60, y: 130 }, radius: 80, sweepFlag: 1 })
+  })
+
+  it('undefined variant and explicit standard draw the same symbol', () => {
+    expect(openingSymbol(door, u)).toEqual(openingSymbol({ ...door, variant: 'standard' }, u))
+  })
+
+  it('french door: two leaves of half the width and two arcs that meet in the middle', () => {
+    const s = openingSymbol({ ...door, variant: 'french' }, u)
+    expect(s.wallLine).toBe(false)
+    expect(s.paths).toHaveLength(2)
+    expect(s.paths[0].pts).toEqual([{ x: 60, y: 50 }, { x: 60, y: 90 }])
+    expect(s.paths[1].pts).toEqual([{ x: 140, y: 50 }, { x: 140, y: 90 }])
+    expect(s.arcs).toHaveLength(2)
+    for (const a of s.arcs) expect(a.radius).toBe(40)
+    // Both arcs start at the centre of the opening.
+    expect(s.arcs[0].from).toEqual({ x: 100, y: 50 })
+    expect(s.arcs[1].from).toEqual({ x: 100, y: 50 })
+    expect(s.arcs.map((a) => a.sweepFlag)).toEqual([1, 0])
+  })
+
+  it('pocket door: a leaf inside the opening, a dashed receiver box and a slide line on the hinge side', () => {
+    const s = openingSymbol({ ...door, variant: 'pocket' }, u)
+    expect(s.wallLine).toBe(true)
+    expect(s.arcs).toHaveLength(0)
+    expect(s.paths).toHaveLength(3)
+    const [leaf, pocket, slide] = s.paths
+    // The leaf is a closed panel that starts at the hinge end and runs 55% of the width inside.
+    expect(leaf.closed).toBe(true)
+    expect(leaf.pts[0]).toEqual({ x: 60, y: 51.25 })
+    expect(leaf.pts[1].x).toBeCloseTo(104)
+    expect(leaf.dashed).toBeUndefined()
+    // The receiver box is dashed and sits along the wall beyond the hinge end.
+    expect(pocket.closed).toBe(true)
+    expect(pocket.dashed).toBe(true)
+    expect(pocket.pts[0].x).toBeCloseTo(60)
+    expect(pocket.pts[1].x).toBeCloseTo(36)
+    // The slide line is a short segment inside the pocket, parallel to the wall.
+    expect(slide.closed).toBeUndefined()
+    expect(slide.pts[0].y).toBeCloseTo(52)
+    expect(slide.pts[1].y).toBeCloseTo(52)
+    expect(slide.pts[1].x).toBeLessThan(slide.pts[0].x)
+  })
+
+  it('pocket door: the pocket follows the hinge side', () => {
+    const s = openingSymbol({ ...door, variant: 'pocket', hinge: 'right' }, u)
+    const [leaf, pocket, slide] = s.paths
+    expect(leaf.pts[0].x).toBeCloseTo(140)
+    expect(leaf.pts[1].x).toBeCloseTo(96)
+    expect(pocket.pts[1].x).toBeCloseTo(164)
+    expect(slide.pts[1].x).toBeGreaterThan(slide.pts[0].x)
+  })
+
+  it('bypass door: two parallel panels that overlap in the middle on either side of the wall', () => {
+    const s = openingSymbol({ ...door, variant: 'bypass' }, u)
+    expect(s.wallLine).toBe(true)
+    expect(s.arcs).toHaveLength(0)
+    expect(s.paths).toHaveLength(2)
+    const [first, second] = s.paths
+    for (const p of s.paths) {
+      expect(p.closed).toBe(true)
+      expect(p.dashed).toBeUndefined()
+      // Each panel is 55% of the width.
+      const xs = p.pts.map((q) => q.x)
+      expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(44)
+    }
+    // The first panel sits fully on the +normal side of the wall, the second fully on the other.
+    expect(Math.min(...first.pts.map((q) => q.y))).toBeGreaterThan(50)
+    expect(Math.max(...second.pts.map((q) => q.y))).toBeLessThan(50)
+    // They overlap in the middle: 55% + 55% of the width.
+    const span = (p: { pts: { x: number }[] }) => [Math.min(...p.pts.map((q) => q.x)), Math.max(...p.pts.map((q) => q.x))]
+    const [a0, a1] = span(first), [b0, b1] = span(second)
+    expect(Math.min(a1, b1) - Math.max(a0, b0)).toBeGreaterThan(0)
+  })
+
+  it('standard window: centre frame line plus one thinner line on each side', () => {
+    const s = openingSymbol(win(), u)
+    expect(s.wallLine).toBe(false)
+    expect(s.arcs).toHaveLength(0)
+    expect(s.paths).toHaveLength(3)
+    expect(s.paths[0].weight).toBe(FRAME_WEIGHT)
+    expect(s.paths[0].pts).toEqual([{ x: 60, y: 50 }, { x: 140, y: 50 }])
+    expect(s.paths[1].pts).toEqual([{ x: 60, y: 51.25 }, { x: 140, y: 51.25 }])
+    expect(s.paths[2].pts).toEqual([{ x: 60, y: 48.75 }, { x: 140, y: 48.75 }])
+    expect(s.paths[1].opacity).toBe(0.6)
+  })
+
+  it('sliding window: two staggered sashes that overlap in the middle', () => {
+    const s = openingSymbol(win({ variant: 'sliding' }), u)
+    expect(s.wallLine).toBe(true)
+    expect(s.arcs).toHaveLength(0)
+    expect(s.paths).toHaveLength(2)
+    const [first, second] = s.paths
+    for (const p of s.paths) expect(p.closed).toBe(true)
+    // One sash on each side of the wall line, 62% of the width each.
+    expect(Math.min(...first.pts.map((q) => q.y))).toBeGreaterThan(50)
+    expect(Math.max(...second.pts.map((q) => q.y))).toBeLessThan(50)
+    expect(Math.max(...first.pts.map((q) => q.x)) - Math.min(...first.pts.map((q) => q.x))).toBeCloseTo(49.6)
+    expect(first.pts[0].x).toBeCloseTo(60)
+    expect(second.pts[1].x).toBeCloseTo(140)
+    // They overlap slightly around the middle.
+    expect(Math.max(...first.pts.map((q) => q.x))).toBeCloseTo(109.6)
+    expect(Math.min(...second.pts.map((q) => q.x))).toBeCloseTo(90.4)
+  })
+
+  it('plain opening: no symbol at all, the ticks alone mark the jambs', () => {
+    const s = openingSymbol(op({ kind: 'opening', hinge: undefined, swing: undefined }), u)
+    expect(s).toEqual({ wallLine: false, paths: [], arcs: [] })
+  })
+
+  it('draws on a rotated wall with the same geometry', () => {
+    const vertical = op({ angleDeg: 90, xCm: 100, yCm: 0 }) // y -40..40 on x = 100
+    const s = openingSymbol({ ...vertical, variant: 'bypass' }, u)
+    for (const p of s.paths) {
+      // Panels run down the vertical wall: their x varies only by the offset, y by the length.
+      expect(Math.max(...p.pts.map((q) => q.x)) - Math.min(...p.pts.map((q) => q.x))).toBeLessThan(5)
+      expect(Math.max(...p.pts.map((q) => q.y)) - Math.min(...p.pts.map((q) => q.y))).toBeCloseTo(44)
+    }
+    const french = openingSymbol({ ...vertical, variant: 'french' }, u)
+    expect(french.arcs[0].radius).toBe(40)
+    // Both leaves open across the wall, so both tips move in x.
+    for (const a of french.arcs) expect(Math.abs(a.to.x - a.from.x)).toBeCloseTo(40)
   })
 })
