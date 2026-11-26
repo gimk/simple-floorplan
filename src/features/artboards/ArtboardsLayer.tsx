@@ -522,8 +522,8 @@ export function ArtboardsLayer() {
               pointerEvents="none"
               className={
                 highlighted
-                  ? 'fill-transparent stroke-orange-500/80 dark:stroke-orange-400/80'
-                  : 'fill-transparent stroke-black/15 dark:stroke-white/[0.14]'
+                  ? 'fill-white/[0.035] stroke-orange-500/80 dark:stroke-orange-400/80'
+                  : 'fill-white/[0.035] stroke-black/15 dark:stroke-white/[0.14]'
               }
             />
             {/* Border click target: only the 10 px stroke band takes the pointer, so a click
