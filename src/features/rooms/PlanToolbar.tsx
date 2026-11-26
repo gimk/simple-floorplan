@@ -36,7 +36,7 @@ export function PlanToolbar() {
       data-testid="plan-toolbar"
       role="toolbar"
       aria-label="Plan tools"
-      className="pointer-events-auto fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 gap-1 rounded-xl border border-white/15 bg-[#12161b]/95 p-1 shadow-xl backdrop-blur"
+      className="pointer-events-auto absolute bottom-4 left-1/2 z-40 flex -translate-x-1/2 gap-1 rounded-xl border border-white/15 bg-[#12161b]/95 p-1 shadow-xl backdrop-blur"
     >
       {TOOLS.map((t) => {
         const active = tool === t.tool

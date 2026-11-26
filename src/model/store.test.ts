@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { parseProjectDoc } from './schema'
-import { useDoc } from './store'
+import { artboardFrame } from '../features/artboards/frame'
+import { ARTBOARD_GAP_CM, cloneDoc, docBounds, useDoc } from './store'
 import { parseProjectJson, serializeProject } from '../sync/jsonFile'
 import type { RefImage } from './types'
 
@@ -78,7 +79,9 @@ describe('artboards', () => {
     const newId = s().duplicateArtboard(src.id)!
     const copy = s().doc.artboards.find((a) => a.id === newId)!
     expect(copy.name).toBe('Plan A (copy)')
-    expect(copy.xCm).toBe(600 + 150)
+    // source frame ends at 600 + 40; the copy frame starts 150 later. The bed reaches x = -30,
+    // so the frame starts 70 left of the origin: copy origin = 640 + 150 + 70
+    expect(copy.xCm).toBe(640 + 150 + 70)
     expect(copy.rooms[0].id).not.toBe('r1')
     expect(copy.openings[0].id).not.toBe('o1')
     expect(copy.furniture[0].id).not.toBe('f1')
@@ -107,6 +110,32 @@ describe('artboards', () => {
     expect(a.ceilingHeightCm).toBe(250)
   })
 
+  it('addArtboard and duplicateArtboard never overlap any frame', () => {
+    s().update((d) => {
+      d.artboards[0].rooms.push({ id: 'r1', name: 'R', vertices: [{ x: -300, y: -100 }, { x: 900, y: -100 }, { x: 900, y: 500 }, { x: -300, y: 500 }] })
+    })
+    s().addArtboard()
+    s().duplicateArtboard(s().doc.artboards[0].id)
+    s().addArtboard()
+    const frames = s().doc.artboards.map((a) => artboardFrame(a))
+    for (let i = 1; i < frames.length; i++) {
+      const maxPrev = Math.max(...frames.slice(0, i).map((f) => f.maxX))
+      expect(frames[i].x - maxPrev).toBeGreaterThanOrEqual(ARTBOARD_GAP_CM - 1e-9)
+    }
+  })
+
+  it('docBounds covers every frame and its header', () => {
+    s().addArtboard()
+    const b = docBounds(s().doc)
+    for (const a of s().doc.artboards) {
+      const f = artboardFrame(a)
+      expect(b.minX).toBeLessThanOrEqual(f.minX)
+      expect(b.minY).toBeLessThan(f.minY)
+      expect(b.maxX).toBeGreaterThanOrEqual(f.maxX)
+      expect(b.maxY).toBeGreaterThanOrEqual(f.maxY)
+    }
+  })
+
   it('addArtboard works when the document has no artboard', () => {
     s().update((d) => { d.artboards = [] })
     const id = s().addArtboard()
@@ -115,6 +144,34 @@ describe('artboards', () => {
     expect(a.xCm).toBe(0)
     expect(a.yCm).toBe(0)
     expect(Number.isFinite(a.xCm)).toBe(true)
+  })
+})
+
+describe('undo guard and clone', () => {
+  it('cloneDoc shares ref image src strings but not objects', () => {
+    s().addRefImage(img())
+    const c = cloneDoc(s().doc)
+    expect(c).toEqual(s().doc)
+    expect(c.refImages[0]).not.toBe(s().doc.refImages[0])
+    expect(c.artboards[0]).not.toBe(s().doc.artboards[0])
+  })
+
+  it('undo and redo do nothing while a drag is open', () => {
+    s().setTitle('A')
+    s().beginDrag()
+    s().undo()
+    expect(s().doc.title).toBe('A')
+    s().endDrag()
+    s().undo()
+    expect(s().doc.title).toBe('Untitled project')
+  })
+
+  it('endDrag keeps at most 100 undo steps', () => {
+    for (let i = 0; i < 105; i++) s().setTitle(`t${i}`)
+    s().beginDrag()
+    s().updateSilent((d) => { d.title = 'drag' })
+    s().endDrag()
+    expect(past()).toBeLessThanOrEqual(100)
   })
 })
 

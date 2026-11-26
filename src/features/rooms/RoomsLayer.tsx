@@ -6,7 +6,8 @@ import { useViewport } from '../../canvas/Viewport'
 import { add, area, fmtCm, labelPoint, projectOnSegment, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { useDoc } from '../../model/store'
-import type { Artboard, Room, Selection } from '../../model/types'
+import type { Artboard, Opening, Room, Selection } from '../../model/types'
+import { syncOpeningsForRoomChange } from '../openings/sync'
 import { useUi } from '../../shell/uiStore'
 import { deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex, roomWalls } from './ops'
 import { snapPoint, snapRoomDelta } from './snap'
@@ -60,11 +61,14 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   const setSelection = (s: Selection) => useUi.getState().set({ activeArtboardId: artboard.id, selection: s })
   const liveRoom = (id: string): Room | undefined =>
     useDoc.getState().doc.artboards.find((a) => a.id === artboard.id)?.rooms.find((r) => r.id === id)
-  const writeVertices = (updates: Map<string, Vec[]>, silent: boolean) => {
+  // `origin` (gesture start rooms + openings) makes openings follow their walls: they are
+  // recomputed from the start state on every move, so no drift builds up.
+  const writeVertices = (updates: Map<string, Vec[]>, silent: boolean, origin?: { rooms: Room[]; openings: Opening[] }) => {
     const fn = (doc: { artboards: Artboard[] }) => {
       const ab = doc.artboards.find((a) => a.id === artboard.id)
       if (!ab) return
       for (const r of ab.rooms) { const v = updates.get(r.id); if (v) r.vertices = v }
+      if (origin) ab.openings = syncOpeningsForRoomChange(origin.openings, origin.rooms, ab.rooms)
     }
     const st = useDoc.getState()
     if (silent) st.updateSilent(fn)
@@ -112,10 +116,11 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     const origs = new Map(artboard.rooms.filter((r) => ids.includes(r.id)).map((r) => [r.id, r] as const))
     const primary = origs.get(room.id)!
     const others = artboard.rooms.filter((r) => !origs.has(r.id))
+    const origin = { rooms: artboard.rooms, openings: artboard.openings }
     startGesture(e, (_, d) => {
       const s = snapRoomDelta(primary, d.x, d.y, others)
       setGuides(s.guides)
-      writeVertices(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), true)
+      writeVertices(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), true, origin)
     })
   }
 
@@ -125,10 +130,11 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     setSelection({ kind: 'wall', artboardId: artboard.id, roomId: room.id, edgeIndex })
     const others = artboard.rooms.filter((r) => r.id !== room.id)
     const a = room.vertices[edgeIndex]
+    const origin = { rooms: artboard.rooms, openings: artboard.openings }
     startGesture(e, (_, d) => {
       const snap = snapPoint(add(a, d), others)
       setGuides(snap.guides)
-      writeVertices(new Map([[room.id, moveEdge(room, edgeIndex, { x: snap.point.x - a.x, y: snap.point.y - a.y }).vertices]]), true)
+      writeVertices(new Map([[room.id, moveEdge(room, edgeIndex, { x: snap.point.x - a.x, y: snap.point.y - a.y }).vertices]]), true, origin)
     })
   }
 
@@ -154,10 +160,11 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     const others = artboard.rooms.filter((r) => r.id !== room.id)
     const n = room.vertices.length
     const anchor = room.vertices[(idx + n - 1) % n]
+    const origin = { rooms: artboard.rooms, openings: artboard.openings }
     startGesture(e, (p) => {
       const snap = snapPoint(p, others, { anchor })
       setGuides(snap.guides)
-      writeVertices(new Map([[room.id, moveVertex(room, idx, snap.point).vertices]]), true)
+      writeVertices(new Map([[room.id, moveVertex(room, idx, snap.point).vertices]]), true, origin)
     })
   }
 

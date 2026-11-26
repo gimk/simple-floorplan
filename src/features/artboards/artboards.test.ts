@@ -7,6 +7,7 @@ import {
   MIN_ARTBOARD_WIDTH_CM,
   artboardAreaM2,
   artboardFrame,
+  pickArtboard,
   roomAreaM2,
 } from './frame'
 
@@ -86,5 +87,18 @@ describe('artboard area', () => {
     const ccw = { ...rect('r1', 300, 200), vertices: [...rect('r1', 300, 200).vertices].reverse() }
     expect(roomAreaM2(ccw)).toBeCloseTo(roomAreaM2(cw), 10)
     expect(roomAreaM2(cw)).toBeCloseTo(6, 10)
+  })
+})
+
+describe('pickArtboard', () => {
+  const a = { ...withRooms([rect('r', 500, 400)]), id: 'a' }
+  const b = { ...withRooms([rect('r', 500, 400)], 1000, 0), id: 'b' }
+  it('picks the artboard whose frame contains the point', () => {
+    expect(pickArtboard([a, b], { x: 1200, y: 100 }, 'a').id).toBe('b')
+    expect(pickArtboard([a, b], { x: 10, y: 10 }, 'b').id).toBe('a')
+  })
+  it('falls back to the active artboard, then the first', () => {
+    expect(pickArtboard([a, b], { x: 800, y: 2000 }, 'b').id).toBe('b')
+    expect(pickArtboard([a, b], { x: 800, y: 2000 }, null).id).toBe('a')
   })
 })

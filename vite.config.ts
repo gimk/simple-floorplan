@@ -8,11 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      // 'prompt' instead of 'autoUpdate': the new service worker is downloaded and
-      // precached in the background, but it only takes over when the user taps
-      // "Reload" in the update toast (src/shell/swUpdate.ts). An
-      // automatic reload in the middle of a survey would be disruptive.
-      registerType: 'prompt',
+      // 'autoUpdate': a new service worker activates and reloads the open page by itself, so a
+      // deployed fix reaches the user without a manual "Reload" tap.
+      registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Simple Floorplan',

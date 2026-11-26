@@ -3,6 +3,7 @@ import { useDoc } from '../../model/store'
 import type { Vec } from '../../model/geometry'
 import { area } from '../../model/geometry'
 import type { Room } from '../../model/types'
+import { syncOpeningsForRoomChange } from '../openings/sync'
 import { cutoutRoom, mergeRooms, setWallLength } from './ops'
 
 const findArtboard = (artboardId: string) => useDoc.getState().doc.artboards.find((a) => a.id === artboardId)
@@ -17,7 +18,9 @@ export function deleteRooms(artboardId: string, roomIds: string[]): void {
   if (!ab || !ab.rooms.some((r) => roomIds.includes(r.id))) return
   useDoc.getState().update((d) => {
     const a = d.artboards.find((x) => x.id === artboardId)!
+    const prev = a.rooms
     a.rooms = a.rooms.filter((r) => !roomIds.includes(r.id))
+    a.openings = syncOpeningsForRoomChange(a.openings, prev, a.rooms)
   })
 }
 
@@ -37,7 +40,9 @@ export function setRoomWallLength(artboardId: string, roomId: string, edgeIndex:
   if (!next) return false
   useDoc.getState().update((d) => {
     const a = d.artboards.find((x) => x.id === artboardId)!
+    const prev = a.rooms
     a.rooms = a.rooms.map((r) => (r.id === roomId ? next : r))
+    a.openings = syncOpeningsForRoomChange(a.openings, prev, a.rooms)
   })
   return true
 }
@@ -60,7 +65,11 @@ export function cutoutArtboardRooms(artboardId: string, cutter: Vec[], targetRoo
     rooms.push(...parts)
   }
   if (!changed) return false
-  useDoc.getState().update((d) => { d.artboards.find((a) => a.id === artboardId)!.rooms = rooms })
+  useDoc.getState().update((d) => {
+    const a = d.artboards.find((x) => x.id === artboardId)!
+    a.openings = syncOpeningsForRoomChange(a.openings, a.rooms, rooms)
+    a.rooms = rooms
+  })
   return true
 }
 
@@ -73,7 +82,9 @@ export function mergeArtboardRooms(artboardId: string, roomIds: string[]): Room 
   if (!merged) return null
   useDoc.getState().update((d) => {
     const a = d.artboards.find((x) => x.id === artboardId)!
+    const prev = a.rooms
     a.rooms = a.rooms.filter((r) => r.id === merged.id || !roomIds.includes(r.id)).map((r) => (r.id === merged.id ? merged : r))
+    a.openings = syncOpeningsForRoomChange(a.openings, prev, a.rooms)
   })
   return merged
 }

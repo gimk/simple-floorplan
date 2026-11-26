@@ -6,10 +6,10 @@ import { dist, fmtCm, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { newId } from '../../model/schema'
 import { useDoc } from '../../model/store'
-import type { Artboard } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import { cutoutArtboardRooms, addRoom } from './actions'
 import { MIN_ROOM_SIDE_CM, createRectRoom, nextRoomName } from './ops'
+import { pickArtboard } from '../artboards/frame'
 import { snapPoint } from './snap'
 import type { SnapGuide } from './snap'
 
@@ -18,14 +18,9 @@ const ORANGE = '#fb923c'
 export function RoomToolsOverlay() {
   const mode = useUi((s) => s.mode)
   const tool = useUi((s) => s.tool)
-  const activeId = useUi((s) => s.activeArtboardId)
-  // Same fallback as the Artboard card: with no active artboard the first one is the target, so
-  // the tools work on a fresh document (activeArtboardId starts as null).
-  const artboard = useDoc(
-    (s) => s.doc.artboards.find((a) => a.id === activeId) ?? s.doc.artboards[0],
-  )
-  if (mode !== 'plan' || !artboard || (tool !== 'rect' && tool !== 'pen' && tool !== 'cutout')) return null
-  return <ToolSurface key={`${artboard.id}-${tool}`} artboard={artboard} tool={tool} />
+  const hasArtboard = useDoc((s) => s.doc.artboards.length > 0)
+  if (mode !== 'plan' || !hasArtboard || (tool !== 'rect' && tool !== 'pen' && tool !== 'cutout')) return null
+  return <ToolSurface key={tool} tool={tool} />
 }
 
 const toSelect = () => useUi.getState().set({ tool: 'select' })
@@ -57,8 +52,17 @@ function Tag({ x, y, text }: { x: number; y: number; text: string }) {
   )
 }
 
-function ToolSurface({ artboard, tool }: { artboard: Artboard; tool: 'rect' | 'pen' | 'cutout' }) {
+function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   const { px, toWorld } = useViewport()
+  const activeId = useUi((s) => s.activeArtboardId)
+  // Target artboard: locked on the first click of a gesture to the artboard under the cursor.
+  const [lockedId, setLockedId] = useState<string | null>(null)
+  const artboard = useDoc((s) => {
+    const list = s.doc.artboards
+    return list.find((a) => a.id === lockedId) ?? list.find((a) => a.id === activeId) ?? list[0]
+  })
+  const artboardRef = useRef(artboard)
+  useEffect(() => { artboardRef.current = artboard })
   const [start, setStart] = useState<Vec | null>(null)
   const [cursor, setCursor] = useState<Vec | null>(null)
   const [points, setPoints] = useState<Vec[]>([])
@@ -68,10 +72,20 @@ function ToolSurface({ artboard, tool }: { artboard: Artboard; tool: 'rect' | 'p
 
   const local = (e: { clientX: number; clientY: number }): Vec => {
     const w = toWorld(e.clientX, e.clientY)
-    return { x: w.x - artboard.xCm, y: w.y - artboard.yCm }
+    const ab = artboardRef.current
+    return { x: w.x - ab.xCm, y: w.y - ab.yCm }
+  }
+  /** First click of a gesture: choose the artboard under the cursor and make it active. */
+  const lockTarget = (e: { clientX: number; clientY: number }) => {
+    const list = useDoc.getState().doc.artboards
+    if (list.length === 0) return
+    const target = pickArtboard(list, toWorld(e.clientX, e.clientY), useUi.getState().activeArtboardId)
+    artboardRef.current = target
+    setLockedId(target.id)
+    if (useUi.getState().activeArtboardId !== target.id) useUi.getState().set({ activeArtboardId: target.id })
   }
   const snap = (p: Vec, anchor?: Vec): Vec => {
-    const r = snapPoint(p, artboard.rooms, { anchor })
+    const r = snapPoint(p, artboardRef.current.rooms, { anchor })
     setGuides(r.guides)
     return r.point
   }
@@ -81,14 +95,14 @@ function ToolSurface({ artboard, tool }: { artboard: Artboard; tool: 'rect' | 'p
     if (pts.length < 3) return
     if (signedArea(pts) < 0) pts = [...pts].reverse()
     if (Math.abs(signedArea(pts)) < 1) return
-    const room = { id: newId(), name: nextRoomName(artboard.rooms), vertices: pts }
+    const room = { id: newId(), name: nextRoomName(artboardRef.current.rooms), vertices: pts }
     finishRoom(room)
   }
   const finishRoom = (room: { id: string; name: string; vertices: Vec[] }) => {
-    addRoom(artboard.id, room)
+    addRoom(artboardRef.current.id, room)
     useUi.getState().set({
-      activeArtboardId: artboard.id,
-      selection: { kind: 'room', artboardId: artboard.id, roomIds: [room.id] },
+      activeArtboardId: artboardRef.current.id,
+      selection: { kind: 'room', artboardId: artboardRef.current.id, roomIds: [room.id] },
       tool: 'select',
     })
   }
@@ -97,7 +111,7 @@ function ToolSurface({ artboard, tool }: { artboard: Artboard; tool: 'rect' | 'p
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]')) return
       if (e.key === 'Escape') {
-        setStart(null); setPoints([]); setGuides([])
+        setStart(null); setPoints([]); setGuides([]); setLockedId(null)
         if (tool === 'pen' && pointsRef.current.length === 0) toSelect()
       } else if (e.key === 'Enter' && tool === 'pen') {
         e.preventDefault()
@@ -112,6 +126,7 @@ function ToolSurface({ artboard, tool }: { artboard: Artboard; tool: 'rect' | 'p
     if (e.button !== 0) return
     e.stopPropagation()
     if (tool === 'pen') {
+      if (pointsRef.current.length === 0) lockTarget(e)
       const pts = pointsRef.current
       if (e.detail >= 2) { closePen(); return }
       const p = snap(local(e), pts[pts.length - 1])
@@ -121,6 +136,7 @@ function ToolSurface({ artboard, tool }: { artboard: Artboard; tool: 'rect' | 'p
       return
     }
     e.currentTarget.setPointerCapture?.(e.pointerId)
+    lockTarget(e)
     const p = snap(local(e))
     setStart(p)
     setCursor(p)
@@ -142,16 +158,16 @@ function ToolSurface({ artboard, tool }: { artboard: Artboard; tool: 'rect' | 'p
     e.currentTarget.releasePointerCapture?.(e.pointerId)
     const end = snap(local(e))
     const a = start
-    setStart(null); setCursor(null); setGuides([])
+    setStart(null); setCursor(null); setGuides([]); setLockedId(null)
     if (tool === 'rect') {
       if (Math.abs(end.x - a.x) < MIN_ROOM_SIDE_CM || Math.abs(end.y - a.y) < MIN_ROOM_SIDE_CM) return
-      finishRoom(createRectRoom(a, end, nextRoomName(artboard.rooms)))
+      finishRoom(createRectRoom(a, end, nextRoomName(artboardRef.current.rooms)))
     } else {
       if (Math.abs(end.x - a.x) < 1 || Math.abs(end.y - a.y) < 1) return
       const cutter = [a, { x: end.x, y: a.y }, end, { x: a.x, y: end.y }]
       const sel = useUi.getState().selection
-      const ids = sel.kind === 'room' && sel.artboardId === artboard.id ? sel.roomIds : undefined
-      cutoutArtboardRooms(artboard.id, cutter, ids)
+      const ids = sel.kind === 'room' && sel.artboardId === artboardRef.current.id ? sel.roomIds : undefined
+      cutoutArtboardRooms(artboardRef.current.id, cutter, ids)
       toSelect()
     }
   }

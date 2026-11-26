@@ -27,9 +27,14 @@ export type ArtboardInspectProps = {
   /** Artboard to inspect. Falls back to the active artboard, then to the first artboard. */
   artboardId?: string | null
   className?: string
+  /**
+   * Read-only card (Design mode): no name, ceiling, room selection, duplicate, add or delete edit.
+   * The measured values (area, room list) stay visible.
+   */
+  readOnly?: boolean
 }
 
-export function ArtboardInspect({ artboardId, className }: ArtboardInspectProps) {
+export function ArtboardInspect({ artboardId, className, readOnly = false }: ArtboardInspectProps) {
   const artboards = useDoc((s) => s.doc.artboards)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
   const selection = useUi((s) => s.selection)
@@ -80,7 +85,9 @@ export function ArtboardInspect({ artboardId, className }: ArtboardInspectProps)
     const doc = useDoc.getState()
     if (doc.doc.artboards.length <= 1) return
     doc.deleteArtboard(artboard.id)
-    const next = doc.doc.artboards[0]
+    // Read the artboards AFTER the delete: `doc.doc` is the document before it, so the old code
+    // always selected the deleted artboard again (and the card showed nothing useful).
+    const next = useDoc.getState().doc.artboards[0]
     if (next) selectArtboard(next.id, 'none')
   }
 
@@ -96,6 +103,7 @@ export function ArtboardInspect({ artboardId, className }: ArtboardInspectProps)
           ariaLabel="Artboard name"
           value={artboard.name}
           onCommit={commitName}
+          disabled={readOnly}
           invalidMessage="Type a name for the artboard."
         />
       </FieldRow>
@@ -108,6 +116,7 @@ export function ArtboardInspect({ artboardId, className }: ArtboardInspectProps)
           unit="cm"
           min={1}
           max={1000}
+          disabled={readOnly}
           onCommit={commitCeiling}
         />
       </FieldRow>
@@ -132,6 +141,7 @@ export function ArtboardInspect({ artboardId, className }: ArtboardInspectProps)
                   <button
                     type="button"
                     onClick={() => selectRoom(artboard.id, r.id)}
+                    disabled={readOnly}
                     aria-pressed={on}
                     className={`${ROW} ${on ? ROW_ON : ROW_OFF} flex min-h-9 w-full items-center justify-between gap-2 text-left hover:bg-black/5 dark:hover:bg-white/5 pointer-coarse:min-h-11`}
                   >
@@ -150,11 +160,23 @@ export function ArtboardInspect({ artboardId, className }: ArtboardInspectProps)
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={`${BTN} flex-1`} onClick={duplicate} title="Duplicate artboard">
+        <button
+          type="button"
+          className={`${BTN} flex-1`}
+          onClick={duplicate}
+          disabled={readOnly}
+          title={readOnly ? 'Switch to Plan mode to edit the artboard' : 'Duplicate artboard'}
+        >
           <Copy size={14} aria-hidden="true" />
           Duplicate
         </button>
-        <button type="button" className={`${BTN} flex-1`} onClick={add} title="Add an empty artboard">
+        <button
+          type="button"
+          className={`${BTN} flex-1`}
+          onClick={add}
+          disabled={readOnly}
+          title={readOnly ? 'Switch to Plan mode to edit the artboard' : 'Add an empty artboard'}
+        >
           <Plus size={14} aria-hidden="true" />
           Add
         </button>
@@ -162,8 +184,14 @@ export function ArtboardInspect({ artboardId, className }: ArtboardInspectProps)
           type="button"
           className={`${BTN} flex-1 text-red-600 hover:bg-red-500/10 dark:text-red-400`}
           onClick={remove}
-          disabled={onlyOne}
-          title={onlyOne ? 'The document keeps at least one artboard' : 'Delete artboard'}
+          disabled={onlyOne || readOnly}
+          title={
+            readOnly
+              ? 'Switch to Plan mode to edit the artboard'
+              : onlyOne
+                ? 'The document keeps at least one artboard'
+                : 'Delete artboard'
+          }
         >
           <Trash2 size={14} aria-hidden="true" />
           Delete

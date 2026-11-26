@@ -60,6 +60,8 @@ export default function App() {
   const setUi = useUi((s) => s.set)
   const selection = useUi((s) => s.selection)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
+  const calibratingImageId = useUi((s) => s.calibratingImageId)
+  const refImages = useDoc((s) => s.doc.refImages)
   const title = useDoc((s) => s.doc.title)
   const artboards = useDoc((s) => s.doc.artboards)
   const canUndo = useStore(useDoc.temporal, (s) => s.pastStates.length > 0)
@@ -73,9 +75,11 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isEditable(e.target)) return
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'z') {
+      // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z, or Ctrl+Y on Windows/Linux.
+      const key = e.key.toLowerCase()
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && (key === 'z' || key === 'y')) {
         e.preventDefault()
-        if (e.shiftKey) useDoc.getState().redo()
+        if (key === 'y' || e.shiftKey) useDoc.getState().redo()
         else useDoc.getState().undo()
         return
       }
@@ -106,6 +110,12 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // B7: a "calibrating image" id that outlives its tool would re-open the overlay with the old
+  // 2 points on the next calibration. Clear it as soon as the tool leaves 'calibrate-image'.
+  useEffect(() => {
+    if (tool !== 'calibrate-image' && calibratingImageId) useUi.getState().set({ calibratingImageId: null })
+  }, [tool, calibratingImageId])
 
   const onImport = async (file: File | undefined) => {
     if (!file) return
@@ -168,7 +178,9 @@ export default function App() {
           ? !!artboards
               .find((a) => a.id === selection.artboardId)
               ?.openings.some((o) => o.id === selection.openingId)
-          : true
+          : selection.kind === 'refImage'
+            ? refImages.some((i) => i.id === selection.imageId)
+            : true
 
   /**
    * The wall-length input only lives while the selection that opened it is still current, and only
@@ -197,7 +209,13 @@ export default function App() {
             // Design mode has none of the Plan-mode placement tools: drop their state.
             setUi(
               next === 'design'
-                ? { mode: next, tool: 'select', placingOpeningKind: null, calibratingImageId: null }
+                ? {
+                    mode: next,
+                    tool: 'select',
+                    selection: { kind: 'none' },
+                    placingOpeningKind: null,
+                    calibratingImageId: null,
+                  }
                 : { mode: next },
             )
           }}
@@ -226,7 +244,7 @@ export default function App() {
             onChange={(e) => { void addRefImages(e.target.files); e.target.value = '' }}
           />
           <button type="button" className={BAR_BTN} aria-label="Undo" title="Undo (Cmd/Ctrl+Z)" disabled={!canUndo} onClick={() => useDoc.getState().undo()}><Undo2 size={18} /></button>
-          <button type="button" className={BAR_BTN} aria-label="Redo" title="Redo (Cmd/Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => useDoc.getState().redo()}><Redo2 size={18} /></button>
+          <button type="button" className={BAR_BTN} aria-label="Redo" title="Redo (Cmd/Ctrl+Shift+Z or Ctrl+Y)" disabled={!canRedo} onClick={() => useDoc.getState().redo()}><Redo2 size={18} /></button>
           <button type="button" className={BAR_BTN} aria-label="Export JSON" title="Export JSON" onClick={() => exportProjectJson(useDoc.getState().doc)}><Download size={18} /></button>
           <button type="button" className={BAR_BTN} aria-label="Import JSON" title="Import JSON" onClick={() => fileRef.current?.click()}><Upload size={18} /></button>
           <input
@@ -257,7 +275,7 @@ export default function App() {
           <Viewport
             overlay={
               <>
-                <CalibrateOverlay />
+                <CalibrateOverlay key={calibratingImageId ?? 'none'} />
                 <RoomToolsOverlay />
                 <PlaceOpeningOverlay />
               </>
@@ -296,13 +314,16 @@ export default function App() {
           )}
         </main>
         <aside aria-label="Inspect" data-testid="inspect-panel" className="hidden w-70 shrink-0 border-l border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 lg:block">
-          {selection.kind === 'room' && selectionExists ? (
+          {mode === 'design' ? (
+            // Design mode edits nothing geometric: the artboard card is read-only here.
+            <ArtboardInspect artboardId={activeArtboardId} readOnly />
+          ) : selection.kind === 'room' && selectionExists ? (
             <RoomInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
           ) : selection.kind === 'wall' && selectionExists ? (
             <WallInspect artboardId={selection.artboardId} roomId={selection.roomId} edgeIndex={selection.edgeIndex} />
           ) : selection.kind === 'opening' && selectionExists ? (
             <OpeningInspect artboardId={selection.artboardId} openingId={selection.openingId} />
-          ) : selection.kind === 'refImage' ? (
+          ) : selection.kind === 'refImage' && selectionExists ? (
             <RefImageInspect imageId={selection.imageId} />
           ) : (
             <ArtboardInspect artboardId={selection.kind === 'artboard' ? selection.artboardId : activeArtboardId} />
