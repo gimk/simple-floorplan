@@ -1,0 +1,261 @@
+// Right-panel Inspect card for the selected room(s) (docs/simple-floorplan-2.md §2.6):
+//   - one room: breadcrumb back to the artboard, editable name, area + perimeter, the wall list
+//     with one exact-length field per wall, and Delete Room.
+//   - two or more rooms: room count, combined area, Merge Rooms and Delete Selected.
+// Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm, m, m².
+import { useId } from 'react'
+import { ChevronLeft, Layers, Merge, Square, Trash2 } from 'lucide-react'
+import { useDoc } from '../../model/store'
+import type { Artboard, Room } from '../../model/types'
+import {
+  BTN,
+  EmptyHint,
+  FieldRow,
+  MUTED,
+  NumberField,
+  PanelSection,
+  ROW,
+  ROW_OFF,
+  ROW_ON,
+  StatGrid,
+  TextField,
+  formatDecimal,
+  formatM2,
+} from '../../shell/panel'
+import { useUi } from '../../shell/uiStore'
+import { roomAreaM2 } from '../artboards/frame'
+import { selectArtboard, selectRoom } from '../artboards/selection'
+import { toast } from '../toast'
+import { deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength } from './actions'
+import { roomWalls } from './ops'
+
+export type RoomInspectProps = {
+  /** Artboard that holds the selected rooms. */
+  artboardId: string
+  /** One room = Room card. Two or more = multi-selection card. Unknown ids are ignored. */
+  roomIds: string[]
+  className?: string
+}
+
+/** Select one wall of a room: the Inspect panel then shows the Wall card. */
+function selectWall(artboardId: string, roomId: string, edgeIndex: number): void {
+  useUi.getState().set({
+    activeArtboardId: artboardId,
+    selection: { kind: 'wall', artboardId, roomId, edgeIndex },
+  })
+}
+
+/** Clear the selection after a delete, so the Inspect panel falls back to the artboard. */
+function clearSelection(): void {
+  useUi.getState().set({ selection: { kind: 'none' } })
+}
+
+/** Small "back" line above a card: the artboard name, one click back to the Artboard card. */
+function BackToArtboard({ artboard }: { artboard: Artboard }) {
+  const label = artboard.name.trim() === '' ? 'Untitled artboard' : artboard.name
+  return (
+    <button
+      type="button"
+      aria-label="Back to artboard"
+      title="Back to artboard"
+      onClick={() => selectArtboard(artboard.id)}
+      className={`flex min-h-9 w-fit max-w-full items-center gap-1 rounded-md px-1 hover:bg-black/5 dark:hover:bg-white/10 pointer-coarse:min-h-11 ${MUTED}`}
+    >
+      <ChevronLeft size={12} aria-hidden="true" />
+      <span className="truncate">{label}</span>
+    </button>
+  )
+}
+
+/** One room selected: name, area, perimeter, walls with an exact length field, Delete Room. */
+function SingleRoomCard({ artboard, room, className }: { artboard: Artboard; room: Room; className?: string }) {
+  const nameId = useId()
+  const selection = useUi((s) => s.selection)
+  const walls = roomWalls(room)
+  const perimeterM = walls.reduce((sum, w) => sum + w.lengthCm, 0) / 100
+  const activeWall =
+    selection.kind === 'wall' && selection.artboardId === artboard.id && selection.roomId === room.id
+      ? selection.edgeIndex
+      : -1
+
+  const commitName = (value: string): boolean | void => {
+    const name = value.trim()
+    if (name === '') return false
+    if (name === room.name) return
+    renameRoom(artboard.id, room.id, name)
+  }
+
+  const remove = () => {
+    deleteRooms(artboard.id, [room.id])
+    clearSelection()
+  }
+
+  return (
+    <PanelSection
+      title="Room"
+      icon={<Square size={14} aria-hidden="true" />}
+      className={className}
+    >
+      <BackToArtboard artboard={artboard} />
+
+      <FieldRow label="Name" htmlFor={nameId}>
+        <TextField
+          id={nameId}
+          ariaLabel="Room name"
+          value={room.name}
+          onCommit={commitName}
+          invalidMessage="Type a name for the room."
+        />
+      </FieldRow>
+
+      <StatGrid
+        items={[
+          { label: 'Area', value: `${formatM2(roomAreaM2(room))} m²` },
+          { label: 'Perimeter', value: `${formatDecimal(perimeterM, 2)} m` },
+        ]}
+      />
+
+      <div className="flex flex-col gap-1">
+        <h3 className={`font-medium ${MUTED}`}>Walls</h3>
+        {walls.length === 0 ? (
+          <EmptyHint>This room has no wall yet.</EmptyHint>
+        ) : (
+          <ul className="flex flex-col gap-1" aria-label="Walls of the room">
+            {walls.map((wall) => {
+              const on = wall.index === activeWall
+              return (
+                <li key={wall.index}>
+                  <div className={`${ROW} ${on ? ROW_ON : ROW_OFF} flex items-center gap-2`}>
+                    <button
+                      type="button"
+                      aria-pressed={on}
+                      aria-label={`Select wall ${wall.index + 1}`}
+                      onClick={() => selectWall(artboard.id, room.id, wall.index)}
+                      className="flex min-h-9 min-w-16 shrink-0 items-center rounded-md px-1 text-left text-sm text-slate-800 hover:bg-black/5 dark:text-slate-100 dark:hover:bg-white/10 pointer-coarse:min-h-11"
+                    >
+                      Wall {wall.index + 1}
+                    </button>
+                    <NumberField
+                      ariaLabel={`Length of wall ${wall.index + 1}`}
+                      unit="cm"
+                      min={1}
+                      value={wall.lengthCm}
+                      className="min-w-0 flex-1"
+                      onCommit={(value) => {
+                        if (value == null || !(value > 0)) return false
+                        return setRoomWallLength(artboard.id, room.id, wall.index, value) ? undefined : false
+                      }}
+                    />
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+
+      <button
+        type="button"
+        className={`${BTN} text-red-600 hover:bg-red-500/10 dark:text-red-400`}
+        onClick={remove}
+        title="Delete this room"
+      >
+        <Trash2 size={14} aria-hidden="true" />
+        Delete Room
+      </button>
+    </PanelSection>
+  )
+}
+
+/** Two or more rooms selected: count, combined area, Merge Rooms, Delete Selected. */
+function MultiRoomCard({
+  artboard,
+  rooms,
+  className,
+}: {
+  artboard: Artboard
+  rooms: Room[]
+  className?: string
+}) {
+  const totalM2 = rooms.reduce((sum, r) => sum + roomAreaM2(r), 0)
+  const ids = rooms.map((r) => r.id)
+
+  const merge = () => {
+    const merged = mergeArtboardRooms(artboard.id, ids)
+    if (!merged) {
+      toast('Rooms do not touch, so they cannot be merged.')
+      return
+    }
+    selectRoom(artboard.id, merged.id)
+  }
+
+  const removeSelected = () => {
+    deleteRooms(artboard.id, ids)
+    clearSelection()
+  }
+
+  return (
+    <PanelSection
+      title="Rooms"
+      icon={<Layers size={14} aria-hidden="true" />}
+      className={className}
+    >
+      <BackToArtboard artboard={artboard} />
+
+      <StatGrid
+        items={[
+          { label: rooms.length === 1 ? 'Room' : 'Rooms', value: String(rooms.length) },
+          { label: 'Combined area', value: `${formatM2(totalM2)} m²` },
+        ]}
+      />
+
+      <ul className="flex flex-col gap-1" aria-label="Selected rooms">
+        {rooms.map((room) => (
+          <li key={room.id} className={`${ROW} ${ROW_OFF} flex items-center justify-between gap-2`}>
+            <span className="truncate text-sm text-slate-800 dark:text-slate-100">
+              {room.name.trim() === '' ? 'Untitled room' : room.name}
+            </span>
+            <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>
+              {formatM2(roomAreaM2(room))} m²
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <button
+        type="button"
+        className={BTN}
+        onClick={merge}
+        title="Merge the selected rooms into one"
+      >
+        <Merge size={14} aria-hidden="true" />
+        Merge Rooms
+      </button>
+
+      <button
+        type="button"
+        className={`${BTN} text-red-600 hover:bg-red-500/10 dark:text-red-400`}
+        onClick={removeSelected}
+        title="Delete the selected rooms"
+      >
+        <Trash2 size={14} aria-hidden="true" />
+        Delete Selected
+      </button>
+    </PanelSection>
+  )
+}
+
+/**
+ * Inspect card of the room selection. Renders nothing when the artboard or every room id is
+ * unknown, so the shell can mount it unconditionally.
+ */
+export function RoomInspect({ artboardId, roomIds, className }: RoomInspectProps) {
+  const artboard = useDoc((s) => s.doc.artboards.find((a) => a.id === artboardId))
+  if (!artboard) return null
+
+  const wanted = new Set(roomIds)
+  const rooms = artboard.rooms.filter((room) => wanted.has(room.id))
+  if (rooms.length === 0) return null
+  if (rooms.length === 1) return <SingleRoomCard artboard={artboard} room={rooms[0]} className={className} />
+  return <MultiRoomCard artboard={artboard} rooms={rooms} className={className} />
+}

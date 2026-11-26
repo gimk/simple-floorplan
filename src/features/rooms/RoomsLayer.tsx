@@ -1,0 +1,274 @@
+// Rooms of one artboard on the canvas (artboard-local cm). Render inside <ArtboardContent>.
+// Plan mode + select tool: select, move, edit walls and vertices. Design mode: geometry is locked.
+import { useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
+import { useViewport } from '../../canvas/Viewport'
+import { add, area, fmtCm, labelPoint, projectOnSegment, signedArea } from '../../model/geometry'
+import type { Vec } from '../../model/geometry'
+import { useDoc } from '../../model/store'
+import type { Artboard, Room, Selection } from '../../model/types'
+import { useUi } from '../../shell/uiStore'
+import { deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex, roomWalls } from './ops'
+import { snapPoint, snapRoomDelta } from './snap'
+import type { SnapGuide } from './snap'
+
+export type EditWallRequest = {
+  artboardId: string
+  roomId: string
+  edgeIndex: number
+  clientX: number
+  clientY: number
+  currentCm: number
+}
+
+export type RoomsLayerProps = {
+  artboard: Artboard
+  onEditWall?: (req: EditWallRequest) => void
+}
+
+const ORANGE = '#fb923c'
+const STROKE = 'rgba(226,232,240,0.85)'
+const DRAG_THRESHOLD_PX = 3
+
+type Gesture = {
+  pointerId: number
+  clientX: number
+  clientY: number
+  start: Vec
+  moved: boolean
+  onMove: (local: Vec, delta: Vec) => void
+  onEnd?: (moved: boolean) => void
+}
+
+export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
+  const { px, toWorld, zoom } = useViewport()
+  const mode = useUi((s) => s.mode)
+  const tool = useUi((s) => s.tool)
+  const selection = useUi((s) => s.selection)
+  const [guides, setGuides] = useState<SnapGuide[]>([])
+  const gesture = useRef<Gesture | null>(null)
+
+  const interactive = mode === 'plan' && tool === 'select'
+  const inArtboard = (s: Selection) => 'artboardId' in s && s.artboardId === artboard.id
+  const selectedIds = selection.kind === 'room' && inArtboard(selection) ? selection.roomIds : []
+  const selectedWall = selection.kind === 'wall' && inArtboard(selection) ? selection : null
+
+  const toLocal = (cx: number, cy: number): Vec => {
+    const w = toWorld(cx, cy)
+    return { x: w.x - artboard.xCm, y: w.y - artboard.yCm }
+  }
+  const setSelection = (s: Selection) => useUi.getState().set({ activeArtboardId: artboard.id, selection: s })
+  const liveRoom = (id: string): Room | undefined =>
+    useDoc.getState().doc.artboards.find((a) => a.id === artboard.id)?.rooms.find((r) => r.id === id)
+  const writeVertices = (updates: Map<string, Vec[]>, silent: boolean) => {
+    const fn = (doc: { artboards: Artboard[] }) => {
+      const ab = doc.artboards.find((a) => a.id === artboard.id)
+      if (!ab) return
+      for (const r of ab.rooms) { const v = updates.get(r.id); if (v) r.vertices = v }
+    }
+    const st = useDoc.getState()
+    if (silent) st.updateSilent(fn)
+    else st.update(fn)
+  }
+
+  const startGesture = (e: ReactPointerEvent<Element>, onMove: Gesture['onMove'], onEnd?: Gesture['onEnd']) => {
+    gesture.current = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, start: toLocal(e.clientX, e.clientY), moved: false, onMove, onEnd }
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+  }
+  const gestureMove = (e: ReactPointerEvent<Element>) => {
+    const g = gesture.current
+    if (!g || g.pointerId !== e.pointerId) return
+    if (!g.moved) {
+      if (Math.hypot(e.clientX - g.clientX, e.clientY - g.clientY) < DRAG_THRESHOLD_PX) return
+      g.moved = true
+      useDoc.getState().beginDrag()
+    }
+    const p = toLocal(e.clientX, e.clientY)
+    g.onMove(p, { x: p.x - g.start.x, y: p.y - g.start.y })
+  }
+  const gestureEnd = (e: ReactPointerEvent<Element>) => {
+    const g = gesture.current
+    if (!g || g.pointerId !== e.pointerId) return
+    gesture.current = null
+    e.currentTarget.releasePointerCapture?.(e.pointerId)
+    if (g.moved) useDoc.getState().endDrag()
+    setGuides([])
+    g.onEnd?.(g.moved)
+  }
+  const gestureProps = { onPointerMove: gestureMove, onPointerUp: gestureEnd, onPointerCancel: gestureEnd }
+
+  const onRoomDown = (e: ReactPointerEvent<SVGPolygonElement>, room: Room) => {
+    if (e.button !== 0 || !interactive) return
+    e.stopPropagation()
+    let ids = selectedIds
+    if (e.shiftKey) {
+      ids = ids.includes(room.id) ? ids.filter((i) => i !== room.id) : [...ids, room.id]
+      setSelection(ids.length ? { kind: 'room', artboardId: artboard.id, roomIds: ids } : { kind: 'none' })
+      if (!ids.includes(room.id)) return
+    } else if (!ids.includes(room.id)) {
+      ids = [room.id]
+      setSelection({ kind: 'room', artboardId: artboard.id, roomIds: ids })
+    }
+    const origs = new Map(artboard.rooms.filter((r) => ids.includes(r.id)).map((r) => [r.id, r] as const))
+    const primary = origs.get(room.id)!
+    const others = artboard.rooms.filter((r) => !origs.has(r.id))
+    startGesture(e, (_, d) => {
+      const s = snapRoomDelta(primary, d.x, d.y, others)
+      setGuides(s.guides)
+      writeVertices(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), true)
+    })
+  }
+
+  const onWallDown = (e: ReactPointerEvent<SVGLineElement>, room: Room, edgeIndex: number) => {
+    if (e.button !== 0 || !interactive) return
+    e.stopPropagation()
+    setSelection({ kind: 'wall', artboardId: artboard.id, roomId: room.id, edgeIndex })
+    const others = artboard.rooms.filter((r) => r.id !== room.id)
+    const a = room.vertices[edgeIndex]
+    startGesture(e, (_, d) => {
+      const snap = snapPoint(add(a, d), others)
+      setGuides(snap.guides)
+      writeVertices(new Map([[room.id, moveEdge(room, edgeIndex, { x: snap.point.x - a.x, y: snap.point.y - a.y }).vertices]]), true)
+    })
+  }
+
+  const onWallDouble = (e: React.MouseEvent, roomId: string, edgeIndex: number) => {
+    if (!interactive) return
+    e.stopPropagation()
+    const room = liveRoom(roomId)
+    if (!room) return
+    const a = room.vertices[edgeIndex], b = room.vertices[(edgeIndex + 1) % room.vertices.length]
+    const p = projectOnSegment(toLocal(e.clientX, e.clientY), a, b).point
+    writeVertices(new Map([[roomId, insertVertexOnEdge(room, edgeIndex, p).vertices]]), false)
+  }
+
+  const onVertexDown = (e: ReactPointerEvent<SVGCircleElement>, room: Room, idx: number) => {
+    if (e.button !== 0 || !interactive) return
+    e.stopPropagation()
+    if (e.altKey) {
+      const live = liveRoom(room.id)
+      const next = live && deleteVertex(live, idx)
+      if (next) writeVertices(new Map([[room.id, next.vertices]]), false)
+      return
+    }
+    const others = artboard.rooms.filter((r) => r.id !== room.id)
+    const n = room.vertices.length
+    const anchor = room.vertices[(idx + n - 1) % n]
+    startGesture(e, (p) => {
+      const snap = snapPoint(p, others, { anchor })
+      setGuides(snap.guides)
+      writeVertices(new Map([[room.id, moveVertex(room, idx, snap.point).vertices]]), true)
+    })
+  }
+
+  const handleRooms = artboard.rooms.filter((r) => selectedIds.includes(r.id) || r.id === selectedWall?.roomId)
+
+  return (
+    <g data-testid={`rooms-layer-${artboard.id}`}>
+      {artboard.rooms.map((room) => {
+        const selected = selectedIds.includes(room.id) || selectedWall?.roomId === room.id
+        const pts = room.vertices.map((v) => `${v.x},${v.y}`).join(' ')
+        const label = room.vertices.length >= 3 ? labelPoint([room.vertices]) : null
+        return (
+          <g key={room.id} data-room-id={room.id}>
+            <polygon
+              points={pts}
+              fill={room.fill ?? 'rgba(255,255,255,0.04)'}
+              stroke={selected ? ORANGE : STROKE}
+              strokeWidth={px(1)}
+              strokeLinejoin="round"
+              pointerEvents={interactive ? 'all' : 'none'}
+              style={{ cursor: interactive ? 'move' : undefined }}
+              onPointerDown={(e) => onRoomDown(e, room)}
+              {...gestureProps}
+            />
+            {label && (
+              <text
+                x={label.x} y={label.y} textAnchor="middle" pointerEvents="none"
+                fontSize={px(13)} fill="rgba(241,245,249,0.9)"
+              >
+                <tspan x={label.x} dy={px(-2)} fontWeight={600}>{room.name}</tspan>
+                <tspan x={label.x} dy={px(15)} fontSize={px(11)} fill="rgba(203,213,225,0.7)">
+                  {fmtCm(Math.round((area(room.vertices) / 10000) * 100) / 100)} m²
+                </tspan>
+              </text>
+            )}
+          </g>
+        )
+      })}
+
+      {artboard.rooms.map((room) => {
+        const s = signedArea(room.vertices) >= 0 ? 1 : -1
+        return roomWalls(room).map((w) => {
+          const isSel = selectedWall?.roomId === room.id && selectedWall.edgeIndex === w.index
+          const dx = (w.b.x - w.a.x) / (w.lengthCm || 1), dy = (w.b.y - w.a.y) / (w.lengthCm || 1)
+          const off = px(10)
+          const lx = w.mid.x - dy * s * off, ly = w.mid.y + dx * s * off
+          const flip = w.angleDeg > 90 || w.angleDeg <= -90
+          const rot = flip ? w.angleDeg + 180 : w.angleDeg
+          const showLabel = w.lengthCm * zoom >= 36
+          return (
+            <g key={`${room.id}-${w.index}`} data-wall={`${room.id}:${w.index}`}>
+              {isSel && <line x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke={ORANGE} strokeWidth={px(2)} strokeLinecap="round" pointerEvents="none" />}
+              {interactive && (
+                <line
+                  x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y}
+                  stroke="transparent" strokeWidth={px(10)} pointerEvents="stroke"
+                  style={{ cursor: 'pointer' }}
+                  onPointerDown={(e) => onWallDown(e, room, w.index)}
+                  onDoubleClick={(e) => onWallDouble(e, room.id, w.index)}
+                  {...gestureProps}
+                />
+              )}
+              {showLabel && (
+                <g
+                  transform={`translate(${lx} ${ly}) rotate(${rot})`}
+                  pointerEvents={interactive ? 'all' : 'none'}
+                  style={{ cursor: interactive ? 'text' : undefined }}
+                  onPointerDown={(e) => { if (interactive && e.button === 0) e.stopPropagation() }}
+                  onClick={(e) => {
+                    if (!interactive) return
+                    e.stopPropagation()
+                    setSelection({ kind: 'wall', artboardId: artboard.id, roomId: room.id, edgeIndex: w.index })
+                    onEditWall?.({ artboardId: artboard.id, roomId: room.id, edgeIndex: w.index, clientX: e.clientX, clientY: e.clientY, currentCm: w.lengthCm })
+                  }}
+                >
+                  <text
+                    textAnchor="middle" dominantBaseline="central" fontSize={px(11)}
+                    fill={isSel ? ORANGE : 'rgba(226,232,240,0.9)'}
+                    stroke="#12161b" strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round"
+                  >
+                    {fmtCm(w.lengthCm)}
+                  </text>
+                </g>
+              )}
+            </g>
+          )
+        })
+      })}
+
+      {interactive && handleRooms.map((room) =>
+        room.vertices.map((v, i) => (
+          <circle
+            key={`${room.id}-v${i}`}
+            cx={v.x} cy={v.y} r={px(5)}
+            fill="#12161b" stroke={ORANGE} strokeWidth={px(1.5)}
+            style={{ cursor: 'grab' }}
+            onPointerDown={(e) => onVertexDown(e, room, i)}
+            {...gestureProps}
+          />
+        )),
+      )}
+
+      <g pointerEvents="none" data-testid="snap-guides">
+        {guides.map((g, i) =>
+          g.kind === 'line' && g.b ? (
+            <line key={i} x1={g.a.x} y1={g.a.y} x2={g.b.x} y2={g.b.y} stroke={ORANGE} strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`} />
+          ) : (
+            <circle key={i} cx={g.a.x} cy={g.a.y} r={px(4)} fill="none" stroke={ORANGE} strokeWidth={px(1.5)} />
+          ),
+        )}
+      </g>
+    </g>
+  )
+}

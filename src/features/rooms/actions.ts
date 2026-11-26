@@ -1,0 +1,79 @@
+// Store actions for rooms. Each call is one undo step (or no step when nothing changes).
+import { useDoc } from '../../model/store'
+import type { Vec } from '../../model/geometry'
+import { area } from '../../model/geometry'
+import type { Room } from '../../model/types'
+import { cutoutRoom, mergeRooms, setWallLength } from './ops'
+
+const findArtboard = (artboardId: string) => useDoc.getState().doc.artboards.find((a) => a.id === artboardId)
+
+export function addRoom(artboardId: string, room: Room): void {
+  if (!findArtboard(artboardId)) return
+  useDoc.getState().update((d) => { d.artboards.find((a) => a.id === artboardId)!.rooms.push(room) })
+}
+
+export function deleteRooms(artboardId: string, roomIds: string[]): void {
+  const ab = findArtboard(artboardId)
+  if (!ab || !ab.rooms.some((r) => roomIds.includes(r.id))) return
+  useDoc.getState().update((d) => {
+    const a = d.artboards.find((x) => x.id === artboardId)!
+    a.rooms = a.rooms.filter((r) => !roomIds.includes(r.id))
+  })
+}
+
+export function renameRoom(artboardId: string, roomId: string, name: string): void {
+  const room = findArtboard(artboardId)?.rooms.find((r) => r.id === roomId)
+  if (!room || room.name === name) return
+  useDoc.getState().update((d) => {
+    d.artboards.find((a) => a.id === artboardId)!.rooms.find((r) => r.id === roomId)!.name = name
+  })
+}
+
+/** Returns false (and changes nothing) when the length is invalid or the room is not found. */
+export function setRoomWallLength(artboardId: string, roomId: string, edgeIndex: number, lengthCm: number): boolean {
+  const room = findArtboard(artboardId)?.rooms.find((r) => r.id === roomId)
+  if (!room) return false
+  const next = setWallLength(room, edgeIndex, lengthCm)
+  if (!next) return false
+  useDoc.getState().update((d) => {
+    const a = d.artboards.find((x) => x.id === artboardId)!
+    a.rooms = a.rooms.map((r) => (r.id === roomId ? next : r))
+  })
+  return true
+}
+
+/**
+ * Subtract the cutter polygon from rooms (targetRoomIds, or all rooms). Rooms the cutter does not
+ * touch stay as they are. Returns true when something changed.
+ */
+export function cutoutArtboardRooms(artboardId: string, cutter: Vec[], targetRoomIds?: string[]): boolean {
+  const ab = findArtboard(artboardId)
+  if (!ab) return false
+  let changed = false
+  const rooms: Room[] = []
+  for (const r of ab.rooms) {
+    if (targetRoomIds && !targetRoomIds.includes(r.id)) { rooms.push(r); continue }
+    const parts = cutoutRoom(r, cutter)
+    const same = parts.length === 1 && Math.abs(area(parts[0].vertices) - area(r.vertices)) < 1e-6
+    if (same) { rooms.push(r); continue }
+    changed = true
+    rooms.push(...parts)
+  }
+  if (!changed) return false
+  useDoc.getState().update((d) => { d.artboards.find((a) => a.id === artboardId)!.rooms = rooms })
+  return true
+}
+
+/** Merge the listed rooms into one (first listed keeps id/name/fill). Returns the merged room or null. */
+export function mergeArtboardRooms(artboardId: string, roomIds: string[]): Room | null {
+  const ab = findArtboard(artboardId)
+  if (!ab) return null
+  const picked = roomIds.map((id) => ab.rooms.find((r) => r.id === id)).filter((r): r is Room => !!r)
+  const merged = mergeRooms(picked)
+  if (!merged) return null
+  useDoc.getState().update((d) => {
+    const a = d.artboards.find((x) => x.id === artboardId)!
+    a.rooms = a.rooms.filter((r) => r.id === merged.id || !roomIds.includes(r.id)).map((r) => (r.id === merged.id ? merged : r))
+  })
+  return merged
+}

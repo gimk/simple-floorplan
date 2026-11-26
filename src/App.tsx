@@ -4,13 +4,21 @@ import { useEffect, useRef, useState } from 'react'
 import { Download, ImagePlus, Redo2, Undo2, Upload } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Viewport } from './canvas/Viewport'
-import { ArtboardInspect, ArtboardsLayer } from './features/artboards'
+import { ArtboardContent, ArtboardInspect, ArtboardsLayer } from './features/artboards'
 import { CalibrateOverlay } from './features/background/CalibrateOverlay'
 import { RefImageInspect } from './features/background/RefImageInspect'
 import { RefImagesLayer } from './features/background/RefImagesLayer'
 import { loadRefImageFile } from './features/background/upload'
+import { deleteRooms } from './features/rooms/actions'
+import { PlanToolbar } from './features/rooms/PlanToolbar'
+import { RoomInspect } from './features/rooms/RoomInspect'
+import { RoomsLayer, type EditWallRequest } from './features/rooms/RoomsLayer'
+import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
+import { WallInspect } from './features/rooms/WallInspect'
+import { WallLengthEditor } from './features/rooms/WallLengthEditor'
 import { ToastHost, toast } from './features/toast'
 import { useDoc } from './model/store'
+import type { Selection } from './model/types'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
@@ -48,11 +56,14 @@ export default function App() {
   const selection = useUi((s) => s.selection)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
   const title = useDoc((s) => s.doc.title)
+  const artboards = useDoc((s) => s.doc.artboards)
   const canUndo = useStore(useDoc.temporal, (s) => s.pastStates.length > 0)
   const canRedo = useStore(useDoc.temporal, (s) => s.futureStates.length > 0)
   const fileRef = useRef<HTMLInputElement>(null)
   const imageRef = useRef<HTMLInputElement>(null)
   const [dropping, setDropping] = useState(false)
+  // Wall-length editor request + the selection object that opened it (see `wallEditor` below).
+  const [editWall, setEditWall] = useState<{ req: EditWallRequest; openedWith: Selection } | null>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -63,14 +74,23 @@ export default function App() {
         else useDoc.getState().undo()
         return
       }
-      // Delete / Backspace removes the selected reference image in Plan mode.
+      // Delete / Backspace removes the selected reference image or rooms in Plan mode.
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const ui = useUi.getState()
-      if (ui.mode !== 'plan' || ui.tool === 'calibrate-image' || ui.selection.kind !== 'refImage') return
-      e.preventDefault()
-      useDoc.getState().deleteRefImage(ui.selection.imageId)
-      useUi.getState().set({ selection: { kind: 'none' }, calibratingImageId: null })
+      if (ui.mode !== 'plan' || ui.tool === 'calibrate-image') return
+      const sel = ui.selection
+      if (sel.kind === 'refImage') {
+        e.preventDefault()
+        useDoc.getState().deleteRefImage(sel.imageId)
+        useUi.getState().set({ selection: { kind: 'none' }, calibratingImageId: null })
+        return
+      }
+      if (sel.kind === 'room' && sel.roomIds.length > 0) {
+        e.preventDefault()
+        deleteRooms(sel.artboardId, sel.roomIds)
+        useUi.getState().set({ selection: { kind: 'none' } })
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -118,6 +138,30 @@ export default function App() {
     if (mode !== 'plan') return
     void addRefImages(e.dataTransfer.files)
   }
+
+  /**
+   * True while the room or wall of the selection still exists. A deleted room (or an undo of its
+   * creation) leaves a stale selection: the Inspect panel then falls back to the artboard card
+   * instead of showing an empty column.
+   */
+  const selectionExists =
+    selection.kind === 'room'
+      ? !!artboards
+          .find((a) => a.id === selection.artboardId)
+          ?.rooms.some((r) => selection.roomIds.includes(r.id))
+      : selection.kind === 'wall'
+        ? !!artboards
+            .find((a) => a.id === selection.artboardId)
+            ?.rooms.some((r) => r.id === selection.roomId && selection.edgeIndex < r.vertices.length)
+        : true
+
+  /**
+   * The wall-length input only lives while the selection that opened it is still current, and only
+   * in Plan mode with the select tool: any other mode, tool or selection closes it at once (no
+   * stale input floats over the plan, and no setState-in-effect is needed to clear it).
+   */
+  const wallEditor =
+    editWall && mode === 'plan' && tool === 'select' && editWall.openedWith === selection ? editWall.req : null
 
   return (
     <div className="flex h-full flex-col bg-[#12161b] text-zinc-100">
@@ -183,7 +227,14 @@ export default function App() {
           onDragLeave={() => setDropping(false)}
           onDrop={onDrop}
         >
-          <Viewport overlay={<CalibrateOverlay />}>
+          <Viewport
+            overlay={
+              <>
+                <CalibrateOverlay />
+                <RoomToolsOverlay />
+              </>
+            }
+          >
             {tool === 'select' && (
               <rect
                 data-testid="canvas-background"
@@ -198,13 +249,29 @@ export default function App() {
             <CanvasGrid />
             <RefImagesLayer />
             <ArtboardsLayer />
+            {artboards.map((a) => (
+              <ArtboardContent key={a.id} artboard={a}>
+                <RoomsLayer
+                  artboard={a}
+                  onEditWall={(req) => setEditWall({ req, openedWith: useUi.getState().selection })}
+                />
+              </ArtboardContent>
+            ))}
           </Viewport>
           <div className="pointer-events-none absolute bottom-3 left-3">
             <ZoomControls />
           </div>
+          <PlanToolbar />
+          {wallEditor && (
+            <WallLengthEditor {...wallEditor} onClose={() => setEditWall(null)} />
+          )}
         </main>
         <aside aria-label="Inspect" data-testid="inspect-panel" className="hidden w-70 shrink-0 border-l border-white/10 bg-[#161b21] p-3 text-sm text-zinc-400 lg:block">
-          {selection.kind === 'refImage' ? (
+          {selection.kind === 'room' && selectionExists ? (
+            <RoomInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
+          ) : selection.kind === 'wall' && selectionExists ? (
+            <WallInspect artboardId={selection.artboardId} roomId={selection.roomId} edgeIndex={selection.edgeIndex} />
+          ) : selection.kind === 'refImage' ? (
             <RefImageInspect imageId={selection.imageId} />
           ) : (
             <ArtboardInspect artboardId={selection.kind === 'artboard' ? selection.artboardId : activeArtboardId} />
