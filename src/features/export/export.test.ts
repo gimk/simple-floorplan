@@ -146,17 +146,51 @@ describe('renderArtboardSvg', () => {
     expect(svg).toContain('<line x1="700" y1="100" x2="700" y2="200" stroke="#12161b" stroke-width="1.5" />')
   })
 
-  it('renders rect furniture with a front-edge tick and circle furniture as an ellipse', () => {
+  it('renders rect furniture with its default corner radius and circle furniture as an ellipse', () => {
     const { svg } = renderArtboardSvg(populated())
     expect(svg).toContain('data-furniture="f1" transform="translate(60 60) rotate(0)"')
-    expect(svg).toContain('<rect x="-30" y="-20" width="60" height="40" rx="1.5"')
+    // Default 4 cm radius, as on the canvas.
+    expect(svg).toContain('<rect x="-30" y="-20" width="60" height="40" rx="4" ry="4"')
     expect(svg).toContain('fill="#c2410c" fill-opacity="0.78"')
-    // Front edge on local -Y: a short bar just inside the top edge.
-    expect(svg).toContain('<line x1="-12" y1="-18" x2="12" y2="-18"')
     expect(svg).toContain('>Chair</text>')
     expect(svg).toContain('data-furniture="f2" transform="translate(250 200) rotate(15)"')
     expect(svg).toContain('<ellipse cx="0" cy="0" rx="40" ry="40"')
     expect(svg).toContain('>Round table</text>')
+  })
+
+  it('draws the subtle direction arrow only when showDirection is true', () => {
+    const off = renderArtboardSvg(artboard({ furniture: [chair()] })).svg
+    expect(off).not.toContain('stroke-opacity="0.55"')
+    expect(off).not.toContain('<path d="M -2.25')
+
+    const hidden = renderArtboardSvg(artboard({ furniture: [chair({ showDirection: false })] })).svg
+    expect(hidden).not.toContain('stroke-opacity="0.55"')
+
+    // Front edge on local -Y: a small chevron, 45 degree wings, white at 0.55 opacity.
+    // The 400 x 300 room keeps the scale at 2 px/cm, so the arrow is 9 px wide over 4 cm.
+    const { svg } = renderArtboardSvg(
+      artboard({ rooms: [rect('r1', 'Living', 0, 0, 400, 300)], furniture: [chair({ showDirection: true })] }),
+    )
+    expect(svg).toContain(
+      '<path d="M -2.25 -15.75 L 0 -18 L 2.25 -15.75" fill="none" stroke="#f4f4f5" ' +
+        'stroke-opacity="0.55" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round" />',
+    )
+    // One arrow only, and it sits above the item label in the drawing order.
+    expect(count(svg, 'stroke-opacity="0.55"')).toBe(1)
+    expect(svg.indexOf('stroke-opacity="0.55"')).toBeLessThan(svg.indexOf('>Chair</text>'))
+  })
+
+  it('applies a custom corner radius on rect furniture, clamped to half the shorter side', () => {
+    const custom = renderArtboardSvg(artboard({ furniture: [chair({ cornerRadiusCm: 12 })] })).svg
+    expect(custom).toContain('<rect x="-30" y="-20" width="60" height="40" rx="12" ry="12"')
+    expect(custom).not.toContain('rx="1.5"')
+
+    const zero = renderArtboardSvg(artboard({ furniture: [chair({ cornerRadiusCm: 0 })] })).svg
+    expect(zero).toContain('<rect x="-30" y="-20" width="60" height="40" rx="0" ry="0"')
+
+    // 60 x 40: the radius can never pass 20 cm (half the depth).
+    const huge = renderArtboardSvg(artboard({ furniture: [chair({ cornerRadiusCm: 500 })] })).svg
+    expect(huge).toContain('<rect x="-30" y="-20" width="60" height="40" rx="20" ry="20"')
   })
 
   it('escapes special characters in the artboard, project, room and furniture names', () => {

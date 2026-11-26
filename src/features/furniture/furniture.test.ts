@@ -5,8 +5,8 @@ import type { Artboard, FurnitureItem, Room } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import { addFurniture, deleteFurniture, duplicateFurniture, setRoomFill, updateFurniture, updateFurnitureSilent } from './actions'
 import {
-  computeDistanceGuides, DEFAULT_MAX_GUIDE_DIST_CM, MAX_FURNITURE_CM, MIN_FURNITURE_CM, furnitureAxisBounds,
-  furnitureWorldCorners, normalizeAngle, snapFurnitureMove, snapRotation,
+  computeDistanceGuides, DEFAULT_MAX_GUIDE_DIST_CM, MAX_FURNITURE_CM, MIN_FURNITURE_CM, directionArrowGeometry,
+  furnitureAxisBounds, furnitureCornerRadiusCm, furnitureWorldCorners, normalizeAngle, snapFurnitureMove, snapRotation,
 } from './geometry'
 import { FLOOR_SWATCHES, FURNITURE_COLORS, FURNITURE_PRESETS } from './presets'
 
@@ -86,6 +86,45 @@ describe('presets and swatches', () => {
     expect(byId.get('bookshelf')).toMatchObject({ widthCm: 100, depthCm: 35 })
     expect(byId.get('kitchen-counter')).toMatchObject({ widthCm: 240, depthCm: 60 })
     expect(byId.get('rug')).toMatchObject({ widthCm: 200, depthCm: 300 })
+  })
+
+  it('marks only the directional presets with showDirection', () => {
+    const directional = FURNITURE_PRESETS.filter((p) => p.showDirection === true).map((p) => p.id)
+    expect(directional).toEqual(['bed', 'single-bed', 'sofa', 'armchair', 'desk', 'wardrobe', 'bookshelf', 'kitchen-counter'])
+    for (const id of ['dining-table', 'round-table', 'coffee-table', 'rug']) {
+      expect(FURNITURE_PRESETS.find((p) => p.id === id)?.showDirection).toBeFalsy()
+    }
+  })
+})
+
+// ---------- corner radius and direction arrow ----------
+
+describe('furnitureCornerRadiusCm / directionArrowGeometry', () => {
+  it('defaults the corner radius to 4 cm and clamps it to half the shorter side', () => {
+    expect(furnitureCornerRadiusCm(100, 60)).toBe(4)
+    expect(furnitureCornerRadiusCm(100, 60, 12)).toBe(12)
+    expect(furnitureCornerRadiusCm(100, 60, 900)).toBe(30)
+    expect(furnitureCornerRadiusCm(20, 10, 6)).toBe(5)
+    expect(furnitureCornerRadiusCm(100, 60, 0)).toBe(0)
+    expect(furnitureCornerRadiusCm(100, 60, -8)).toBe(0)
+  })
+
+  it('points the direction arrow to local -Y, inside the top edge', () => {
+    const arrow = directionArrowGeometry(160, 200, (px) => px / 2)!
+    expect(arrow.tip.x).toBe(0)
+    expect(arrow.tip.y).toBeGreaterThan(-100)
+    expect(arrow.tip.y).toBeLessThan(-97)
+    // Wings go back (down) by the same amount as their half width: 45 degrees.
+    expect(arrow.left.x).toBeCloseTo(-arrow.right.x)
+    expect(arrow.left.y).toBeCloseTo(arrow.right.y)
+    expect(arrow.left.y - arrow.tip.y).toBeCloseTo(Math.abs(arrow.left.x))
+  })
+
+  it('keeps the arrow inside a small item and drops it when there is no room', () => {
+    const small = directionArrowGeometry(4, 4, (px) => px / 2)!
+    expect(Math.abs(small.left.x)).toBeLessThanOrEqual(2)
+    expect(small.left.y).toBeLessThanOrEqual(2)
+    expect(directionArrowGeometry(0, 40, (px) => px)).toBeNull()
   })
 })
 

@@ -180,3 +180,32 @@ export function computeDistanceGuides(item: FurnitureItem, artboard: Artboard, m
   }
   return out
 }
+
+/** Corner radius of a 'rect' item, in cm. Default 4 cm, never more than half of the shorter side. */
+export function furnitureCornerRadiusCm(widthCm: number, depthCm: number, cornerRadiusCm?: number): number {
+  return Math.max(0, Math.min(cornerRadiusCm ?? 4, widthCm / 2, depthCm / 2))
+}
+
+/** The three points of the subtle front-direction chevron of one item, in local cm. */
+export type DirectionArrow = {
+  /** Tip, just inside the local -Y (front) edge. */
+  tip: Vec
+  /** Back end of the left wing. */
+  left: Vec
+  /** Back end of the right wing. */
+  right: Vec
+}
+
+/**
+ * Geometry of the optional front-direction chevron: it points to local -Y, its wings go back at 45°
+ * and it never grows past the item. `u` turns screen px into cm, so it keeps its on-screen size.
+ * Returns null when the item is too small to hold it.
+ */
+export function directionArrowGeometry(widthCm: number, depthCm: number, u: (px: number) => number): DirectionArrow | null {
+  const halfW = Math.min(u(4.5), widthCm * 0.22)
+  const rise = Math.min(halfW, depthCm * 0.22)
+  const inset = Math.min(u(4), depthCm * 0.15)
+  if (!(halfW > 0) || !(rise > 0)) return null
+  const tipY = -depthCm / 2 + inset
+  return { tip: { x: 0, y: tipY }, left: { x: -halfW, y: tipY + rise }, right: { x: halfW, y: tipY + rise } }
+}

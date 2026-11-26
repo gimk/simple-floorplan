@@ -37,6 +37,8 @@ export const furnitureSchema = z.object({
   rotationDeg: num,
   color: z.string(),
   heightCm: num.positive().optional(),
+  showDirection: z.boolean().optional(),
+  cornerRadiusCm: z.number().min(0).optional(),
 })
 
 export const artboardSchema = z.object({

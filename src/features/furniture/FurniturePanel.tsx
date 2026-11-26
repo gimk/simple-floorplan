@@ -9,6 +9,7 @@ import { Circle, LayoutGrid, Plus, Shapes, Square } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem } from '../../model/types'
 import {
+  CheckboxRow,
   EmptyHint,
   FieldRow,
   MUTED,
@@ -36,6 +37,7 @@ type NewItem = {
   depthCm: number
   color: string
   heightCm?: number
+  showDirection?: boolean
 }
 
 /** Defaults of the custom shape form. */
@@ -144,6 +146,7 @@ export function FurniturePanel() {
   const [widthCm, setWidthCm] = useState(DEFAULT_WIDTH_CM)
   const [depthCm, setDepthCm] = useState(DEFAULT_DEPTH_CM)
   const [color, setColor] = useState(FURNITURE_COLORS[0].color)
+  const [showDirection, setShowDirection] = useState(false)
 
   const artboard = artboards.find((a) => a.id === activeArtboardId) ?? artboards[0]
 
@@ -162,6 +165,7 @@ export function FurniturePanel() {
       widthCm: clampCm(widthCm),
       depthCm: clampCm(depthCm),
       color,
+      showDirection,
     })
   }
 
@@ -220,6 +224,8 @@ export function FurniturePanel() {
           <ColorRow value={color} onPick={setColor} />
         </div>
 
+        <CheckboxRow label="Direction arrow" checked={showDirection} onChange={setShowDirection} />
+
         <button
           type="button"
           className={ADD_BTN}
@@ -246,6 +252,7 @@ export function FurniturePanel() {
                   depthCm: preset.depthCm,
                   color: preset.color,
                   heightCm: preset.heightCm,
+                  showDirection: preset.showDirection,
                 })
               }
             />

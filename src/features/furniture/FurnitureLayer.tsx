@@ -16,6 +16,8 @@ import {
   MAX_FURNITURE_CM,
   MIN_FURNITURE_CM,
   computeDistanceGuides,
+  directionArrowGeometry,
+  furnitureCornerRadiusCm,
   snapFurnitureMove,
   snapRotation,
 } from './geometry'
@@ -197,19 +199,22 @@ export function FurnitureLayer({ artboard }: { artboard: Artboard }) {
       strokeWidth: selected ? 2 : 1,
       vectorEffect: 'non-scaling-stroke' as const,
     }
-    const half = Math.min(w * 0.2, 40)
-    const inset = Math.min(d * 0.12, px(4))
+    const rx = furnitureCornerRadiusCm(w, d, item.cornerRadiusCm)
+    const arrow = item.showDirection ? directionArrowGeometry(w, d, px) : null
     return (
       <>
         {item.shape === 'circle'
           ? <ellipse cx={0} cy={0} rx={w / 2} ry={d / 2} {...common} />
-          : <rect x={-w / 2} y={-d / 2} width={w} height={d} rx={Math.min(3, w / 8, d / 8)} {...common} />}
-        {/* Front edge (local -Y): a bar just inside the top edge. */}
-        <line
-          x1={-half} y1={-d / 2 + inset} x2={half} y2={-d / 2 + inset}
-          stroke="#f4f4f5" strokeOpacity={0.9} strokeWidth={3} strokeLinecap="round"
-          vectorEffect="non-scaling-stroke" pointerEvents="none"
-        />
+          : <rect x={-w / 2} y={-d / 2} width={w} height={d} rx={rx} ry={rx} {...common} />}
+        {arrow && (
+          // Optional subtle front-direction chevron (local -Y), never bigger than the item.
+          <path
+            d={`M ${arrow.left.x} ${arrow.left.y} L ${arrow.tip.x} ${arrow.tip.y} L ${arrow.right.x} ${arrow.right.y}`}
+            fill="none" stroke="#f4f4f5" strokeOpacity={0.55} strokeWidth={1.5}
+            strokeLinecap="round" strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke" pointerEvents="none"
+          />
+        )}
       </>
     )
   }

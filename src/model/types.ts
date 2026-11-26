@@ -38,6 +38,10 @@ export type FurnitureItem = {
   rotationDeg: number
   color: string
   heightCm?: number
+  /** Draw a subtle front-direction arrow near the local -Y (front) edge. Omitted or false: no arrow. */
+  showDirection?: boolean
+  /** Border radius of a 'rect' item, in cm (>= 0). Ignored by 'circle' items. */
+  cornerRadiusCm?: number
 }
 
 export type Artboard = {

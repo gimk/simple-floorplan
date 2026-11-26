@@ -13,6 +13,7 @@ import {
   NumberField,
   PanelSection,
   Segmented,
+  SwitchRow,
   TextField,
   formatCmInput,
 } from '../../shell/panel'
@@ -127,6 +128,16 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
     patch({ heightCm: value })
   }
 
+  /** Largest radius that still looks like a rounded rectangle. */
+  const maxRadiusCm = Math.floor(Math.min(item.widthCm, item.depthCm) / 2)
+
+  const commitRadius = (value: number | null): boolean | void => {
+    if (value == null) return false
+    const next = Math.max(0, Math.min(value, maxRadiusCm))
+    if (next === (item.cornerRadiusCm ?? 4)) return
+    patch({ cornerRadiusCm: next })
+  }
+
   return (
     <PanelSection title="Furniture" icon={<Armchair size={14} aria-hidden="true" />}>
       <FieldRow label="Name" htmlFor={nameId}>
@@ -172,6 +183,26 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
           onCommit={commitDepth}
         />
       </FieldRow>
+
+      {item.shape === 'rect' && (
+        <FieldRow label="Corner radius" hint="rounded corners">
+          <NumberField
+            ariaLabel="Furniture corner radius"
+            unit="cm"
+            min={0}
+            max={maxRadiusCm}
+            value={item.cornerRadiusCm ?? 4}
+            onCommit={commitRadius}
+          />
+        </FieldRow>
+      )}
+
+      <SwitchRow
+        label="Direction arrow"
+        name="furniture-direction"
+        checked={!!item.showDirection}
+        onChange={(next) => patch({ showDirection: next })}
+      />
 
       <FieldRow label="Rotation" hint="clockwise">
         <NumberField

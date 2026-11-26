@@ -6,6 +6,7 @@ import { fmtCm, labelPoint, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
+import { directionArrowGeometry, furnitureCornerRadiusCm } from '../furniture/geometry'
 import { doorArcGeometry, openingEndpoints } from '../openings/geometry'
 
 export type ExportOptions = {
@@ -189,13 +190,19 @@ function furnitureSvg(f: FurnitureItem, ctx: Ctx): string[] {
   if (f.shape === 'circle') {
     out.push(`      <ellipse cx="0" cy="0" rx="${num(w / 2)}" ry="${num(d / 2)}" ${common} />`)
   } else {
-    out.push(`      <rect x="${num(-w / 2)}" y="${num(-d / 2)}" width="${num(w)}" height="${num(d)}" rx="${num(Math.min(ctx.u(3), w / 8, d / 8))}" ${common} />`)
-    // Front edge (local -Y): a bar just inside the top edge, as on the canvas.
-    const half = Math.min(w * 0.2, 40)
-    const inset = Math.min(d * 0.12, ctx.u(4))
+    const rx = furnitureCornerRadiusCm(w, d, f.cornerRadiusCm)
     out.push(
-      `      <line x1="${num(-half)}" y1="${num(-d / 2 + inset)}" x2="${num(half)}" y2="${num(-d / 2 + inset)}" ` +
-        `stroke="#f4f4f5" stroke-opacity="0.9" stroke-width="${num(ctx.u(3))}" stroke-linecap="round" />`,
+      `      <rect x="${num(-w / 2)}" y="${num(-d / 2)}" width="${num(w)}" height="${num(d)}" ` +
+        `rx="${num(rx)}" ry="${num(rx)}" ${common} />`,
+    )
+  }
+  // Optional subtle front-direction chevron on local -Y, as on the canvas.
+  const arrow = f.showDirection ? directionArrowGeometry(w, d, ctx.u) : null
+  if (arrow) {
+    out.push(
+      `      <path d="M ${num(arrow.left.x)} ${num(arrow.left.y)} L ${num(arrow.tip.x)} ${num(arrow.tip.y)} ` +
+        `L ${num(arrow.right.x)} ${num(arrow.right.y)}" fill="none" stroke="#f4f4f5" stroke-opacity="0.55" ` +
+        `stroke-width="${num(ctx.u(1.5))}" stroke-linecap="round" stroke-linejoin="round" />`,
     )
   }
   const fontSize = Math.min(ctx.u(11), d * 0.55, w * 0.35)
