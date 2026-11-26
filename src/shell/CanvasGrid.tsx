@@ -3,9 +3,11 @@
 // The lines are aligned to the origin of the active artboard (falling back to the first artboard,
 // then to the world origin), so a major line passes through that origin.
 //
-// The grid fades outside the artboards, so the frames stand out: a faint grid covers the whole
-// viewport, and the normal-contrast grid is clipped to `#artboards-grid-clip`, which holds one
-// rect per artboard frame. With no artboard, only the normal grid is drawn.
+// The grid only shows at full contrast inside the active artboard: the crisp lines are clipped to
+// `#active-artboard-grid-clip`, which holds the active artboard frame. A faint grid covers the whole
+// viewport but is masked by `#outside-grid-mask`, whose black rects cut out EVERY artboard frame,
+// so no grid at all is drawn inside the unselected artboards. With no artboard, only the crisp grid
+// is drawn, over the whole viewport.
 import { useEffect, useState } from 'react'
 import { useViewport } from '../canvas/Viewport'
 import { useDoc } from '../model/store'
@@ -20,8 +22,11 @@ const FALLBACK: Size = { w: 800, h: 600 }
 /** Opacity of the grid outside the artboards, relative to its normal contrast. */
 const OUTSIDE_OPACITY = 0.28
 
-/** Id of the clip path that keeps the crisp grid inside the artboard frames. */
-const ARTBOARDS_CLIP_ID = 'artboards-grid-clip'
+/** Id of the clip path that keeps the crisp grid inside the active artboard frame. */
+const ACTIVE_CLIP_ID = 'active-artboard-grid-clip'
+
+/** Id of the mask that removes the faint grid from every artboard frame. */
+const OUTSIDE_MASK_ID = 'outside-grid-mask'
 
 /** Current size of the canvas element, in screen px, with a safe fallback. */
 const readSize = (svg: SVGSVGElement | null): Size => ({
@@ -66,6 +71,10 @@ export function CanvasGrid() {
   const ox = origin?.xCm ?? 0
   const oy = origin?.yCm ?? 0
 
+  // The active artboard gets the crisp grid; the other frames get no grid at all.
+  const active = origin ?? null
+  const activeFrame = active ? artboardFrame(active) : null
+
   // One line every `step` cm from the origin; every 5th line is a major one (integer count from
   // the origin avoids floating-point modulo tests).
   const xs: { x: number; major: boolean }[] = []
@@ -80,21 +89,49 @@ export function CanvasGrid() {
   return (
     <g pointerEvents="none" aria-hidden="true">
       <defs>
-        <clipPath id={ARTBOARDS_CLIP_ID} clipPathUnits="userSpaceOnUse">
+        <clipPath id={ACTIVE_CLIP_ID} clipPathUnits="userSpaceOnUse">
+          {activeFrame && (
+            <rect
+              x={activeFrame.x}
+              y={activeFrame.y}
+              width={activeFrame.width}
+              height={activeFrame.height}
+            />
+          )}
+        </clipPath>
+        <mask
+          id={OUTSIDE_MASK_ID}
+          maskUnits="userSpaceOnUse"
+          x={x0}
+          y={y0}
+          width={x1 - x0}
+          height={y1 - y0}
+        >
+          {/* White shows the faint grid, the black artboard rects hide it inside every frame. */}
+          <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} fill="white" />
           {artboards.map((a) => {
             const f = artboardFrame(a)
-            return <rect key={a.id} x={f.x} y={f.y} width={f.width} height={f.height} />
+            return (
+              <rect
+                key={a.id}
+                x={f.x}
+                y={f.y}
+                width={f.width}
+                height={f.height}
+                fill="black"
+              />
+            )
           })}
-        </clipPath>
+        </mask>
       </defs>
-      {/* Faint grid outside the artboards: it covers the whole viewport, the crisp grid is drawn
-          on top of it inside the frames. */}
+      {/* Faint grid outside the artboards only: the black rects of the mask cut the frames out. */}
       {artboards.length > 0 && (
-        <g opacity={OUTSIDE_OPACITY}>
+        <g opacity={OUTSIDE_OPACITY} mask={`url(#${OUTSIDE_MASK_ID})`}>
           <GridLines xs={xs} ys={ys} x0={x0} y0={y0} x1={x1} y1={y1} unit={px(1)} />
         </g>
       )}
-      <g clipPath={artboards.length > 0 ? `url(#${ARTBOARDS_CLIP_ID})` : undefined}>
+      {/* Crisp grid, inside the active artboard only (whole viewport when there is no artboard). */}
+      <g clipPath={activeFrame ? `url(#${ACTIVE_CLIP_ID})` : undefined}>
         <GridLines xs={xs} ys={ys} x0={x0} y0={y0} x1={x1} y1={y1} unit={px(1)} />
       </g>
     </g>
@@ -140,4 +177,3 @@ function GridLines({
     </>
   )
 }
-
