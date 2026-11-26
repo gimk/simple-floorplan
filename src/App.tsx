@@ -27,6 +27,7 @@ import { RoomsLayer, type EditWallRequest } from './features/rooms/RoomsLayer'
 import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
+import { TapeOverlay } from './features/tape/TapeOverlay'
 import { ToastHost, toast } from './features/toast'
 import { selectRoom } from './features/artboards/selection'
 import { useDoc } from './model/store'
@@ -113,6 +114,20 @@ export default function App() {
         const ui = useUi.getState()
         ui.set(modeUiPatch(key === '1' ? 'plan' : 'design', ui.selection))
         return
+      }
+      // Plain 'm' toggles the quick Tape measure in both modes; in Design mode 'v' leaves it.
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && (key === 'm' || key === 'v')) {
+        const ui = useUi.getState()
+        if (key === 'm') {
+          e.preventDefault()
+          ui.set({ tool: ui.tool === 'tape' ? 'select' : 'tape' })
+          return
+        }
+        if (ui.mode === 'design' && ui.tool === 'tape') {
+          e.preventDefault()
+          ui.set({ tool: 'select' })
+          return
+        }
       }
       // Cmd/Ctrl+D duplicates the selected item: furniture in Design mode, the artboard in Plan mode.
       if ((e.metaKey || e.ctrlKey) && key === 'd' && !e.altKey && !e.shiftKey) {
@@ -370,6 +385,7 @@ export default function App() {
                 <CalibrateOverlay key={calibratingImageId ?? 'none'} />
                 <RoomToolsOverlay />
                 <PlaceOpeningOverlay />
+                <TapeOverlay />
                 <MarqueeOverlay />
               </>
             }

@@ -5,7 +5,7 @@ import type { OpeningKind, Selection } from '../model/types'
 
 export type View = { x: number; y: number; zoom: number }
 export type Mode = 'plan' | 'design'
-export type Tool = 'select' | 'rect' | 'pen' | 'cutout' | 'place-opening' | 'calibrate-image'
+export type Tool = 'select' | 'rect' | 'pen' | 'cutout' | 'place-opening' | 'calibrate-image' | 'tape'
 
 type UiData = {
   /** World point at the screen origin (cm) + screen px per cm. */
