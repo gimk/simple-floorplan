@@ -2,7 +2,7 @@
 // record nothing and are meant for drags (wrap them in beginDrag/endDrag).
 import { useDoc } from '../../model/store'
 import { useUi } from '../../shell/uiStore'
-import type { FurnitureItem } from '../../model/types'
+import type { FloorPattern, FurnitureItem } from '../../model/types'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
 
 type FurniturePatch = Partial<Omit<FurnitureItem, 'id'>>
@@ -124,5 +124,33 @@ export function setRoomFill(artboardId: string, roomId: string, fill: string | u
     if (!r) return
     if (fill === undefined) delete r.fill
     else r.fill = fill
+  })
+}
+
+/** Set the floor pattern of one room. 'solid' and undefined store nothing, so the JSON stays clean. */
+export function setRoomFloorPattern(artboardId: string, roomId: string, pattern: FloorPattern | undefined): void {
+  if (!findArtboard(artboardId)?.rooms.some((r) => r.id === roomId)) return
+  useDoc.getState().update((d) => {
+    const r = d.artboards.find((a) => a.id === artboardId)!.rooms.find((x) => x.id === roomId)
+    if (!r) return
+    if (pattern === undefined || pattern === 'solid') delete r.floorPattern
+    else r.floorPattern = pattern
+  })
+}
+
+/** Paint (or with undefined, clear) one wall of a room. The map is removed when it becomes empty. */
+export function setRoomWallColor(artboardId: string, roomId: string, edgeIndex: number, color: string | undefined): void {
+  if (!findArtboard(artboardId)?.rooms.some((r) => r.id === roomId)) return
+  useDoc.getState().update((d) => {
+    const r = d.artboards.find((a) => a.id === artboardId)!.rooms.find((x) => x.id === roomId)
+    if (!r) return
+    const key = String(edgeIndex)
+    if (color === undefined) {
+      const { [key]: _removed, ...rest } = r.wallColors ?? {}
+      if (Object.keys(rest).length === 0) delete r.wallColors
+      else r.wallColors = rest
+    } else {
+      r.wallColors = { ...(r.wallColors ?? {}), [key]: color }
+    }
   })
 }

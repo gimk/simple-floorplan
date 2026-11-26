@@ -92,6 +92,22 @@ describe('renderArtboardSvg', () => {
     expect(svg).toContain('>21 m²</text>')
   })
 
+  it('emits a <pattern> def and a url fill when a room has a floor pattern', () => {
+    const r = { ...rect('r1', 'Kitchen', 0, 0, 400, 300, '#8a6b4a'), floorPattern: 'wood' as const }
+    const { svg } = renderArtboardSvg(artboard({ rooms: [r] }))
+    expect(svg).toContain('<pattern id="floor-r1"')
+    expect(svg).toContain('fill="url(#floor-r1)"')
+    expect(svg).not.toContain('<pattern id="floor-r2"')
+  })
+
+  it('draws a painted wall stroke when a room has wallColors', () => {
+    const r = { ...rect('r1', 'Kitchen', 0, 0, 400, 300), wallColors: { '1': '#b85d43' } }
+    const { svg } = renderArtboardSvg(artboard({ rooms: [r] }))
+    expect(svg).toContain('data-wall-paint="r1:1"')
+    expect(svg).toContain('stroke="#b85d43"')
+    expect(svg).not.toContain('data-wall-paint="r1:0"')
+  })
+
   it('renders rooms with their own fill at 0.28 and a default fill otherwise', () => {
     const { svg } = renderArtboardSvg(populated())
     expect(svg).toContain('data-room="r1"')

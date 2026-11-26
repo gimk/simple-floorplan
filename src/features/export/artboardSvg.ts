@@ -5,6 +5,7 @@
 import { fmtCm, labelPoint, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
+import { DEFAULT_PATTERN_FILL, isPatterned, patternId, patternSvg } from '../rooms/floorPatterns'
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
 import { directionArrowGeometry, furnitureCornerRadiusCm } from '../furniture/geometry'
 import { doorArcGeometry, openingEndpoints, openingSymbol, openingVariant } from '../openings/geometry'
@@ -143,11 +144,26 @@ function roomSvg(room: Room, ctx: Ctx): string[] {
   if (v.length < 3) return []
   const out: string[] = []
   const pts = v.map((p) => `${num(p.x)},${num(p.y)}`).join(' ')
-  const fillOpacity = room.fill ? ' fill-opacity="0.28"' : ''
+  const pattern = isPatterned(room.floorPattern) ? room.floorPattern : null
+  const pid = patternId(room.id, 'floor')
+  if (pattern) {
+    out.push(`    <defs>${patternSvg(pid, pattern, esc(room.fill ?? DEFAULT_PATTERN_FILL), ctx.u(1))}</defs>`)
+  }
+  const fillOpacity = room.fill && !pattern ? ' fill-opacity="0.28"' : ''
+  const fillValue = pattern ? `url(#${pid})` : esc(room.fill ?? 'rgba(255,255,255,0.04)')
   out.push(
-    `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${esc(room.fill ?? 'rgba(255,255,255,0.04)')}"${fillOpacity} ` +
+    `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${fillValue}"${fillOpacity} ` +
       `stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" stroke-linejoin="round" />`,
   )
+  for (let i = 0; i < v.length; i++) {
+    const paint = room.wallColors?.[String(i)]
+    if (!paint) continue
+    const a = v[i], b = v[(i + 1) % v.length]
+    out.push(
+      `    <line data-wall-paint="${esc(room.id)}:${i}" x1="${num(a.x)}" y1="${num(a.y)}" x2="${num(b.x)}" y2="${num(b.y)}" ` +
+        `stroke="${esc(paint)}" stroke-width="${num(ctx.u(2.5))}" />`,
+    )
+  }
   const c = labelPoint([v])
   out.push(
     `    <text x="${num(c.x)}" y="${num(c.y - ctx.u(2))}" text-anchor="middle" font-family="${FONT}" ` +

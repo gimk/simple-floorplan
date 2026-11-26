@@ -3,16 +3,17 @@
 // (front-most first, with the two stack steps). The geometry of the room is read-only here: walls
 // and dimensions belong to Plan mode.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm, m².
-import { useId } from 'react'
-import { Armchair, ChevronDown, ChevronUp, PaintBucket, Square } from 'lucide-react'
+import { useId, useState } from 'react'
+import { Armchair, ChevronDown, ChevronUp, PaintBucket, Paintbrush, Square } from 'lucide-react'
 import { pointInPolygon } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem, Room } from '../../model/types'
 import { EmptyHint, FieldRow, IconButton, MUTED, PanelSection, TextField, formatM2 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { roomAreaM2 } from '../artboards/frame'
-import { reorderFurniture, setRoomFill } from './actions'
-import { FLOOR_SWATCHES } from './presets'
+import { roomWalls, formatLengthCm } from '../rooms/ops'
+import { reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomWallColor } from './actions'
+import { FLOOR_PATTERNS, FLOOR_SWATCHES, WALL_ACCENT_COLORS } from './presets'
 
 export type DesignRoomInspectProps = {
   /** Artboard that holds the room. */
@@ -66,6 +67,7 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
   const artboard = useDoc((s) => s.doc.artboards.find((a) => a.id === artboardId))
   const room: Room | undefined = artboard?.rooms.find((r) => r.id === roomId)
   const nameId = useId()
+  const [wallIndex, setWallIndex] = useState<number | null>(null)
   if (!artboard || !room) return null
 
   const fill = room.fill
@@ -138,6 +140,69 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
           })}
         </div>
         <p className={MUTED}>{currentLabel}</p>
+        <div className="grid grid-cols-3 gap-1" role="group" aria-label="Floor pattern">
+          {FLOOR_PATTERNS.map((p) => {
+            const active = (room.floorPattern ?? 'solid') === p.id
+            return (
+              <button
+                key={p.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setRoomFloorPattern(artboard.id, room.id, p.id)}
+                className={`min-h-7 rounded-full border px-2 text-xs font-medium pointer-coarse:min-h-10 ${
+                  active
+                    ? 'border-orange-500 bg-orange-500/15 text-orange-600 dark:text-orange-300'
+                    : 'border-black/15 text-slate-700 hover:bg-black/5 dark:border-white/20 dark:text-slate-200 dark:hover:bg-white/10'
+                }`}
+              >
+                {p.label}
+              </button>
+            )
+          })}
+        </div>
+      </PanelSection>
+
+      <PanelSection title="Wall paint" icon={<Paintbrush size={14} aria-hidden="true" />}>
+        <ul className="flex flex-col gap-1" aria-label="Walls of this room">
+          {roomWalls(room).map((w) => {
+            const paint = room.wallColors?.[String(w.index)]
+            const open = wallIndex === w.index
+            return (
+              <li key={w.index} className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => setWallIndex(open ? null : w.index)}
+                  className={`flex min-h-9 items-center gap-2 rounded-md border px-2 py-1 text-left text-sm pointer-coarse:min-h-11 ${
+                    open ? 'border-orange-500' : 'border-transparent hover:bg-black/5 dark:hover:bg-white/10'
+                  }`}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={paint ? { backgroundColor: paint } : undefined}
+                    className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/25"
+                  />
+                  <span className="text-slate-800 dark:text-slate-100">
+                    {`Wall ${w.index + 1} · ${formatLengthCm(w.lengthCm, artboard.precisionCm)} cm`}
+                  </span>
+                </button>
+                {open && (
+                  <div className="grid grid-cols-5 gap-2 px-1 pb-1" role="group" aria-label={`Paint for wall ${w.index + 1}`}>
+                    {WALL_ACCENT_COLORS.map((sw) => (
+                      <FloorSwatch
+                        key={sw.id}
+                        label={sw.label}
+                        color={sw.color}
+                        active={sw.color === undefined ? paint === undefined : paint?.toLowerCase() === sw.color.toLowerCase()}
+                        onPick={() => setRoomWallColor(artboard.id, room.id, w.index, sw.color)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </li>
+            )
+          })}
+        </ul>
       </PanelSection>
 
       <PanelSection title="Furniture" icon={<Armchair size={14} aria-hidden="true" />}>

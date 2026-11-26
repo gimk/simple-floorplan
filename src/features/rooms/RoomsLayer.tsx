@@ -18,6 +18,7 @@ import {
   constrainAxis, constrainWallPerpendicular, deleteVertex, formatLengthCm, insertVertexOnEdge, moveEdge, moveRoom, moveVertex,
   roomWalls, roundToPrecision, scaleRoomFromVertex, wallResizeCursor,
 } from './ops'
+import { DEFAULT_PATTERN_FILL, PATTERN_DEFS, isPatterned, patternId } from './floorPatterns'
 import { snapPoint, snapRoomDelta } from './snap'
 import type { SnapGuide } from './snap'
 
@@ -279,12 +280,23 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
         const selected = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
         const pts = room.vertices.map((v) => `${v.x},${v.y}`).join(' ')
         const label = room.vertices.length >= 3 ? labelPoint([room.vertices]) : null
+        const pattern = isPatterned(room.floorPattern) ? room.floorPattern : null
+        const pid = patternId(room.id)
+        const def = pattern ? PATTERN_DEFS[pattern] : null
         return (
           <g key={room.id} data-room-id={room.id}>
+            {pattern && def && (
+              <defs>
+                <pattern id={pid} width={def.w} height={def.h} patternUnits="userSpaceOnUse">
+                  <rect width={def.w} height={def.h} fill={room.fill ?? DEFAULT_PATTERN_FILL} fillOpacity={0.28} />
+                  <g dangerouslySetInnerHTML={{ __html: def.inner(px(1)) }} />
+                </pattern>
+              </defs>
+            )}
             <polygon
               points={pts}
-              fill={room.fill ?? 'rgba(255,255,255,0.04)'}
-              fillOpacity={room.fill ? 0.28 : undefined}
+              fill={pattern ? `url(#${pid})` : (room.fill ?? 'rgba(255,255,255,0.04)')}
+              fillOpacity={!pattern && room.fill ? 0.28 : undefined}
               stroke={selected ? ORANGE : STROKE}
               strokeWidth={px(design && selected ? 1.5 : 1)}
               strokeLinejoin="round"
@@ -321,6 +333,13 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
           const showLabel = w.lengthCm * zoom >= 36
           return (
             <g key={`${room.id}-${w.index}`} data-wall={`${room.id}:${w.index}`}>
+              {room.wallColors?.[String(w.index)] && (
+                <line
+                  x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y}
+                  stroke={room.wallColors[String(w.index)]} strokeWidth={px(3)} strokeLinecap="butt" pointerEvents="none"
+                  data-wall-paint={`${room.id}:${w.index}`}
+                />
+              )}
               {isSel && <line x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke={ORANGE} strokeWidth={px(2)} strokeLinecap="round" pointerEvents="none" />}
               {interactive && (
                 <line

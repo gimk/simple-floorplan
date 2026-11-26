@@ -10,6 +10,8 @@ export const roomSchema = z.object({
   name: z.string(),
   vertices: z.array(vec),
   fill: z.string().optional(),
+  floorPattern: z.enum(['solid', 'wood', 'parquet', 'tile', 'stone', 'carpet']).optional(),
+  wallColors: z.record(z.string(), z.string()).optional(),
 })
 
 export const openingSchema = z.object({

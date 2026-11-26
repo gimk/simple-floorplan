@@ -4,7 +4,7 @@ import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem, Room } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import {
-  addFurniture, deleteFurniture, duplicateFurniture, reorderFurniture, setRoomFill, updateFurniture, updateFurnitureSilent,
+  addFurniture, deleteFurniture, duplicateFurniture, reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomWallColor, updateFurniture, updateFurnitureSilent,
 } from './actions'
 import {
   computeDistanceGuides, DEFAULT_MAX_GUIDE_DIST_CM, MAX_FURNITURE_CM, MIN_FURNITURE_CM, directionArrowGeometry,
@@ -556,6 +556,45 @@ describe('setRoomFill', () => {
       setRoomFill(artboardId, 'r1', sw.color)
       expect(s().doc.artboards[0].rooms[0].fill).toBe(sw.color)
     }
+  })
+})
+
+describe('setRoomFloorPattern', () => {
+  it('sets a pattern, stores nothing for solid/undefined, and undoes', () => {
+    const artboardId = s().doc.artboards[0].id
+    s().update((d) => { d.artboards[0].rooms.push(rect('r1', 0, 0, 400, 300)) })
+    setRoomFloorPattern(artboardId, 'r1', 'wood')
+    expect(s().doc.artboards[0].rooms[0].floorPattern).toBe('wood')
+    setRoomFloorPattern(artboardId, 'r1', 'solid')
+    expect('floorPattern' in s().doc.artboards[0].rooms[0]).toBe(false)
+    setRoomFloorPattern(artboardId, 'r1', 'tile')
+    setRoomFloorPattern(artboardId, 'r1', undefined)
+    expect('floorPattern' in s().doc.artboards[0].rooms[0]).toBe(false)
+    useDoc.temporal.getState().undo()
+    expect(s().doc.artboards[0].rooms[0].floorPattern).toBe('tile')
+    useDoc.temporal.getState().redo()
+    expect(s().doc.artboards[0].rooms[0].floorPattern).toBeUndefined()
+    const before = past()
+    setRoomFloorPattern(artboardId, 'nope', 'wood')
+    expect(past()).toBe(before)
+  })
+})
+
+describe('setRoomWallColor', () => {
+  it('sets, clears, removes the empty map, and undoes', () => {
+    const artboardId = s().doc.artboards[0].id
+    s().update((d) => { d.artboards[0].rooms.push(rect('r1', 0, 0, 400, 300)) })
+    setRoomWallColor(artboardId, 'r1', 0, '#b85d43')
+    setRoomWallColor(artboardId, 'r1', 2, '#5a7a65')
+    expect(s().doc.artboards[0].rooms[0].wallColors).toEqual({ '0': '#b85d43', '2': '#5a7a65' })
+    setRoomWallColor(artboardId, 'r1', 0, undefined)
+    expect(s().doc.artboards[0].rooms[0].wallColors).toEqual({ '2': '#5a7a65' })
+    setRoomWallColor(artboardId, 'r1', 2, undefined)
+    expect('wallColors' in s().doc.artboards[0].rooms[0]).toBe(false)
+    useDoc.temporal.getState().undo()
+    expect(s().doc.artboards[0].rooms[0].wallColors).toEqual({ '2': '#5a7a65' })
+    useDoc.temporal.getState().redo()
+    expect(s().doc.artboards[0].rooms[0].wallColors).toBeUndefined()
   })
 })
 

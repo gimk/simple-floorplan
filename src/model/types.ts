@@ -3,7 +3,18 @@ import type { Vec } from './geometry'
 
 export type { Vec }
 
-export type RoomShape = { id: string; name: string; vertices: Vec[]; fill?: string }
+/** Floor texture drawn over the room fill. 'solid' (or unset) means no texture. */
+export type FloorPattern = 'solid' | 'wood' | 'parquet' | 'tile' | 'stone' | 'carpet'
+
+export type RoomShape = {
+  id: string
+  name: string
+  vertices: Vec[]
+  fill?: string
+  floorPattern?: FloorPattern
+  /** Accent paint per wall: keys are edge indices ('0', '1', ...), values are hex colours. */
+  wallColors?: Record<string, string>
+}
 export type Room = RoomShape
 
 /** Drawing precision of an artboard, in cm. */

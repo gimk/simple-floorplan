@@ -1,6 +1,8 @@
 // Starter furniture presets, floor fill swatches and furniture colours (no React, no store).
 // Colours are muted so they read well on the dark canvas (#12161b) at low opacity.
 
+import type { FloorPattern } from '../../model/types'
+
 /** A floor finish choice. `color` undefined means no fill (the default canvas look). */
 export type Swatch = { id: string; label: string; color: string | undefined }
 
@@ -15,6 +17,28 @@ export const FLOOR_SWATCHES: Swatch[] = [
   { id: 'concrete', label: 'Concrete', color: '#6b7075' },
   { id: 'carpet', label: 'Carpet', color: '#6b5b73' },
   { id: 'terrace', label: 'Terrace', color: '#4f6b55' },
+]
+
+/** Floor textures offered in the room Inspect card. */
+export const FLOOR_PATTERNS: { id: FloorPattern; label: string }[] = [
+  { id: 'solid', label: 'Solid' },
+  { id: 'wood', label: 'Wood' },
+  { id: 'parquet', label: 'Parquet' },
+  { id: 'tile', label: 'Tile' },
+  { id: 'stone', label: 'Stone' },
+  { id: 'carpet', label: 'Carpet' },
+]
+
+/** Accent paint colours for single walls. `color` undefined clears the paint. */
+export const WALL_ACCENT_COLORS: Swatch[] = [
+  { id: 'none', label: 'Default', color: undefined },
+  { id: 'warm-white', label: 'Warm White', color: '#e5e0d5' },
+  { id: 'terracotta', label: 'Terracotta', color: '#b85d43' },
+  { id: 'sage', label: 'Sage', color: '#5a7a65' },
+  { id: 'slate-blue', label: 'Slate Blue', color: '#486581' },
+  { id: 'ochre', label: 'Ochre', color: '#c4943a' },
+  { id: 'charcoal', label: 'Charcoal', color: '#4b5563' },
+  { id: 'blush', label: 'Blush', color: '#a66e76' },
 ]
 
 /** Furniture body colours. */
