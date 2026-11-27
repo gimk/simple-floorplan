@@ -8,7 +8,12 @@ import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
 import { DEFAULT_PATTERN_FILL, isPatterned, patternId, patternSvg } from '../rooms/floorPatterns'
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
 import { directionArrowGeometry, furnitureCornerRadiusCm } from '../furniture/geometry'
+import {
+  WALL_COLOR, jambSegment, openingSymbolShift, openingWall, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
+} from '../rooms/walls'
+import type { OpeningWall } from '../rooms/walls'
 import { doorArcGeometry, openingEndpoints, openingSymbol, openingVariant } from '../openings/geometry'
+import { CANVAS_BG } from '../../shell/canvasTokens'
 
 export type ExportOptions = {
   /** Draw the furniture of the artboard. Default: true. */
@@ -19,7 +24,7 @@ export type ExportOptions = {
   projectTitle?: string
 }
 
-const BG = '#12161b'
+const BG = CANVAS_BG
 const LINE = '#e4e4e7'
 const TEXT = 'rgba(241,245,249,0.9)'
 const TEXT_DIM = 'rgba(203,213,225,0.7)'
@@ -99,12 +104,14 @@ function furnitureBounds(f: FurnitureItem): Bounds {
 
 /** Tight extent of the drawing in artboard-local cm (rooms, openings, doors' swing, furniture). */
 function contentBounds(a: Artboard, includeFurniture: boolean): Bounds | null {
+  const wallT = wallThicknessOf(a)
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
   const grow = (x: number, y: number) => {
     minX = Math.min(minX, x); minY = Math.min(minY, y)
     maxX = Math.max(maxX, x); maxY = Math.max(maxY, y)
   }
-  for (const r of a.rooms) for (const v of r.vertices) grow(v.x, v.y)
+  // Thick walls stick out of the room polygons by the wall thickness (miter corners: a bit more).
+  for (const r of a.rooms) for (const v of r.vertices) { grow(v.x - wallT, v.y - wallT); grow(v.x + wallT, v.y + wallT) }
   for (const o of a.openings) {
     const { start, end } = openingEndpoints(o)
     grow(start.x, start.y); grow(end.x, end.y)
@@ -139,6 +146,10 @@ type Ctx = {
   u: (px: number) => number
   pxPerCm: number
   includeWallLabels: boolean
+  /** Wall thickness in cm (0 = thin walls, the old look). */
+  wallThicknessCm: number
+  /** Id of the mask that hides room border strokes and wall paint lines inside thick-wall openings. */
+  strokeMaskId: string | null
   /** Too-short walls are skipped; two rooms that share a wall print its length only once. */
   wallLabelSeen: Set<string>
 }
@@ -156,17 +167,33 @@ function roomSvg(room: Room, ctx: Ctx): string[] {
   }
   const fillOpacity = room.fill && !pattern ? ' fill-opacity="0.28"' : ''
   const fillValue = pattern ? `url(#${pid})` : esc(room.fill ?? 'rgba(255,255,255,0.04)')
-  out.push(
-    `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${fillValue}"${fillOpacity} ` +
-      `stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" stroke-linejoin="round" />`,
-  )
+  const paintLines: string[] = []
   for (let i = 0; i < v.length; i++) {
     const paint = room.wallColors?.[String(i)]
     if (!paint) continue
     const a = v[i], b = v[(i + 1) % v.length]
-    out.push(
-      `    <line data-wall-paint="${esc(room.id)}:${i}" x1="${num(a.x)}" y1="${num(a.y)}" x2="${num(b.x)}" y2="${num(b.y)}" ` +
+    paintLines.push(
+      `      <line data-wall-paint="${esc(room.id)}:${i}" x1="${num(a.x)}" y1="${num(a.y)}" x2="${num(b.x)}" y2="${num(b.y)}" ` +
         `stroke="${esc(paint)}" stroke-width="${num(ctx.u(2.5))}" />`,
+    )
+  }
+  const strokePolygon =
+    `      <polygon points="${pts}" fill="none" stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" stroke-linejoin="round" />`
+  if (ctx.strokeMaskId) {
+    // Thick walls: the fill keeps no stroke, and the border stroke and the wall paint lines go into
+    // one masked group so an opening cuts them away (no 1px line crosses the gap).
+    out.push(
+      `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${fillValue}"${fillOpacity} stroke="none" />`,
+      `    <g data-room-strokes="${esc(room.id)}" mask="url(#${ctx.strokeMaskId})">`,
+      strokePolygon,
+      ...paintLines,
+      `    </g>`,
+    )
+  } else {
+    out.push(
+      `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${fillValue}"${fillOpacity} ` +
+        `stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" stroke-linejoin="round" />`,
+      ...paintLines.map((l) => l.slice(2)),
     )
   }
   const c = labelPoint([v])
@@ -187,7 +214,7 @@ function roomSvg(room: Room, ctx: Ctx): string[] {
     if (ctx.wallLabelSeen.has(key)) continue
     ctx.wallLabelSeen.add(key)
     const dx = (b.x - a.x) / lengthCm, dy = (b.y - a.y) / lengthCm
-    const off = ctx.u(10)
+    const off = ctx.u(10) + ctx.wallThicknessCm
     const lx = (a.x + b.x) / 2 - dy * s * off, ly = (a.y + b.y) / 2 + dx * s * off
     const angleDeg = Math.atan2(b.y - a.y, b.x - a.x) / RAD
     // Keep the label readable (never upside down) and the angle small.
@@ -201,6 +228,60 @@ function roomSvg(room: Room, ctx: Ctx): string[] {
     )
   }
   return out
+}
+
+/**
+ * Thick outward walls, drawn first (behind the room fills). A mask keeps the stroke out of every room
+ * interior and cuts a gap at each opening, exactly like the canvas. Empty when walls are thin.
+ */
+function wallLayerSvg(artboard: Artboard, ctx: Ctx): string[] {
+  const m = wallMaskModel(artboard, ctx.wallThicknessCm)
+  if (!m) return []
+  const id = `wall-mask-${esc(artboard.id)}`
+  const area = `x="${num(m.x)}" y="${num(m.y)}" width="${num(m.width)}" height="${num(m.height)}"`
+  const out = [
+    `    <defs>`,
+    `      <mask id="${id}" maskUnits="userSpaceOnUse" ${area}>`,
+    `        <rect ${area} fill="#fff" />`,
+    ...m.roomPoints.map((p) => `        <polygon points="${p}" fill="#000" />`),
+    ...m.cutouts.map((c) =>
+      `        <line x1="${num(c.x1)}" y1="${num(c.y1)}" x2="${num(c.x2)}" y2="${num(c.y2)}" stroke="#000" ` +
+        `stroke-width="${num(c.width)}" stroke-linecap="butt" />`),
+    `      </mask>`,
+    `    </defs>`,
+    `    <g data-walls="${id}" mask="url(#${id})">`,
+  ]
+  for (const room of artboard.rooms) {
+    if (room.vertices.length < 3) continue
+    out.push(
+      `      <polygon points="${room.vertices.map((p) => `${num(p.x)},${num(p.y)}`).join(' ')}" fill="none" stroke="${WALL_COLOR}" ` +
+        `stroke-width="${num(ctx.wallThicknessCm * 2)}" stroke-linejoin="miter" stroke-miterlimit="4" />`,
+    )
+  }
+  out.push('    </g>')
+  return out
+}
+
+/**
+ * The mask that hides the room border strokes and the wall paint lines inside every opening that
+ * crosses a thick wall: one butt-capped cutout of the exact opening width per hosted opening, from
+ * `pad` inside the room to `pad` past the outer wall face. Empty when walls are thin.
+ */
+function strokeMaskSvg(artboard: Artboard, ctx: Ctx): string[] {
+  const m = wallStrokeMaskModel(artboard, ctx.wallThicknessCm, Math.max(ctx.u(3), 1.5))
+  if (!m) return []
+  const id = `wall-stroke-mask-${esc(artboard.id)}`
+  const area = `x="${num(m.x)}" y="${num(m.y)}" width="${num(m.width)}" height="${num(m.height)}"`
+  return [
+    `    <defs>`,
+    `      <mask id="${id}" maskUnits="userSpaceOnUse" ${area}>`,
+    `        <rect ${area} fill="#fff" />`,
+    ...m.cutouts.map((c) =>
+      `        <line x1="${num(c.x1)}" y1="${num(c.y1)}" x2="${num(c.x2)}" y2="${num(c.y2)}" stroke="#000" ` +
+        `stroke-width="${num(c.width)}" stroke-linecap="butt" />`),
+    `      </mask>`,
+    `    </defs>`,
+  ]
 }
 
 /** Furniture: rect with a front-edge tick (local -Y) or ellipse, fill at 0.78, name in the middle. */
@@ -241,7 +322,7 @@ function furnitureSvg(f: FurnitureItem, ctx: Ctx): string[] {
 }
 
 /** Openings on top of the walls: background gap line, then the 1px symbol of the kind and its style. */
-function openingSvg(op: Opening, ctx: Ctx): string[] {
+function openingSvg(op: Opening, ctx: Ctx, wall: OpeningWall | null): string[] {
   const { start, end } = openingEndpoints(op)
   const nx = -Math.sin(op.angleDeg * RAD), ny = Math.cos(op.angleDeg * RAD)
   const tick = ctx.u(4)
@@ -249,15 +330,30 @@ function openingSvg(op: Opening, ctx: Ctx): string[] {
   const out: string[] = []
   out.push(
     `    <g data-opening="${esc(op.id)}" data-kind="${esc(op.kind)}" data-variant="${esc(openingVariant(op))}">`,
-    `      <line x1="${num(start.x)}" y1="${num(start.y)}" x2="${num(end.x)}" y2="${num(end.y)}" ` +
-      `stroke="${BG}" stroke-width="${num(ctx.u(3))}" />`,
   )
-  const ticks = (color: string) => [
-    `      <line x1="${num(start.x - nx * tick)}" y1="${num(start.y - ny * tick)}" x2="${num(start.x + nx * tick)}" ` +
-      `y2="${num(start.y + ny * tick)}" stroke="${color}" stroke-width="${num(ctx.u(1))}" />`,
-    `      <line x1="${num(end.x - nx * tick)}" y1="${num(end.y - ny * tick)}" x2="${num(end.x + nx * tick)}" ` +
-      `y2="${num(end.y + ny * tick)}" stroke="${color}" stroke-width="${num(ctx.u(1))}" />`,
-  ]
+  // Thin walls need the dark gap line that hides the wall under the opening. With a thick wall the
+  // two masks already remove the wall body and both room borders, so the line would only be a dark
+  // bar across the page. The masks come from the artboard, so this holds for a flush opening too
+  // (effective wall thickness 0: `wall` is null there but the stroke mask still cuts both borders).
+  if (!ctx.strokeMaskId) {
+    out.push(
+      `      <line x1="${num(start.x)}" y1="${num(start.y)}" x2="${num(end.x)}" y2="${num(end.y)}" ` +
+        `stroke="${BG}" stroke-width="${num(ctx.u(3))}" />`,
+    )
+  }
+  // Thick wall: the jambs span the wall thickness (outward from the room edge); else short ticks.
+  const jambs = wall
+    ? [jambSegment(start, wall), jambSegment(end, wall)]
+    : [
+        { a: { x: start.x - nx * tick, y: start.y - ny * tick }, b: { x: start.x + nx * tick, y: start.y + ny * tick } },
+        { a: { x: end.x - nx * tick, y: end.y - ny * tick }, b: { x: end.x + nx * tick, y: end.y + ny * tick } },
+      ]
+  const ticks = (color: string) => jambs.map((j) =>
+    `      <line x1="${num(j.a.x)}" y1="${num(j.a.y)}" x2="${num(j.b.x)}" y2="${num(j.b.y)}" ` +
+      `stroke="${color}" stroke-width="${num(ctx.u(1))}" />`)
+  // The symbol (frame, panes, leaf) sits across the wall thickness.
+  const shift = wall ? openingSymbolShift(op, wall) : null
+  if (shift) out.push(`      <g data-wall-shift="1" transform="translate(${num(shift.x)} ${num(shift.y)})">`)
   // Sliding and pocket styles keep a 1px line through the wall, with the panels offset from it.
   if (symbol.wallLine) {
     out.push(
@@ -290,6 +386,7 @@ function openingSvg(op: Opening, ctx: Ctx): string[] {
         `stroke-width="${num(ctx.u(1))}" stroke-opacity="0.8" />`,
     )
   }
+  if (shift) out.push('      </g>')
   // Openings keep their jamb ticks on every style, as on the canvas.
   out.push(...ticks(LINE))
   out.push('    </g>')
@@ -341,10 +438,13 @@ export function renderArtboardSvg(artboard: Artboard, opts: ExportOptions = {}):
   }
   const widthPx = Math.max(1, Math.round(sheetW * pxPerCm))
   const heightPx = Math.max(1, Math.round(sheetH * pxPerCm))
+  const wallThicknessCm = wallThicknessOf(artboard)
   const ctx: Ctx = {
     u: (px: number) => px / pxPerCm,
     pxPerCm,
     includeWallLabels: opts.includeWallLabels !== false,
+    wallThicknessCm,
+    strokeMaskId: wallThicknessCm > 0 ? `wall-stroke-mask-${artboard.id}` : null,
     wallLabelSeen: new Set<string>(),
   }
 
@@ -353,9 +453,12 @@ export function renderArtboardSvg(artboard: Artboard, opts: ExportOptions = {}):
     `    <rect x="${num(sheetX)}" y="${num(sheetY)}" width="${num(sheetW)}" height="${num(sheetH)}" fill="${BG}" />`,
     ...headerSvg(artboard, sheetX, sheetW, sheetY, opts.projectTitle, ctx.u),
   )
+  body.push(...wallLayerSvg(artboard, ctx))
+  // Declared here so both masks come before the shapes that reference them.
+  body.push(...strokeMaskSvg(artboard, ctx))
   for (const room of artboard.rooms) body.push(...roomSvg(room, ctx))
   if (includeFurniture) for (const f of artboard.furniture) body.push(...furnitureSvg(f, ctx))
-  for (const op of artboard.openings) body.push(...openingSvg(op, ctx))
+  for (const op of artboard.openings) body.push(...openingSvg(op, ctx, openingWall(artboard.rooms, op, ctx.wallThicknessCm)))
 
   const svg = [
     '<?xml version="1.0" encoding="UTF-8"?>',

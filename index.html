@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="theme-color" content="#161b21" />
+    <meta name="theme-color" content="#12161b" />
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="Simple Floorplan: draw rooms, walls, doors and windows, and measure a home on any device." />
     <style>html{background:#12161b}</style>
@@ -12,7 +12,8 @@
     <title>Simple Floorplan</title>
   </head>
   <body>
-    <noscript>Simple Floorplan needs JavaScript. Please turn it on to use the app.</noscript>
+    <!-- The app is dark only: the noscript text must stay readable on the #12161b background. -->
+    <noscript style="color:#e8ecef;padding:1rem;display:block">Simple Floorplan needs JavaScript. Please turn it on to use the app.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

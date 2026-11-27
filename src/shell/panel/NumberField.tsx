@@ -156,7 +156,7 @@ export function NumberField({
           }}
         />
         {unit && (
-          <span aria-hidden="true" className="shrink-0 pr-2 text-xs text-slate-500 dark:text-slate-400">
+          <span aria-hidden="true" className="shrink-0 pr-2 text-xs text-slate-400">
             {unit}
           </span>
         )}

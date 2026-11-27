@@ -20,11 +20,11 @@ export type StatGridProps = {
 }
 
 const TONE: Record<StatTone, string> = {
-  default: 'text-slate-900 dark:text-slate-100',
-  ok: 'text-emerald-700 dark:text-emerald-400',
-  warn: 'text-amber-700 dark:text-amber-400',
-  bad: 'text-red-600 dark:text-red-400',
-  muted: 'text-slate-500 dark:text-slate-400',
+  default: 'text-slate-100',
+  ok: 'text-emerald-400',
+  warn: 'text-amber-400',
+  bad: 'text-red-400',
+  muted: 'text-slate-400',
 }
 
 export function StatGrid({ items, columns = 2, className }: StatGridProps) {

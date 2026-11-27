@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Opening, Room } from '../../model/types'
-import { syncOpeningsForRoomChange, syncOpeningsForRoomMove } from './sync'
+import { openingOutward } from '../rooms/walls'
+import { createOpening, snapToWall } from './geometry'
+import { hostWallIn, syncOpeningsForRoomChange, syncOpeningsForRoomMove } from './sync'
 
 const rect = (id: string, x: number, y: number, w: number, h: number): Room => ({
   id, name: id, vertices: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }],
 })
-const door = (id: string, xCm: number, yCm: number, angleDeg = 0): Opening => ({ id, kind: 'door', xCm, yCm, angleDeg, widthCm: 90, hinge: 'left', swing: 'in' })
+const door = (id: string, xCm: number, yCm: number, angleDeg = 0, roomId?: string): Opening =>
+  ({ id, kind: 'door', xCm, yCm, angleDeg, widthCm: 90, hinge: 'left', swing: 'in', roomId })
 const shift = (r: Room, dx: number, dy: number): Room => ({ ...r, vertices: r.vertices.map((v) => ({ x: v.x + dx, y: v.y + dy })) })
 
 describe('syncOpeningsForRoomMove', () => {
@@ -73,5 +76,75 @@ describe('syncOpeningsForRoomChange', () => {
     const part = rect('a2', 0, 0, 200, 300)
     const out = syncOpeningsForRoomChange([door('on', 100, 0), door('gone', 300, 0)], [a], [part])
     expect(out.map((o) => o.id)).toEqual(['on'])
+  })
+})
+
+// Two rooms flush: room B is snapped against the right wall of room A, so that wall of A (edge 1,
+// "up" on screen) and the left wall of B (edge 3, "down") are at the same place. A door on that wall
+// is at distance 0 from an edge of both rooms.
+describe('flush walls (0 cm gap)', () => {
+  /** Room A, 400 x 300, from (0, 0). The door of the tests sits on its right wall (x = 400). */
+  const a = rect('a', 0, 0, 400, 300)
+  /** Room B, 300 x 300, left wall flush with the right wall of room A. */
+  const bFlush = rect('b', 400, 0, 300, 300)
+  /** Room B with a 20 cm gap, before it is snapped flush (or after it is pulled away). */
+  const bApart = rect('b', 420, 0, 300, 300)
+
+  it('keeps the door on room B (and its outward side) when room B is snapped flush', () => {
+    const owned = door('owned', 420, 150, -90, 'b')
+    const legacy = door('legacy', 420, 150, -90)
+    const out = syncOpeningsForRoomChange([owned, legacy], [a, bApart], [a, bFlush])
+    // Both openings follow the wall of room B, which moved by 20 cm to the left.
+    for (const o of out) expect(o).toMatchObject({ xCm: 400, yCm: 150, angleDeg: -90 })
+    // The legacy opening (no roomId) is placed by the direction tie-breaker, then records its room.
+    for (const o of out) expect(o.roomId).toBe('b')
+    // The wall that hosts them is the left wall of room B, not the right wall of room A.
+    for (const o of [out[0], out[1]]) {
+      expect(hostWallIn([a, bFlush], o)).toMatchObject({ room: { id: 'b' }, edgeIndex: 3 })
+      // Room B is on the +x side: its outward normal points to -x. Room A's would point to +x.
+      expect(openingOutward([a, bFlush], o)?.x).toBeCloseTo(-1)
+    }
+  })
+
+  it('hosts an opening on the flush wall of its own room when a room is missing from the list', () => {
+    // An unknown roomId (deleted room) falls back to the nearest edge, then to the door direction.
+    expect(hostWallIn([a, bFlush], door('gone', 400, 150, 90, 'gone'))?.room.id).toBe('a')
+    expect(hostWallIn([a, bFlush], door('gone', 400, 150, -90, 'gone'))?.room.id).toBe('b')
+  })
+
+  it('keeps the door on room B when room B is pulled away from room A', () => {
+    const out = syncOpeningsForRoomChange([door('o', 400, 150, -90, 'b')], [a, bFlush], [a, shift(bFlush, 100, 0)])
+    expect(out[0]).toMatchObject({ roomId: 'b', xCm: 500, yCm: 150 })
+    expect(hostWallIn([a, shift(bFlush, 100, 0)], out[0])).toMatchObject({ room: { id: 'b' }, edgeIndex: 3 })
+  })
+
+  it('does not move an opening that belongs to another room', () => {
+    const o = door('o', 400, 150, -90, 'b')
+    const out = syncOpeningsForRoomMove([o], a, shift(a, 0, 20))
+    expect(out[0]).toBe(o)
+  })
+
+  it('keeps the door on room A after it is dragged there (the drag sets roomId)', () => {
+    // The opening was on room B, then dragged onto the top wall of room A: the drag patches roomId
+    // with the room of the wall snap (see OpeningsLayer).
+    const dragged: Opening = { ...door('o', 200, 0, 0, 'b'), roomId: 'a' }
+    expect(hostWallIn([a, bFlush], dragged)).toMatchObject({ room: { id: 'a' }, edgeIndex: 0 })
+    // Room B is then moved: the door stays on room A.
+    const out = syncOpeningsForRoomChange([dragged], [a, bFlush], [a, shift(bFlush, 100, 0)])
+    expect(out[0]).toMatchObject({ roomId: 'a', xCm: 200, yCm: 0 })
+  })
+
+  it('records the host room when an opening is created', () => {
+    const snap = snapToWall({ x: 690, y: 120 }, [a, bFlush], 90, 20)
+    expect(snap?.roomId).toBe('b')
+    expect(createOpening('door', snap!).roomId).toBe('b')
+  })
+
+  it('falls back cleanly when room B is deleted', () => {
+    const out = syncOpeningsForRoomChange([door('o', 400, 150, -90, 'b')], [a, bFlush], [a])
+    // The door is not removed: it stays on the wall that is still there, now owned by room A.
+    expect(out.map((o) => o.id)).toEqual(['o'])
+    expect(out[0]).toMatchObject({ xCm: 400, yCm: 150, roomId: 'a', angleDeg: -90 })
+    expect(hostWallIn([a], out[0])).toMatchObject({ room: { id: 'a' }, edgeIndex: 1 })
   })
 })

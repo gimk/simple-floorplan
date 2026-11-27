@@ -10,6 +10,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import type { Vec } from '../model/geometry'
 import { useUi } from '../shell/uiStore'
 import { wheelZoomFactor } from '../shell/viewMath'
+import { useCanvasKeyboard } from './useCanvasKeyboard'
 
 type Ctx = {
   /** Screen px per cm. */
@@ -37,6 +38,8 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
   const pointers = useRef(new Map<number, Vec>())
   const panStart = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null)
   const pinch = useRef<{ d: number; zoom: number; world: Vec } | null>(null)
+
+  const { onKeyDown, announcement } = useCanvasKeyboard()
 
   useEffect(() => setSvg(ref.current), [])
 
@@ -136,10 +139,15 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
     <ViewportCtx.Provider value={ctx}>
       <svg
         ref={ref}
+        role="application"
+        aria-label="Floor plan canvas"
+        aria-describedby="canvas-keyboard-help"
+        tabIndex={0}
+        onKeyDown={onKeyDown}
         data-testid="floorplan-canvas"
         data-pan-ready={space ? '' : undefined}
         data-panning={panning ? '' : undefined}
-        className="h-full w-full touch-none select-none"
+        className="h-full w-full touch-none select-none outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-bright"
         style={{ cursor }}
         onPointerDownCapture={onPointerDownCapture}
         onPointerMoveCapture={onPointerMoveCapture}
@@ -157,6 +165,12 @@ export function Viewport({ children, overlay }: { children: ReactNode; overlay?:
           {overlay}
         </g>
       </svg>
+      <div id="canvas-keyboard-help" className="sr-only">
+        Tab selects the next room, opening or furniture. Arrow keys move the selection by 1 centimeter, or 10 with Shift.
+      </div>
+      <div data-testid="canvas-live" role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </div>
     </ViewportCtx.Provider>
   )
 }

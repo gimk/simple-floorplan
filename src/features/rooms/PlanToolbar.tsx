@@ -1,9 +1,13 @@
-// Compact floating tool bar: Plan mode has Select V, Rectangle R, Pen P, Cutout X, Tape M.
+// Compact floating tool bar: Plan mode has Select V, Rectangle R, Pen P, Cutout X, Artboard A, Tape M.
 // Design mode has no drawing tools, so it shows a tiny pill with only Select V and Tape M.
 // Keyboard: the bar is one tab stop (roving tabindex); Left / Right move between tools.
+//
+// HUD typography (M7 of the design audit): the glyph stays the only thing inside the 36 px target.
+// On lg+ the button grows into a short column and the 12 px shortcut key sits BELOW the glyph, so
+// it never covers the icon.
 import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { MousePointer2, PenTool, Ruler, Scissors, Square } from 'lucide-react'
+import { Frame, MousePointer2, PenTool, Ruler, Scissors, Square } from 'lucide-react'
 import { useUi } from '../../shell/uiStore'
 import type { Tool } from '../../shell/uiStore'
 
@@ -14,6 +18,7 @@ const TOOLS: ToolButton[] = [
   { tool: 'rect', label: 'Rectangle', key: 'R', icon: <Square size={ICON} aria-hidden="true" />, group: 'draw' },
   { tool: 'pen', label: 'Pen', key: 'P', icon: <PenTool size={ICON} aria-hidden="true" />, group: 'draw' },
   { tool: 'cutout', label: 'Cutout', key: 'X', icon: <Scissors size={ICON} aria-hidden="true" />, group: 'draw' },
+  { tool: 'artboard', label: 'Artboard', key: 'A', icon: <Frame size={ICON} aria-hidden="true" />, group: 'draw' },
   { tool: 'tape', label: 'Tape', key: 'M', icon: <Ruler size={ICON} aria-hidden="true" />, group: 'measure' },
 ]
 
@@ -82,17 +87,17 @@ export function PlanToolbar() {
               aria-pressed={active}
               tabIndex={stop === t.tool ? 0 : -1}
               onClick={() => set({ tool: t.tool })}
-              className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors pointer-coarse:h-11 pointer-coarse:w-11 ${
+              className={`flex h-9 w-9 flex-col items-center justify-center rounded-lg transition-colors pointer-coarse:h-11 pointer-coarse:w-11 ${
                 active ? 'bg-orange-500/20 text-orange-300 ring-1 ring-inset ring-orange-400/50' : 'text-slate-300 hover:bg-white/10'
-              }`}
+              } lg:h-12 lg:w-10`}
             >
               {t.icon}
-              <span className="absolute bottom-0.5 right-1 text-[10px] leading-none text-slate-400 max-md:hidden" aria-hidden="true">
+              <kbd
+                className="hidden font-sans text-xs leading-none font-normal text-slate-400 lg:block lg:mt-1"
+                aria-hidden="true"
+              >
                 {t.key}
-              </span>
-              {active && (
-                <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-orange-400" aria-hidden="true" />
-              )}
+              </kbd>
             </button>
           </div>
         )

@@ -86,6 +86,7 @@ export function convertV1ToV2(raw: unknown, opts: ConvertV1Options = {}): Projec
     const o: Opening = {
       id: typeof e.id === 'string' && e.id ? e.id : newId(),
       kind: kind as OpeningKind,
+      roomId: room.id,
       xCm: r2(a.x + dx * t - minX),
       yCm: r2(a.y + dy * t - minY),
       angleDeg: r2((Math.atan2(dy, dx) * 180) / Math.PI),

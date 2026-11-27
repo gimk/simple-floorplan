@@ -1,11 +1,14 @@
 // Right-panel Inspect card for one artboard (docs/simple-floorplan-2.md §2.6):
 // name, ceiling height, total area, room list, and the Duplicate / Add / Delete artboard actions.
-// Dark UI, built from the shared sidebar primitives in src/shell/panel.
+// Dark UI, built from the shared sidebar primitives in src/shell/panel. Sub-headings reuse the
+// panel LABEL style (12 px medium slate-300), one step above the 12 px slate-400 hints (L2/L3).
 // The Export card (Phase 5) stays available in Plan AND Design mode: exporting changes no data.
 import { useId, useState } from 'react'
 import { Copy, Download, Frame, Image, Plus } from 'lucide-react'
 import { useDoc } from '../../model/store'
+import { MAX_WALL_THICKNESS_CM, MIN_WALL_THICKNESS_CM } from '../../model/types'
 import type { Artboard, PrecisionCm } from '../../model/types'
+import { wallThicknessOf } from '../rooms/walls'
 import { downloadArtboardPng, downloadArtboardSvg } from '../export/download'
 import { toast } from '../toast'
 import {
@@ -13,6 +16,7 @@ import {
   DangerButton,
   EmptyHint,
   FieldRow,
+  LABEL,
   MUTED,
   NumberField,
   PanelSection,
@@ -54,6 +58,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
   const selection = useUi((s) => s.selection)
   const nameId = useId()
   const ceilingId = useId()
+  const wallId = useId()
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const wanted = artboardId ?? activeArtboardId
@@ -84,6 +89,12 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
     if (value == null || !(value > 0)) return false
     if (value === artboard.ceilingHeightCm) return
     patch((a) => { a.ceilingHeightCm = value })
+  }
+
+  const commitWallThickness = (value: number | null): boolean | void => {
+    if (value == null || !(value >= 0) || value > MAX_WALL_THICKNESS_CM) return false
+    if (value === wallThicknessOf(artboard)) return
+    patch((a) => { a.wallThicknessCm = value })
   }
 
   const setPrecision = (value: string) => {
@@ -167,12 +178,26 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
           />
         </FieldRow>
 
+        <FieldRow label="Wall thickness" htmlFor={wallId} hint="0 = thin walls">
+          <NumberField
+            id={wallId}
+            ariaLabel="Wall thickness (cm)"
+            value={wallThicknessOf(artboard)}
+            unit="cm"
+            min={MIN_WALL_THICKNESS_CM}
+            max={MAX_WALL_THICKNESS_CM}
+            disabled={readOnly}
+            onCommit={commitWallThickness}
+          />
+        </FieldRow>
+
         <FieldRow label="Precision" hint="drawing step">
           <Segmented
             options={PRECISION_OPTIONS}
             value={String(artboard.precisionCm)}
             onChange={setPrecision}
             ariaLabel="Drawing precision"
+            size="sm"
             disabled={readOnly}
           />
         </FieldRow>
@@ -185,7 +210,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
         />
 
         <div className="flex flex-col gap-1">
-          <h3 className="text-xs font-medium text-slate-500 dark:text-slate-400">Rooms</h3>
+          <h3 className={LABEL}>Rooms</h3>
           {artboard.rooms.length === 0 ? (
             <EmptyHint>No room yet. Draw a room in Plan mode.</EmptyHint>
           ) : (
@@ -199,9 +224,9 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
                       onClick={() => selectRoom(artboard.id, r.id)}
                       disabled={readOnly}
                       aria-pressed={on}
-                      className={`${ROW} ${on ? ROW_ON : ROW_OFF} flex min-h-9 w-full items-center justify-between gap-2 text-left hover:bg-black/5 dark:hover:bg-white/5 pointer-coarse:min-h-11`}
+                      className={`${ROW} ${on ? ROW_ON : ROW_OFF} flex min-h-9 w-full items-center justify-between gap-2 text-left hover:bg-white/5 pointer-coarse:min-h-11`}
                     >
-                      <span className="truncate text-sm text-slate-800 dark:text-slate-100">
+                      <span className="truncate text-sm text-slate-100">
                         {r.name.trim() === '' ? 'Untitled room' : r.name}
                       </span>
                       <span className={`shrink-0 font-mono text-xs tabular-nums ${MUTED}`}>
@@ -242,10 +267,10 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
           </button>
         </div>
 
-        <div className="flex flex-col gap-2 border-t border-black/10 pt-3 dark:border-white/10">
+        <div className="flex flex-col gap-2 border-t border-white/10 pt-3">
           {confirmingDelete && !readOnly && !onlyOne ? (
             <div role="group" aria-label="Confirm artboard delete" className="flex flex-col gap-2">
-              <p className="text-sm text-slate-800 dark:text-slate-100">Delete artboard?</p>
+              <p className="text-sm text-slate-100">Delete artboard?</p>
               <EmptyHint>
                 {`This also deletes its ${artboard.rooms.length} room${artboard.rooms.length === 1 ? '' : 's'}, ${artboard.openings.length} opening${artboard.openings.length === 1 ? '' : 's'} and ${artboard.furniture.length} furniture item${artboard.furniture.length === 1 ? '' : 's'}. You can undo it.`}
               </EmptyHint>

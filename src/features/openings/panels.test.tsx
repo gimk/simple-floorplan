@@ -151,8 +151,10 @@ describe('OpeningInspect', () => {
     expect(html).toContain('aria-label="Back to Artboard: Plan A"')
     expect(html).toContain('Plan A')
     expect(html).toContain('aria-label="Opening type"')
-    // the door choice is the active one
-    expect(html).toContain('aria-pressed="true"')
+    // the door choice is the checked radio of the segmented control
+    expect(html).toContain('role="radiogroup"')
+    expect(html).toContain('role="radio"')
+    expect(html).toContain('aria-checked="true"')
     expect(html).toContain('value="85"')
     expect(html).toContain('cm')
     expect(html).toContain('Hinge left')

@@ -12,6 +12,7 @@ import {
   ColorRow,
   DangerButton,
   FieldRow,
+  LABEL,
   MUTED,
   NumberField,
   PanelSection,
@@ -153,7 +154,8 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
     })
   }
 
-  const label = 'text-xs text-slate-500 dark:text-slate-400'
+  // Every inspector label of this card: 12 px medium slate-300 (L2/L3 of the design audit).
+  const label = LABEL
 
   return (
     <>

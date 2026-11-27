@@ -1,5 +1,6 @@
 // Zod 4 validation for the v2 ProjectDoc, plus the default (empty) project.
 import { z } from 'zod'
+import { DEFAULT_WALL_THICKNESS_CM } from './types'
 import type { Artboard, ProjectDoc } from './types'
 
 const num = z.number().finite()
@@ -17,6 +18,7 @@ export const roomSchema = z.object({
 export const openingSchema = z.object({
   id: z.string().min(1),
   kind: z.enum(['door', 'window', 'opening']),
+  roomId: z.string().min(1).optional(),
   xCm: num,
   yCm: num,
   angleDeg: num,
@@ -50,6 +52,7 @@ export const artboardSchema = z.object({
   yCm: num,
   ceilingHeightCm: num.positive().default(250),
   precisionCm: z.union([z.literal(0.1), z.literal(0.5), z.literal(1)]).default(1),
+  wallThicknessCm: num.min(0).max(50).optional(),
   widthCm: num.positive().optional(),
   heightCm: num.positive().optional(),
   rooms: z.array(roomSchema),
@@ -86,7 +89,7 @@ export const newId = (): string =>
     : `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
 export function createArtboard(name: string, xCm = 0, yCm = 0): Artboard {
-  return { id: newId(), name, xCm, yCm, ceilingHeightCm: 250, precisionCm: 1, rooms: [], openings: [], furniture: [] }
+  return { id: newId(), name, xCm, yCm, ceilingHeightCm: 250, precisionCm: 1, wallThicknessCm: DEFAULT_WALL_THICKNESS_CM, rooms: [], openings: [], furniture: [] }
 }
 
 export function createDefaultProject(): ProjectDoc {

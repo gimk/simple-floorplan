@@ -79,7 +79,7 @@ export function PanelSection({
             onClick={toggle}
             className="flex min-h-9 w-full min-w-0 items-center gap-2 rounded-md text-left pointer-coarse:min-h-11"
           >
-            <ChevronDown size={14} className={`shrink-0 text-slate-500 transition-transform dark:text-slate-400 ${open ? '' : '-rotate-90'}`} />
+            <ChevronDown size={14} className={`shrink-0 text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />
             {icon}
             <span className={`truncate ${HEADING}`}>{title}</span>
           </button>

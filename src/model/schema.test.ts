@@ -104,3 +104,24 @@ describe('schema', () => {
     if (!r.ok) expect(r.error).toContain('variant')
   })
 })
+
+describe('wallThicknessCm', () => {
+  const withThickness = (v: unknown) => {
+    const d = createDefaultProject()
+    return { ...d, artboards: [{ ...d.artboards[0], wallThicknessCm: v }] }
+  }
+  it('is optional, so older files stay valid', () => {
+    const d = createDefaultProject()
+    const { wallThicknessCm: _w, ...rest } = d.artboards[0]
+    expect(parseProjectDoc({ ...d, artboards: [rest] }).ok).toBe(true)
+  })
+  it('accepts 0 to 50 and rejects values outside', () => {
+    expect(parseProjectDoc(withThickness(0)).ok).toBe(true)
+    expect(parseProjectDoc(withThickness(50)).ok).toBe(true)
+    expect(parseProjectDoc(withThickness(-1)).ok).toBe(false)
+    expect(parseProjectDoc(withThickness(51)).ok).toBe(false)
+  })
+  it('new artboards default to 10 cm', () => {
+    expect(createDefaultProject().artboards[0].wallThicknessCm).toBe(10)
+  })
+})

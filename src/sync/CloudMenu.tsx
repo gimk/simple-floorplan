@@ -7,6 +7,7 @@ import { useDoc } from '../model/store'
 import type { ProjectDoc } from '../model/types'
 import { BTN, BTN_DANGER, BTN_PRIMARY, IconButton, INPUT } from '../shell/panel'
 import { useUi } from '../shell/uiStore'
+import { useDialogFocus } from '../shell/useDialogFocus'
 import {
   CloudUnauthorizedError,
   clearCloudToken,
@@ -58,6 +59,7 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
   const [synced, setSynced] = useState(false)
   const [pending, setPending] = useState<Pending | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const saveRef = useRef<HTMLButtonElement>(null)
   const passRef = useRef<HTMLInputElement>(null)
   const title = useDoc((s) => s.doc.title)
@@ -113,6 +115,9 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
     setPending(null)
     void refresh()
   }
+
+  // Focus in on open, Tab trapped inside the popover, focus restored on close.
+  useDialogFocus(open, dialogRef)
 
   // Focus: the passcode input when locked, else the Save button.
   useEffect(() => {
@@ -295,6 +300,7 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
       )}
       {open && (
         <div
+          ref={dialogRef}
           role="dialog"
           aria-label="Cloud sync"
           aria-busy={busy}

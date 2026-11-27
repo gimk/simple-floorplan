@@ -1,5 +1,6 @@
 // Square icon-only button: 36 px, 44 px on coarse pointers. `label` is both the
 // aria-label and the tooltip, so it is required.
+// The app is dark only: each variant holds its dark look directly, with no `dark:` pairs.
 import type { ReactNode } from 'react'
 
 export type IconButtonProps = {
@@ -17,15 +18,15 @@ export type IconButtonProps = {
 }
 
 const LOOK: Record<NonNullable<IconButtonProps['variant']>, string> = {
-  default: 'text-slate-600 hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/10',
-  bar: 'border border-black/10 bg-black/5 text-slate-700 hover:bg-black/10 dark:border-white/10 dark:bg-surface-2 dark:text-slate-200 dark:hover:bg-white/10',
+  default: 'text-slate-300 hover:bg-white/10',
+  bar: 'border border-white/10 bg-surface-2 text-slate-200 hover:bg-white/10',
   primary: 'bg-accent text-white hover:bg-accent-bright',
-  danger: 'text-red-600 hover:bg-red-500/10 dark:text-red-400',
-  ghost: 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100',
+  danger: 'text-red-400 hover:bg-red-500/10',
+  ghost: 'text-slate-400 hover:text-slate-100',
 }
 
 export function IconButton({ label, icon, onClick, variant = 'default', disabled, pressed, type = 'button', className }: IconButtonProps) {
-  const on = pressed ? 'bg-orange-500/20 text-orange-700 dark:text-orange-400' : ''
+  const on = pressed ? 'bg-orange-500/20 text-orange-400' : ''
   return (
     <button
       type={type}

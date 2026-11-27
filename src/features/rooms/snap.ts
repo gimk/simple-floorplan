@@ -3,6 +3,7 @@ import { dist, projectOnSegment } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import type { Room } from '../../model/types'
 import { roundToPrecision } from './ops'
+import { edgeOutwardNormal } from './walls'
 
 export type SnapGuide = { kind: 'point' | 'line'; a: Vec; b?: Vec }
 export type SnapResult = { point: Vec; guides: SnapGuide[] }
@@ -14,6 +15,8 @@ export type SnapOpts = {
   disableSnap?: boolean
   /** Drawing precision in cm. Used as the grid when gridCm is omitted. */
   precisionCm?: number
+  /** Wall thickness in cm (default 0). Above 0, the point also snaps to each room edge offset outward by it. */
+  wallThicknessCm?: number
 }
 
 export const DEFAULT_GRID_CM = 5
@@ -33,6 +36,7 @@ export function snapPoint(pt: Vec, otherRooms: Room[], opts: SnapOpts = {}): Sna
 
   let bestV: Vec | null = null, bestVd = thr
   let bestW: { point: Vec; a: Vec; b: Vec } | null = null, bestWd = thr
+  const gap = opts.wallThicknessCm && opts.wallThicknessCm > 0 ? opts.wallThicknessCm : 0
   for (const room of otherRooms) {
     const vs = room.vertices
     for (let i = 0; i < vs.length; i++) {
@@ -41,6 +45,13 @@ export function snapPoint(pt: Vec, otherRooms: Room[], opts: SnapOpts = {}): Sna
       const a = vs[i], b = vs[(i + 1) % vs.length]
       const p = projectOnSegment(pt, a, b)
       if (p.distance <= bestWd) { bestWd = p.distance; bestW = { point: p.point, a, b } }
+      // The same edge pushed outward by the wall thickness: the gap between two thick-walled rooms.
+      const n = gap > 0 ? edgeOutwardNormal(room, i) : null
+      if (n) {
+        const ga = { x: a.x + n.x * gap, y: a.y + n.y * gap }, gb = { x: b.x + n.x * gap, y: b.y + n.y * gap }
+        const q = projectOnSegment(pt, ga, gb)
+        if (q.distance <= bestWd) { bestWd = q.distance; bestW = { point: q.point, a: ga, b: gb } }
+      }
     }
   }
   if (bestV) return { point: { x: bestV.x, y: bestV.y }, guides: [{ kind: 'point', a: { x: bestV.x, y: bestV.y } }] }
@@ -72,6 +83,7 @@ function bestShift(mine: number[], others: number[], thr: number): number | null
  * Move a room by (dx, dy), then pull its walls onto nearby walls/vertices of other rooms:
  * x and y are snapped on their own. Returns the corrected delta and guides
  * (a line along each aligned edge, a point where a corner meets a corner).
+ * With opts.wallThicknessCm > 0 the walls also snap at a gap of +/- that thickness (flush stays).
  */
 export function snapRoomDelta(
   room: Room,
@@ -79,22 +91,28 @@ export function snapRoomDelta(
   dy: number,
   otherRooms: Room[],
   thresholdCm = 12,
-  opts: { disableSnap?: boolean; precisionCm?: number } = {},
+  opts: { disableSnap?: boolean; precisionCm?: number; wallThicknessCm?: number } = {},
 ): { dx: number; dy: number; guides: SnapGuide[] } {
   if (opts.disableSnap) return { dx: roundP(dx, opts.precisionCm), dy: roundP(dy, opts.precisionCm), guides: [] }
   const others = otherRooms.flatMap((r) => r.vertices)
   if (!room.vertices.length || !others.length) return { dx, dy, guides: [] }
-  const sx = bestShift(room.vertices.map((v) => v.x + dx), others.map((v) => v.x), thresholdCm)
-  const sy = bestShift(room.vertices.map((v) => v.y + dy), others.map((v) => v.y), thresholdCm)
+  const t = opts.wallThicknessCm && opts.wallThicknessCm > 0 ? opts.wallThicknessCm : 0
+  const offsets = t > 0 ? [0, t, -t] : [0]
+  const sx = bestShift(room.vertices.map((v) => v.x + dx), others.flatMap((v) => offsets.map((k) => v.x + k)), thresholdCm)
+  const sy = bestShift(room.vertices.map((v) => v.y + dy), others.flatMap((v) => offsets.map((k) => v.y + k)), thresholdCm)
   const ox = dx + (sx ?? 0), oy = dy + (sy ?? 0)
   const moved = room.vertices.map((v) => ({ x: v.x + ox, y: v.y + oy }))
   const guides: SnapGuide[] = []
   const near = (a: number, b: number) => Math.abs(a - b) < 1e-6
   if (sx !== null) {
-    for (const v of moved) for (const o of others) if (near(v.x, o.x)) guides.push({ kind: 'line', a: { x: o.x, y: Math.min(v.y, o.y) }, b: { x: o.x, y: Math.max(v.y, o.y) } })
+    for (const v of moved) for (const o of others) for (const k of offsets) if (near(v.x, o.x + k)) {
+      guides.push({ kind: 'line', a: { x: o.x + k, y: Math.min(v.y, o.y) }, b: { x: o.x + k, y: Math.max(v.y, o.y) } })
+    }
   }
   if (sy !== null) {
-    for (const v of moved) for (const o of others) if (near(v.y, o.y)) guides.push({ kind: 'line', a: { x: Math.min(v.x, o.x), y: o.y }, b: { x: Math.max(v.x, o.x), y: o.y } })
+    for (const v of moved) for (const o of others) for (const k of offsets) if (near(v.y, o.y + k)) {
+      guides.push({ kind: 'line', a: { x: Math.min(v.x, o.x), y: o.y + k }, b: { x: Math.max(v.x, o.x), y: o.y + k } })
+    }
   }
   for (const v of moved) for (const o of others) if (near(v.x, o.x) && near(v.y, o.y)) guides.push({ kind: 'point', a: { x: o.x, y: o.y } })
   return { dx: ox, dy: oy, guides }

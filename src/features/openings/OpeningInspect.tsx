@@ -4,7 +4,6 @@
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm.
 import { Copy, DoorOpen, Frame, RectangleHorizontal } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { projectOnSegment } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { Artboard, Opening, OpeningKind, OpeningVariant } from '../../model/types'
 import {
@@ -28,6 +27,7 @@ import type { Wall } from '../rooms/ops'
 import { toast } from '../toast'
 import { addOpening, deleteOpening, updateOpening } from './actions'
 import { MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM, openingVariant } from './geometry'
+import { hostWallIn } from './sync'
 
 export type OpeningInspectProps = {
   /** Artboard that holds the opening. */
@@ -67,20 +67,16 @@ const WINDOW_VARIANT_OPTIONS = [
   { value: 'double-casement', label: 'Double casement' },
 ] as const
 
-/** An opening is hosted on a wall when its centre is within 1 cm of the wall segment. */
-const WALL_TOLERANCE_CM = 1
-
-/** The wall that hosts the opening, with the distance of the opening centre from the wall start. */
-function hostWall(artboard: Artboard, opening: Opening): { wall: Wall; centreCm: number } | null {
-  const c = { x: opening.xCm, y: opening.yCm }
-  for (const room of artboard.rooms) {
-    for (const wall of roomWalls(room)) {
-      if (wall.lengthCm < 1e-6) continue
-      const hit = projectOnSegment(c, wall.a, wall.b)
-      if (hit.distance <= WALL_TOLERANCE_CM) return { wall, centreCm: hit.t * wall.lengthCm }
-    }
-  }
-  return null
+/**
+ * The wall that hosts the opening, with the distance of the opening centre from the wall start.
+ * Same host as the canvas (`hostWallIn`): when two rooms are flush the opening stays on the wall of
+ * the room it belongs to (`roomId`).
+ */
+function hostWallOf(artboard: Artboard, opening: Opening): { wall: Wall; centreCm: number } | null {
+  const host = hostWallIn(artboard.rooms, opening)
+  if (!host) return null
+  const wall = roomWalls(host.room)[host.edgeIndex]
+  return wall ? { wall, centreCm: host.t * wall.lengthCm } : null
 }
 
 type Hinge = 'left' | 'right'
@@ -160,7 +156,7 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
 
   const hinge: Hinge = opening.hinge ?? 'left'
   const swing: Swing = opening.swing ?? 'in'
-  const host = hostWall(artboard, opening)
+  const host = hostWallOf(artboard, opening)
   const nearEdgeCm = host ? host.centreCm - opening.widthCm / 2 : 0
   const farEdgeCm = host ? host.wall.lengthCm - host.centreCm - opening.widthCm / 2 : 0
 

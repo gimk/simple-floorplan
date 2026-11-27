@@ -22,10 +22,11 @@ import {
   snapRotation,
 } from './geometry'
 import type { DistanceGuide } from './geometry'
+import { CANVAS_BG, CANVAS_SELECT } from '../../shell/canvasTokens'
 
-const ORANGE = '#fb923c'
+const ORANGE = CANVAS_SELECT
 const CYAN = '#22d3ee'
-const BG = '#12161b'
+const BG = CANVAS_BG
 const DRAG_THRESHOLD_PX = 3
 const RAD = Math.PI / 180
 

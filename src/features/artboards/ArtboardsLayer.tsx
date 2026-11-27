@@ -30,6 +30,7 @@ import {
   type ArtboardFrame,
 } from './frame'
 import { selectArtboard } from './selection'
+import { CANVAS_BG, CANVAS_SELECT_STRONG } from '../../shell/canvasTokens'
 
 /**
  * Wraps the children of one artboard in `<g transform="translate(xCm, yCm)">`, so they can be
@@ -54,7 +55,7 @@ function DuplicateGlyph({ size }: { size: number }) {
       />
       <rect
         x={6.5 * u} y={5.5 * u} width={9 * u} height={11 * u} rx={1.6 * u}
-        strokeWidth={1.3 * u} className="fill-[#12161b] stroke-slate-300"
+        strokeWidth={1.3 * u} fill={CANVAS_BG} className="stroke-slate-300"
       />
     </>
   )
@@ -274,7 +275,7 @@ type Grip = {
 }
 
 /** Orange accent of the resize handles, the same one the room and image handles use. */
-const ORANGE = '#f97316'
+const ORANGE = CANVAS_SELECT_STRONG
 /** Fill of a resize handle: dark, so it reads as a grip on the light artboard paper. */
 const HANDLE_FILL = '#18181b'
 

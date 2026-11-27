@@ -18,7 +18,7 @@ export function DangerButton({ children, onClick, shortcut, disabled, className 
       <Trash2 size={14} aria-hidden="true" />
       <span className="min-w-0 truncate">{children}</span>
       {shortcut && (
-        <kbd className="ml-1 rounded border border-red-500/40 px-1 font-sans text-[10px] leading-4 opacity-80">{shortcut}</kbd>
+        <kbd className="ml-1 rounded border border-red-400/40 px-1 font-sans text-xs leading-4">{shortcut}</kbd>
       )}
     </button>
   )

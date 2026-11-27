@@ -39,7 +39,7 @@ export function ZoomControls() {
       </button>
       <div className="mx-0.5 h-5 w-px bg-white/15 sm:mx-1" aria-hidden="true" />
       <div className="flex flex-col items-center pr-1" role="img" title="Scale bar" aria-label={`Scale bar: ${fmtScale(stepCm)}`}>
-        <span className="text-[10px] leading-3 tabular-nums">{fmtScale(stepCm)}</span>
+        <span className="text-xs leading-3 tabular-nums">{fmtScale(stepCm)}</span>
         <span className="block border-b-2 border-l-2 border-r-2 border-current" style={{ width: barPx, height: 4 }} />
       </div>
     </div>

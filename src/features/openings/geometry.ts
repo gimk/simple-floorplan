@@ -300,7 +300,9 @@ export function openingSymbol(op: Opening, u: (px: number) => number): OpeningSy
 /** New opening at a wall snap. Doors get hinge/swing (default 'left'/'in'); other kinds get none. */
 export function createOpening(kind: OpeningKind, snap: WallSnap, hinge: 'left' | 'right' = 'left', swing: 'in' | 'out' = 'in'): Opening {
   const widthCm = Math.min(DEFAULT_OPENING_WIDTH_CM[kind], Math.max(MIN_OPENING_WIDTH_CM, snap.wallLengthCm))
-  const op: Opening = { id: newId(), kind, xCm: snap.xCm, yCm: snap.yCm, angleDeg: snap.angleDeg, widthCm }
+  // `roomId` records which wall hosts the opening: a flush wall of a neighbouring room is at the same
+  // distance and must not take the opening over later.
+  const op: Opening = { id: newId(), kind, roomId: snap.roomId, xCm: snap.xCm, yCm: snap.yCm, angleDeg: snap.angleDeg, widthCm }
   if (kind === 'door') { op.hinge = hinge; op.swing = swing }
   return op
 }

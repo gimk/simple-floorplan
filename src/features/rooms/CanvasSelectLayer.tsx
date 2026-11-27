@@ -10,6 +10,7 @@ import { useUi } from '../../shell/uiStore'
 import { selectArtboard } from '../artboards/selection'
 import { boxFromPoints, findArtboardAtPoint, findRoomsInBox } from './boxSelect'
 import { useMarquee } from './marqueeStore'
+import { CANVAS_MARQUEE_FILL, CANVAS_SELECT_STRONG } from '../../shell/canvasTokens'
 
 const DRAG_PX = 4
 
@@ -133,8 +134,8 @@ export function MarqueeOverlay() {
       y={box.minY}
       width={box.maxX - box.minX}
       height={box.maxY - box.minY}
-      fill="rgba(249,115,22,0.08)"
-      stroke="#f97316"
+      fill={CANVAS_MARQUEE_FILL}
+      stroke={CANVAS_SELECT_STRONG}
       strokeWidth={px(1)}
       strokeDasharray={`${px(4)} ${px(3)}`}
       pointerEvents="none"

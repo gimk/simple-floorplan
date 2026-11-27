@@ -30,7 +30,7 @@ const table = (p: Partial<FurnitureItem> = {}): FurnitureItem => ({
 })
 
 const artboard = (p: Partial<Artboard> = {}): Artboard => ({
-  id: 'ab1', name: 'Ground floor', xCm: 1000, yCm: 2000, ceilingHeightCm: 250, precisionCm: 1,
+  id: 'ab1', name: 'Ground floor', xCm: 1000, yCm: 2000, ceilingHeightCm: 250, precisionCm: 1, wallThicknessCm: 0,
   rooms: [], openings: [], furniture: [], ...p,
 })
 
@@ -455,5 +455,155 @@ describe('renderArtboardSvg opening variants', () => {
     const groups = styles.map((variant) => groupOf(oneWindow({ variant }), 'w1'))
     expect(new Set(groups).size).toBe(styles.length)
     expect(oneWindow({ variant: 'casement' })).toBe(oneWindow({ variant: 'casement' }))
+  })
+})
+
+describe('renderArtboardSvg with wall thickness', () => {
+  const thick = (t: number | undefined, extra: Partial<Artboard> = {}) => {
+    const a = populated()
+    if (t === undefined) delete a.wallThicknessCm
+    else a.wallThicknessCm = t
+    return renderArtboardSvg({ ...a, ...extra }).svg
+  }
+
+  it('draws no wall layer when the thickness is 0', () => {
+    const svg = thick(0)
+    expect(svg).not.toContain('<mask')
+    expect(svg).not.toContain('data-walls')
+    expect(svg).not.toContain('data-wall-shift')
+  })
+
+  it('draws a masked wall layer behind the rooms, with the default 10 cm when unset', () => {
+    const svg = thick(undefined)
+    expect(svg).toContain('<mask id="wall-mask-ab1"')
+    expect(svg).toContain('stroke-width="20"') // 2 x 10 cm
+    expect(svg).toContain('stroke-linejoin="miter" stroke-miterlimit="4"')
+    expect(svg.indexOf('data-walls')).toBeLessThan(svg.indexOf('data-room='))
+  })
+
+  it('masks every room interior in black and cuts one black line per opening', () => {
+    const svg = thick(12)
+    const mask = svg.slice(svg.indexOf('<mask'), svg.indexOf('</mask>'))
+    expect(mask.match(/<polygon [^>]*fill="#000"/g)).toHaveLength(2)
+    expect(mask.match(/<line /g)).toHaveLength(3)
+    expect(mask).toContain('fill="#fff"')
+    expect(svg).toContain('stroke-width="24"')
+  })
+
+  it('spans the jambs across the wall and centres a window in it', () => {
+    const svg = thick(10)
+    const win = svg.slice(svg.indexOf('data-opening="w1"'))
+    const group = win.slice(0, win.indexOf('data-opening', 10) > 0 ? win.indexOf('data-opening', 10) : undefined)
+    // Window at the top wall (y 0), outward = up (y -1): the symbol shifts 5 cm up.
+    expect(group).toContain('translate(0 -5)')
+    expect(group).toMatch(/y1="0"[^>]*y2="-10"/) // jamb from the room edge outward by 10 cm
+  })
+
+  it('pushes wall labels by the wall thickness', () => {
+    // Top wall of Living (400 wide, x 0..400): label at x = 200, 5 cm off the wall at 2 px/cm.
+    const labelY = (svg: string) => Number(svg.match(/translate\(200 ([-\d.]+)\) rotate\(0\)/)?.[1])
+    expect(Math.abs(labelY(thick(10))) - Math.abs(labelY(thick(0)))).toBeCloseTo(10, 5)
+  })
+
+  it('grows the sheet to hold the thick walls', () => {
+    expect(renderArtboardSvg({ ...populated(), wallThicknessCm: 20 }).widthPx)
+      .toBeGreaterThan(renderArtboardSvg({ ...populated(), wallThicknessCm: 0 }).widthPx)
+  })
+
+  it('moves the room border stroke into a masked group, so no line crosses an opening', () => {
+    const svg = thick(10)
+    // A second mask, one per artboard, declared before the rooms that use it.
+    expect(svg).toContain('<mask id="wall-stroke-mask-ab1"')
+    expect(svg.indexOf('wall-stroke-mask-ab1')).toBeLessThan(svg.indexOf('data-room='))
+    // Each room: a fill polygon with no stroke, plus a stroke-only polygon in the masked group.
+    expect(count(svg, 'data-room-strokes=')).toBe(2)
+    expect(svg).toContain('data-room-strokes="r1" mask="url(#wall-stroke-mask-ab1)"')
+    for (const m of svg.matchAll(/<polygon data-room="[^"]*"[^>]*>/g)) expect(m[0]).toContain('stroke="none"')
+    for (const m of svg.matchAll(/<g data-room-strokes="[^"]*"[^>]*>[\s\S]*?<\/g>/g)) {
+      expect(m[0]).toContain('fill="none" stroke="#e4e4e7" stroke-width="0.75" stroke-linejoin="round"')
+    }
+    // Thin walls keep the single outlined polygon and no second mask.
+    const thin = thick(0)
+    expect(thin).not.toContain('wall-stroke-mask')
+    expect(count(thin, 'data-room-strokes=')).toBe(0)
+    expect(thin).toContain(
+      '<polygon data-room="r1" points="0,0 400,0 400,300 0,300" fill="#22d3ee" fill-opacity="0.28" ' +
+        'stroke="#e4e4e7" stroke-width="0.75" stroke-linejoin="round" />',
+    )
+  })
+
+  it('cuts the stroke mask with one butt-capped band of the exact opening width per opening', () => {
+    const svg = thick(10)
+    const mask = svg.slice(svg.indexOf('<mask id="wall-stroke-mask-ab1"'), svg.indexOf('</mask>', svg.indexOf('<mask id="wall-stroke-mask-ab1"')))
+    expect(mask).toContain('fill="#fff"')
+    // 2 px/cm on this plan, so px(3) is 1.5 cm: the pad is max(1.5, 1.5) = 1.5 cm.
+    // Window w1 sits on the top wall (y 0), outward = up: from 1.5 cm inside to 11.5 cm outside.
+    expect(mask).toContain(
+      '<line x1="550" y1="1.5" x2="550" y2="-11.5" stroke="#000" stroke-width="120" stroke-linecap="butt" />',
+    )
+    // Door d1, 85 cm wide, on the same top wall.
+    expect(mask).toContain(
+      '<line x1="200" y1="1.5" x2="200" y2="-11.5" stroke="#000" stroke-width="85" stroke-linecap="butt" />',
+    )
+    expect(mask.match(/stroke-linecap="butt"/g)).toHaveLength(3)
+  })
+
+  it('puts the painted wall lines inside the stroke mask too', () => {
+    const svg = thick(10, { rooms: [{ ...rect('r1', 'Living', 0, 0, 400, 300), wallColors: { '0': '#b85d43' } }] })
+    const g = svg.slice(svg.indexOf('data-room-strokes="r1"'))
+    expect(g.slice(0, g.indexOf('</g>'))).toContain('data-wall-paint="r1:0"')
+    // Thin walls keep the paint line outside any mask.
+    const thin = thick(0, { rooms: [{ ...rect('r1', 'Living', 0, 0, 400, 300), wallColors: { '0': '#b85d43' } }] })
+    expect(thin).toContain('data-wall-paint="r1:0"')
+    expect(thin).not.toContain('wall-stroke-mask')
+  })
+
+  it('drops the dark gap line over a thick wall and keeps it over a thin one', () => {
+    // The two masks already remove the wall and both room borders, so the dark eraser bar is only
+    // needed when the walls are thin.
+    expect(groupOf(thick(0), 'w1')).toContain('stroke="#12161b" stroke-width="1.5"')
+    expect(groupOf(thick(10), 'w1')).not.toContain('stroke="#12161b"')
+    expect(groupOf(thick(10), 'd1')).not.toContain('stroke="#12161b"')
+    expect(groupOf(thick(0), 'd1')).toContain('stroke="#12161b" stroke-width="1.5"')
+  })
+})
+
+describe('renderArtboardSvg with flush rooms', () => {
+  /** Two rooms sharing the same wall line at x = 400, with one door on that shared wall. */
+  const flush = (t: number) => renderArtboardSvg(artboard({
+    wallThicknessCm: t,
+    rooms: [rect('r1', 'Living', 0, 0, 400, 300), rect('r2', 'Kitchen', 400, 0, 700, 300)],
+    openings: [door({ xCm: 400, yCm: 150, angleDeg: 90 })],
+  })).svg
+
+  it('draws the door on the shared wall line instead of across the thick wall', () => {
+    const g = groupOf(flush(10), 'd1')
+    // No wall shift: the thick wall is masked away by the second room, so the leaf hinges on the line.
+    expect(g).not.toContain('data-wall-shift')
+    // Short centred jamb ticks only, and no dark eraser bar over the page.
+    expect(count(g, '<line')).toBe(3) // the two ticks and the wall line of the door symbol
+    expect(g).not.toContain('stroke="#12161b"')
+    // Each tick is a few cm wide and centred on the shared wall line at x = 400 (a 10 cm jamb would
+    // run from x = 400 to x = 410).
+    const ticks = [...g.matchAll(/<line x1="([-\d.]+)" y1="[-\d.]+" x2="([-\d.]+)" y2="[-\d.]+"/g)]
+      .map((m) => [Number(m[1]), Number(m[2])] as const)
+      .filter(([x1, x2]) => Math.abs(x2 - x1) < 5)
+    expect(ticks).toHaveLength(2)
+    for (const [x1, x2] of ticks) expect((x1 + x2) / 2).toBeCloseTo(400, 5)
+    expect(g).not.toContain('x2="410"')
+  })
+
+  it('still cuts both flush room borders out of the opening', () => {
+    const svg = flush(10)
+    const from = svg.indexOf('<mask id="wall-stroke-mask-ab1"')
+    const mask = svg.slice(from, svg.indexOf('</mask>', from))
+    // From the pad inside the left room to the pad past the 10 cm wall: both border lines are cut.
+    const line = mask.match(/<line [^>]*\/>/)?.[0] ?? ''
+    const x1 = Number(line.match(/x1="([-\d.]+)"/)?.[1])
+    const x2 = Number(line.match(/x2="([-\d.]+)"/)?.[1])
+    expect(x1).toBeLessThan(400)
+    expect(x2).toBeGreaterThan(400)
+    expect(line).toContain('stroke-width="85"') // the door width
+    expect(line).toContain('stroke-linecap="butt"')
   })
 })

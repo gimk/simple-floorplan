@@ -21,6 +21,8 @@ import {
 import { DEFAULT_PATTERN_FILL, PATTERN_DEFS, isPatterned, patternId } from './floorPatterns'
 import { snapPoint, snapRoomDelta } from './snap'
 import type { SnapGuide } from './snap'
+import { WALL_COLOR, wallMaskModel, wallStrokeMaskModel, wallThicknessOf } from './walls'
+import { CANVAS_BG, CANVAS_HALO, CANVAS_SELECT } from '../../shell/canvasTokens'
 
 export type EditWallRequest = {
   artboardId: string
@@ -36,7 +38,7 @@ export type RoomsLayerProps = {
   onEditWall?: (req: EditWallRequest) => void
 }
 
-const ORANGE = '#fb923c'
+const ORANGE = CANVAS_SELECT
 const STROKE = 'rgba(226,232,240,0.85)'
 const DRAG_THRESHOLD_PX = 3
 
@@ -61,6 +63,14 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
   const [guides, setGuides] = useState<SnapGuide[]>([])
   const gesture = useRef<Gesture | null>(null)
   useEffect(() => () => { gesture.current?.unsub?.() }, [])
+
+  const thickness = wallThicknessOf(artboard)
+  const maskModel = wallMaskModel(artboard, thickness)
+  const maskId = `wall-mask-${artboard.id}`
+  // A second mask hides the room border strokes and the wall paint lines inside every opening that
+  // crosses a thick wall, so both room borders vanish there instead of crossing the gap.
+  const strokeMaskModel = wallStrokeMaskModel(artboard, thickness, Math.max(px(3), 1.5))
+  const strokeMaskId = `wall-stroke-mask-${artboard.id}`
 
   const interactive = mode === 'plan' && tool === 'select'
   // Design mode keeps every geometric handle out of reach: a room only takes the pointer there, so a
@@ -188,9 +198,13 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
         }
         const dups = [...moved].map(([id, v]) => ({ ...origs.get(id)!, id: dupIds.get(id)!, vertices: v }))
         const byId = new Map(origin.openings.map((o) => [o.id, o] as const))
+        // A clone follows a duplicated room: its `roomId` must be the new id of that room.
         const clones = synced
           .filter((o) => { const b = byId.get(o.id); return !!b && (b.xCm !== o.xCm || b.yCm !== o.yCm || b.angleDeg !== o.angleDeg) })
-          .map((o) => ({ ...o, id: cloneId(o.id) }))
+          .map((o) => {
+            const roomId = o.roomId ? dupIds.get(o.roomId) ?? o.roomId : o.roomId
+            return { ...o, id: cloneId(o.id), roomId }
+          })
         ab.rooms = [...origin.rooms, ...dups]
         ab.openings = [...origin.openings, ...clones]
         // The originals did not move, so their furniture stays where it was: a mode switch mid-drag
@@ -201,7 +215,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
     }
     startGesture(e, (_, d0, mods) => {
       const d = mods.shift ? constrainAxis(d0.x, d0.y) : d0
-      const s = snapRoomDelta(primary, d.x, d.y, mods.alt ? artboard.rooms : others, px(10), { disableSnap: mods.cmd, precisionCm: artboard.precisionCm })
+      const s = snapRoomDelta(primary, d.x, d.y, mods.alt ? artboard.rooms : others, px(10), { disableSnap: mods.cmd, precisionCm: artboard.precisionCm, wallThicknessCm: thickness })
       setGuides(s.guides)
       dupActive = mods.alt
       write(new Map([...origs].map(([id, r]) => [id, moveRoom(r, s.dx, s.dy).vertices])), mods.alt, s.dx, s.dy)
@@ -225,7 +239,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
         delta = mods.cmd ? c : { x: roundToPrecision(c.x, artboard.precisionCm), y: roundToPrecision(c.y, artboard.precisionCm) }
         setGuides([])
       } else {
-        const snap = snapPoint(add(a, d), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10) })
+        const snap = snapPoint(add(a, d), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10), wallThicknessCm: thickness })
         setGuides(snap.guides)
         delta = { x: snap.point.x - a.x, y: snap.point.y - a.y }
       }
@@ -266,7 +280,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
         writeVertices(new Map([[room.id, scaleRoomFromVertex(room, idx, p, mods.cmd ? 0 : artboard.precisionCm).vertices]]), true, origin)
         return
       }
-      const snap = snapPoint(p, others, { anchor, precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10) })
+      const snap = snapPoint(p, others, { anchor, precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10), wallThicknessCm: thickness })
       setGuides(snap.guides)
       writeVertices(new Map([[room.id, moveVertex(room, idx, snap.point).vertices]]), true, origin)
     })
@@ -274,8 +288,70 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
 
   const handleRooms = artboard.rooms.filter((r) => selectedIds.includes(r.id) || r.id === selectedWall?.roomId || r.id === selectedVertex?.roomId)
 
+  /** Black butt-capped cutout bands of a wall (or wall stroke) mask. */
+  const cutoutLines = (cutouts: { x1: number; y1: number; x2: number; y2: number; width: number }[]) =>
+    cutouts.map((c, i) => (
+      <line key={`c${i}`} x1={c.x1} y1={c.y1} x2={c.x2} y2={c.y2} stroke="#000" strokeWidth={c.width} strokeLinecap="butt" />
+    ))
+
+  /** Painted wall lines of a room (one per edge that has a wall colour). */
+  const paintLines = (room: Room) =>
+    room.vertices.length < 3 ? null : room.vertices.map((a, i) => {
+      const color = room.wallColors?.[String(i)]
+      if (!color) return null
+      const b = room.vertices[(i + 1) % room.vertices.length]
+      return (
+        <line
+          key={`paint-${i}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+          stroke={color} strokeWidth={px(3)} strokeLinecap="butt" pointerEvents="none"
+          data-wall-paint={`${room.id}:${i}`}
+        />
+      )
+    })
+
   return (
     <g data-testid={`rooms-layer-${artboard.id}`}>
+      {maskModel && (
+        // Thick outward walls, behind every room fill. Two masks: one keeps the wall body out of the
+        // room interiors (translucent fills, reference images below stay untouched), the other hides
+        // the room border strokes and the wall paint lines inside each opening.
+        <g pointerEvents="none" data-testid={`wall-layer-${artboard.id}`}>
+          <defs>
+            <mask
+              id={maskId} maskUnits="userSpaceOnUse"
+              x={maskModel.x} y={maskModel.y} width={maskModel.width} height={maskModel.height}
+            >
+              <rect x={maskModel.x} y={maskModel.y} width={maskModel.width} height={maskModel.height} fill="#fff" />
+              {maskModel.roomPoints.map((p, i) => <polygon key={`r${i}`} points={p} fill="#000" />)}
+              {cutoutLines(maskModel.cutouts)}
+            </mask>
+          </defs>
+          <g mask={`url(#${maskId})`}>
+            {artboard.rooms.filter((r) => r.vertices.length >= 3).map((room) => (
+              <polygon
+                key={room.id}
+                points={room.vertices.map((v) => `${v.x},${v.y}`).join(' ')}
+                fill="none" stroke={WALL_COLOR} strokeWidth={thickness * 2}
+                strokeLinejoin="miter" strokeMiterlimit={4}
+              />
+            ))}
+          </g>
+        </g>
+      )}
+      {strokeMaskModel && (
+        <defs>
+          <mask
+            id={strokeMaskId} maskUnits="userSpaceOnUse"
+            x={strokeMaskModel.x} y={strokeMaskModel.y} width={strokeMaskModel.width} height={strokeMaskModel.height}
+          >
+            <rect
+              x={strokeMaskModel.x} y={strokeMaskModel.y}
+              width={strokeMaskModel.width} height={strokeMaskModel.height} fill="#fff"
+            />
+            {cutoutLines(strokeMaskModel.cutouts)}
+          </mask>
+        </defs>
+      )}
       {artboard.rooms.map((room) => {
         const selected = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
         const pts = room.vertices.map((v) => `${v.x},${v.y}`).join(' ')
@@ -297,8 +373,10 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
               points={pts}
               fill={pattern ? `url(#${pid})` : (room.fill ?? 'rgba(255,255,255,0.04)')}
               fillOpacity={!pattern && room.fill ? 0.28 : undefined}
-              stroke={selected ? ORANGE : STROKE}
-              strokeWidth={px(design && selected ? 1.5 : 1)}
+              // Thick walls: the border stroke moves to a masked outline below, so it cannot cross
+              // an opening. Thin walls keep the old single polygon.
+              stroke={strokeMaskModel ? 'none' : selected ? ORANGE : STROKE}
+              strokeWidth={strokeMaskModel ? undefined : px(design && selected ? 1.5 : 1)}
               strokeLinejoin="round"
               pointerEvents={selectable ? 'all' : 'none'}
               style={{ cursor: interactive ? 'move' : design ? 'pointer' : undefined }}
@@ -306,6 +384,16 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
               onClick={(e) => onRoomClick(e, room)}
               {...gestureProps}
             />
+            {strokeMaskModel && (
+              // Border stroke and wall paint of the room, hidden inside every opening of a thick wall.
+              <g mask={`url(#${strokeMaskId})`} pointerEvents="none" data-testid={`room-strokes-${room.id}`}>
+                <polygon
+                  points={pts} fill="none" stroke={selected ? ORANGE : STROKE}
+                  strokeWidth={px(design && selected ? 1.5 : 1)} strokeLinejoin="round" pointerEvents="none"
+                />
+                {paintLines(room)}
+              </g>
+            )}
             {label && (
               <text
                 x={label.x} y={label.y} textAnchor="middle" pointerEvents="none"
@@ -326,20 +414,15 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
         return roomWalls(room).map((w) => {
           const isSel = selectedWall?.roomId === room.id && selectedWall.edgeIndex === w.index
           const dx = (w.b.x - w.a.x) / (w.lengthCm || 1), dy = (w.b.y - w.a.y) / (w.lengthCm || 1)
-          const off = px(10)
+          const off = px(10) + thickness
           const lx = w.mid.x - dy * s * off, ly = w.mid.y + dx * s * off
           const flip = w.angleDeg > 90 || w.angleDeg <= -90
           const rot = flip ? w.angleDeg + 180 : w.angleDeg
           const showLabel = w.lengthCm * zoom >= 36
           return (
             <g key={`${room.id}-${w.index}`} data-wall={`${room.id}:${w.index}`}>
-              {room.wallColors?.[String(w.index)] && (
-                <line
-                  x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y}
-                  stroke={room.wallColors[String(w.index)]} strokeWidth={px(3)} strokeLinecap="butt" pointerEvents="none"
-                  data-wall-paint={`${room.id}:${w.index}`}
-                />
-              )}
+              {/* Thick walls paint the wall lines inside the room group above, behind the stroke mask. */}
+              {!strokeMaskModel && paintLines(room)?.[w.index]}
               {isSel && <line x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke={ORANGE} strokeWidth={px(2)} strokeLinecap="round" pointerEvents="none" />}
               {interactive && (
                 <line
@@ -367,7 +450,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
                   <text
                     textAnchor="middle" dominantBaseline="central" fontSize={px(11)}
                     fill={isSel ? ORANGE : 'rgba(226,232,240,0.9)'}
-                    stroke="#12161b" strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round"
+                    stroke={CANVAS_HALO} strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round"
                   >
                     {formatLengthCm(w.lengthCm, artboard.precisionCm)}
                   </text>
@@ -385,7 +468,7 @@ export function RoomsLayer({ artboard, onEditWall }: RoomsLayerProps) {
           <circle
             key={`${room.id}-v${i}`}
             cx={v.x} cy={v.y} r={px(5)}
-            fill={isSel ? ORANGE : '#12161b'} stroke={ORANGE} strokeWidth={px(1.5)}
+            fill={isSel ? ORANGE : CANVAS_BG} stroke={ORANGE} strokeWidth={px(1.5)}
             style={{ cursor: 'grab' }}
             onPointerDown={(e) => onVertexDown(e, room, i)}
             {...gestureProps}

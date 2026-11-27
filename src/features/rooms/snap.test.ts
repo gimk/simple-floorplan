@@ -95,3 +95,26 @@ describe('snap disableSnap and precisionCm (Phase 3.5A)', () => {
     expect(snapRoomDelta(room, -3.7, 2.2, [other], 12, { disableSnap: true, precisionCm: 1 })).toEqual({ dx: -4, dy: 2, guides: [] })
   })
 })
+
+describe('gap snapping with wall thickness', () => {
+  const t = 10
+  it('snapPoint snaps to the edge offset outward by the wall thickness', () => {
+    // `other` is a rectangle (see above); its right edge is at x = 400.
+    const r = snapPoint({ x: 412, y: 50 }, [other], { wallThicknessCm: t, thresholdCm: 5, gridCm: 0 })
+    expect(r.point.x).toBeCloseTo(410)
+    expect(r.guides.some((g) => g.kind === 'line')).toBe(true)
+  })
+  it('snapPoint ignores the offset edge when no thickness is given', () => {
+    const r = snapPoint({ x: 412, y: 50 }, [other], { thresholdCm: 5, gridCm: 0 })
+    expect(r.point.x).toBeCloseTo(412)
+  })
+  it('snapRoomDelta snaps at +/- thickness gap and keeps flush alignment', () => {
+    const room = rect('m', 414, 0, 500, 100)
+    const gapSnap = snapRoomDelta(room, 0, 0, [other], 5, { wallThicknessCm: t })
+    expect(gapSnap.dx).toBeCloseTo(-4) // left edge 414 -> 410
+    const flush = snapRoomDelta(rect('m', 403, 0, 500, 100), 0, 0, [other], 5, { wallThicknessCm: t })
+    expect(flush.dx).toBeCloseTo(-3) // flush at 400 wins: closer than 410
+    const none = snapRoomDelta(room, 0, 0, [other], 5)
+    expect(none.dx).toBe(0)
+  })
+})

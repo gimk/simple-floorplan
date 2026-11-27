@@ -5,7 +5,7 @@
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
 /* Design tokens. Utilities (bg-surface-1, text-accent ...) read these as CSS variables,
-   so sunlight mode only has to override the variables below. */
+   so one class can retheme a subtree without touching the utilities. */
 @theme {
   --color-surface-0: #12161b;
   --color-surface-1: #161b21;
@@ -14,12 +14,24 @@
   --color-accent-bright: #ea580c;
 }
 
-:root { color-scheme: dark; --focus-ring: var(--color-accent-bright); --app-fg: #e8ecef; }
+:root {
+  color-scheme: dark;
+  --focus-ring: var(--color-accent-bright);
+  --app-fg: #e8ecef;
+  /* Shell geometry. The two side panels and the clearance the floating bottom toolbar needs,
+     so overlays (toasts, hints) can clear it with one calc() instead of a magic number. */
+  --panel-w-left: 15rem;
+  --panel-w-right: 17.5rem;
+  --toolbar-clear: 5rem;
+}
+/* Reduced motion removes MOVEMENT only: translate/scale/rotate transitions snap, moving
+   animations are cut to one frame and smooth scrolling is turned off. Colour, opacity,
+   border and shadow fades keep their normal duration, so state changes stay readable. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, opacity, box-shadow !important;
     scroll-behavior: auto !important;
   }
 }
@@ -42,31 +54,4 @@ body { font-family: system-ui, -apple-system, sans-serif; background: var(--colo
     outline: 2px solid var(--focus-ring);
     outline-offset: 1px;
   }
-}
-
-/* Sunlight mode (Measuring Mode high contrast, toggled in the measure header):
-   pure black on white even in dark theme, bigger digits, thicker drawing lines. */
-.sunlight {
-  --color-surface-0: #fff;
-  --color-surface-1: #fff;
-  --color-surface-2: #fff;
-  --app-fg: #000;
-  --focus-ring: #000;
-}
-/* Legacy dark:* utilities used outside the panel kit still need the override. */
-.sunlight,
-.sunlight [class*="dark:bg-"]:not([role="progressbar"] > div) { background-color: #fff !important; }
-.sunlight [role="progressbar"] > div { background-color: #000 !important; }
-.sunlight,
-.sunlight [class*="dark:text-"] { color: #000 !important; }
-.sunlight [class*="dark:border-"] { border-color: #000 !important; }
-.sunlight [data-value-state="estimated"] { color: #475569 !important; border-color: #475569 !important; }
-.sunlight [data-value-state="measured"] { color: #047857 !important; border-color: #047857 !important; }
-.sunlight [data-value-state="solved"] { color: #5b21b6 !important; border-color: #5b21b6 !important; }
-.sunlight svg [data-value-state="measured"] { fill: #047857 !important; }
-.sunlight svg [data-value-state="solved"] { fill: #5b21b6 !important; }
-.sunlight input, .sunlight textarea, .sunlight select { font-size: 1.15rem !important; }
-.sunlight input { font-size: 1.4rem !important; } /* bigger digits for the measurement fields */
-.sunlight svg line:not([stroke="transparent"]), .sunlight svg polygon, .sunlight svg path, .sunlight svg rect[stroke], .sunlight svg circle {
-  stroke-width: 3.5 !important;
 }

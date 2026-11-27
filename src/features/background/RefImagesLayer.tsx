@@ -6,6 +6,7 @@ import { useUi } from '../../shell/uiStore'
 import { useViewport } from '../../canvas/Viewport'
 import { resizeFromCorner, cornerPx } from './scale'
 import type { RefImage } from '../../model/types'
+import { CANVAS_SELECT_DEEP } from '../../shell/canvasTokens'
 
 type Drag =
   | { kind: 'move'; id: string; start: { x: number; y: number }; x0: number; y0: number }
@@ -81,7 +82,7 @@ export function RefImagesLayer() {
               onPointerCancel={onUp}
             />
             {interactive && selected && (
-              <rect x={img.xCm} y={img.yCm} width={w} height={h} fill="none" stroke="#ea580c" strokeWidth={px(1.5)} pointerEvents="none" />
+              <rect x={img.xCm} y={img.yCm} width={w} height={h} fill="none" stroke={CANVAS_SELECT_DEEP} strokeWidth={px(1.5)} pointerEvents="none" />
             )}
             {canEdit && selected && [0, 1, 2, 3].map((i) => {
               const c = cornerPx(img, i)
@@ -92,7 +93,7 @@ export function RefImagesLayer() {
                   key={i}
                   data-testid={`ref-handle-${i}`}
                   x={wc.x - s / 2} y={wc.y - s / 2} width={s} height={s}
-                  fill="#fff" stroke="#ea580c" strokeWidth={px(1.5)}
+                  fill="#fff" stroke={CANVAS_SELECT_DEEP} strokeWidth={px(1.5)}
                   style={{ cursor: i % 2 === 0 ? 'nwse-resize' : 'nesw-resize' }}
                   onPointerDown={(e) => onCornerDown(e, img, i)}
                   onPointerMove={onMove}

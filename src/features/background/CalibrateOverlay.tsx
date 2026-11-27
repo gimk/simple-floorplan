@@ -11,6 +11,7 @@ import { calibrateScale, pixelAtWorld } from './calibrate'
 import { computeCmPerPx } from './scale'
 import { dist } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
+import { CANVAS_SELECT_DEEP } from '../../shell/canvasTokens'
 
 const PAD = 8
 const FORM_W = 256
@@ -79,7 +80,7 @@ export function CalibrateOverlay() {
         onPointerUp={(e) => { e.currentTarget.releasePointerCapture?.(e.pointerId); setDrag(null) }}
         onPointerCancel={() => setDrag(null)}
       />}
-      <circle cx={p.x} cy={p.y} r={px(5)} fill="#ea580c" stroke="#fff" strokeWidth={px(1.5)} pointerEvents="none" />
+      <circle cx={p.x} cy={p.y} r={px(5)} fill={CANVAS_SELECT_DEEP} stroke="#fff" strokeWidth={px(1.5)} pointerEvents="none" />
     </g>
   )
   const end = pts.length === 2 ? pts[1] : hover
@@ -103,7 +104,7 @@ export function CalibrateOverlay() {
         }}
       />
       {pts.length >= 1 && end && (
-        <line x1={pts[0].x} y1={pts[0].y} x2={end.x} y2={end.y} stroke="#ea580c" strokeWidth={px(2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" />
+        <line x1={pts[0].x} y1={pts[0].y} x2={end.x} y2={end.y} stroke={CANVAS_SELECT_DEEP} strokeWidth={px(2)} strokeDasharray={`${px(6)} ${px(4)}`} pointerEvents="none" />
       )}
       {pts.map(dot)}
       {pts.length === 2 && createPortal(

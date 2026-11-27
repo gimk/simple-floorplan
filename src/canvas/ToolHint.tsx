@@ -12,7 +12,7 @@ export type ToolHintProps = {
   step?: string | number
   /** Show a close button. The hint stays hidden after the user closes it (until it remounts). */
   dismissible?: boolean
-  /** Fainter style for a hint that is already known. */
+  /** Quieter colour for a hint that is already known (slate-400, still readable — no opacity). */
   muted?: boolean
   /** Where to place the pill. Default: top-center. */
   position?: 'top' | 'bottom'
@@ -30,12 +30,12 @@ export function ToolHint({ text, step, dismissible = false, muted = false, posit
       className={`pointer-events-none fixed left-1/2 z-30 flex max-w-[min(95vw,40rem)] -translate-x-1/2 justify-center ${place} ${className}`}
     >
       <div
-        className={`pointer-events-none flex items-center gap-2 rounded-2xl border border-white/15 bg-surface-2/95 px-3 py-1 text-center text-[11px] leading-snug text-slate-200 shadow-lg ${
-          muted ? 'opacity-60' : ''
+        className={`pointer-events-none flex items-center gap-2 rounded-2xl border border-white/15 bg-surface-2/95 px-3 py-1 text-center text-xs leading-snug shadow-lg ${
+          muted ? 'text-slate-400' : 'text-slate-200'
         }`}
       >
         {step !== undefined && (
-          <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] font-semibold text-slate-100">{step}</span>
+          <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-xs font-semibold text-slate-100">{step}</span>
         )}
         <span className="min-w-0 text-balance break-words">{text}</span>
         {dismissible && (

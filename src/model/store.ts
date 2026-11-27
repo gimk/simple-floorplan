@@ -90,8 +90,10 @@ const cloneArtboard = (src: Artboard, xCm: number, yCm: number): Artboard => {
   c.name = `${src.name} (copy)`
   c.xCm = xCm
   c.yCm = yCm
-  c.rooms.forEach((r) => { r.id = newId() })
-  c.openings.forEach((o) => { o.id = newId() })
+  // Rooms get new ids: the openings that live on their walls must follow (see `Opening.roomId`).
+  const roomIds = new Map<string, string>()
+  c.rooms.forEach((r) => { const id = newId(); roomIds.set(r.id, id); r.id = id })
+  c.openings.forEach((o) => { o.id = newId(); const roomId = o.roomId && roomIds.get(o.roomId); if (roomId) o.roomId = roomId })
   c.furniture.forEach((f) => { f.id = newId() })
   return c
 }

@@ -4,7 +4,6 @@
 // Wall N goes from vertex N-1 to vertex N of the room polygon. Dark UI, shared panel primitives.
 import { useId } from 'react'
 import { ChevronLeft, ChevronRight, Compass, Ruler } from 'lucide-react'
-import { projectOnSegment } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { Artboard, Opening, Room } from '../../model/types'
 import {
@@ -23,18 +22,21 @@ import {
 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { selectRoom } from '../artboards/selection'
+import { hostWallIn } from '../openings/sync'
 import { toast } from '../toast'
 import { deleteRoomWall, setRoomWallLength } from './actions'
 import { roomWalls } from './ops'
 import type { Wall } from './ops'
 
-/** An opening is on the wall when its centre is within 1 cm of the wall segment. */
-const CENTRE_TOLERANCE_CM = 1
-
-function openingsOnWall(artboard: Artboard, wall: Wall): Opening[] {
-  return artboard.openings.filter(
-    (o) => projectOnSegment({ x: o.xCm, y: o.yCm }, wall.a, wall.b).distance <= CENTRE_TOLERANCE_CM,
-  )
+/**
+ * Openings hosted by `wall`. The host is the same one the canvas uses (`hostWallIn`), so when two
+ * rooms are flush a door that belongs to the other room is not listed on this wall too.
+ */
+function openingsOnWall(artboard: Artboard, room: Room, wall: Wall): Opening[] {
+  return artboard.openings.filter((o) => {
+    const host = hostWallIn(artboard.rooms, o)
+    return !!host && host.room.id === room.id && host.edgeIndex === wall.index
+  })
 }
 
 /** Endpoint "x · y" in cm, 1 decimal, French comma (matches the other numbers of the panel). */
@@ -83,7 +85,7 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
   const wall = Number.isInteger(edgeIndex) ? roomWalls(room)[edgeIndex] : undefined
   if (!wall) return null
 
-  const openings = openingsOnWall(artboard, wall)
+  const openings = openingsOnWall(artboard, room, wall)
   const roomLabel = room.name.trim() === '' ? 'Untitled room' : room.name
   const count = room.vertices.length
   const prev = (edgeIndex - 1 + count) % count

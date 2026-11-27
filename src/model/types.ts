@@ -1,4 +1,4 @@
-// Simple Floorplan 2 data model. Units: cm and degrees. Rooms are independent polygons (zero wall thickness).
+// Simple Floorplan 2 data model. Units: cm and degrees. Rooms are independent polygons (interior dimensions); walls are drawn outward from them.
 import type { Vec } from './geometry'
 
 export type { Vec }
@@ -34,6 +34,13 @@ export type OpeningVariant = DoorVariant | WindowVariant
 export type Opening = {
   id: string
   kind: OpeningKind
+  /**
+   * Room whose wall hosts the opening. Two rooms can be flush (a shared wall with a 0 cm gap), and
+   * then the opening centre is at distance 0 from an edge of both: this field says which wall the
+   * opening belongs to. Optional: documents saved before it existed, and openings placed off any
+   * wall, have none; the nearest wall then hosts the opening.
+   */
+  roomId?: string
   /** Centre of the opening on the wall, in artboard-local cm. */
   xCm: number
   yCm: number
@@ -64,6 +71,11 @@ export type FurnitureItem = {
   cornerRadiusCm?: number
 }
 
+/** Default wall thickness of an artboard, in cm. 0 turns the thick walls off. */
+export const DEFAULT_WALL_THICKNESS_CM = 10
+export const MIN_WALL_THICKNESS_CM = 0
+export const MAX_WALL_THICKNESS_CM = 50
+
 export type Artboard = {
   id: string
   name: string
@@ -72,6 +84,11 @@ export type Artboard = {
   ceilingHeightCm: number
   /** Drawing precision (snap and rounding step) in cm. */
   precisionCm: PrecisionCm
+  /**
+   * Thickness of the walls, in cm (0 to 50). Room polygons stay the interior; the wall is drawn
+   * outward from each room edge. Omitted = DEFAULT_WALL_THICKNESS_CM; 0 = no thick walls.
+   */
+  wallThicknessCm?: number
   /** Optional manual frame width/height in cm. They act as the minimum frame size. */
   widthCm?: number
   heightCm?: number

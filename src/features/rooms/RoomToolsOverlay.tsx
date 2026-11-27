@@ -16,9 +16,11 @@ import { cutoutArtboardRooms, addRoom } from './actions'
 import { MIN_ROOM_SIDE_CM, constrainAngle45, createRectRoom, nextRoomName } from './ops'
 import { pickArtboard } from '../artboards/frame'
 import { snapPoint } from './snap'
+import { wallThicknessOf } from './walls'
 import type { SnapGuide } from './snap'
+import { CANVAS_BG, CANVAS_DANGER, CANVAS_HALO, CANVAS_SELECT, CANVAS_SELECT_FILL_HOVER } from '../../shell/canvasTokens'
 
-const ORANGE = '#fb923c'
+const ORANGE = CANVAS_SELECT
 
 export function RoomToolsOverlay() {
   const mode = useUi((s) => s.mode)
@@ -53,7 +55,7 @@ function Guides({ guides }: { guides: SnapGuide[] }) {
       {tag && (
         <text
           x={tag.at.x + px(8)} y={tag.at.y - px(8)} fontSize={px(10)} fill="#fdba74" opacity={0.85}
-          stroke="#12161b" strokeWidth={px(2.5)} paintOrder="stroke" pointerEvents="none"
+          stroke={CANVAS_HALO} strokeWidth={px(2.5)} paintOrder="stroke" pointerEvents="none"
         >
           {tag.text}
         </text>
@@ -74,7 +76,7 @@ function Tag({ x, y, text }: { x: number; y: number; text: string }) {
   return (
     <text
       x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={px(12)} fill="#f1f5f9"
-      stroke="#12161b" strokeWidth={px(3)} paintOrder="stroke" pointerEvents="none"
+      stroke={CANVAS_HALO} strokeWidth={px(3)} paintOrder="stroke" pointerEvents="none"
     >
       {text}
     </text>
@@ -119,7 +121,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
   }
   const snap = (p: Vec, anchor: Vec | undefined, mods: Modifiers): Vec => {
     const ab = artboardRef.current
-    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: isFreeSnap(mods), thresholdCm: px(10) })
+    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: isFreeSnap(mods), thresholdCm: px(10), wallThicknessCm: wallThicknessOf(ab) })
     setGuides(r.guides)
     return r.point
   }
@@ -270,7 +272,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     ? { x: Math.min(box.a.x, box.b.x), y: Math.min(box.a.y, box.b.y), w: Math.abs(box.b.x - box.a.x), h: Math.abs(box.b.y - box.a.y) }
     : null
   const tooSmall = tool === 'rect' && !!rectBox && (rectBox.w < MIN_ROOM_SIDE_CM || rectBox.h < MIN_ROOM_SIDE_CM)
-  const color = tool === 'cutout' || tooSmall ? '#f87171' : ORANGE
+  const color = tool === 'cutout' || tooSmall ? CANVAS_DANGER : ORANGE
   const last = points[points.length - 1]
   const nearClose = tool === 'pen' && points.length >= 3 && !!cursor && dist(cursor, points[0]) < 0.5
   const perimeter = points.reduce((sum, p, i) => (i === 0 ? 0 : sum + dist(points[i - 1], p)), 0) + (last && cursor ? dist(last, cursor) : 0)
@@ -328,7 +330,7 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
               fill="none" stroke={ORANGE} strokeWidth={px(1)} strokeLinejoin="round"
             />
             {points.map((p, i) => (
-              <circle key={i} cx={p.x} cy={p.y} r={px(i === 0 && points.length >= 3 ? (nearClose ? 9 : 5) : 3)} fill={i === 0 && nearClose ? 'rgba(251,146,60,0.3)' : '#12161b'} stroke={ORANGE} strokeWidth={px(1.5)} />
+              <circle key={i} cx={p.x} cy={p.y} r={px(i === 0 && points.length >= 3 ? (nearClose ? 9 : 5) : 3)} fill={i === 0 && nearClose ? CANVAS_SELECT_FILL_HOVER : CANVAS_BG} stroke={ORANGE} strokeWidth={px(1.5)} />
             ))}
             {nearClose && <Tag x={points[0].x} y={points[0].y - px(18)} text="Close" />}
             {cursor && last && seg && seg.distCm > 0.5 && (

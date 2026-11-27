@@ -1,6 +1,8 @@
 // Label left, control right. Wraps to a full-width control on very narrow panels.
+// Label = 12 px medium slate-300, hint = 12 px regular slate-400 (L2/L3 of the design audit):
+// one step of hierarchy between the two, both readable on the dark surface.
 import type { ReactNode } from 'react'
-import { MUTED } from './styles'
+import { HINT, LABEL } from './styles'
 
 export type FieldRowProps = {
   label: string
@@ -17,11 +19,11 @@ export type FieldRowProps = {
 }
 
 export function FieldRow({ label, htmlFor, hint, labelWidth = 'w-20', children, className, stacked }: FieldRowProps) {
-  const labelCls = `shrink-0 text-xs text-slate-500 dark:text-slate-400 ${stacked ? 'w-full' : labelWidth}`
+  const labelCls = `${LABEL} ${stacked ? 'w-full' : labelWidth} shrink-0`
   const labelContent = (
     <>
       {label}
-      {hint && <span className={`block font-normal ${MUTED}`}>{hint}</span>}
+      {hint && <span className={`block ${HINT}`}>{hint}</span>}
     </>
   )
   return (

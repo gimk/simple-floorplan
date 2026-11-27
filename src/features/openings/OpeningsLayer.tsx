@@ -11,8 +11,12 @@ import type { Artboard, Opening } from '../../model/types'
 import { getModifiers, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import { formatLengthCm, roundToPrecision } from '../rooms/ops'
+import { jambSegment, openingSymbolShift, openingWall, wallThicknessOf } from '../rooms/walls'
+import type { OpeningWall } from '../rooms/walls'
 import { keepOpeningOrientation, openingEndpoints, openingSymbol, resizeOpeningFromEnd, snapToWall } from './geometry'
 import type { OpeningSymbolArc, OpeningSymbolPath, WallSnap } from './geometry'
+import { openingHitEndpoints, openingHitWidth } from './hit'
+import { hostWallIn } from './sync'
 
 export type { Opening }
 
@@ -61,8 +65,13 @@ function arcD(a: OpeningSymbolArc): string {
   return `M ${a.from.x} ${a.from.y} A ${a.radius} ${a.radius} 0 0 ${a.sweepFlag} ${a.to.x} ${a.to.y}`
 }
 
-/** Pure drawing of one opening (no events). Reused by the placement overlay for previews. */
-export function OpeningShape({ op, selected = false, ghost = false }: { op: Opening; selected?: boolean; ghost?: boolean }) {
+/**
+ * Pure drawing of one opening (no events). Reused by the placement overlay for previews.
+ * `strokeMasked` tells that the artboard has a thick-wall stroke mask (wallThicknessCm > 0): that mask
+ * already cuts the room border lines out of the opening, even when this opening sits on a flush wall
+ * and `wall` is null (effective thickness 0). Default: the wall frame itself.
+ */
+export function OpeningShape({ op, selected = false, ghost = false, wall = null, strokeMasked }: { op: Opening; selected?: boolean; ghost?: boolean; wall?: OpeningWall | null; strokeMasked?: boolean }) {
   const { px } = useViewport()
   const { start, end } = openingEndpoints(op)
   const color = selected ? ORANGE : ghost ? ORANGE : LINE
@@ -73,15 +82,28 @@ export function OpeningShape({ op, selected = false, ghost = false }: { op: Open
   const symbol = openingSymbol(op, px)
   // A selected opening gets every stroke a bit heavier, so it stands out of the plan.
   const weight = (m: number) => px(m * (selected ? 1.5 : 1))
+  // Thick wall: the jambs span the wall thickness (outward from the room edge) and the symbol sits across it.
+  const jambs = wall ? [jambSegment(start, wall), jambSegment(end, wall)] : null
+  const shift = wall ? openingSymbolShift(op, wall) : null
   const ticks = (c: string) => (
     <>
-      <line x1={start.x - nx * tick} y1={start.y - ny * tick} x2={start.x + nx * tick} y2={start.y + ny * tick} stroke={c} strokeWidth={px(1)} />
-      <line x1={end.x - nx * tick} y1={end.y - ny * tick} x2={end.x + nx * tick} y2={end.y + ny * tick} stroke={c} strokeWidth={px(1)} />
+      {(jambs ?? [
+        { a: { x: start.x - nx * tick, y: start.y - ny * tick }, b: { x: start.x + nx * tick, y: start.y + ny * tick } },
+        { a: { x: end.x - nx * tick, y: end.y - ny * tick }, b: { x: end.x + nx * tick, y: end.y + ny * tick } },
+      ]).map((j, i) => (
+        <line key={i} x1={j.a.x} y1={j.a.y} x2={j.b.x} y2={j.b.y} stroke={c} strokeWidth={px(1)} />
+      ))}
     </>
   )
+  // Thick wall: the SVG masks of RoomsLayer already cut the wall body and both room border lines out
+  // of the opening, so the page below (grid, reference images) shows through. A dark eraser line
+  // there would paint a black bar over that page: it is only needed for thin walls. The masks work by
+  // artboard, so a flush opening (effective thickness 0) on a thick-wall artboard needs no eraser.
+  const eraseGap = ghost || !(strokeMasked ?? (wall !== null && wall.thicknessCm > 0))
   return (
     <g pointerEvents="none">
-      <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={BG} strokeWidth={px(3)} />
+      {eraseGap && <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={BG} strokeWidth={px(3)} />}
+      <g transform={shift ? `translate(${shift.x} ${shift.y})` : undefined}>
       {symbol.wallLine && (
         <line x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke={line} strokeWidth={px(1)} />
       )}
@@ -109,6 +131,7 @@ export function OpeningShape({ op, selected = false, ghost = false }: { op: Open
           opacity={0.8}
         />
       ))}
+      </g>
       {ticks(op.kind === 'window' && !selected && !ghost ? SKY : color)}
     </g>
   )
@@ -120,6 +143,7 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
   const tool = useUi((s) => s.tool)
   const selection = useUi((s) => s.selection)
   const interactive = mode === 'plan' && tool === 'select'
+  const thickness = wallThicknessOf(artboard)
   const selectedId = selection.kind === 'opening' && selection.artboardId === artboard.id ? selection.openingId : null
   const gesture = useRef<Gesture | null>(null)
 
@@ -215,8 +239,12 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
       const s = snapToWall(p, artboard.rooms, cur.widthCm, px(22))
       if (!s) return
       const c = roundAlongWall(s, cur.widthCm, artboard.precisionCm, !mods.cmd)
+      // The host room follows the pointer: sliding along a flush wall shared with another room must
+      // not move the opening to that room. The current room wins a tie (see `hostWallIn`), otherwise
+      // the room of the snap hosts the opening.
+      const roomId = hostWallIn(artboard.rooms, { ...cur, xCm: c.xCm, yCm: c.yCm })?.room.id ?? s.roomId
       // The wall may be seen from its other end (shared wall of two rooms): keep the hinge/swing side.
-      patch(movingId, { xCm: c.xCm, yCm: c.yCm, angleDeg: keepOpeningOrientation(s.angleDeg, cur.angleDeg) })
+      patch(movingId, { roomId, xCm: c.xCm, yCm: c.yCm, angleDeg: keepOpeningOrientation(s.angleDeg, cur.angleDeg) })
     }, () => {
       // The copy is kept on release: select it, as the original was left at its start position.
       if (dupId) select(dupId)
@@ -242,15 +270,19 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
     // and clicks reach the furniture drawn underneath them.
     <g data-testid={`openings-layer-${artboard.id}`} pointerEvents={interactive ? undefined : 'none'}>
       {artboard.openings.map((op) => {
-        const { start: a, end: b } = openingEndpoints(op)
+        const { start, end } = openingEndpoints(op)
+        const wall = openingWall(artboard.rooms, op, thickness)
         const sel = op.id === selectedId
+        // Thick wall: the hit band sits on the wall centreline, across the whole wall thickness.
+        // A null frame (thin artboard, or a flush wall whose body is masked away) keeps it on the line.
+        const hit = openingHitEndpoints(start, end, wall)
         return (
           <g key={op.id} data-opening-id={op.id}>
-            <OpeningShape op={op} selected={sel} />
+            <OpeningShape op={op} selected={sel} wall={wall} strokeMasked={thickness > 0} />
             {interactive && (
               <line
-                x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke="transparent" strokeWidth={px(12)} pointerEvents="stroke" style={{ cursor: 'move' }}
+                x1={hit.start.x} y1={hit.start.y} x2={hit.end.x} y2={hit.end.y}
+                stroke="transparent" strokeWidth={openingHitWidth(wall, px)} pointerEvents="stroke" style={{ cursor: 'move' }}
                 onPointerDown={(e) => onBodyDown(e, op)} {...gp}
               />
             )}
@@ -258,7 +290,9 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
         )
       })}
       {interactive && artboard.openings.filter((o) => o.id === selectedId).map((op) => {
-        const { start: a, end: b } = openingEndpoints(op)
+        const ends = openingEndpoints(op)
+        // The end handles sit on the middle of the jambs: same wall-centred line as the hit band.
+        const { start: a, end: b } = openingHitEndpoints(ends.start, ends.end, openingWall(artboard.rooms, op, thickness))
         const rad = (op.angleDeg * Math.PI) / 180
         const lx = (a.x + b.x) / 2 + Math.sin(rad) * px(14), ly = (a.y + b.y) / 2 - Math.cos(rad) * px(14)
         return (

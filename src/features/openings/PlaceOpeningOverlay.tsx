@@ -18,6 +18,7 @@ import { addOpening } from './actions'
 import { DEFAULT_OPENING_WIDTH_CM, computeDoorFlip, createOpening, snapToWall } from './geometry'
 import type { WallSnap } from './geometry'
 import { OpeningShape } from './OpeningsLayer'
+import { openingWall, wallThicknessOf } from '../rooms/walls'
 
 type Hit = { artboard: Artboard; snap: WallSnap }
 
@@ -199,7 +200,7 @@ function Surface({ kind }: { kind: OpeningKind }) {
       />
       {preview && (
         <g transform={`translate(${preview.ab.xCm} ${preview.ab.yCm})`} opacity={0.9} data-testid="opening-preview" pointerEvents="none" strokeWidth={px(1)}>
-          <OpeningShape op={preview.op} ghost />
+          <OpeningShape op={preview.op} ghost wall={openingWall(preview.ab.rooms, preview.op, wallThicknessOf(preview.ab))} />
           {overlap && previewHit && (() => {
             const dx = Math.cos(preview.op.angleDeg * RAD), dy = Math.sin(preview.op.angleDeg * RAD)
             const h = preview.op.widthCm / 2

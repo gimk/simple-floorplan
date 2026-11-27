@@ -1,7 +1,7 @@
 // v2 shell: top bar (title, mode, undo/redo, JSON export/import, add image), left panel,
 // SVG canvas (grid, reference images, artboard frames), right Inspect panel.
-import { useEffect, useRef, useState } from 'react'
-import { Download, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, Redo2, Undo2, Upload, X } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { Download, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Viewport } from './canvas/Viewport'
 import { ArtboardContent, ArtboardInspect, ArtboardsLayer } from './features/artboards'
@@ -24,6 +24,7 @@ import { deleteRoomVertex, deleteRoomWall, deleteRooms } from './features/rooms/
 import { PlanToolbar } from './features/rooms/PlanToolbar'
 import { RoomInspect } from './features/rooms/RoomInspect'
 import { RoomsLayer, type EditWallRequest } from './features/rooms/RoomsLayer'
+import { ArtboardToolOverlay } from './features/artboards/ArtboardToolOverlay'
 import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
@@ -37,6 +38,7 @@ import { CanvasGrid } from './shell/CanvasGrid'
 import { IconButton, Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
 import { useUi, type Mode } from './shell/uiStore'
+import { shortcutsBlocked, useDialogFocus } from './shell/useDialogFocus'
 import { useMediaQuery } from './shell/useDesktop'
 import { ZoomControls } from './shell/ZoomControls'
 import { fitAll, zoomIn, zoomOut, zoomReset } from './shell/zoom'
@@ -52,10 +54,10 @@ const MODES: { value: Mode; label: string; title: string }[] = [
 
 /** Text button of the top bar (Add image). 36 px high, 44 px on a coarse pointer. */
 const BAR_BTN =
-  'flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-surface-2 px-2 text-xs text-slate-200 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-surface-2 pointer-coarse:h-11'
+  'flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-surface-2 px-2 text-xs text-slate-200 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-surface-2 aria-disabled:opacity-40 aria-disabled:hover:bg-surface-2 pointer-coarse:h-11'
 
 /** Thin divider between the groups of the top bar. */
-const DIVIDER = <div className="mx-1 hidden h-5 w-px bg-white/15 md:block" aria-hidden="true" />
+const DIVIDER = <div className="mx-1 hidden h-5 w-px bg-white/15 lg:block" aria-hidden="true" />
 
 const isMac = undoShortcut() === '⌘Z'
 const REDO_KEYS = isMac ? '⌘⇧Z' : 'Ctrl+Y'
@@ -85,6 +87,7 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Rectangle', 'R'],
       ['Pen', 'P'],
       ['Cutout', 'X'],
+      ['Artboard', 'A'],
       ['Tape measure', 'M'],
     ],
   },
@@ -109,10 +112,13 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
 
 /** Cheat-sheet modal for the keyboard shortcuts. Closes with Esc (global handler), the button or the backdrop. */
 function ShortcutsModal({ onClose }: { onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useDialogFocus(true, dialogRef)
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" data-testid="shortcuts-modal">
       <button type="button" aria-label="Close keyboard shortcuts" tabIndex={-1} className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard shortcuts"
@@ -189,6 +195,13 @@ export default function App() {
   const [dropping, setDropping] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
+  const moreOpenRef = useRef(false)
+  // Mirror the state into a ref (not during render) so the global key handler below
+  // sees the current value without re-subscribing on every change.
+  useEffect(() => {
+    moreOpenRef.current = moreOpen
+  }, [moreOpen])
+  const moreId = useId()
   const drawer = useUi((s) => s.drawer)
   const leftCollapsed = useUi((s) => s.leftCollapsed)
   const inspectCollapsed = useUi((s) => s.inspectCollapsed)
@@ -222,6 +235,8 @@ export default function App() {
         useUi.getState().set({ shortcutsOpen: !useUi.getState().shortcutsOpen })
         return
       }
+      // Nothing below may fire behind an open cheat sheet, More menu or dialog.
+      if (shortcutsBlocked({ shortcutsOpen: useUi.getState().shortcutsOpen, moreOpen: moreOpenRef.current }, document)) return
       // Zoom: + / = in, - out, 0 = 100%, F or Shift+1 = fit all.
       if (plain && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomIn(); return }
       if (plain && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); return }
@@ -361,7 +376,10 @@ export default function App() {
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMoreOpen(false)
+      if (e.key === 'Escape') {
+        setMoreOpen(false)
+        moreRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
+      }
     }
     document.addEventListener('pointerdown', onDown)
     document.addEventListener('keydown', onKey)
@@ -460,6 +478,8 @@ export default function App() {
   const wallEditor =
     editWall && mode === 'plan' && tool === 'select' && editWall.openedWith === selection ? editWall.req : null
 
+  const activeBoard = artboards.find((a) => a.id === activeArtboardId) ?? artboards[0]
+  const emptyPlan = mode === 'plan' && tool === 'select' && !!activeBoard && activeBoard.rooms.length === 0
   const leftInline = isMd && !leftCollapsed
   const inspectInline = isLg && !inspectCollapsed
   const leftSheet = !isMd && drawer === 'left'
@@ -491,6 +511,7 @@ export default function App() {
 
   return (
     <div className="flex h-dvh flex-col bg-surface-0 text-zinc-100">
+      <h1 className="sr-only">Simple Floorplan</h1>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/10 bg-surface-1 px-3">
         <div className="group relative flex min-w-0 flex-1 basis-0 items-center">
           <input
@@ -516,11 +537,14 @@ export default function App() {
         <div className="flex shrink-0 items-center justify-end gap-1 lg:flex-1 lg:basis-0">
           <button
             type="button"
-            className={`${BAR_BTN} max-md:hidden`}
-            aria-label="Add reference image"
-            title={mode === 'plan' ? 'Add reference image (PNG, JPG, WebP, SVG, PDF)' : 'Switch to Plan mode (1) to add reference images'}
-            disabled={mode !== 'plan'}
-            onClick={() => imageRef.current?.click()}
+            className={`${BAR_BTN} max-lg:hidden`}
+            aria-label={mode === 'plan' ? 'Add reference image' : 'Add reference image (unavailable in Design mode)'}
+            title={mode === 'plan' ? 'Add reference image (PNG, JPG, WebP, SVG, PDF)' : 'Unavailable in Design mode. Press 1 to switch to Plan mode.'}
+            aria-disabled={mode !== 'plan'}
+            onClick={() => {
+              if (mode === 'plan') imageRef.current?.click()
+              else toast('Reference images need Plan mode. Press 1 to switch.')
+            }}
           >
             <ImagePlus size={18} />
             <span className="hidden lg:inline">Add image</span>
@@ -529,43 +553,59 @@ export default function App() {
           <IconButton label={`Undo (${undoShortcut()})`} variant="bar" icon={<Undo2 size={18} />} disabled={!canUndo} onClick={() => useDoc.getState().undo()} />
           <IconButton label={`Redo (${REDO_KEYS})`} variant="bar" icon={<Redo2 size={18} />} disabled={!canRedo} onClick={() => useDoc.getState().redo()} />
           {DIVIDER}
-          <div className="flex items-center gap-1 max-md:hidden">
+          <div className="flex items-center gap-1 max-lg:hidden">
             <IconButton label="Export JSON" variant="bar" icon={<Download size={18} />} onClick={() => exportProjectJson(useDoc.getState().doc)} />
             <IconButton label="Import JSON" variant="bar" icon={<Upload size={18} />} onClick={() => fileRef.current?.click()} />
           </div>
           {DIVIDER}
-          <div className="max-md:hidden">
+          <div className="max-lg:hidden">
             <CloudMenu />
           </div>
           <div className="max-lg:hidden">
             <IconButton label="Keyboard shortcuts (?)" variant="bar" icon={<Keyboard size={18} />} onClick={() => setUi({ shortcutsOpen: true })} />
           </div>
-          <div ref={moreRef} className="relative md:hidden">
-            <IconButton label="More actions" variant="bar" icon={<Ellipsis size={18} />} pressed={moreOpen} onClick={() => setMoreOpen((o) => !o)} />
+          <div ref={moreRef} className="relative lg:hidden">
+            <button
+              type="button"
+              title="More actions"
+              aria-label="More actions"
+              aria-expanded={moreOpen}
+              aria-controls={moreId}
+              onClick={() => setMoreOpen((o) => !o)}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-white/10 bg-surface-2 text-slate-200 hover:bg-white/10 pointer-coarse:h-11 pointer-coarse:w-11 ${moreOpen ? 'bg-orange-500/20 text-orange-400' : ''}`}
+            >
+              <Ellipsis size={18} />
+            </button>
             {moreOpen && (
               <div
-                role="menu"
-                aria-label="More actions"
+                id={moreId}
                 className="absolute right-0 top-full z-50 mt-1 w-56 max-w-[calc(100vw-1rem)] rounded-lg border border-white/10 bg-surface-2 p-1 shadow-xl"
               >
                 <button
                   type="button"
-                  role="menuitem"
-                  className={moreItem}
-                  disabled={mode !== 'plan'}
-                  title={mode === 'plan' ? undefined : 'Switch to Plan mode to add reference images'}
-                  onClick={() => { setMoreOpen(false); imageRef.current?.click() }}
+                  className={`${moreItem} aria-disabled:opacity-40 aria-disabled:hover:bg-transparent`}
+                  aria-disabled={mode !== 'plan'}
+                  aria-label={mode === 'plan' ? 'Add image' : 'Add image (unavailable in Design mode)'}
+                  title={mode === 'plan' ? undefined : 'Unavailable in Design mode. Press 1 to switch to Plan mode.'}
+                  onClick={() => {
+                    if (mode !== 'plan') { toast('Reference images need Plan mode. Press 1 to switch.'); return }
+                    setMoreOpen(false)
+                    imageRef.current?.click()
+                  }}
                 >
                   <ImagePlus size={18} aria-hidden="true" /> Add image
                 </button>
-                <button type="button" role="menuitem" className={moreItem} onClick={() => { setMoreOpen(false); exportProjectJson(useDoc.getState().doc) }}>
+                <button type="button" className={moreItem} onClick={() => { setMoreOpen(false); exportProjectJson(useDoc.getState().doc) }}>
                   <Download size={18} aria-hidden="true" /> Export JSON
                 </button>
-                <button type="button" role="menuitem" className={moreItem} onClick={() => { setMoreOpen(false); fileRef.current?.click() }}>
+                <button type="button" className={moreItem} onClick={() => { setMoreOpen(false); fileRef.current?.click() }}>
                   <Upload size={18} aria-hidden="true" /> Import JSON
                 </button>
-                <div className="my-1 border-t border-white/10" />
                 <CloudMenu showLabel />
+                <div className="my-1 border-t border-white/10" />
+                <button type="button" className={moreItem} onClick={() => { setMoreOpen(false); setUi({ shortcutsOpen: true }) }}>
+                  <Keyboard size={18} aria-hidden="true" /> Keyboard shortcuts <kbd className="ml-auto font-mono text-xs text-slate-400">?</kbd>
+                </button>
               </div>
             )}
           </div>
@@ -593,9 +633,9 @@ export default function App() {
           <button type="button" aria-label="Close panel" tabIndex={-1} className="fixed inset-0 z-40 bg-black/50" onClick={closeDrawer} />
         )}
         <aside
-          aria-label="Left panel"
+          aria-label={leftName}
           data-testid="left-panel"
-          className={`${asideBase} ${leftInline ? 'w-60 shrink-0 border-r border-white/10' : leftSheet ? sheetClass() : 'hidden'}`}
+          className={`${asideBase} ${leftInline ? 'w-[var(--panel-w-left)] shrink-0 border-r border-white/10' : leftSheet ? sheetClass() : 'hidden'}`}
         >
           {leftSheet && sheetHeader(leftName)}
           {mode === 'plan' ? (
@@ -618,6 +658,7 @@ export default function App() {
               <>
                 <CalibrateOverlay key={calibratingImageId ?? 'none'} />
                 <RoomToolsOverlay />
+                <ArtboardToolOverlay />
                 <PlaceOpeningOverlay />
                 <TapeOverlay />
                 <MarqueeOverlay />
@@ -671,6 +712,22 @@ export default function App() {
             <ZoomControls />
           </div>
           <PlanToolbar />
+          {emptyPlan && (
+            <div className="pointer-events-none absolute inset-x-0 top-1/3 z-20 flex justify-center px-4" data-testid="empty-state">
+              <div className="pointer-events-auto w-full max-w-xs rounded-xl border border-white/10 bg-surface-2/95 p-4 text-center shadow-xl">
+                <h2 className="text-sm font-semibold text-slate-100">Draw your first room</h2>
+                <p className="mt-1 text-xs text-slate-400">Drag a rectangle, or click corners with the pen.</p>
+                <div className="mt-3 flex gap-2">
+                  <button type="button" className={`${BAR_BTN} flex-1`} onClick={() => setUi({ tool: 'rect' })}>
+                    <Square size={16} aria-hidden="true" /> Rectangle
+                  </button>
+                  <button type="button" className={`${BAR_BTN} flex-1`} onClick={() => setUi({ tool: 'pen' })}>
+                    <PenTool size={16} aria-hidden="true" /> Pen
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {wallEditor && (
             <WallLengthEditor {...wallEditor} onClose={() => setEditWall(null)} />
           )}
@@ -683,9 +740,9 @@ export default function App() {
           )}
         </main>
         <aside
-          aria-label="Inspect"
+          aria-label="Inspect panel"
           data-testid="inspect-panel"
-          className={`${asideBase} ${inspectInline ? 'w-70 shrink-0 border-l border-white/10' : inspectSheet ? sheetClass() : 'hidden'}`}
+          className={`${asideBase} ${inspectInline ? 'w-[var(--panel-w-right)] shrink-0 border-l border-white/10' : inspectSheet ? sheetClass() : 'hidden'}`}
         >
           {inspectSheet && sheetHeader('Inspect')}
           {mode === 'design' ? (
