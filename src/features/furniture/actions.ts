@@ -121,7 +121,11 @@ export function duplicateFurniture(artboardId: string, furnitureId: string, offs
   if (!src) return null
   const id = crypto.randomUUID()
   const copy: FurnitureItem = { ...src, id, xCm: src.xCm + offsetCm, yCm: src.yCm + offsetCm }
-  useDoc.getState().update((d) => { d.artboards.find((a) => a.id === artboardId)!.furniture.push(copy) })
+  useDoc.getState().update((d) => {
+    const list = d.artboards.find((a) => a.id === artboardId)!.furniture
+    const at = list.findIndex((f) => f.id === furnitureId)
+    list.splice(at + 1, 0, copy)
+  })
   select(artboardId, id)
   return id
 }
@@ -192,14 +196,22 @@ export function duplicateFurnitureGroup(artboardId: string, furnitureIds: string
   const artboard = findArtboard(artboardId)
   if (!artboard) return []
   const wanted = new Set(furnitureIds)
+  const copyOf = new Map<string, FurnitureItem>()
   const copies = artboard.furniture
     .filter((f) => wanted.has(f.id))
-    .map((f): FurnitureItem => ({ ...f, id: crypto.randomUUID(), xCm: f.xCm + offsetCm, yCm: f.yCm + offsetCm }))
+    .map((f): FurnitureItem => {
+      const copy: FurnitureItem = { ...f, id: crypto.randomUUID(), xCm: f.xCm + offsetCm, yCm: f.yCm + offsetCm }
+      copyOf.set(f.id, copy)
+      return copy
+    })
   if (copies.length === 0) return []
   useDoc.getState().update((d) => {
     const ab = d.artboards.find((a) => a.id === artboardId)
     if (!ab) return
-    ab.furniture.push(...copies.map((c) => ({ ...c })))
+    ab.furniture = ab.furniture.flatMap((f) => {
+      const c = copyOf.get(f.id)
+      return c ? [f, { ...c }] : [f]
+    })
   })
   const ids = copies.map((c) => c.id)
   setFurnitureSelection(artboardId, ids)

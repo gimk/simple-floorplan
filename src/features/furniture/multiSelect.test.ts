@@ -196,12 +196,19 @@ describe('duplicateFurnitureGroup', () => {
     expect(past()).toBe(before + 1)
     const list = s().doc.artboards[0].furniture
     expect(list).toHaveLength(4)
-    expect(list[2]).toMatchObject({ id: ids[0], xCm: 120, yCm: 120 })
+    expect(list[1]).toMatchObject({ id: ids[0], xCm: 120, yCm: 120 })
     expect(list[3]).toMatchObject({ id: ids[1], xCm: 420, yCm: 320 })
     expect(ui().selection).toEqual({ kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ids })
     expect(ui().activeArtboardId).toBe('ab1')
     s().undo()
     expect(s().doc.artboards[0].furniture).toHaveLength(2)
+  })
+
+  it('puts each copy directly above its source', () => {
+    hydrate([item({ id: 'f1' }), item({ id: 'f2', xCm: 400, yCm: 300 }), item({ id: 'f3', xCm: 800, yCm: 500 })])
+    const ids = duplicateFurnitureGroup('ab1', ['f1', 'f3'])
+    expect(ids).toHaveLength(2)
+    expect(s().doc.artboards[0].furniture.map((f) => f.id)).toEqual(['f1', ids[0], 'f2', 'f3', ids[1]])
   })
 
   it('honours a custom offset and copies a single item of the group', () => {

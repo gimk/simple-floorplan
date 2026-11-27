@@ -448,6 +448,15 @@ describe('duplicateFurniture', () => {
     expect(ui().selection).toEqual({ kind: 'furniture', artboardId, furnitureId: copyId })
   })
 
+  it('puts the copy directly above its source, not on top of every layer', () => {
+    const artboardId = s().doc.artboards[0].id
+    const ids = ['A', 'B', 'C'].map((name) =>
+      addFurniture(artboardId, { name, shape: 'rect', xCm: 0, yCm: 0, widthCm: 85, depthCm: 85, rotationDeg: 0, color: '#4b5563' }),
+    )
+    const copyId = duplicateFurniture(artboardId, ids[0])!
+    expect(s().doc.artboards[0].furniture.map((f) => f.id)).toEqual([ids[0], copyId, ids[1], ids[2]])
+  })
+
   it('honours a custom offset and returns null for an unknown item', () => {
     const artboardId = s().doc.artboards[0].id
     const id = addFurniture(artboardId, { name: 'Chair', shape: 'rect', xCm: 0, yCm: 0, widthCm: 85, depthCm: 85, rotationDeg: 0, color: '#4b5563' })

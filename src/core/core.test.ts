@@ -741,6 +741,18 @@ describe('applyCommand: furniture', () => {
     expect(applyCommand(added.doc, { type: 'duplicate_furniture', furnitureId: 'nope' }).ok).toBe(false)
   })
 
+  it('duplicate_furniture puts the copy at index 1, directly above its source', () => {
+    const d0 = ok(createDefaultProject(), { type: 'add_furniture', name: 'A', xCm: 0, yCm: 0 })
+    const d1 = ok(d0.doc, { type: 'add_furniture', name: 'B', xCm: 200, yCm: 0 })
+    const firstId = d1.doc.artboards[0].furniture[0].id
+    const r = ok(d1.doc, { type: 'duplicate_furniture', furnitureId: firstId })
+    const list = r.doc.artboards[0].furniture
+    expect(list).toHaveLength(3)
+    expect(list[0].id).toBe(firstId)
+    expect(list[1].id).toBe(r.result.furnitureId)
+    expect(list[2].name).toBe('B')
+  })
+
   it('delete_furniture', () => {
     const added = ok(createDefaultProject(), { type: 'add_furniture', xCm: 0, yCm: 0 })
     const furnitureId = added.result.furnitureId as string

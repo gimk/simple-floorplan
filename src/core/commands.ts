@@ -438,7 +438,7 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       const ab = getArtboard(d, cmd.artboardId)
       const src = getFurniture(ab, cmd.furnitureId)
       const copy: FurnitureItem = { ...src, id: newId(), xCm: src.xCm + 20, yCm: src.yCm + 20 }
-      ab.furniture.push(copy)
+      ab.furniture.splice(ab.furniture.indexOf(src) + 1, 0, copy)
       return { artboardId: ab.id, furnitureId: copy.id, sourceFurnitureId: src.id }
     }
     case 'delete_furniture': {
