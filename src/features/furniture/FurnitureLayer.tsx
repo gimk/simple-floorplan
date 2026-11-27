@@ -19,7 +19,7 @@ import {
   updateFurnitureSilent,
 } from './actions'
 import type { FurnitureStart } from './actions'
-import { resolveFurnitureClick, resolveFurnitureDoubleClick } from './groups'
+import { expandToGroups, resolveFurnitureClick, resolveFurnitureDoubleClick } from './groups'
 import { groupBounds } from './groupTransform'
 import type { FurnitureTransformStart } from './groupTransform'
 import {
@@ -27,6 +27,7 @@ import {
   EDGE_HANDLES,
   applyAxisLock,
   computeMeasureGuides,
+  computeMeasureGuidesForBox,
   directionArrowGeometry,
   furnitureAxisBounds,
   furnitureCornerRadiusCm,
@@ -87,9 +88,10 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       : []
   // A group that lost items (undo, a delete elsewhere) is stale: draw nothing until the next click.
   const activeIds = selection.kind === 'furnitureMulti' && selIds.length < 2 ? [] : selIds
-  // Option/Alt measure stays single-selection only; handles, resize, rotate and Alt-duplicate work for groups too.
+  // Option/Alt measure, handles, resize, rotate and Alt-duplicate work for single and group selections.
   const selectedId = activeIds.length === 1 ? activeIds[0] : null
   const multiIds = activeIds.length > 1 ? activeIds : null
+  const hasSelection = activeIds.length > 0
   const gesture = useRef<Gesture | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [guides, setGuides] = useState<DistanceGuide[]>([])
@@ -120,18 +122,32 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const recompute = () => {
     const hide = () => setMeasure((m) => (m === null ? m : null))
     if (!getModifiers().alt || gesture.current || !lastPointer.current) { hide(); return }
-    const sel = selectedId ? live(selectedId) : undefined
-    if (!sel) { hide(); return }
     const ab = liveArtboard()
-    const target = pickMeasureTarget(lastPointer.current, ab, sel.id, px(8))
-    setMeasure({ guides: computeMeasureGuides(sel, target, ab), target })
+    if (selectedId) {
+      const sel = ab.furniture.find((f) => f.id === selectedId)
+      if (!sel) { hide(); return }
+      const target = pickMeasureTarget(lastPointer.current, ab, sel.id, px(8))
+      setMeasure({ guides: computeMeasureGuides(sel, target, ab), target })
+      return
+    }
+    if (multiIds) {
+      const idSet = new Set(multiIds)
+      const items = ab.furniture.filter((f) => idSet.has(f.id))
+      const box = groupBounds(items)
+      if (!box) { hide(); return }
+      const excluded = new Set(expandToGroups(ab, multiIds))
+      const target = pickMeasureTarget(lastPointer.current, ab, excluded, px(8))
+      setMeasure({ guides: computeMeasureGuidesForBox(box, target, ab), target })
+      return
+    }
+    hide()
   }
   // The window listener reads the newest closures through this ref, so a pan or a zoom needs no resubscribe.
   const measureApi = useRef({ toLocal, recompute })
   useEffect(() => { measureApi.current = { toLocal, recompute } })
 
   useEffect(() => {
-    if (!design || !selectedId) return
+    if (!design || !hasSelection) return
     const onPointerMove = (e: PointerEvent) => {
       lastPointer.current = measureApi.current.toLocal(e.clientX, e.clientY)
       syncModifiersFromEvent(e)
@@ -144,7 +160,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       unsubscribe()
       setMeasure(null)
     }
-  }, [design, selectedId])
+  }, [design, hasSelection])
 
   const start = (e: ReactPointerEvent<Element>, onMove: (p: Vec) => void) => {
     e.stopPropagation()

@@ -5,6 +5,7 @@
 // offset of a local point (lx, ly) is (lx*cos - ly*sin, lx*sin + ly*cos).
 // The FRONT edge of an item is the local -Y (top) edge, for every rotation: a bed, a sofa and a desk
 // all face the same way, and a 0 degree item faces up on screen.
+import { pointInPolygon } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import type { Artboard, FurnitureItem } from '../../model/types'
 
@@ -269,21 +270,25 @@ const rayHit = (o: Vec, d: Vec, a: Vec, b: Vec): number | null => {
 }
 
 /**
- * Nearest wall distance in each of the 4 cardinal directions from the item's bounds, measured from the
- * edges at the centre line. A direction with no wall within maxDistCm gives no guide.
+ * Nearest wall distance in each of the 4 cardinal directions from `box`, measured from the
+ * edges at the centre line, using the room that contains the box centre (or [] if none).
+ * A direction with no wall within maxDistCm gives no guide.
  */
-export function computeDistanceGuides(item: FurnitureItem, artboard: Artboard, maxDistCm = DEFAULT_MAX_GUIDE_DIST_CM): DistanceGuide[] {
-  const b = furnitureAxisBounds(item)
-  const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2
+export function computeDistanceGuidesForBox(
+  box: ItemBounds,
+  artboard: Artboard,
+  maxDistCm = DEFAULT_MAX_GUIDE_DIST_CM,
+): DistanceGuide[] {
+  const cx = (box.minX + box.maxX) / 2, cy = (box.minY + box.maxY) / 2
+  const room = artboard.rooms.find((r) => pointInPolygon({ x: cx, y: cy }, r.vertices))
+  if (!room) return []
   const rays: { axis: 'x' | 'y'; from: Vec; dir: Vec }[] = [
-    { axis: 'x', from: { x: b.minX, y: cy }, dir: { x: -1, y: 0 } },
-    { axis: 'x', from: { x: b.maxX, y: cy }, dir: { x: 1, y: 0 } },
-    { axis: 'y', from: { x: cx, y: b.minY }, dir: { x: 0, y: -1 } },
-    { axis: 'y', from: { x: cx, y: b.maxY }, dir: { x: 0, y: 1 } },
+    { axis: 'x', from: { x: box.minX, y: cy }, dir: { x: -1, y: 0 } },
+    { axis: 'x', from: { x: box.maxX, y: cy }, dir: { x: 1, y: 0 } },
+    { axis: 'y', from: { x: cx, y: box.minY }, dir: { x: 0, y: -1 } },
+    { axis: 'y', from: { x: cx, y: box.maxY }, dir: { x: 0, y: 1 } },
   ]
-  const walls = artboard.rooms.flatMap((r) =>
-    r.vertices.map((p, i) => [p, r.vertices[(i + 1) % r.vertices.length]] as [Vec, Vec]),
-  )
+  const walls = room.vertices.map((p, i) => [p, room.vertices[(i + 1) % room.vertices.length]] as [Vec, Vec])
   const out: DistanceGuide[] = []
   for (const ray of rays) {
     let best: number | null = null
@@ -302,6 +307,14 @@ export function computeDistanceGuides(item: FurnitureItem, artboard: Artboard, m
     })
   }
   return out
+}
+
+/**
+ * Nearest wall distance in each of the 4 cardinal directions from the item's bounds, measured from the
+ * edges at the centre line. A direction with no wall within maxDistCm gives no guide.
+ */
+export function computeDistanceGuides(item: FurnitureItem, artboard: Artboard, maxDistCm = DEFAULT_MAX_GUIDE_DIST_CM): DistanceGuide[] {
+  return computeDistanceGuidesForBox(furnitureAxisBounds(item), artboard, maxDistCm)
 }
 
 // ---------- Option/Alt measure tool ----------
@@ -335,13 +348,20 @@ const hitsItem = (p: Vec, item: FurnitureItem): boolean => {
 }
 
 /**
- * What the cursor at artboard-local point p points at. Items win, top of the stack first, and the
- * selected item is never its own target; then the closest room wall within wallTolCm; else 'none'.
+ * What the cursor at artboard-local point p points at. Items win, top of the stack first, and any
+ * item in `excludedIds` is never a target; then the closest room wall within wallTolCm; else 'none'.
  */
-export function pickMeasureTarget(p: Vec, artboard: Artboard, selectedId: string, wallTolCm: number): MeasureTarget {
+export function pickMeasureTarget(
+  p: Vec,
+  artboard: Artboard,
+  excludedIds: string | ReadonlySet<string>,
+  wallTolCm: number,
+): MeasureTarget {
+  const isExcluded = (id: string): boolean =>
+    typeof excludedIds === 'string' ? id === excludedIds : excludedIds.has(id)
   for (let i = artboard.furniture.length - 1; i >= 0; i--) {
     const f = artboard.furniture[i]
-    if (f.id === selectedId) continue
+    if (isExcluded(f.id)) continue
     if (hitsItem(p, f)) return { kind: 'furniture', item: f }
   }
   let best: { d: number; a: Vec; b: Vec } | null = null
@@ -356,12 +376,24 @@ export function pickMeasureTarget(p: Vec, artboard: Artboard, selectedId: string
   return best ? { kind: 'wall', a: best.a, b: best.b } : { kind: 'none' }
 }
 
+const boxCorners = (b: ItemBounds): [Vec, Vec, Vec, Vec] => [
+  { x: b.minX, y: b.minY },
+  { x: b.maxX, y: b.minY },
+  { x: b.maxX, y: b.maxY },
+  { x: b.minX, y: b.maxY },
+]
+
 /**
- * Display-only distance guides between the selected item and what the cursor points at.
+ * Display-only distance guides between `box` and what the cursor points at.
  * 'none' falls back to the 4 nearest-wall distances. No guide with a distance <= 0 is returned.
  */
-export function computeMeasureGuides(selected: FurnitureItem, target: MeasureTarget, artboard: Artboard): DistanceGuide[] {
-  const A = furnitureAxisBounds(selected)
+export function computeMeasureGuidesForBox(
+  box: ItemBounds,
+  target: MeasureTarget,
+  artboard: Artboard,
+  corners: readonly Vec[] = boxCorners(box),
+): DistanceGuide[] {
+  const A = box
   const acx = (A.minX + A.maxX) / 2, acy = (A.minY + A.maxY) / 2
   const out: DistanceGuide[] = []
   const push = (axis: 'x' | 'y', x1: number, y1: number, x2: number, y2: number) => {
@@ -370,7 +402,7 @@ export function computeMeasureGuides(selected: FurnitureItem, target: MeasureTar
     out.push({ axis, x1, y1, x2, y2, distCm })
   }
 
-  if (target.kind === 'none') return computeDistanceGuides(selected, artboard)
+  if (target.kind === 'none') return computeDistanceGuidesForBox(A, artboard)
 
   if (target.kind === 'furniture') {
     const B = furnitureAxisBounds(target.item)
@@ -415,7 +447,7 @@ export function computeMeasureGuides(selected: FurnitureItem, target: MeasureTar
   let best: { d: number; from: Vec; to: Vec } | null = null
   const sx = b.x - a.x, sy = b.y - a.y
   const len2 = sx * sx + sy * sy
-  for (const c of furnitureWorldCorners(selected)) {
+  for (const c of corners) {
     const t = len2 < EPS ? 0 : Math.min(1, Math.max(0, ((c.x - a.x) * sx + (c.y - a.y) * sy) / len2))
     const to = { x: a.x + sx * t, y: a.y + sy * t }
     const d = Math.hypot(c.x - to.x, c.y - to.y)
@@ -423,6 +455,14 @@ export function computeMeasureGuides(selected: FurnitureItem, target: MeasureTar
   }
   if (best && best.d >= 0.5) push('x', best.from.x, best.from.y, best.to.x, best.to.y)
   return out
+}
+
+/**
+ * Display-only distance guides between the selected item and what the cursor points at.
+ * 'none' falls back to the 4 nearest-wall distances. No guide with a distance <= 0 is returned.
+ */
+export function computeMeasureGuides(selected: FurnitureItem, target: MeasureTarget, artboard: Artboard): DistanceGuide[] {
+  return computeMeasureGuidesForBox(furnitureAxisBounds(selected), target, artboard, furnitureWorldCorners(selected))
 }
 
 /** Corner radius of a 'rect' item, in cm. Default 4 cm, never more than half of the shorter side. */

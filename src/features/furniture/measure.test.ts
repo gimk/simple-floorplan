@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { createArtboard } from '../../model/schema'
 import type { Artboard, FurnitureItem, Room } from '../../model/types'
-import { computeDistanceGuides, computeMeasureGuides, pickMeasureTarget } from './geometry'
+import {
+  computeDistanceGuides,
+  computeDistanceGuidesForBox,
+  computeMeasureGuides,
+  computeMeasureGuidesForBox,
+  pickMeasureTarget,
+} from './geometry'
+import { groupBounds } from './groupTransform'
 
 // ---------- helpers ----------
 
@@ -119,5 +126,69 @@ describe('computeMeasureGuides', () => {
     const a = item({ id: 'a', xCm: 200, yCm: 150 })
     const room = board([rect('r1', 0, 0, 400, 300)], [a])
     expect(computeMeasureGuides(a, { kind: 'none' }, room)).toEqual(computeDistanceGuides(a, room))
+  })
+})
+
+// ---------- multi-selection / group measure ----------
+
+describe('multi-selection / group measure', () => {
+  it('excludes all members of the selection as targets', () => {
+    const g1 = item({ id: 'g1', xCm: 50, yCm: 50, groupId: 'grp' })
+    const g2 = item({ id: 'g2', xCm: 200, yCm: 50, groupId: 'grp' })
+    const other = item({ id: 'other', xCm: 350, yCm: 50 })
+    const ab = board([], [g1, g2, other])
+    const excluded = new Set(['g1', 'g2'])
+
+    expect(pickMeasureTarget({ x: 50, y: 50 }, ab, excluded, 8)).toEqual({ kind: 'none' })
+    expect(pickMeasureTarget({ x: 200, y: 50 }, ab, excluded, 8)).toEqual({ kind: 'none' })
+    expect(pickMeasureTarget({ x: 350, y: 50 }, ab, excluded, 8)).toEqual({ kind: 'furniture', item: other })
+  })
+
+  it('measures gap from the selection box to an external item', () => {
+    const g1 = item({ id: 'g1', xCm: 50, yCm: 100, widthCm: 60, depthCm: 40 }) // x [20, 80], y [80, 120]
+    const g2 = item({ id: 'g2', xCm: 130, yCm: 160, widthCm: 40, depthCm: 40 }) // x [110, 150], y [140, 180]
+    const box = groupBounds([g1, g2])! // x [20, 150], y [80, 180]
+    const other = item({ id: 'other', xCm: 230, yCm: 130, widthCm: 60, depthCm: 60 }) // x [200, 260], y [100, 160]
+    const ab = board([], [g1, g2, other])
+
+    const guides = computeMeasureGuidesForBox(box, { kind: 'furniture', item: other }, ab)
+    expect(guides).toEqual([{ axis: 'x', x1: 150, y1: 130, x2: 200, y2: 130, distCm: 50 }])
+  })
+
+  it('measures distance from the selection box to a wall', () => {
+    const g1 = item({ id: 'g1', xCm: 100, yCm: 100, widthCm: 60, depthCm: 40 }) // y [80, 120]
+    const g2 = item({ id: 'g2', xCm: 200, yCm: 150, widthCm: 40, depthCm: 60 }) // y [120, 180]
+    const box = groupBounds([g1, g2])! // x [70, 220], y [80, 180]
+    const ab = board([rect('r1', 0, 0, 400, 300)], [g1, g2])
+
+    const topGuides = computeMeasureGuidesForBox(box, { kind: 'wall', a: { x: 0, y: 0 }, b: { x: 400, y: 0 } }, ab)
+    expect(topGuides).toEqual([{ axis: 'y', x1: 145, y1: 80, x2: 145, y2: 0, distCm: 80 }])
+
+    const rightGuides = computeMeasureGuidesForBox(box, { kind: 'wall', a: { x: 400, y: 0 }, b: { x: 400, y: 300 } }, ab)
+    expect(rightGuides).toEqual([{ axis: 'x', x1: 220, y1: 130, x2: 400, y2: 130, distCm: 180 }])
+  })
+
+  it('measures floor distances from the selection box to the enclosing room walls', () => {
+    const g1 = item({ id: 'g1', xCm: 100, yCm: 100, widthCm: 60, depthCm: 40 }) // x [70, 130], y [80, 120]
+    const g2 = item({ id: 'g2', xCm: 200, yCm: 160, widthCm: 40, depthCm: 40 }) // x [180, 220], y [140, 180]
+    const box = groupBounds([g1, g2])! // x [70, 220], y [80, 180], center (145, 130)
+    const ab = board([rect('r1', 0, 0, 400, 300)], [g1, g2])
+
+    const guides = computeMeasureGuidesForBox(box, { kind: 'none' }, ab)
+    expect(guides).toHaveLength(4)
+    expect(guides).toEqual(computeDistanceGuidesForBox(box, ab))
+    expect(guides.find((g) => g.axis === 'x' && g.x2 < g.x1)?.distCm).toBe(70)
+    expect(guides.find((g) => g.axis === 'x' && g.x2 > g.x1)?.distCm).toBe(180)
+    expect(guides.find((g) => g.axis === 'y' && g.y2 < g.y1)?.distCm).toBe(80)
+    expect(guides.find((g) => g.axis === 'y' && g.y2 > g.y1)?.distCm).toBe(120)
+  })
+
+  it('returns no floor distances when the selection box center is outside all rooms', () => {
+    const g1 = item({ id: 'g1', xCm: -100, yCm: 150, widthCm: 40, depthCm: 40 })
+    const g2 = item({ id: 'g2', xCm: -40, yCm: 150, widthCm: 40, depthCm: 40 })
+    const box = groupBounds([g1, g2])! // center (-70, 150) outside room [0..400, 0..300]
+    const ab = board([rect('r1', 0, 0, 400, 300)], [g1, g2])
+
+    expect(computeMeasureGuidesForBox(box, { kind: 'none' }, ab)).toEqual([])
   })
 })
