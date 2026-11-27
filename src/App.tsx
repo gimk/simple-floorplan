@@ -1,7 +1,7 @@
 // v2 shell: top bar (title, mode, undo/redo, JSON export/import, add image), left panel,
 // SVG canvas (grid, reference images, artboard frames), right Inspect panel.
 import { useEffect, useId, useRef, useState } from 'react'
-import { Download, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
+import { Download, ClipboardCopy, ClipboardPaste, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Viewport } from './canvas/Viewport'
 import { ArtboardContent, ArtboardInspect, ArtboardsLayer } from './features/artboards'
@@ -33,7 +33,7 @@ import { toast, undoShortcut } from './features/toast'
 import { ToastHost } from './features/toast/ToastHost'
 import { selectRoom } from './features/artboards/selection'
 import { useDoc } from './model/store'
-import type { Selection } from './model/types'
+import type { ProjectDoc, Selection } from './model/types'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { IconButton, Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
@@ -43,7 +43,7 @@ import { useMediaQuery } from './shell/useDesktop'
 import { ZoomControls } from './shell/ZoomControls'
 import { fitAll, zoomIn, zoomOut, zoomReset } from './shell/zoom'
 import { CloudMenu } from './sync/CloudMenu'
-import { exportProjectJson, importProjectJson } from './sync/jsonFile'
+import { exportProjectJson, importProjectJson, parseProjectJson, serializeProject } from './sync/jsonFile'
 
 initTheme()
 
@@ -167,6 +167,51 @@ const modeUiPatch = (mode: Mode, selection: Selection) =>
       }
     : { mode, ...(selection.kind === 'furniture' ? { selection: { kind: 'none' } as Selection } : {}) }
 
+/** Modal to paste project JSON text (no file picker). Same parsing as the file import, incl. v1 conversion. */
+function PasteJsonModal({ onClose, onImported }: { onClose: () => void; onImported: (doc: ProjectDoc) => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const [text, setText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  useDialogFocus(true, dialogRef)
+  const submit = () => {
+    const r = parseProjectJson(text)
+    if (!r.ok) { setError(r.error); return }
+    onImported(r.doc)
+  }
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" data-testid="paste-json-modal-root">
+      <button type="button" aria-label="Close paste JSON" tabIndex={-1} className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Paste JSON"
+        data-testid="paste-json-modal"
+        className="relative flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto rounded-xl border border-white/10 bg-surface-2 p-4 text-sm text-slate-200 shadow-2xl"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-slate-100">Paste JSON</h2>
+          <IconButton label="Close" icon={<X size={16} />} onClick={onClose} />
+        </div>
+        <textarea
+          data-testid="paste-json-textarea"
+          aria-label="Project JSON"
+          value={text}
+          onChange={(e) => { setText(e.target.value); setError(null) }}
+          rows={12}
+          spellCheck={false}
+          className="w-full resize-y rounded-md border border-white/10 bg-surface-1 p-2 font-mono text-xs text-slate-100 focus:border-orange-500"
+        />
+        {error && <p role="alert" data-testid="paste-json-error" className="text-xs text-red-400">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" className={BAR_BTN} onClick={onClose}>Cancel</button>
+          <button type="button" data-testid="paste-json-submit" className={`${BAR_BTN} border-orange-500/60 text-orange-300`} onClick={submit}>Import</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const key0 = (e: KeyboardEvent) => e.key.toLowerCase()
 
 /** World point (cm) at the centre of the visible canvas. */
@@ -184,6 +229,7 @@ export default function App() {
   const setUi = useUi((s) => s.set)
   const selection = useUi((s) => s.selection)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
+  const viewZoom = useUi((s) => s.view.zoom)
   const calibratingImageId = useUi((s) => s.calibratingImageId)
   const refImages = useDoc((s) => s.doc.refImages)
   const title = useDoc((s) => s.doc.title)
@@ -194,6 +240,7 @@ export default function App() {
   const imageRef = useRef<HTMLInputElement>(null)
   const [dropping, setDropping] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [pasteOpen, setPasteOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
   const moreOpenRef = useRef(false)
   // Mirror the state into a ref (not during render) so the global key handler below
@@ -404,6 +451,22 @@ export default function App() {
     } else toast(`Import failed: ${r.error}`)
   }
 
+  const copyJson = async () => {
+    try {
+      await navigator.clipboard.writeText(serializeProject(useDoc.getState().doc))
+      toast('Project JSON copied')
+    } catch (err) {
+      toast(`Copy failed: ${err instanceof Error ? err.message : 'clipboard unavailable'}`)
+    }
+  }
+
+  const onPasted = (doc: ProjectDoc) => {
+    useDoc.getState().hydrate(doc)
+    setUi({ activeArtboardId: null, selection: { kind: 'none' } })
+    setPasteOpen(false)
+    toast(`Imported "${doc.title}"`)
+  }
+
   /** Load every dropped/picked file as a reference image and select the last one. */
   const addRefImages = async (files: FileList | null) => {
     const list = files ? [...files] : []
@@ -556,6 +619,12 @@ export default function App() {
           <div className="flex items-center gap-1 max-lg:hidden">
             <IconButton label="Export JSON" variant="bar" icon={<Download size={18} />} onClick={() => exportProjectJson(useDoc.getState().doc)} />
             <IconButton label="Import JSON" variant="bar" icon={<Upload size={18} />} onClick={() => fileRef.current?.click()} />
+            <button type="button" data-testid="copy-json-btn" aria-label="Copy JSON" title="Copy JSON" className={`${BAR_BTN} w-9 pointer-coarse:w-11 px-0`} onClick={() => void copyJson()}>
+              <ClipboardCopy size={18} aria-hidden="true" />
+            </button>
+            <button type="button" data-testid="paste-json-btn" aria-label="Paste JSON" title="Paste JSON" className={`${BAR_BTN} w-9 pointer-coarse:w-11 px-0`} onClick={() => setPasteOpen(true)}>
+              <ClipboardPaste size={18} aria-hidden="true" />
+            </button>
           </div>
           {DIVIDER}
           <div className="max-lg:hidden">
@@ -600,6 +669,12 @@ export default function App() {
                 </button>
                 <button type="button" className={moreItem} onClick={() => { setMoreOpen(false); fileRef.current?.click() }}>
                   <Upload size={18} aria-hidden="true" /> Import JSON
+                </button>
+                <button type="button" data-testid="copy-json-btn-more" aria-label="Copy JSON" className={moreItem} onClick={() => { setMoreOpen(false); void copyJson() }}>
+                  <ClipboardCopy size={18} aria-hidden="true" /> Copy JSON
+                </button>
+                <button type="button" data-testid="paste-json-btn-more" aria-label="Paste JSON" className={moreItem} onClick={() => { setMoreOpen(false); setPasteOpen(true) }}>
+                  <ClipboardPaste size={18} aria-hidden="true" /> Paste JSON
                 </button>
                 <CloudMenu showLabel />
                 <div className="my-1 border-t border-white/10" />
@@ -646,6 +721,11 @@ export default function App() {
         </aside>
         <main
           data-testid="canvas-container"
+          data-mode={mode}
+          data-tool={tool}
+          data-active-artboard={activeArtboardId ?? ''}
+          data-selection={selectionAttr(selection)}
+          data-zoom={String(Math.round(viewZoom * 100) / 100)}
           className={`relative min-w-0 flex-1 ${dropping ? 'ring-2 ring-orange-500/70 ring-inset' : ''}`}
           onDragOver={onDragOver}
           onDragLeave={(e) => {
@@ -770,7 +850,22 @@ export default function App() {
         </aside>
       </div>
       {shortcutsOpen && <ShortcutsModal onClose={() => setUi({ shortcutsOpen: false })} />}
+      {pasteOpen && <PasteJsonModal onClose={() => setPasteOpen(false)} onImported={onPasted} />}
       <ToastHost />
     </div>
   )
+}
+
+/** Compact selection string for the canvas container: "none", "room:a,b", "wall:roomId:edge", ... */
+function selectionAttr(sel: Selection): string {
+  switch (sel.kind) {
+    case 'none': return 'none'
+    case 'artboard': return `artboard:${sel.artboardId}`
+    case 'room': return `room:${sel.roomIds.join(',')}`
+    case 'wall': return `wall:${sel.roomId}:${sel.edgeIndex}`
+    case 'vertex': return `vertex:${sel.roomId}:${sel.vertexIndex}`
+    case 'opening': return `opening:${sel.openingId}`
+    case 'furniture': return `furniture:${sel.furnitureId}`
+    case 'refImage': return `refImage:${sel.imageId}`
+  }
 }

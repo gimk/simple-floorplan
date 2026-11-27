@@ -8,7 +8,13 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate:local": "npx wrangler d1 migrations apply simple-floorplan --local",
+    "db:migrate:remote": "npx wrangler d1 migrations apply simple-floorplan --remote",
+    "dev:api": "npm run build && npx wrangler dev --port 8788",
+    "deploy": "npm run build && npx wrangler deploy",
+    "smoke": "node scripts/smoke.mjs",
+    "sfp": "node cli/sfp.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.77.0",

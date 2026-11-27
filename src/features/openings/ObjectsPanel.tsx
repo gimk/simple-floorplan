@@ -4,11 +4,17 @@
 //   - "Reference Images": the canvas images of the project, one click to select one, plus a
 //     compact "Upload image / PDF" button (the upload itself belongs to the shell).
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm.
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { DoorOpen, Eye, EyeOff, Frame, ImagePlus, Lock, LockOpen, RectangleHorizontal } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { OpeningKind } from '../../model/types'
-import { BTN, BTN_PRIMARY, EmptyHint, IconButton, MUTED, PanelSection, ROW, ROW_OFF, ROW_ON } from '../../shell/panel'
+import { BTN, BTN_PRIMARY, EmptyHint, INPUT, IconButton, LABEL, MUTED, PanelSection, ROW, ROW_OFF, ROW_ON } from '../../shell/panel'
+import { newId } from '../../model/schema'
+import { selectRoom } from '../artboards/selection'
+import { addRoom } from '../rooms/actions'
+import { NumInput } from '../rooms/NumInput'
+import { createRectRoom, nextRoomName } from '../rooms/ops'
 import { useUi } from '../../shell/uiStore'
 import { DEFAULT_OPENING_WIDTH_CM } from './geometry'
 import { PLACE_HINTS } from './placeHints'
@@ -89,6 +95,103 @@ function PickerButton({ item, armed }: { item: PickerItem; armed: boolean }) {
   )
 }
 
+/** Artboard that receives a new room: the active one, else the first. */
+function targetArtboard() {
+  const { doc } = useDoc.getState()
+  return doc.artboards.find((a) => a.id === useUi.getState().activeArtboardId) ?? doc.artboards[0]
+}
+
+/** Parse "0,0 400,0 400,300 0,300" into points (each point is "x,y"). Null when under 3 points or junk remains. */
+function parsePoints(text: string): { x: number; y: number }[] | null {
+  const re = /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/g
+  const pts = [...text.matchAll(re)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }))
+  if (text.replace(re, '').replace(/[\s;]+/g, '') !== '') return null
+  return pts.length >= 3 ? pts : null
+}
+
+/** Numeric "Add room" form: rectangle by X / Y / width / depth, or a polygon from a points string. */
+function AddRoomForm() {
+  const [name, setName] = useState('')
+  const [x, setX] = useState(0)
+  const [y, setY] = useState(0)
+  const [w, setW] = useState(400)
+  const [d, setD] = useState(300)
+  const [points, setPoints] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const submitRect = () => {
+    const ab = targetArtboard()
+    if (!ab) return
+    if (!(w >= 10) || !(d >= 10)) { setError('Width and depth must be at least 10 cm.'); return }
+    const room = createRectRoom({ x, y }, { x: x + w, y: y + d }, name.trim() || nextRoomName(ab.rooms))
+    addRoom(ab.id, room)
+    selectRoom(ab.id, room.id)
+    setName('')
+    setError(null)
+  }
+
+  const submitPolygon = () => {
+    const ab = targetArtboard()
+    if (!ab) return
+    const vertices = parsePoints(points.trim())
+    if (!vertices) { setError('Type at least 3 points like 0,0 400,0 400,300 0,300.'); return }
+    const room = { id: newId(), name: name.trim() || nextRoomName(ab.rooms), vertices }
+    addRoom(ab.id, room)
+    selectRoom(ab.id, room.id)
+    setPoints('')
+    setError(null)
+  }
+
+  const field = (label: string, testId: string, value: number, set: (v: number) => void, min?: number) => (
+    <label className="flex flex-col gap-1">
+      <span className={LABEL}>{label}</span>
+      <NumInput testId={testId} ariaLabel={label} value={value} min={min} onCommit={(v) => { set(v) }} />
+    </label>
+  )
+
+  return (
+    <PanelSection title="Add Room">
+      <form
+        data-testid="add-room-form"
+        className="flex flex-col gap-2"
+        aria-label="Add room"
+        onSubmit={(e) => { e.preventDefault(); submitRect() }}
+      >
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>Name</span>
+          <input
+            data-testid="add-room-name" type="text" className={INPUT} value={name} placeholder="Room 1"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {field('X (cm)', 'add-room-x', x, setX)}
+          {field('Y (cm)', 'add-room-y', y, setY)}
+          {field('Width (cm)', 'add-room-width', w, setW, 10)}
+          {field('Depth (cm)', 'add-room-depth', d, setD, 10)}
+        </div>
+        <button type="submit" data-testid="add-room-submit" className={BTN_PRIMARY}>Add room</button>
+      </form>
+      <details className="flex flex-col gap-2" data-testid="add-polygon-details">
+        <summary className={`cursor-pointer ${MUTED}`}>By points</summary>
+        <div className="mt-2 flex flex-col gap-2">
+          <label className="flex flex-col gap-1">
+            <span className={LABEL}>Points (x,y in cm)</span>
+            <input
+              data-testid="add-polygon-input" type="text" className={INPUT} value={points}
+              placeholder="0,0 400,0 400,300 0,300"
+              onChange={(e) => setPoints(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitPolygon() } }}
+            />
+          </label>
+          <button type="button" data-testid="add-polygon-submit" className={BTN} onClick={submitPolygon}>Add polygon room</button>
+        </div>
+      </details>
+      {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
+    </PanelSection>
+  )
+}
+
 /** Left panel of Plan mode: the opening picker and the reference image list. */
 export function ObjectsPanel({ onUploadImage }: ObjectsPanelProps) {
   const refImages = useDoc((s) => s.doc.refImages)
@@ -120,6 +223,8 @@ export function ObjectsPanel({ onUploadImage }: ObjectsPanelProps) {
           <EmptyHint>Pick an object, then click a wall of a room. Choose the style in the Inspect panel after placing.</EmptyHint>
         )}
       </PanelSection>
+
+      <AddRoomForm />
 
       <PanelSection title="Reference Images">
         {refImages.length === 0 ? (

@@ -10,6 +10,7 @@ import type { Artboard, Room } from '../../model/types'
 import {
   BTN,
   BackLink,
+  LABEL,
   DangerButton,
   EmptyHint,
   FieldRow,
@@ -28,6 +29,8 @@ import { useUi } from '../../shell/uiStore'
 import { roomAreaM2 } from '../artboards/frame'
 import { selectArtboard, selectRoom } from '../artboards/selection'
 import { toast } from '../toast'
+import { syncOpeningsForRoomChange } from '../openings/sync'
+import { NumInput } from './NumInput'
 import { deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength } from './actions'
 import { mergeRooms, roomWalls } from './ops'
 
@@ -44,6 +47,18 @@ function selectWall(artboardId: string, roomId: string, edgeIndex: number): void
   useUi.getState().set({
     activeArtboardId: artboardId,
     selection: { kind: 'wall', artboardId, roomId, edgeIndex },
+  })
+}
+
+/** Move a room by (dx, dy) cm. Openings on its walls follow (one undo step). */
+function translateRoom(artboardId: string, roomId: string, dx: number, dy: number): void {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) return
+  useDoc.getState().update((d) => {
+    const a = d.artboards.find((x) => x.id === artboardId)
+    if (!a || !a.rooms.some((r) => r.id === roomId)) return
+    const prev = a.rooms
+    a.rooms = a.rooms.map((r) => (r.id === roomId ? { ...r, vertices: r.vertices.map((v) => ({ x: v.x + dx, y: v.y + dy })) } : r))
+    a.openings = syncOpeningsForRoomChange(a.openings, prev, a.rooms)
   })
 }
 
@@ -72,6 +87,8 @@ function SingleRoomCard({ artboard, room, className }: { artboard: Artboard; roo
   const nameId = useId()
   const selection = useUi((s) => s.selection)
   const walls = roomWalls(room)
+  const minX = Math.min(...room.vertices.map((v) => v.x))
+  const minY = Math.min(...room.vertices.map((v) => v.y))
   const perimeterM = walls.reduce((sum, w) => sum + w.lengthCm, 0) / 100
   const activeWall =
     selection.kind === 'wall' && selection.artboardId === artboard.id && selection.roomId === room.id
@@ -108,6 +125,23 @@ function SingleRoomCard({ artboard, room, className }: { artboard: Artboard; roo
           invalidMessage="Type a name for the room."
         />
       </FieldRow>
+
+      <div className="grid grid-cols-2 gap-2" role="group" aria-label="Room position">
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>X (cm)</span>
+          <NumInput
+            testId="room-x-input" ariaLabel="Room X (cm)" value={minX}
+            onCommit={(v) => { translateRoom(artboard.id, room.id, v - minX, 0) }}
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>Y (cm)</span>
+          <NumInput
+            testId="room-y-input" ariaLabel="Room Y (cm)" value={minY}
+            onCommit={(v) => { translateRoom(artboard.id, room.id, 0, v - minY) }}
+          />
+        </label>
+      </div>
 
       <StatGrid
         items={[

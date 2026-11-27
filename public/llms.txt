@@ -1,365 +1,324 @@
 # Simple Floorplan
 
-> 2D apartment floorplan editor and on-site laser-measure survey app.
-> World units are **centimeters (cm)** everywhere, with **x right** and **y down**.
-> Walls are addressed by survey label `CODE-1..n` (1-based polygon order), diagonal by `CODE-D`, and ceiling height by `CODE-H`.
+> Simple Floorplan is a 2D apartment floorplan editor that runs in the browser. It has two modes, Plan and Design. The document format is ProjectDoc schemaVersion 3. All units are centimetres (cm) and degrees. The x axis points right and the y axis points down.
 
-## Base URL
+## What the app is
 
-Until the custom domain `floorplan.pantoine.com` is attached, the deployed server is
-`https://simple-floorplan.<account-subdomain>.workers.dev`. Locally, `npm run dev:api`
-runs `wrangler dev` and serves the same routes on `http://localhost:8788`.
+- Web app (React and SVG), installable as a PWA, works offline. Projects are saved in the browser (IndexedDB).
+- Optional cloud sync: project documents are stored in Cloudflare D1, images in Cloudflare R2. Both are reached through the Worker API below.
+- A project is one ProjectDoc (schemaVersion 3). It holds `refImages` and one or more `artboards`. An artboard holds `rooms`, `openings` and `furniture`.
+- Room: a polygon of `vertices` (interior). Walls are drawn outward from each edge. Each wall has an edge index.
+- Opening: a door, window or opening (`kind`) placed on a wall, with a centre (`xCm`, `yCm`), an `angleDeg`, a `widthCm` and optional style `variant`.
+- Furniture: a `rect` or `circle` item with a position, size, `rotationDeg` and `color`.
+- Reference image: a PNG, JPG, WebP, SVG or PDF placed on the plan (Plan mode only), with `cmPerPx` scale and `opacity`.
+- Modes: Plan (key `1`) and Design (key `2`). In Design mode the furniture panel and the tape tool are used.
+- Export: artboard SVG, PNG, and the project as JSON (file, or Copy JSON / Copy SVG). Import: a project JSON file, or Paste JSON. Older v1 JSON exports are converted on import.
 
-## Machine-Readable Specs
+## Machine-readable specs (no token needed)
 
-- OpenAPI 3.1: `/api/openapi.json`
-- PlanDoc v1 JSON Schema: `/api/schema/plan.v1.json`
+- `GET /api/openapi.json`: OpenAPI 3.1.0 document for the whole Worker API.
+- `GET /api/schema/project.v3.json`: JSON Schema (draft 2020-12) for ProjectDoc schemaVersion 3.
 
-## Authentication
+Both responses use `Content-Type: application/json; charset=utf-8` and `Cache-Control: public, max-age=300`.
 
-When the server has `PASSCODE` configured, include this header on every `/api/*` request (except `/api/openapi.json` and `/api/schema/plan.v1.json`):
+## REST API (Cloudflare Worker)
 
-```
-x-passcode: <your-passcode>
-```
+Source: `functions/worker.ts` (routes, auth, docs) and `functions/mcp.ts` (MCP endpoint). All routes are under `/api/` on the same host as the app. Locally, `npm run dev:api` (build, then `npx wrangler dev --port 8788`) serves the API on `http://localhost:8788`. The Vite dev server (`npm run dev`) proxies `/api` to `http://localhost:8788`, so run the Worker on that port in a second terminal.
 
-## Key Endpoints
+D1 migrations: `migrations/0001_projects.sql` (the projects table) and `migrations/0002_version_and_tokens.sql` (the `version` column and the `api_tokens` table). Local: `npm run db:migrate:local`. Remote: `npm run db:migrate:remote`.
 
-- `GET /api/projects` — List projects.
-- `POST /api/projects` — Create a project (`{ "name": "Apt 4B", "title": "Apt 4B" }`).
-- `GET /api/projects/:id` — Get full `PlanDoc` v1 merged with measurements, elements, notes, and `version`.
-- `PATCH /api/projects/:id` — Rename project (`{ "name", "title" }`).
-- `DELETE /api/projects/:id` — Delete project, all rows, and R2 images.
-- `PUT /api/projects/:id/snapshot` — Replace snapshot with optimistic concurrency (`baseVersion`). Validated with `PlanDoc` v1 schema.
-- `POST /api/projects/:id/commands` — Execute an atomic batch of high-level commands (`{ "commands": [...], "dryRun": false, "baseVersion": 3 }`). Supports `Idempotency-Key` header for safe retries.
-- `POST /api/projects/:id/query` — Run a semantic query (`summary`, `unmeasured`, `validate`, `shared_walls`, `room`).
-- `GET /api/projects/:id/render.svg?background=0|1` — Render a standalone SVG of the floorplan for visual verification.
-- `PUT /api/projects/:id/measurements/:label` — Set one on-site measurement (`{ "actualCm": 342.5 }`).
-- `DELETE /api/projects/:id/measurements/:label` — Delete one measurement.
-- `PUT /api/projects/:id/items/:itemId` — Upsert one wall element.
-- `DELETE /api/projects/:id/items/:itemId` — Soft-delete one wall element.
-- `PUT /api/projects/:id/notes/:code` — Set a room note (`{ "text": "..." }`).
-- `GET /api/projects/:id/changes?since=<ISO>` — Incremental sync feed.
-- `POST /api/projects/:id/images` — Upload background/pin image (`multipart/form-data` with `file`). Refused by the R2 cost caps: `413 file_too_large`, `507 storage_cap_reached`, `429 daily_upload_cap` (see **Cost safety**).
-- `GET /api/images/:key` — Fetch uploaded image.
-- `GET /api/share/whoami` — Project id, scopes and capabilities of the calling Bearer token (`read` scope). Used by the read-only share viewer `/share#<token>`, which sends no passcode.
+### Authentication
 
-## Queries (`POST /api/projects/:id/query`)
+Send one of these headers:
 
-- `{ "query": "summary" }` — Indoor/outdoor areas, per-room breakdown, survey progress, and paint/flooring/baseboard takeoff.
-- `{ "query": "unmeasured", "args": { "roomCode": "CU" } }` — Remaining unmeasured survey IDs in walking order.
-- `{ "query": "validate" }` — Checks discrepancies (> 2 cm), squareness, opposite walls, element overflow, overlapping elements, and self-intersections.
-- `{ "query": "shared_walls", "args": { "roomCodes": ["SE", "CU"] } }` — Detects collinear shared walls between rooms and whether they are bearing.
-- `{ "query": "room", "args": { "roomCode": "CU" } }` — Full details for one room.
+- `Authorization: Bearer <token>`. The token is a scoped token (`sfp_...`) or the master secret.
+- `x-api-token: <secret>`. The value is the master secret or a scoped token.
 
-## Commands (`POST /api/projects/:id/commands`)
+The master secret is the Worker secret `PASSCODE` (checked first) or `API_TOKEN`. It has the `admin` scope on every project. Set it with `npx wrangler secret put PASSCODE`.
 
-Send `{ "commands": [ ... ], "dryRun": false, "baseVersion": 1 }`. Walls can be addressed by survey label (`"SE-2"`), `{ "roomId": "...", "wallStart": "..." }`, or `{ "roomCode": "SE", "wallIndex": 2 }`.
+Scoped tokens come from `POST /api/tokens` (admin only). Each token has:
 
-1. `add_room`:
-```json
-{ "type": "add_room", "code": "CU", "name": "Kitchen", "rect": { "x": 0, "y": 0, "w": 280, "h": 350 }, "ceilingCm": 265 }
-```
+- `scopes`: `read` < `edit` < `admin`. Default `read`.
+- `projectId` (optional): the token works on this one project only.
 
-2. `update_room`:
-```json
-{ "type": "update_room", "roomCode": "CU", "name": "Open Kitchen", "code": "K1", "ceilingCm": 264, "walkOrder": 2 }
-```
+Scope needed per route:
 
-3. `delete_room`:
-```json
-{ "type": "delete_room", "roomCode": "K1" }
-```
+- `read`: `GET /api/projects`, `GET /api/projects/:id`, `POST /api/projects/:id/query`, `GET /api/projects/:id/render.svg`, `GET /api/images/...`.
+- `edit`: `POST /api/projects`, `PUT`, `PATCH` and `DELETE /api/projects/:id`, `POST /api/projects/:id/commands`, `PUT` and `DELETE /api/images/...`.
+- `admin`: all `/api/tokens` routes.
+- `POST /api/mcp`: `read` to enter. Each MCP tool checks its own scope (see the MCP section).
 
-3b. `delete_wall` (a wall shared by two rooms merges them; a wall of one room is removed by extending the two walls next to it until they meet; refused when a wall is locked or the neighbours are parallel; doors on the wall go with it):
-```json
-{ "type": "delete_wall", "wall": "SE-3" }
-```
+Errors:
 
-4. `slice_room`:
-```json
-{ "type": "slice_room", "roomCode": "SE", "a": { "x": 200, "y": -10 }, "b": { "x": 200, "y": 430 }, "newRoomCode": "EN", "newRoomName": "Entry" }
-```
+- `401 {"error":"Unauthorized"}`: credentials are missing or wrong. If neither secret is set, the API is open (admin), unless the request sends a Bearer token that is not a known token.
+- `403 {"error":"Forbidden"}`: the scope is too low, or the token is limited to another project.
+- Only the two discovery routes skip the token check when a secret is set.
+- The web app keeps the master value in browser local storage under the key `sfp-cloud-token` and sends it as `x-api-token`.
 
-5. `cutout_room`:
-```json
-{ "type": "cutout_room", "roomCode": "CU", "rect": { "x": 0, "y": 0, "w": 60, "h": 45 } }
-```
+### Discovery (no token)
 
-6. `merge_rooms`:
-```json
-{ "type": "merge_rooms", "roomCodes": ["SE", "CU"], "keepCode": "SE", "newName": "Living + Kitchen", "allowBearingRemoval": false }
-```
-
-7. `set_wall_props`:
-```json
-{ "type": "set_wall_props", "wall": "SE-2", "wallType": "bearing", "thicknessCm": 25, "locked": true }
-```
-
-8. `set_wall_length`:
-```json
-{ "type": "set_wall_length", "wall": "CU-1", "lengthCm": 285, "anchor": "start" }
-```
-
-9. `move_vertex`:
-```json
-{ "type": "move_vertex", "roomCode": "CU", "vertexIndex": 2, "x": 285, "y": 350, "moveLinked": true }
-```
-
-10. `place_element`:
-```json
-{ "type": "place_element", "wall": "CU-2", "kind": "window", "variant": "standard", "offsetCm": 65, "widthCm": 120, "heightCm": 135, "sillCm": 95 }
-```
-
-11. `update_element`:
-```json
-{ "type": "update_element", "elementId": "el_123", "offsetCm": 70, "widthCm": 115 }
-```
-
-12. `delete_element`:
-```json
-{ "type": "delete_element", "elementId": "el_123" }
-```
-
-13. `set_measurement`:
-```json
-{ "type": "set_measurement", "label": "CU-1", "actualCm": 281.5 }
-```
-
-14. `clear_measurement`:
-```json
-{ "type": "clear_measurement", "label": "CU-1" }
-```
-
-15. `apply_measurements`:
-```json
-{ "type": "apply_measurements", "roomCode": "CU", "lockVerifiedWalls": true }
-```
-
-16. `set_room_note`:
-```json
-{ "type": "set_room_note", "roomCode": "CU", "text": "Water shutoff valve under sink" }
-```
-
-17. `add_pin`:
-```json
-{ "type": "add_pin", "roomCode": "CU", "wall": "CU-2", "at": { "x": 280, "y": 120 }, "text": "Electrical panel" }
-```
-
-18. `add_tape`:
-```json
-{ "type": "add_tape", "roomCode": "CU", "a": { "x": 0, "y": 100 }, "b": { "x": 140, "y": 100 }, "actualCm": 141, "label": "Clearance to island" }
-```
-
-19. `set_apartment` — default ceiling height and reference surfaces (DPE, Loi Carrez, Loi Boutin, deed, listing, other). `defaultCeilingCm: null` removes it; `references` replaces the whole list; `addReference` / `removeReferenceId` change one entry. Rooms without their own `ceilingCm` use the default:
-```json
-{ "type": "set_apartment", "defaultCeilingCm": 250 }
-{ "type": "set_apartment", "addReference": { "source": "dpe", "label": "DPE 2023", "surfaceM2": 62.4, "date": "2023-04-01" } }
-```
-
-20. `set_solver` — turn the plan solver On or Off (the whole plan at once). On: fit the plan to the measured values, record every change. Off: write the base geometry back, so the plan shows the estimated and measured values again. Options have the defaults of the Solve tab (`keepLocked` true, `surfaceMode` off, `snapThickness` false, `angles` square):
-```json
-{ "type": "set_solver", "enabled": true }
-{ "type": "set_solver", "enabled": false }
-{ "type": "set_solver", "enabled": true, "keepLocked": false, "snapThickness": true, "angles": "free" }
-```
-
-21. `solver_revoke` — keep ONE wall at its base value: hold a wall position or a wall thickness, so the next solves do not move it. Use a stored wall id or a wall label:
-```json
-{ "type": "solver_revoke", "wallId": "W12", "kind": "position" }
-{ "type": "solver_revoke", "wallId": "CU-2", "kind": "thickness" }
-```
-
-22. `solver_restore` — remove that hold, so the solver may move the wall again:
-```json
-{ "type": "solver_restore", "wallId": "W12", "kind": "position" }
-```
-
-## Agent access with API tokens
-
-In addition to the `x-passcode` header (full admin, used by the web app), agents can send a scoped bearer token:
-
-```
-Authorization: Bearer sfp_...
-```
-
-Scopes are cumulative: `read` < `measure` < `edit` < `admin`.
-
-- `read`: all GET routes, `POST /api/projects/:id/query`, `render.svg`, `events`.
-- `measure`: `read` + measurement/item/note writes + commands `set_measurement`, `clear_measurement`, `set_room_note`, `add_pin`, `add_tape`.
-- `edit`: everything except token admin and project delete.
-- `admin`: everything, including token admin and `DELETE /api/projects/:id`.
-
-A token can be restricted to one project (`projectId` at creation). Missing/invalid credentials return `401`; a valid token without the needed scope returns `403` with `{ "error": "forbidden", "requiredScope": "...", "message": "..." }`.
-
-Create a token (the plaintext is returned exactly once; only its SHA-256 hash is stored):
-
-```bash
-curl -X POST https://<host>/api/tokens \
-  -H "Authorization: Bearer $SFP_ADMIN_TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{ "name": "survey-agent", "scopes": "read,measure", "projectId": "proj_apt_4b" }'
-# -> { "id": "...", "name": "survey-agent", "scopes": ["read","measure"], "token": "sfp_..." }
-```
-
-Use it:
-
-```bash
-TOKEN=sfp_...
-curl https://<host>/api/projects/proj_apt_4b \
-  -H "Authorization: Bearer $TOKEN"                       # read scope
-curl -X PUT https://<host>/api/projects/proj_apt_4b/measurements/CU-2 \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{ "actualCm": 342 }'                                 # measure scope
-curl -X POST https://<host>/api/projects/proj_apt_4b/commands \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -H 'Idempotency-Key: measure-cu-2-once' \
-  -d '{ "commands": [{ "type": "set_measurement", "label": "CU-2", "actualCm": 342 }] }'
-```
-
-List and revoke tokens (admin scope or `x-passcode`):
-
-```bash
-curl https://<host>/api/tokens -H "Authorization: Bearer $SFP_ADMIN_TOKEN"
-curl -X DELETE https://<host>/api/tokens/<id> -H "Authorization: Bearer $SFP_ADMIN_TOKEN"
-```
-
-Read the append-only event log (read scope) — one event per write route, one per command in a batch:
-
-```bash
-curl "https://<host>/api/projects/proj_apt_4b/events?since=2026-11-21T00:00:00Z&limit=100" \
-  -H "Authorization: Bearer $TOKEN"
-# -> { "events": [{ "id": "...", "ts": "...", "actor": "survey-agent", "kind": "command",
-#                  "summary": "set_measurement CU-2 = 342 cm", "payload": { ... } }] }
-```
-
-
-## Cost safety (R2 caps)
-
-Images are stored in R2 and the API keeps the bucket inside the free tier with three
-hard caps, read from `[vars]` in `wrangler.toml` (`src/core/caps.ts` holds the
-defaults and the pure decision logic):
-
-| Var | Default | Refusal |
+| Method | Path | Result |
 |---|---|---|
-| `MAX_UPLOAD_MB` | `10` | `413 { "error": "file_too_large", "maxMb": 10 }` |
-| `MAX_R2_TOTAL_MB` | `5000` | `507 { "error": "storage_cap_reached", "usedMb": 4999.3, "capMb": 5000 }` |
-| `MAX_UPLOADS_PER_DAY` | `200` | `429 { "error": "daily_upload_cap", "cap": 200 }` |
+| GET | `/api/openapi.json` | OpenAPI 3.1.0 document. |
+| GET | `/api/schema/project.v3.json` | ProjectDoc v3 JSON Schema. |
 
-- The checks run **before** R2 is written, in this order: single file size, bucket
-  total (`SUM(size_bytes)` in D1, migration `0004_image_sizes.sql`), uploads in the
-  last 24 h. A value exactly at a cap is allowed.
-- `DELETE /api/projects/:id` removes the R2 objects and the `images` rows, so the
-  total drops at once.
-- These are permanent errors, not transient ones: do not retry the same upload.
-  Report the reason to the user instead. The web app keeps the photo as a local
-  data URL and shows it in the sync status line.
+### Tokens (admin)
 
-## MCP Server (`POST /api/mcp`)
+| Method | Path | Result |
+|---|---|---|
+| POST | `/api/tokens` | Body `{ "name", "scopes"?, "projectId"? }`. Returns `201` with `token` (`sfp_` + 32 hex characters). The token is shown only once. |
+| GET | `/api/tokens` | `{ "tokens": [...] }` with `id`, `name`, `scopes`, `projectId`, `createdAt`, `revokedAt`, `lastUsedAt`. Never the token value. |
+| DELETE | `/api/tokens/:id` | Revokes the token. Returns `{ "ok": true }`. |
 
-Simple Floorplan exposes a stateless MCP Streamable HTTP endpoint at `/api/mcp` (JSON-RPC 2.0, protocol `2025-06-18` and `2025-03-26`; `GET /api/mcp` returns `405`). It uses the same `/api` authentication (`Authorization: Bearer <token>` or `x-passcode`). The route itself requires the `read` scope; each `tools/call` is then checked against the tool's own required scope (read-only tools: `read`, `set_measurement`: `measure`, `run_commands`: per command type via the same rules as `/commands`, all other write tools: `edit`). A missing scope returns a tool result with `isError: true` and `structuredContent.error.requiredScope`. Every successful MCP write logs one event per command to the project event log (kind `command`, actor = token name), and `create_project` logs a `project_create` event — visible via `GET /api/projects/:id/events` and the `get_events` tool below.
+### Projects
 
-### MCP Tools
+| Method | Path | Scope | Result |
+|---|---|---|---|
+| GET | `/api/projects` | read | `{ "projects": [{ id, title, version, updatedAt }] }`, most recently updated first. A project-limited token sees only its project. |
+| POST | `/api/projects` | edit | Body `{ "id"?, "title"?, "doc"? }`. Returns `201 { id, title, version: 1, updatedAt }`. Without `doc`, the project gets an empty v3 document with one artboard, "Plan A". Without `id`, a UUID is made. `409` if the id exists. |
+| GET | `/api/projects/:id` | read | `{ id, title, doc, version, updatedAt }`. `404` if missing. |
+| PUT | `/api/projects/:id` | edit | Create or replace (upsert). Body `{ "doc", "title"? }`. `title` defaults to `doc.title`. The doc is validated (zod and the ProjectDoc semantic checks). Returns `{ ok, version, updatedAt }`. |
+| PATCH | `/api/projects/:id` | edit | Rename. Body `{ "title", "baseVersion"? }`. The title inside the stored doc changes too. `404` if missing. |
+| DELETE | `/api/projects/:id` | edit | Deletes the project and every R2 image under `images/<id>/`. Returns `{ ok, deletedImages }`. |
 
-- `list_projects` — List all projects.
-- `create_project` — Create a project (`{ name, title? }`).
-- `get_plan` — Get a project as `summary` (default) or full `json` (`{ projectId, format? }`).
-- `get_unmeasured` — Remaining unmeasured survey IDs in walk order (`{ projectId, roomCode? }`).
-- `validate_plan` — Check geometry, element overflows/overlaps, discrepancies, and squareness (`{ projectId, roomCode? }`).
-- `find_shared_walls` — Detect collinear shared walls and bearing status (`{ projectId, roomCodes? }`).
-- `run_commands` — Execute an atomic batch of commands (`{ projectId, commands, dryRun?, baseVersion? }`).
-- `set_measurement` — Record a verified laser measurement (`{ projectId, label, cm }`).
-- `place_element` — Place a door, window, opening, or radiator on a wall.
-- `add_storage` — Add a BUILT-IN STORAGE (a closet) on the OUTER side of a wall of a room: a small room with its own side and back walls, and a front door in the host wall that opens into the room (`{ projectId, room, wall, offsetCm, widthCm, depthCm, sideCm?, backCm?, door? }`).
-- `update_storage` — Change the position, the dimensions and/or the front door of a built-in storage; a field that is left out keeps its value (`{ projectId, storage, offsetCm?, widthCm?, depthCm?, sideCm?, backCm?, door? }`).
-- `delete_storage` — Delete a built-in storage: its room, its own walls and its front door; the host wall is merged back into one wall (`{ projectId, storage }`).
-- `delete_wall` — Delete one wall of a room: two rooms merge, or the walls next to it are extended to meet (`{ projectId, wall }`; supports `dryRun`).
-- `add_room` — Add a room by `rect` or `vertices`.
-- `slice_room` — Split a room along a line `(a, b)`.
-- `merge_rooms` — Merge two adjacent rooms (blocks bearing walls unless `allowBearingRemoval: true`; supports `dryRun`).
-- `set_wall_props` — Set wall type (`partition | bearing | exterior`), thickness, or lock.
-- `apply_measurements` — Re-solve the geometry of single rooms from verified wall lengths (a base edit; with the solver On, prefer `set_solver`).
-- `set_solver` — Turn the plan solver On or Off: it fits the WHOLE plan to the measured values, records each change, and Off writes the estimated + measured geometry back (`{ projectId, enabled, keepLocked?, surfaceMode?, snapThickness?, angles? }`).
-- `solver_revoke` — Hold one wall position or wall thickness at its base value (`{ projectId, wallId, kind }`).
-- `solver_restore` — Remove that hold (`{ projectId, wallId, kind }`).
-- `render_svg` — Render a standalone SVG (returned as text + `image/svg+xml` resource link).
-- `get_events` — Read the project event log (`{ projectId, since?, limit? }`; default limit 100, max 1000).
+Validation errors return `400 { "error": "invalid_document", "issues": [{ code, severity, path, message }] }`.
 
-### MCP Resources
+### Versions and conflicts
 
-- `floorplan://projects`
-- `floorplan://projects/{id}/plan.json`
-- `floorplan://projects/{id}/summary.json`
-- `floorplan://projects/{id}/unmeasured.json`
-- `floorplan://projects/{id}/render.svg`
-- `floorplan://projects/{id}/events.json`
+- Every project has an integer `version`. It starts at 1 and goes up by 1 on each write (PUT, PATCH, commands).
+- To avoid overwriting a newer change, send the version you read. Use `baseVersion` in the body, or the `If-Match: "<version>"` header. The body value wins when both are sent.
+- If the stored version is different, the Worker returns `409 { "error": "version_conflict", "currentVersion": N }`. Read the project again, apply your change to the new doc, and retry.
+- Without `baseVersion` or `If-Match`, the write does not check the version.
 
-### MCP Prompts
+### Semantic routes
 
-- `trace_plan_image`
-- `finish_survey`
-- `renovation_option`
-- `contractor_export`
+`POST /api/projects/:id/commands` (edit scope). Body: exactly one of `command` (one object) or `commands` (an array). Optional `dryRun: true` checks the change and saves nothing. Optional `baseVersion` or `If-Match`.
 
-### Local Stdio Bridge
+- A batch is all or nothing.
+- Success: `{ ok: true, dryRun, version, updatedAt, result }`. `updatedAt` is not set on a dry run, and `version` is the current version.
+- Failure: `400 { ok: false, error, issues? }`. Conflict: `409`.
+- Command types: `set_title`, `add_artboard`, `update_artboard`, `duplicate_artboard`, `delete_artboard`, `add_room_rect`, `add_room_polygon`, `rename_room`, `move_room`, `set_wall_length`, `move_vertex`, `insert_vertex`, `delete_vertex`, `delete_rooms`, `cutout_rooms`, `merge_rooms`, `set_room_style`, `add_opening_on_wall`, `update_opening`, `delete_opening`, `add_furniture`, `update_furniture`, `reorder_furniture`, `duplicate_furniture`, `delete_furniture`.
+- Most commands take an optional `artboardId`. The default is the first artboard.
+- Example: `{"command":{"type":"add_room_rect","name":"Kitchen","xCm":0,"yCm":0,"widthCm":400,"heightCm":300}}`
 
-For stdio-only MCP clients (e.g. Claude Desktop), run `node mcp-stdio/index.mjs` with `SFP_URL` (default `http://localhost:8788/api/mcp`) and `SFP_TOKEN` (or `SFP_PASSCODE`). See `mcp-stdio/README.md`.
+`POST /api/projects/:id/query` (read scope). Body `{ "kind", "artboardId"? }`. Read-only.
 
-## Text DSL (`.sfp`) — compact, diffable plan format
+- `summary`: `{ ok, summary }`.
+- `validate`: `{ ok, valid, issues }`.
+- `artboard`: `{ ok, artboard }`. The first artboard if `artboardId` is not sent.
+- `rooms`: `{ ok, rooms }`.
+- `walls`: `{ ok, walls }`. Each wall has `artboardId`, `roomId`, `roomName`, `edgeIndex`, `lengthCm`, `angleDeg`, `start`, `end` and `openingIds`.
+- Unknown `kind`: `400`. Unknown `artboardId`: `404`.
 
-Endpoints:
+`GET /api/projects/:id/render.svg?artboard=<id>` (read scope). Returns the artboard as `image/svg+xml`. Without `artboard`, the first artboard is used. `404` if the project or the artboard is missing.
 
-- `GET /api/projects/:id/plan.sfp` — Download the plan as `.sfp` text (`text/plain`).
-- `PUT /api/projects/:id/plan.sfp?dryRun=1` — Replace geometry from a `.sfp` body (`text/plain`). `?dryRun=1` returns `{ dryRun, version, diff, summary }` without writing. `?baseVersion=N` returns `409 version_conflict` on mismatch. Parse errors return `400 { error: "dsl_parse_error", message, line }`.
-- `GET /api/projects/:id/plan.dxf` — ASCII DXF R12 (`application/dxf`, attachment).
+### Images
 
-Grammar (units are **cm**, x right, y down; `#` starts a comment; wall label `CODE-n` = wall starting at vertex n-1):
+| Method | Path | Scope | Result |
+|---|---|---|---|
+| GET | `/api/images/{projectId}/{imageId}` | read | Image bytes, sent with the Content-Type stored at upload. `404` if missing. |
+| PUT | `/api/images/{projectId}/{imageId}` | edit | Stores the raw request body. The request Content-Type is kept (default `application/octet-stream`). Returns `{ ok, key }`. |
+| DELETE | `/api/images/{projectId}/{imageId}` | edit | Deletes the image. Returns `{ ok: true }`. |
 
-```text
-plan "Apartment 4B" version=1 unit=cm
-apartment ceiling 250                          # optional default height for rooms without one
-ref dpe 62.4 "DPE 2023" date="2023-04-01"      # optional reference surface (source surface [label])
-ref carrez 60.1 room=SE note="lower 1.8 m excluded"
+- Path segments use only letters, digits, `.`, `_` and `-`. A segment with `..` is refused with `400 { "error": "Invalid key" }`.
+- The R2 object key is `images/<projectId>/<imageId>`.
 
-room EN "Entry" rect(0,0 180x240) ceiling=265 walk=1 [outdoor] [diag=0,3] [id=room_EN]
-  wall EN-1 exterior 30cm locked        # only non-default walls (default: partition 10cm)
-  hole poly(60,60 90,60 90,90 60,90)     # cutouts
-  door EN-1 at=40 w=90 h=204 single hinge=start swing=in [note="..."]
-  window SE-1 at=80 w=160 h=140 sill=90 french
-  storage EN-1 from 100 width 60 depth 40 door single
-  measure EN-1=181 EN-2=239 EN-D=255 EN-H=265   # or top-level: measure SE-2 = 412.5
-  note "Electrical panel near EN-4"
-  pin at(10,0) wall=EN-1 text="Meter" photos=key1,key2
+### Error summary
 
-room SE "Living Room" poly(180,0 600,0 600,420 180,420) ceiling=265 walk=2
-  ...
+Errors are JSON: `{ "error": "<message>" }`. `400` invalid JSON or input. `401` missing or wrong credentials. `403` scope too low or wrong project. `404` not found. `405` wrong method for the path. `409` version conflict or id already exists. Unknown path: `404`.
 
-tape from(0,150) to(400,150) =401 label="Cross room" room=SE
-pin at(10,10) room=EN text="..."
+## ProjectDoc v3 example (minimal, valid)
+
+This document passes the app schema (`parseProjectDoc`) and the JSON Schema at `/api/schema/project.v3.json`.
+
+```json
+{
+  "schemaVersion": 3,
+  "id": "proj_1",
+  "title": "Apartment 4B",
+  "refImages": [],
+  "artboards": [
+    {
+      "id": "plan_a",
+      "name": "Plan A",
+      "xCm": 0,
+      "yCm": 0,
+      "ceilingHeightCm": 250,
+      "precisionCm": 1,
+      "rooms": [
+        {
+          "id": "room_living",
+          "name": "Living room",
+          "vertices": [
+            { "x": 0, "y": 0 },
+            { "x": 400, "y": 0 },
+            { "x": 400, "y": 300 },
+            { "x": 0, "y": 300 }
+          ]
+        }
+      ],
+      "openings": [],
+      "furniture": []
+    }
+  ]
+}
 ```
 
-- `rect(x,y WxH)` for axis-aligned rectangles, `poly(x,y x,y ...)` otherwise. A vertex may carry an explicit id: `poly(v1:0,0 v2:180,0 ...)` (emitted only when it differs from the deterministic default `v_<code>_<i>`).
-- Element kinds: `door | window | opening | radiator | other`. Variants are bare words: doors `single|double|sliding|pocket|bifold`, windows `standard|french|fixed`.
-- Built-in storage: one `storage` line in the room block of the parent room — `storage WALL from NUM width NUM depth NUM [side NUM] [back NUM] [door single|double|sliding|pocket|bifold|none]`. A storage is a small room on the OUTER side of that wall (a closet) with its own side and back walls, and a front door in the host wall that opens into the room. From start: distance from the room's inside corner to the near inside face of the storage; `width` is the inside clear width; `depth` is the inside clear depth from the outer face of the host wall; `side` and `back` are the side and back wall thicknesses (default 5 cm). A storage room is never written as a `room` and its front door is never written as a `door`.
-- Fields: `at=` offset from wall start, `w=` width, `h=` height, `sill=`, `depth=`, `hinge=start|end`, `swing=in|out`, `note=`, `id=`.
-- Round-trip is lossless for geometry and values: `dslToPlan(planToDsl(doc))` deep-equals `doc` on geometry/values (ids are regenerated deterministically when not explicit). Implemented in `src/core/dsl.ts` (`planToDsl`, `dslToPlan`, `DslParseError` with line numbers).
+Notes:
 
-## DXF export
+- `schemaVersion` must be the number `3`.
+- `precisionCm` is `0.1`, `0.5` or `1`. Default `1`.
+- `ceilingHeightCm` is greater than 0. Default `250` when omitted by the app schema.
+- `wallThicknessCm` (0 to 50) is optional. Omitted means 10. `0` turns thick walls off.
+- Lengths are in cm. Angles are in degrees.
 
-`GET /api/projects/:id/plan.dxf` returns ASCII **DXF R12 (AC1009)**, units cm (`$INSUNITS=5`), y axis flipped to the DXF y-up convention. Layers: `ROOMS` (closed POLYLINE+VERTEX), `WALLS_BEARING` / `WALLS_PARTITION` / `WALLS_EXTERIOR` (LINE pairs for both wall faces), `DOORS` (swing ARC + leaf LINE), `WINDOWS`, `STORAGE`, `DIMENSIONS` (wall length lines + labels), `TEXT` (room labels `CODE name area m2`). Pure generator in `src/core/dxf.ts` (`planToDxf`).
+## MCP server (`POST /api/mcp`)
 
-## CLI (`sfp`)
+`POST /api/mcp` is a Model Context Protocol server. It uses the Streamable HTTP transport with JSON-RPC 2.0 messages. Send one JSON-RPC message per POST, with `Content-Type: application/json`. Send credentials as in the REST API (see Authentication). The route needs the `read` scope. Each tool checks its own scope, with the same rules as the REST routes.
 
-Zero-dependency Node >= 18 client (`cli/sfp.mjs`, bin name `sfp`; see `cli/README.md`). Config via `SFP_URL` (default `http://localhost:8788`), `SFP_TOKEN` (Bearer) or `SFP_PASSCODE` (x-passcode).
+Methods:
+
+- `initialize`: returns `protocolVersion` `2025-03-26`, `capabilities: { tools: {} }` and `serverInfo` (`simple-floorplan`).
+- `notifications/initialized`: a message without `id` (a notification). Returns `202` with an empty body.
+- `ping`: returns `{}`.
+- `tools/list`: returns the tools, each with `name`, `description` and `inputSchema`.
+- `tools/call`: `params: { name, arguments }`.
+
+Any other method returns `-32601`. A message without `id` never gets a JSON-RPC response body.
+
+Tools:
+
+| Tool | Scope | Arguments | Result |
+|---|---|---|---|
+| `list_projects` | read | none | Projects, most recently updated first. A project-limited token sees only its project. |
+| `get_project` | read | `projectId` | Project `id`, `title`, `version`, `updatedAt` and the full ProjectDoc v3. |
+| `create_project` | edit | `title?`, `id?`, `doc?` | The new project (version 1). Without `doc`, it has one empty artboard. |
+| `query_project` | read | `projectId`, `kind` (`summary`, `validate`, `rooms`, `walls`, `artboard`), `artboardId?` | Read-only query result. |
+| `run_commands` | edit | `projectId`, `command` or `commands`, `dryRun?`, `baseVersion?` | Same result as `POST /api/projects/:id/commands`. A batch is all or nothing. |
+| `render_svg` | read | `projectId`, `artboardId?` | The artboard as SVG text. Default: the first artboard. |
+| `delete_project` | edit | `projectId` | Deletes the project and its images. Cannot be undone. |
+
+Errors:
+
+- JSON-RPC errors: `-32700` parse error, `-32600` invalid request, `-32601` method not found, `-32602` invalid params (for example an unknown tool name, or `params.name` not a string).
+- Tool errors return a normal result with `isError: true`. Examples: a missing `projectId`, a `400` or `409` from the command layer, or `Forbidden: this token cannot use <tool>` when the token scope is too low or the token is limited to another project.
+- A successful tool result has `content` (one text item with the JSON result) and, for JSON results, `structuredContent`.
+
+Example:
 
 ```bash
-sfp projects
-sfp pull <project> [--format sfp|json] [-o file]
-sfp push <project> <file.sfp> [--dry-run]
-sfp query <project> summary|unmeasured|validate|shared_walls [--room CODE] [--json]
-sfp run <project> <commands.json> [--dry-run]
-sfp export <project> svg|dxf -o file
-sfp measure <project> <label> <cm>     # e.g. sfp measure proj_1 SE-2 412.5
+curl -s -X POST http://localhost:8788/api/mcp \
+  -H "Authorization: Bearer $SFP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
+
+## CLI (`cli/sfp.mjs`)
+
+`cli/sfp.mjs` is a zero-dependency Node script (Node 22 or later). It wraps the REST API. Run it as `node cli/sfp.mjs <command>`, or as `npm run sfp -- <command>` (the `--` passes the arguments to the script).
+
+Environment and flags:
+
+- `SFP_URL`: API base URL. Default `http://localhost:8788`. Flag `--url <url>`.
+- `SFP_TOKEN`: the master secret or a scoped token. Flag `--token <token>`.
+- A token that starts with `sfp_` is sent as `Authorization: Bearer`. Any other token is sent as `x-api-token`.
+- Errors print `error: <message>` to stderr. The exit code is `1`. Success is `0`.
+
+Commands:
+
+| Command | Scope | Result |
+|---|---|---|
+| `projects` | read | List projects. |
+| `create [title]` | edit | Create a project. |
+| `pull <id> [out.json]` | read | Download the ProjectDoc. Writes a file, or prints to stdout. |
+| `push <id> <file.json> [--base-version n]` | edit | Upload a ProjectDoc (`PUT`). `--base-version` sends `baseVersion`. |
+| `query <id> <summary\|validate\|rooms\|walls\|artboard> [--artboard <aid>]` | read | Read-only query. |
+| `exec <id> <jsonOrFile> [--dry-run] [--base-version n]` | edit | Run one command, or an array of commands. The argument is inline JSON, `@file.json`, or a path to a JSON file. |
+| `render <id> [out.svg] [--artboard <aid>]` | read | Artboard SVG. Writes a file, or prints to stdout. |
+| `delete <id>` | edit | Delete a project. |
+| `help` | none | Show usage. |
+
+Example:
+
+```bash
+export SFP_URL=http://localhost:8788
+export SFP_TOKEN=sfp_...
+npm run sfp -- projects
+npm run sfp -- exec proj_1 '{"type":"add_room_rect","xCm":0,"yCm":0,"widthCm":400,"heightCm":300}' --dry-run
+```
+
+## Browser surface (in-page)
+
+The app sets `window.sfp` (version `'3'`) when it starts. It edits the open project through the same command layer as the app. Every successful `exec` is one undo step. All return values are JSON-serializable. Units: cm and degrees.
+
+- Read: `getDoc()` (deep copy of the ProjectDoc), `getUi()` (`mode`, `tool`, `activeArtboardId`, `selection`, `view`), `summarize()`, `validate()` (`{ ok, issues }`).
+- Edit: `exec(cmdOrCmds, { dryRun? })` returns `{ ok: true, result, dryRun }` or `{ ok: false, error, issues? }`. An array of commands is all-or-nothing. `dryRun(cmdOrCmds)` checks without changing anything. `undo()` and `redo()` return `true` when the project changed.
+- UI: `setMode('plan' | 'design')`, `setTool(tool)`, `select(selection)`, `setActiveArtboard(id)`, `setView({ x, y, zoom })`, `fitView(artboardId?)`.
+- Files: `loadProject(input)` (validates, then replaces the project and clears undo history; returns `{ ok, error?, issues? }`), `exportProject()` (JSON text), `exportSvg(artboardId?)` (`{ ok: true, svg, artboardId }`).
+- Coordinates: `worldToScreen(xCm, yCm)` and `screenToWorld(clientX, clientY)` use the canvas box and the view. They return `null` when no canvas is on the page.
+- Events: `subscribe(({ rev, doc }) => ...)` returns an unsubscribe function. The window also fires `sfp:change` with `detail: { rev }`.
+
+Example: `window.sfp.exec({ type: 'add_room_rect', name: 'Kitchen', xCm: 0, yCm: 0, widthCm: 400, heightCm: 300 })`.
+
+When the browser has WebMCP (`navigator.modelContext.registerTool`), the app registers these tools. Without WebMCP, nothing is registered.
+
+- `sfp_get_project`: summary and UI state.
+- `sfp_get_doc`: the full ProjectDoc.
+- `sfp_validate`: validation issues.
+- `sfp_exec`: `{ commands, dryRun? }`; `commands` is one command or an array.
+- `sfp_undo`, `sfp_redo`.
+- `sfp_set_ui`: `{ mode?, tool?, activeArtboardId?, selection?, view?, fit? }`.
+- `sfp_load_project`: `{ project }`.
+- `sfp_export_svg`: `{ artboardId? }`.
+
+The REST API above is for stored projects (cloud sync). `window.sfp` is for the project open in the page.
+
+The SVG plan marks its entities in the DOM:
+
+- `data-entity`: `room`, `wall`, `opening` or `furniture`.
+- `data-id`: the entity id. For a `wall`, `data-id` is the id of its room.
+- `data-edge`: the wall edge index. Set on `wall` elements only.
+- Also present: `data-room-id`, `data-opening-id`, `data-furniture-id`, and `data-wall="<roomId>:<edgeIndex>"` on walls.
+- Each element has an `aria-label` with a readable name, for example `Wall 2 of Living room, 400 cm`.
+
+Numeric values are edited in the side panels with number fields (position, size, rotation, ceiling height, and similar). Values use cm and degrees.
+
+## Browser URL parameters
+
+The app reads these query parameters when it starts (`src/shell/urlParams.ts`). Invalid values are ignored. Parsing never throws.
+
+| Parameter | Values | Effect |
+|---|---|---|
+| `project` | a project id | Loads the project from the cloud API (`GET /api/projects/:id`) and replaces the open project. Needs cloud access (see Authentication). A load error shows a message. |
+| `mode` | `plan`, `design` | Sets the mode. |
+| `tool` | `select`, `rect`, `pen`, `cutout`, `artboard`, `tape` | Sets the active tool. |
+| `artboard` | an artboard id | Makes that artboard active, if it exists in the open project. |
+| `nosw` | `1` or `true` | Unregisters every service worker before the app starts, so a stale PWA cache cannot serve an old build. |
+
+Example: `https://<host>/?project=proj_1&mode=design&tool=tape&artboard=plan_a`
+
+## Copy and paste actions (in-page UI)
+
+- **Copy JSON**: copies the open project to the clipboard as JSON text. It is a toolbar button (`aria-label="Copy JSON"`), and it is also in the More menu.
+- **Paste JSON**: opens a dialog (`aria-label="Paste JSON"`) where you paste project JSON. It is also in the More menu.
+- **Copy SVG**: in the artboard inspector (`aria-label="Copy SVG"`), copies the SVG of that artboard to the clipboard.
+
+## Not in this version
+
+These are not implemented. Do not call them:
+
+- `/snapshot`, `/items`, `/measurements`, `/events`, `/share`
+- The `.sfp` text DSL, DXF export, the stdio MCP wrapper
+- PlanDoc v1 and its `schemaVersion` 1 format
+- `x-passcode`
+
+## For AI agents: suggested order
+
+1. Read `/api/schema/project.v3.json` to learn the document shape.
+2. Read `/api/openapi.json` for the endpoint list.
+3. Get credentials. Use the master secret, or ask an admin to create a scoped token with `POST /api/tokens`. Send it as `Authorization: Bearer <token>` (or `x-api-token: <secret>`).
+4. Call `GET /api/projects` to list projects and their `version` values.
+5. Read with `POST /api/projects/:id/query` (for example `{"kind":"summary"}`), or with `GET /api/projects/:id`.
+6. Change a project with `POST /api/projects/:id/commands`. Send `dryRun: true` first. Then send the same body without `dryRun`, with `baseVersion` set to the version you read.
+7. To replace the whole document instead, read the project, change `doc`, and send it back with `PUT /api/projects/:id`, the same `title` and `baseVersion`.
+8. On `409 version_conflict`, read the project again and retry.

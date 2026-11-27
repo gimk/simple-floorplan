@@ -2,16 +2,19 @@
 // back link to the room, "‹ Wall X of N ›" to cycle the walls, the exact length in cm, the openings
 // hosted on the wall (click one to select it), Delete Wall, and a collapsed Geometry section.
 // Wall N goes from vertex N-1 to vertex N of the room polygon. Dark UI, shared panel primitives.
-import { useId } from 'react'
+import { useId, useState } from 'react'
 import { ChevronLeft, ChevronRight, Compass, Ruler } from 'lucide-react'
 import { useDoc } from '../../model/store'
-import type { Artboard, Opening, Room } from '../../model/types'
+import type { Artboard, Opening, OpeningKind, Room } from '../../model/types'
 import {
   BackLink,
   DangerButton,
   EmptyHint,
   FieldRow,
+  BTN,
   IconButton,
+  INPUT,
+  LABEL,
   MUTED,
   NumberField,
   PanelSection,
@@ -22,9 +25,13 @@ import {
 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { selectRoom } from '../artboards/selection'
+import { addOpening } from '../openings/actions'
+import { DEFAULT_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM, MAX_OPENING_WIDTH_CM } from '../openings/geometry'
 import { hostWallIn } from '../openings/sync'
+import { newId } from '../../model/schema'
 import { toast } from '../toast'
 import { deleteRoomWall, setRoomWallLength } from './actions'
+import { NumInput } from './NumInput'
 import { roomWalls } from './ops'
 import type { Wall } from './ops'
 
@@ -60,6 +67,77 @@ function selectWall(artboardId: string, roomId: string, edgeIndex: number): void
 /** Select one opening of the artboard. */
 function selectOpening(artboardId: string, openingId: string): void {
   useUi.getState().set({ activeArtboardId: artboardId, selection: { kind: 'opening', artboardId, openingId } })
+}
+
+/** Form: add a door / window / opening on this wall at a typed width and offset from the wall start. */
+function AddOpeningForm({ artboardId, room, wall }: { artboardId: string; room: Room; wall: Wall }) {
+  const [kind, setKind] = useState<OpeningKind>('door')
+  const [width, setWidth] = useState<number | null>(null)
+  const [offset, setOffset] = useState<number | null>(null)
+  const w = width ?? DEFAULT_OPENING_WIDTH_CM[kind]
+  const off = offset ?? wall.lengthCm / 2
+  const kindId = useId()
+
+  const submit = () => {
+    const widthCm = Math.min(w, Math.max(MIN_OPENING_WIDTH_CM, wall.lengthCm))
+    const t = Math.min(wall.lengthCm, Math.max(0, off)) / (wall.lengthCm || 1)
+    const op: Opening = {
+      id: newId(),
+      kind,
+      roomId: room.id,
+      xCm: wall.a.x + (wall.b.x - wall.a.x) * t,
+      yCm: wall.a.y + (wall.b.y - wall.a.y) * t,
+      angleDeg: wall.angleDeg,
+      widthCm,
+    }
+    if (kind === 'door') { op.hinge = 'left'; op.swing = 'in' }
+    addOpening(artboardId, op)
+    selectOpening(artboardId, op.id)
+  }
+
+  return (
+    <form
+      data-testid="wall-add-opening-form"
+      className="flex flex-col gap-2"
+      aria-label="Add opening on wall"
+      onSubmit={(e) => { e.preventDefault(); submit() }}
+    >
+      <h3 className={`font-medium ${MUTED}`}>Add opening on wall</h3>
+      <label className="flex flex-col gap-1" htmlFor={kindId}>
+        <span className={LABEL}>Kind</span>
+        <select
+          id={kindId}
+          data-testid="wall-add-opening-kind"
+          className={INPUT}
+          value={kind}
+          onChange={(e) => { setKind(e.target.value as OpeningKind); setWidth(null) }}
+        >
+          <option value="door">Door</option>
+          <option value="window">Window</option>
+          <option value="opening">Opening</option>
+        </select>
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>Width (cm)</span>
+          <NumInput
+            testId="wall-add-opening-width" ariaLabel="Opening width (cm)" value={w}
+            min={MIN_OPENING_WIDTH_CM}
+            onCommit={(v) => { if (v > MAX_OPENING_WIDTH_CM) return false; setWidth(v) }}
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>Offset (cm)</span>
+          <NumInput
+            testId="wall-add-opening-offset" ariaLabel="Offset from wall start (cm)" value={off}
+            min={0}
+            onCommit={(v) => { if (v > wall.lengthCm) return false; setOffset(v) }}
+          />
+        </label>
+      </div>
+      <button type="submit" data-testid="wall-add-opening-submit" className={BTN}>Add</button>
+    </form>
+  )
 }
 
 export type WallInspectProps = {
@@ -159,6 +237,8 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
             </>
           )}
         </div>
+
+        <AddOpeningForm key={`${room.id}:${edgeIndex}`} artboardId={artboard.id} room={room} wall={wall} />
 
         <DangerButton onClick={remove} disabled={room.vertices.length <= 3} shortcut="Del">
           Delete Wall

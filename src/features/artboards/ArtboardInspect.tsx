@@ -4,11 +4,12 @@
 // panel LABEL style (12 px medium slate-300), one step above the 12 px slate-400 hints (L2/L3).
 // The Export card (Phase 5) stays available in Plan AND Design mode: exporting changes no data.
 import { useId, useState } from 'react'
-import { Copy, Download, Frame, Image, Plus } from 'lucide-react'
+import { Clipboard, Copy, Download, Frame, Image, Plus } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import { MAX_WALL_THICKNESS_CM, MIN_WALL_THICKNESS_CM } from '../../model/types'
 import type { Artboard, PrecisionCm } from '../../model/types'
 import { wallThicknessOf } from '../rooms/walls'
+import { renderArtboardSvg } from '../export/artboardSvg'
 import { downloadArtboardPng, downloadArtboardSvg } from '../export/download'
 import { toast } from '../toast'
 import {
@@ -29,7 +30,8 @@ import {
   formatM2,
 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
-import { artboardAreaM2, roomAreaM2 } from './frame'
+import { NumInput } from '../rooms/NumInput'
+import { MIN_ARTBOARD_HEIGHT_CM, MIN_ARTBOARD_WIDTH_CM, artboardAreaM2, artboardFrame, roomAreaM2 } from './frame'
 import { selectArtboard, selectRoom } from './selection'
 
 export type ArtboardInspectProps = {
@@ -66,6 +68,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
   if (!artboard) return null
 
   const areaM2 = artboardAreaM2(artboard)
+  const frame = artboardFrame(artboard)
   const onlyOne = artboards.length <= 1
   const selectedRooms = new Set(
     selection.kind === 'room' && selection.artboardId === artboard.id ? selection.roomIds : [],
@@ -95,6 +98,26 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
     if (value == null || !(value >= 0) || value > MAX_WALL_THICKNESS_CM) return false
     if (value === wallThicknessOf(artboard)) return
     patch((a) => { a.wallThicknessCm = value })
+  }
+
+  /** Move the frame so its left/top edge sits at the typed world cm (content stays inside it). */
+  const commitFrameX = (value: number): boolean | void => {
+    const dx = value - frame.x
+    if (dx === 0) return
+    patch((a) => { a.xCm += dx })
+  }
+  const commitFrameY = (value: number): boolean | void => {
+    const dy = value - frame.y
+    if (dy === 0) return
+    patch((a) => { a.yCm += dy })
+  }
+  const commitFrameW = (value: number): boolean | void => {
+    if (!(value >= MIN_ARTBOARD_WIDTH_CM)) return false
+    patch((a) => { a.widthCm = value })
+  }
+  const commitFrameH = (value: number): boolean | void => {
+    if (!(value >= MIN_ARTBOARD_HEIGHT_CM)) return false
+    patch((a) => { a.heightCm = value })
   }
 
   const setPrecision = (value: string) => {
@@ -138,6 +161,15 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
     toast('Exported SVG')
   }
 
+  const copySvg = async () => {
+    try {
+      await navigator.clipboard.writeText(renderArtboardSvg(artboard, exportOptions).svg)
+      toast('SVG copied')
+    } catch (err) {
+      toast(`Copy failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const exportPng = async () => {
     try {
       await downloadArtboardPng(artboard, exportOptions)
@@ -164,6 +196,20 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
             invalidMessage="Type a name for the artboard."
           />
         </FieldRow>
+
+        <div className="grid grid-cols-2 gap-2" role="group" aria-label="Artboard frame" data-testid="artboard-frame-form">
+          {([
+            ['X', frame.x, 'artboard-x-input', commitFrameX, undefined],
+            ['Y', frame.y, 'artboard-y-input', commitFrameY, undefined],
+            ['Width', frame.width, 'artboard-width-input', commitFrameW, MIN_ARTBOARD_WIDTH_CM],
+            ['Height', frame.height, 'artboard-height-input', commitFrameH, MIN_ARTBOARD_HEIGHT_CM],
+          ] as const).map(([label, value, testId, onCommit, min]) => (
+            <label key={testId} className="flex flex-col gap-1">
+              <span className={LABEL}>{label} (cm)</span>
+              <NumInput testId={testId} ariaLabel={`Artboard ${label.toLowerCase()} (cm)`} value={value} min={min} disabled={readOnly} onCommit={onCommit} />
+            </label>
+          ))}
+        </div>
 
         <FieldRow label="Ceiling" htmlFor={ceilingId} hint="for the 3D view">
           <NumberField
@@ -296,7 +342,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
       </PanelSection>
 
       <PanelSection title="Export" icon={<Download size={14} aria-hidden="true" />}>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             className={`${BTN} flex-1`}
@@ -314,6 +360,17 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
           >
             <Download size={14} aria-hidden="true" />
             Export SVG
+          </button>
+          <button
+            type="button"
+            className={`${BTN} flex-1`}
+            data-testid="copy-svg-btn"
+            aria-label="Copy SVG"
+            onClick={copySvg}
+            title="Copy this artboard as SVG text"
+          >
+            <Clipboard size={14} aria-hidden="true" />
+            Copy SVG
           </button>
         </div>
       </PanelSection>
