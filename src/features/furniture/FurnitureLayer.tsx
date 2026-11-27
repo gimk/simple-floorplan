@@ -16,12 +16,14 @@ import {
   MAX_FURNITURE_CM,
   MIN_FURNITURE_CM,
   computeDistanceGuides,
+  computeMeasureGuides,
   directionArrowGeometry,
   furnitureCornerRadiusCm,
+  pickMeasureTarget,
   snapFurnitureMove,
   snapRotation,
 } from './geometry'
-import type { DistanceGuide } from './geometry'
+import type { DistanceGuide, MeasureTarget } from './geometry'
 import { CANVAS_BG, CANVAS_SELECT } from '../../shell/canvasTokens'
 
 const ORANGE = CANVAS_SELECT
@@ -60,6 +62,11 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const gesture = useRef<Gesture | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [guides, setGuides] = useState<DistanceGuide[]>([])
+  // Option/Alt measure overlay: display only, never touches the document.
+  const [measure, setMeasure] = useState<{ guides: DistanceGuide[]; target: MeasureTarget } | null>(null)
+  const lastPointer = useRef<Vec | null>(null)
+  // Render-safe mirror of "a gesture is active" (a ref must not be read during render).
+  const [gesturing, setGesturing] = useState(false)
   const [rotBadge, setRotBadge] = useState<{ id: string; deg: number } | null>(null)
 
   // Shift / Alt can change while the pointer is down: replay the last pointer position at once.
@@ -77,9 +84,42 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const select = (id: string) =>
     useUi.getState().set({ activeArtboardId: artboard.id, selection: { kind: 'furniture', artboardId: artboard.id, furnitureId: id } })
 
+  // Recompute the Option/Alt measure overlay from the last pointer position of the live document.
+  const recompute = () => {
+    const hide = () => setMeasure((m) => (m === null ? m : null))
+    if (!getModifiers().alt || gesture.current || !lastPointer.current) { hide(); return }
+    const sel = selectedId ? live(selectedId) : undefined
+    if (!sel) { hide(); return }
+    const ab = liveArtboard()
+    const target = pickMeasureTarget(lastPointer.current, ab, sel.id, px(8))
+    setMeasure({ guides: computeMeasureGuides(sel, target, ab), target })
+  }
+  // The window listener reads the newest closures through this ref, so a pan or a zoom needs no resubscribe.
+  const measureApi = useRef({ toLocal, recompute })
+  useEffect(() => { measureApi.current = { toLocal, recompute } })
+
+  useEffect(() => {
+    if (!design || !selectedId) return
+    const onPointerMove = (e: PointerEvent) => {
+      lastPointer.current = measureApi.current.toLocal(e.clientX, e.clientY)
+      syncModifiersFromEvent(e)
+      measureApi.current.recompute()
+    }
+    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    const unsubscribe = subscribeModifiers(() => measureApi.current.recompute())
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      unsubscribe()
+      setMeasure(null)
+    }
+  }, [design, selectedId])
+
   const start = (e: ReactPointerEvent<Element>, onMove: (p: Vec) => void) => {
     e.stopPropagation()
     syncModifiersFromEvent(e)
+    // A gesture owns the screen: the measure overlay goes away at once.
+    setMeasure(null)
+    setGesturing(true)
     gesture.current = { pointerId: e.pointerId, cx: e.clientX, cy: e.clientY, moved: false, last: null, onMove }
     try { e.currentTarget.setPointerCapture?.(e.pointerId) } catch { /* synthetic or missing pointer id */ }
   }
@@ -100,6 +140,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     const g = gesture.current
     if (!g || g.pointerId !== e.pointerId) return
     gesture.current = null
+    setGesturing(false)
     syncModifiersFromEvent(e)
     try { e.currentTarget.releasePointerCapture?.(e.pointerId) } catch { /* not captured */ }
     if (g.moved) useDoc.getState().endDrag()
@@ -240,8 +281,52 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     )
   }
 
+  /** One distance guide. Shared by the drag guides and the Option/Alt measure guides. */
+  const renderGuide = (g: DistanceGuide, key: number) => {
+    const color = g.axis === 'x' ? CYAN : ORANGE
+    const label = `${fmtCm(g.distCm)} cm`
+    const mx = (g.x1 + g.x2) / 2, my = (g.y1 + g.y2) / 2
+    const pw = px(label.length * 6.2 + 12)
+    return (
+      <g key={key} pointerEvents="none">
+        <line
+          x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2}
+          stroke={color} strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`}
+        />
+        <circle cx={g.x2} cy={g.y2} r={px(2.5)} fill={color} />
+        <rect x={mx - pw / 2} y={my - px(8)} width={pw} height={px(16)} rx={px(8)} fill={BG} stroke={color} strokeWidth={px(1)} />
+        <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" fontSize={px(10.5)} fill={color}>
+          {label}
+        </text>
+      </g>
+    )
+  }
+
   const selected = selectedId ? artboard.furniture.find((f) => f.id === selectedId) : undefined
   const hs = px(8)
+
+  // Option/Alt measure overlay: the hovered target outline, then its distance guides.
+  const measureView = measure && !gesturing ? measure : null
+  const measureOutline = (() => {
+    if (!measureView) return null
+    const t = measureView.target
+    if (t.kind === 'furniture') {
+      const it = t.item
+      const w = it.widthCm, d = it.depthCm
+      const rx = furnitureCornerRadiusCm(w, d, it.cornerRadiusCm)
+      return (
+        <g transform={`translate(${it.xCm} ${it.yCm}) rotate(${it.rotationDeg})`}>
+          {it.shape === 'circle'
+            ? <ellipse cx={0} cy={0} rx={w / 2} ry={d / 2} fill="none" stroke={CYAN} strokeWidth={px(1.5)} />
+            : <rect x={-w / 2} y={-d / 2} width={w} height={d} rx={rx} ry={rx} fill="none" stroke={CYAN} strokeWidth={px(1.5)} />}
+        </g>
+      )
+    }
+    if (t.kind === 'wall') {
+      return <line x1={t.a.x} y1={t.a.y} x2={t.b.x} y2={t.b.y} stroke={CYAN} strokeWidth={px(3)} strokeOpacity={0.6} />
+    }
+    return null
+  })()
 
   return (
     <g
@@ -300,25 +385,14 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
         )
       })()}
 
-      {guides.map((g, i) => {
-        const color = g.axis === 'x' ? CYAN : ORANGE
-        const label = `${fmtCm(g.distCm)} cm`
-        const mx = (g.x1 + g.x2) / 2, my = (g.y1 + g.y2) / 2
-        const pw = px(label.length * 6.2 + 12)
-        return (
-          <g key={i} pointerEvents="none">
-            <line
-              x1={g.x1} y1={g.y1} x2={g.x2} y2={g.y2}
-              stroke={color} strokeWidth={px(1)} strokeDasharray={`${px(4)} ${px(3)}`}
-            />
-            <circle cx={g.x2} cy={g.y2} r={px(2.5)} fill={color} />
-            <rect x={mx - pw / 2} y={my - px(8)} width={pw} height={px(16)} rx={px(8)} fill={BG} stroke={color} strokeWidth={px(1)} />
-            <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" fontSize={px(10.5)} fill={color}>
-              {label}
-            </text>
-          </g>
-        )
-      })}
+      {guides.map(renderGuide)}
+
+      {measureView && (
+        <g data-testid="furniture-measure" pointerEvents="none">
+          {measureOutline}
+          {measureView.guides.map(renderGuide)}
+        </g>
+      )}
     </g>
   )
 }

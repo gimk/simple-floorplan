@@ -181,6 +181,127 @@ export function computeDistanceGuides(item: FurnitureItem, artboard: Artboard, m
   return out
 }
 
+// ---------- Option/Alt measure tool ----------
+
+/** What the cursor points at while the measure tool is held: an item, a wall, or nothing. */
+export type MeasureTarget =
+  | { kind: 'furniture'; item: FurnitureItem }
+  | { kind: 'wall'; a: Vec; b: Vec }
+  | { kind: 'none' }
+
+/** Distance from p to segment ab, in cm. */
+const distToSegment = (p: Vec, a: Vec, b: Vec): number => {
+  const sx = b.x - a.x, sy = b.y - a.y
+  const len2 = sx * sx + sy * sy
+  if (len2 < EPS) return Math.hypot(p.x - a.x, p.y - a.y)
+  const t = Math.min(1, Math.max(0, ((p.x - a.x) * sx + (p.y - a.y) * sy) / len2))
+  return Math.hypot(p.x - (a.x + sx * t), p.y - (a.y + sy * t))
+}
+
+/** True when the artboard-local point p is inside the outline of the item (rect box or ellipse). */
+const hitsItem = (p: Vec, item: FurnitureItem): boolean => {
+  const a = -item.rotationDeg * RAD
+  const cos = Math.cos(a), sin = Math.sin(a)
+  const dx = p.x - item.xCm, dy = p.y - item.yCm
+  const lx = dx * cos - dy * sin
+  const ly = dx * sin + dy * cos
+  const hw = item.widthCm / 2, hd = item.depthCm / 2
+  if (!(hw > 0) || !(hd > 0)) return false
+  if (item.shape === 'circle') return (lx / hw) ** 2 + (ly / hd) ** 2 <= 1 + EPS
+  return Math.abs(lx) <= hw + EPS && Math.abs(ly) <= hd + EPS
+}
+
+/**
+ * What the cursor at artboard-local point p points at. Items win, top of the stack first, and the
+ * selected item is never its own target; then the closest room wall within wallTolCm; else 'none'.
+ */
+export function pickMeasureTarget(p: Vec, artboard: Artboard, selectedId: string, wallTolCm: number): MeasureTarget {
+  for (let i = artboard.furniture.length - 1; i >= 0; i--) {
+    const f = artboard.furniture[i]
+    if (f.id === selectedId) continue
+    if (hitsItem(p, f)) return { kind: 'furniture', item: f }
+  }
+  let best: { d: number; a: Vec; b: Vec } | null = null
+  for (const room of artboard.rooms) {
+    const v = room.vertices
+    for (let i = 0; i < v.length; i++) {
+      const a = v[i], b = v[(i + 1) % v.length]
+      const d = distToSegment(p, a, b)
+      if (d <= wallTolCm && (best === null || d < best.d)) best = { d, a, b }
+    }
+  }
+  return best ? { kind: 'wall', a: best.a, b: best.b } : { kind: 'none' }
+}
+
+/**
+ * Display-only distance guides between the selected item and what the cursor points at.
+ * 'none' falls back to the 4 nearest-wall distances. No guide with a distance <= 0 is returned.
+ */
+export function computeMeasureGuides(selected: FurnitureItem, target: MeasureTarget, artboard: Artboard): DistanceGuide[] {
+  const A = furnitureAxisBounds(selected)
+  const acx = (A.minX + A.maxX) / 2, acy = (A.minY + A.maxY) / 2
+  const out: DistanceGuide[] = []
+  const push = (axis: 'x' | 'y', x1: number, y1: number, x2: number, y2: number) => {
+    const distCm = roundP(Math.hypot(x2 - x1, y2 - y1), artboard.precisionCm)
+    if (!(distCm > 0)) return
+    out.push({ axis, x1, y1, x2, y2, distCm })
+  }
+
+  if (target.kind === 'none') return computeDistanceGuides(selected, artboard)
+
+  if (target.kind === 'furniture') {
+    const B = furnitureAxisBounds(target.item)
+    const gapX = B.minX >= A.maxX ? [A.maxX, B.minX] : B.maxX <= A.minX ? [A.minX, B.maxX] : null
+    const gapY = B.minY >= A.maxY ? [A.maxY, B.minY] : B.maxY <= A.minY ? [A.minY, B.maxY] : null
+    const oy1 = Math.max(A.minY, B.minY), oy2 = Math.min(A.maxY, B.maxY)
+    const ox1 = Math.max(A.minX, B.minX), ox2 = Math.min(A.maxX, B.maxX)
+    // The gap line sits on the middle of the shared span, or on the centre line when there is none.
+    const gy = oy1 <= oy2 ? (oy1 + oy2) / 2 : acy
+    const gx = ox1 <= ox2 ? (ox1 + ox2) / 2 : acx
+    if (gapX) push('x', gapX[0], gy, gapX[1], gy)
+    if (gapY) push('y', gx, gapY[0], gx, gapY[1])
+    if (gapX || gapY) return out
+    // Boxes overlap or one contains the other: report the inner edge distances that are visible.
+    const inner = (axis: 'x' | 'y', x1: number, y1: number, x2: number, y2: number) => {
+      const d = roundP(Math.hypot(x2 - x1, y2 - y1), artboard.precisionCm)
+      if (d > 0.5) out.push({ axis, x1, y1, x2, y2, distCm: d })
+    }
+    inner('x', A.minX, acy, B.minX, acy)
+    inner('x', A.maxX, acy, B.maxX, acy)
+    inner('y', acx, A.minY, acx, B.minY)
+    inner('y', acx, A.maxY, acx, B.maxY)
+    return out
+  }
+
+  const { a, b } = target
+  if (Math.abs(a.y - b.y) < 0.01) {
+    const wy = a.y
+    const x = Math.min(Math.max(acx, Math.min(a.x, b.x)), Math.max(a.x, b.x))
+    if (wy <= A.minY) push('y', x, A.minY, x, wy)
+    else if (wy >= A.maxY) push('y', x, A.maxY, x, wy)
+    return out
+  }
+  if (Math.abs(a.x - b.x) < 0.01) {
+    const wx = a.x
+    const y = Math.min(Math.max(acy, Math.min(a.y, b.y)), Math.max(a.y, b.y))
+    if (wx <= A.minX) push('x', A.minX, y, wx, y)
+    else if (wx >= A.maxX) push('x', A.maxX, y, wx, y)
+    return out
+  }
+  // Slanted wall: shortest distance from any corner of the box.
+  let best: { d: number; from: Vec; to: Vec } | null = null
+  const sx = b.x - a.x, sy = b.y - a.y
+  const len2 = sx * sx + sy * sy
+  for (const c of furnitureWorldCorners(selected)) {
+    const t = len2 < EPS ? 0 : Math.min(1, Math.max(0, ((c.x - a.x) * sx + (c.y - a.y) * sy) / len2))
+    const to = { x: a.x + sx * t, y: a.y + sy * t }
+    const d = Math.hypot(c.x - to.x, c.y - to.y)
+    if (best === null || d < best.d) best = { d, from: c, to }
+  }
+  if (best && best.d >= 0.5) push('x', best.from.x, best.from.y, best.to.x, best.to.y)
+  return out
+}
+
 /** Corner radius of a 'rect' item, in cm. Default 4 cm, never more than half of the shorter side. */
 export function furnitureCornerRadiusCm(widthCm: number, depthCm: number, cornerRadiusCm?: number): number {
   return Math.max(0, Math.min(cornerRadiusCm ?? 4, widthCm / 2, depthCm / 2))
