@@ -3,7 +3,7 @@
 // quick quarter turns), optional height for the future 3D view, colour, Duplicate and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm and degrees.
 import { useId } from 'react'
-import { Armchair, ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, Move, Palette, RotateCcw, RotateCw, Ruler, Layers } from 'lucide-react'
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import {
@@ -22,6 +22,7 @@ import {
 } from '../../shell/panel'
 import { selectArtboard } from '../artboards/selection'
 import { toast } from '../toast'
+import { alignFurnitureInRoom, findFurnitureRoom, type FurnitureAlignment } from './align'
 import { deleteFurniture, duplicateFurniture, reorderFurniture, updateFurniture, type StackOp } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, normalizeAngle } from './geometry'
 import { FURNITURE_COLORS } from './presets'
@@ -53,6 +54,16 @@ const TURNS: readonly { label: string; delta: number; title: string }[] = [
   { label: '-45°', delta: -45, title: 'Turn 45° counter-clockwise' },
   { label: '+45°', delta: 45, title: 'Turn 45° clockwise' },
   { label: '+90°', delta: 90, title: 'Turn 90° clockwise' },
+]
+
+/** Room alignment buttons: two rows of 3 (horizontal, then vertical) and one centre button. */
+const ALIGN_BUTTONS: readonly { op: FurnitureAlignment; label: string; Icon: typeof ArrowDown }[] = [
+  { op: 'left', label: 'Align left', Icon: AlignStartVertical },
+  { op: 'center-x', label: 'Center horizontally', Icon: AlignCenterVertical },
+  { op: 'right', label: 'Align right', Icon: AlignEndVertical },
+  { op: 'top', label: 'Align top', Icon: AlignStartHorizontal },
+  { op: 'center-y', label: 'Center vertically', Icon: AlignCenterHorizontal },
+  { op: 'bottom', label: 'Align bottom', Icon: AlignEndHorizontal },
 ]
 
 /** Furniture colour swatches for the shared ColorRow. */
@@ -142,6 +153,14 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
     if (value == null) return false
     if (value === item.yCm) return
     patch({ yCm: value })
+  }
+
+  const alignRoom = findFurnitureRoom(item, artboard.rooms)
+  const alignHint = 'Place item inside a room to align'
+  const alignTo = (op: FurnitureAlignment) => {
+    const next = alignFurnitureInRoom(item, artboard.rooms, op, artboard.precisionCm)
+    if (!next || (next.xCm === item.xCm && next.yCm === item.yCm)) return
+    patch(next) // one updateFurniture call = one undo step
   }
 
   const remove = () => {
@@ -274,6 +293,36 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
             </button>
           ))}
         </div>
+
+        <FieldRow label={alignRoom ? `Align in ${alignRoom.name.trim() === '' ? 'room' : alignRoom.name}` : 'Align in room'} stacked>
+          <div className="grid grid-cols-3 gap-1" role="group" aria-label="Align in room">
+            {ALIGN_BUTTONS.map(({ op, label: opLabel, Icon }) => (
+              <button
+                key={op}
+                type="button"
+                className={BTN}
+                title={alignRoom ? opLabel : alignHint}
+                aria-label={opLabel}
+                disabled={!alignRoom}
+                onClick={() => alignTo(op)}
+              >
+                <Icon size={14} aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        </FieldRow>
+        <button
+          type="button"
+          className={BTN}
+          title={alignRoom ? 'Center in room (both axes)' : alignHint}
+          aria-label="Center in room"
+          disabled={!alignRoom}
+          onClick={() => alignTo('center')}
+        >
+          <Maximize size={14} aria-hidden="true" />
+          Center in room
+        </button>
+        {!alignRoom && <p className={MUTED}>{alignHint}.</p>}
       </PanelSection>
 
       <PanelSection title="Appearance" icon={<Palette size={14} aria-hidden="true" />}>

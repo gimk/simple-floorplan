@@ -100,6 +100,34 @@ export function measureSegment(a: Vec, b: Vec): { distCm: number; dxCm: number; 
   return { distCm, dxCm, dyCm, angleDeg }
 }
 
+/**
+ * Centre of the measurement label, pushed clear of the line a -> b.
+ *
+ * The normal of the segment is flipped so the label sits above a mostly horizontal line
+ * (normal pointing to -y) and to the right of a mostly vertical one (normal pointing to +x).
+ * The distance from the midpoint is the half-size of the label rect along that normal plus
+ * `gap`, so the box never touches the line at any angle. Units are the units of `a`/`b`
+ * (world cm on the canvas, screen pixels for `labelWidth`, `labelHeight` and `gap`).
+ */
+export function tapeLabelOffset(a: Vec, b: Vec, labelWidth: number, labelHeight: number, gap: number): Vec {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const d = Math.hypot(dx, dy)
+  const hw = Math.max(labelWidth, 0) / 2
+  const hh = Math.max(labelHeight, 0) / 2
+  const g = Math.max(gap, 0)
+  const mx = (a.x + b.x) / 2
+  const my = (a.y + b.y) / 2
+  // Zero-length segment: there is no direction, so put the label straight above the point.
+  if (d < EPS) return { x: mx, y: my - (hh + g) }
+  let nx = -dy / d
+  let ny = dx / d
+  // Mostly horizontal: prefer above the line (ny < 0). Mostly vertical: prefer right of it (nx > 0).
+  if (Math.abs(dx) >= Math.abs(dy) ? ny > 0 : nx < 0) { nx = -nx; ny = -ny }
+  const distFromLine = Math.abs(nx) * hw + Math.abs(ny) * hh + g
+  return { x: mx + nx * distFromLine, y: my + ny * distFromLine }
+}
+
 /** Label of a length, rounded to 0.1 cm: "142.5 cm". */
 export function fmtTapeCm(cm: number): string {
   const r = Math.round(cm * 10) / 10

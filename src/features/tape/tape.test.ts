@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Artboard, FurnitureItem, Room } from '../../model/types'
-import { fmtTapeCm, measureSegment, snapTapePoint } from './geometry'
+import type { Vec } from '../../model/geometry'
+import { fmtTapeCm, measureSegment, snapTapePoint, tapeLabelOffset } from './geometry'
 
 const room = (id: string, x0: number, y0: number, x1: number, y1: number): Room => ({
   id, name: id,
@@ -152,5 +153,123 @@ describe('snapTapePoint', () => {
   it('ignores candidates outside the threshold', () => {
     expect(snapTapePoint({ x: 395, y: 5 }, [board()], 2).snapped).toBe(false)
     expect(snapTapePoint({ x: 395, y: 5 }, [board()], 20).snapped).toBe(true)
+  })
+})
+
+/** Signed distances of the four corners of an axis-aligned rect (centre c) to the infinite line ab. */
+const cornerSignedDistances = (a: Vec, b: Vec, c: Vec, w: number, h: number): number[] => {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const d = Math.hypot(dx, dy)
+  const nx = -dy / d
+  const ny = dx / d
+  const corners: Vec[] = [
+    { x: c.x - w / 2, y: c.y - h / 2 },
+    { x: c.x + w / 2, y: c.y - h / 2 },
+    { x: c.x + w / 2, y: c.y + h / 2 },
+    { x: c.x - w / 2, y: c.y + h / 2 },
+  ]
+  return corners.map((p) => (p.x - a.x) * nx + (p.y - a.y) * ny)
+}
+
+/** The label rect must stay on one side of the line and clear it by at least `gap`. */
+const expectClearOfLine = (a: Vec, b: Vec, c: Vec, w: number, h: number, gap: number) => {
+  const sd = cornerSignedDistances(a, b, c, w, h)
+  const positive = sd.every((v) => v > 0)
+  const negative = sd.every((v) => v < 0)
+  expect(positive || negative).toBe(true) // the line does not cross the box
+  expect(Math.min(...sd.map(Math.abs))).toBeGreaterThanOrEqual(gap - 1e-9)
+}
+
+describe('tapeLabelOffset', () => {
+  const W = 60
+  const H = 20
+  const GAP = 5
+
+  it('puts the label above a horizontal line', () => {
+    const a = { x: 0, y: 0 }
+    const b = { x: 200, y: 0 }
+    const c = tapeLabelOffset(a, b, W, H, GAP)
+    expect(c.x).toBeCloseTo(100, 9)
+    expect(c.y).toBeCloseTo(-(H / 2 + GAP), 9) // screen y points down: negative is above
+    expectClearOfLine(a, b, c, W, H, GAP)
+  })
+
+  it('puts the label above a horizontal line measured right to left', () => {
+    const a = { x: 200, y: 40 }
+    const b = { x: 0, y: 40 }
+    const c = tapeLabelOffset(a, b, W, H, GAP)
+    expect(c.x).toBeCloseTo(100, 9)
+    expect(c.y).toBeCloseTo(40 - (H / 2 + GAP), 9)
+    expectClearOfLine(a, b, c, W, H, GAP)
+  })
+
+  it('puts the label to the right of a vertical line, both ways', () => {
+    const a = { x: 10, y: 0 }
+    const b = { x: 10, y: 200 }
+    const down = tapeLabelOffset(a, b, W, H, GAP)
+    expect(down.x).toBeCloseTo(10 + (W / 2 + GAP), 9)
+    expect(down.y).toBeCloseTo(100, 9)
+    expectClearOfLine(a, b, down, W, H, GAP)
+    const up = tapeLabelOffset(b, a, W, H, GAP)
+    expect(up).toEqual(down)
+    expectClearOfLine(b, a, up, W, H, GAP)
+  })
+
+  it('clears a diagonal line by the gap, on the side preferred for its direction', () => {
+    const a = { x: 0, y: 0 }
+    const b = { x: 100, y: 100 }
+    const c = tapeLabelOffset(a, b, W, H, GAP)
+    // The normal is (0.7071, -0.7071): the label sits up and to the right of the line.
+    const k = Math.SQRT1_2 * (Math.SQRT1_2 * (W / 2 + H / 2) + GAP)
+    expect(c.x).toBeCloseTo(50 + k, 6)
+    expect(c.y).toBeCloseTo(50 - k, 6)
+    expectClearOfLine(a, b, c, W, H, GAP)
+  })
+
+  it('gives the same box for the opposite direction a <- b', () => {
+    const a = { x: 20, y: 30 }
+    const b = { x: -140, y: 95 }
+    expect(tapeLabelOffset(a, b, W, H, GAP)).toEqual(tapeLabelOffset(b, a, W, H, GAP))
+    expectClearOfLine(a, b, tapeLabelOffset(a, b, W, H, GAP), W, H, GAP)
+  })
+
+  it('never overlaps the line at any angle', () => {
+    const a = { x: 0, y: 0 }
+    for (let deg = 0; deg < 360; deg += 1) {
+      const r = (deg * Math.PI) / 180
+      const b = { x: 300 * Math.cos(r), y: 300 * Math.sin(r) }
+      const c = tapeLabelOffset(a, b, W, H, GAP)
+      expectClearOfLine(a, b, c, W, H, GAP)
+    }
+  })
+
+  it('keeps the preferred side for near-horizontal and near-vertical angles', () => {
+    const a = { x: 0, y: 0 }
+    // 10 degrees: mostly horizontal, so above the line (screen y points down).
+    const b1 = { x: 300, y: 300 * Math.tan((10 * Math.PI) / 180) }
+    const c1 = tapeLabelOffset(a, b1, W, H, GAP)
+    expect(c1.y).toBeLessThan((b1.y / b1.x) * c1.x)
+    // 80 degrees: mostly vertical, so right of the line.
+    const b2 = { x: 300 / Math.tan((80 * Math.PI) / 180), y: 300 }
+    const c2 = tapeLabelOffset(a, b2, W, H, GAP)
+    expect(c2.x).toBeGreaterThan((b2.x / b2.y) * c2.y)
+  })
+
+  it('pushes a wider label further out on a diagonal line', () => {
+    const a = { x: 0, y: 0 }
+    const b = { x: 200, y: 200 }
+    const mid = { x: 100, y: 100 }
+    const far = (c: Vec) => Math.hypot(c.x - mid.x, c.y - mid.y)
+    const small = tapeLabelOffset(a, b, 40, H, GAP)
+    const large = tapeLabelOffset(a, b, 120, H, GAP)
+    expect(far(large)).toBeGreaterThan(far(small))
+    expectClearOfLine(a, b, large, 120, H, GAP)
+  })
+
+  it('puts the label above a zero-length segment', () => {
+    const p = { x: 12, y: 34 }
+    const c = tapeLabelOffset(p, { x: 12, y: 34 }, W, H, GAP)
+    expect(c).toEqual({ x: 12, y: 34 - (H / 2 + GAP) })
   })
 })

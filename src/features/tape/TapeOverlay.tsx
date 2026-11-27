@@ -19,7 +19,7 @@ import { FREE_SNAP_LABEL, getModifiers, isFreeSnap, subscribeModifiers, syncModi
 import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import { toast } from '../toast'
-import { fmtTapeCm, measureSegment, snapTapePoint } from './geometry'
+import { fmtTapeCm, measureSegment, snapTapePoint, tapeLabelOffset } from './geometry'
 import type { TapeSnap } from './geometry'
 
 const SKY = '#38bdf8'
@@ -42,12 +42,9 @@ export function TapeOverlay() {
   return <Surface />
 }
 
-/** Dark rounded pill with one or two text lines, drawn in world cm from screen-constant sizes. */
-function WorldLabel({ cx, cy, text, sub, onClick }: { cx: number; cy: number; text: string; sub?: string; onClick?: () => void }) {
+/** Compact dark pill with one text line (the distance), drawn in world cm from screen-constant sizes. */
+function WorldLabel({ cx, cy, w, h, text, onClick }: { cx: number; cy: number; w: number; h: number; text: string; onClick?: () => void }) {
   const { px } = useViewport()
-  const h = px(sub ? 34 : 18)
-  const chars = Math.max(text.length, sub?.length ?? 0)
-  const w = px(chars * 6.6 + 14)
   return (
     <g
       pointerEvents={onClick ? 'all' : 'none'}
@@ -61,14 +58,9 @@ function WorldLabel({ cx, cy, text, sub, onClick }: { cx: number; cy: number; te
         x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={Math.min(h / 2, px(12))}
         fill="#0d1216" fillOpacity={0.94} stroke={SKY} strokeOpacity={0.45} strokeWidth={px(1)}
       />
-      <text x={cx} y={sub ? cy - px(7) : cy} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill="#e0f2fe">
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill="#e0f2fe">
         {text}
       </text>
-      {sub && (
-        <text x={cx} y={cy + px(8)} textAnchor="middle" dominantBaseline="central" fontSize={px(10)} fill="#94a3b8">
-          {sub}
-        </text>
-      )}
     </g>
   )
 }
@@ -197,9 +189,15 @@ function Surface() {
 
   const seg = a && b ? measureSegment(a.point, b.point) : null
   const show = !!a && !!b && !!seg && seg.distCm > 0
-  const midX = a && b ? (a.point.x + b.point.x) / 2 : 0
-  const midY = a && b ? (a.point.y + b.point.y) / 2 : 0
   const locked = phase === 'locked'
+  /** The canvas pill shows the distance only: one compact line, never two. */
+  const labelText = seg ? fmtTapeCm(seg.distCm) : ''
+  const labelH = px(20)
+  const labelW = px(labelText.length * 6.6 + 12)
+  /** Label centre, pushed clear of the line so the pill never covers it at any angle. */
+  const labelPos = a && b
+    ? tapeLabelOffset(a.point, b.point, labelW, labelH, px(10))
+    : { x: 0, y: 0 }
 
   const copyDistance = () => {
     if (!seg) return
@@ -210,12 +208,23 @@ function Surface() {
     else fail()
   }
 
+  /** Full readout, kept in the hint bar so it never sits on the drawing. */
+  const readout = show && seg
+    ? `${fmtTapeCm(seg.distCm)} · Δx ${fmtTapeCm(Math.abs(seg.dxCm))} · Δy ${fmtTapeCm(Math.abs(seg.dyCm))} · ${Math.round(seg.angleDeg * 10) / 10}°`
+    : null
+
   const hint =
     phase === 'idle'
       ? `Tape (M): Click or drag to measure · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`
-      : locked
-        ? `Tape: Click the label to copy · × or click to measure again · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`
-        : `Tape: Click or drag the second point · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`
+      : (
+        <>
+          {readout && <span data-testid="tape-readout" className="font-semibold text-sky-200">{readout}</span>}
+          {readout ? ' · ' : ''}
+          {locked
+            ? `Click the label to copy · × or click to measure again · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`
+            : `Click or drag the second point · Shift 45° · ${FREE_SNAP_LABEL} no snap · Esc exit`}
+        </>
+      )
 
   return (
     <g data-testid="tape-overlay">
@@ -252,9 +261,9 @@ function Surface() {
             <EndDot p={b.point} snapped={b.snapped} locked={locked} />
           </g>
           <WorldLabel
-            cx={midX} cy={midY - px(locked ? 24 : 14)}
-            text={fmtTapeCm(seg.distCm)}
-            sub={`Δx ${fmtTapeCm(Math.abs(seg.dxCm))} · Δy ${fmtTapeCm(Math.abs(seg.dyCm))} · ${Math.round(seg.angleDeg * 10) / 10}°`}
+            cx={labelPos.x} cy={labelPos.y}
+            w={labelW} h={labelH}
+            text={labelText}
             onClick={locked ? copyDistance : undefined}
           />
           {locked && (

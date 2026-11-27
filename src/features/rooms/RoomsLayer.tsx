@@ -22,6 +22,7 @@ import { DEFAULT_PATTERN_FILL, PATTERN_DEFS, isPatterned, patternId } from './fl
 import { snapPoint, snapRoomDelta } from './snap'
 import type { SnapGuide } from './snap'
 import { computeTextLod } from './textLod'
+import type { TextLod } from './textLod'
 import { WALL_COLOR, wallMaskModel, wallStrokeMaskModel, wallThicknessOf } from './walls'
 import { CANVAS_BG, CANVAS_HALO, CANVAS_SELECT } from '../../shell/canvasTokens'
 
@@ -99,10 +100,11 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   const selectedVertex = selection.kind === 'vertex' && inArtboard(selection) ? selection : null
 
   // Text level of detail: depends on zoom and selection, never on pan.
-  const textLod = useMemo(() => computeTextLod({
+  // Design mode draws no room or wall label at all, so the computation is skipped there.
+  const textLod = useMemo<TextLod>(() => (design ? { rooms: new Map(), walls: new Map() } : computeTextLod({
     rooms: roomGeo, zoom, wallThicknessCm: thickness, precisionCm: artboard.precisionCm,
     selectedRoomIds: selectedIds, selectedWall, selectedVertex,
-  }), [roomGeo, zoom, thickness, selectedIds, selectedWall, selectedVertex, artboard.precisionCm])
+  })), [design, roomGeo, zoom, thickness, selectedIds, selectedWall, selectedVertex, artboard.precisionCm])
 
   const toLocal = (cx: number, cy: number): Vec => {
     const w = toWorld(cx, cy)
@@ -405,6 +407,8 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
               {...gestureProps}
             />
             {(() => {
+              // Design mode shows no room name and no area on the canvas (the aria-label stays).
+              if (design) return null
               const lod = textLod.rooms.get(room.id)
               if (!label || !lod || lod.tier === 'hidden') return null
               const { p, vertical } = lod
@@ -453,7 +457,8 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
       {roomGeo.map(({ room, walls }) => {
         return walls.map((w) => {
           const isSel = selectedWall?.roomId === room.id && selectedWall.edgeIndex === w.index
-          const wl = textLod.walls.get(`${room.id}:${w.index}`)
+          // Design mode shows no wall length on the canvas (the aria-label stays).
+          const wl = design ? undefined : textLod.walls.get(`${room.id}:${w.index}`)
           return (
             <g key={`${room.id}-${w.index}`} data-wall={`${room.id}:${w.index}`} data-entity="wall" data-id={room.id} data-edge={w.index} aria-label={`Wall ${w.index + 1} of ${room.name}, ${Math.round(w.lengthCm)} cm`}>
               {/* Thick walls paint the wall lines inside the room group above, behind the stroke mask. */}
