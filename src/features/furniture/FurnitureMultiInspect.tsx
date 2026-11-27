@@ -89,7 +89,7 @@ export function FurnitureMultiInspect({ artboardId, furnitureIds }: FurnitureMul
             aria-label="Flip horizontal"
             onClick={() => flipSelection('x')}
           >
-            <FlipHorizontal2 size={14} aria-hidden="true" />
+            <FlipVertical2 size={14} aria-hidden="true" />
             Flip H
           </button>
           <button
@@ -99,7 +99,7 @@ export function FurnitureMultiInspect({ artboardId, furnitureIds }: FurnitureMul
             aria-label="Flip vertical"
             onClick={() => flipSelection('y')}
           >
-            <FlipVertical2 size={14} aria-hidden="true" />
+            <FlipHorizontal2 size={14} aria-hidden="true" />
             Flip V
           </button>
         </div>

@@ -396,7 +396,7 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
               aria-pressed={!!item.flipX}
               onClick={() => flipSelection('x')}
             >
-              <FlipHorizontal2 size={14} aria-hidden="true" />
+              <FlipVertical2 size={14} aria-hidden="true" />
               Flip H
             </button>
             <button
@@ -407,7 +407,7 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
               aria-pressed={!!item.flipY}
               onClick={() => flipSelection('y')}
             >
-              <FlipVertical2 size={14} aria-hidden="true" />
+              <FlipHorizontal2 size={14} aria-hidden="true" />
               Flip V
             </button>
           </div>
