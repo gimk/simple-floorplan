@@ -1,25 +1,35 @@
 // Reference images in world space (background layer). Plan mode + unlocked: click selects, drag moves,
 // corner handles resize proportionally. Design mode: non-interactive.
-import { useRef } from 'react'
+import { memo, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useDoc } from '../../model/store'
 import { useUi } from '../../shell/uiStore'
 import { useViewport } from '../../canvas/Viewport'
 import { resizeFromCorner, cornerPx } from './scale'
 import type { RefImage } from '../../model/types'
 import { CANVAS_SELECT_DEEP } from '../../shell/canvasTokens'
+import { MAX_DISPLAY_PX, displayCacheVersion, getCachedDisplay, needsDownscale, requestDisplay, subscribeDisplayCache } from './displayCache'
 
 type Drag =
   | { kind: 'move'; id: string; start: { x: number; y: number }; x0: number; y0: number }
   | { kind: 'corner'; id: string; corner: number }
 
-export function RefImagesLayer() {
+function RefImagesLayerImpl() {
   const refImages = useDoc((s) => s.doc.refImages)
   const mode = useUi((s) => s.mode)
   const tool = useUi((s) => s.tool)
   const selection = useUi((s) => s.selection)
-  const { toWorld, px } = useViewport()
+  const { toWorld, px, zoom } = useViewport()
+  useSyncExternalStore(subscribeDisplayCache, displayCacheVersion)
   const drag = useRef<Drag | null>(null)
   const interactive = mode === 'plan' && tool === 'select'
+  const visibleImages = useMemo(() => refImages.filter((i) => i.visible), [refImages])
+
+  // Kick off one-time downscale for large images (display only; doc src is never changed).
+  useEffect(() => {
+    for (const i of visibleImages) {
+      if (needsDownscale(i.naturalWidth, i.naturalHeight)) void requestDisplay(i.src)
+    }
+  }, [visibleImages])
 
   const onDown = (e: React.PointerEvent, img: RefImage) => {
     if (!interactive || e.button !== 0) return
@@ -62,16 +72,19 @@ export function RefImagesLayer() {
 
   return (
     <g data-testid="ref-images-layer" style={{ pointerEvents: interactive ? undefined : 'none' }}>
-      {refImages.filter((i) => i.visible).map((img) => {
+      {visibleImages.map((img) => {
         const w = img.naturalWidth * img.cmPerPx, h = img.naturalHeight * img.cmPerPx
         const cx = img.xCm + w / 2, cy = img.yCm + h / 2
         const selected = selection.kind === 'refImage' && selection.imageId === img.id
         const canEdit = interactive && !img.locked
+        const onScreen = Math.max(w, h) * zoom
+        const lowRes = needsDownscale(img.naturalWidth, img.naturalHeight) && onScreen <= MAX_DISPLAY_PX
+          ? getCachedDisplay(img.src) : undefined
         return (
           <g key={img.id} transform={`rotate(${img.rotationDeg} ${cx} ${cy})`}>
             <image
               data-testid={`ref-image-${img.id}`}
-              href={img.src}
+              href={lowRes ?? img.src}
               x={img.xCm} y={img.yCm} width={w} height={h}
               preserveAspectRatio="none"
               opacity={img.opacity}
@@ -108,3 +121,5 @@ export function RefImagesLayer() {
     </g>
   )
 }
+
+export const RefImagesLayer = memo(RefImagesLayerImpl)

@@ -54,6 +54,20 @@ describe('labelPoint', () => {
     const p = labelPoint([outer, hole])
     expect(pointInPolygon(p, hole)).toBe(false)
   })
+  it('caches a single ring and still sees a ring moved in place', () => {
+    const r = P(0, 0, 400, 0, 400, 300, 0, 300)
+    const first = labelPoint([r])
+    expect(first).toEqual({ x: 200, y: 150 })
+    // Same array, same coordinates: the cached point comes back, and the caller may write to it.
+    const again = labelPoint([r])
+    expect(again).toEqual(first)
+    expect(again).not.toBe(first)
+    again.x = -1
+    expect(labelPoint([r])).toEqual({ x: 200, y: 150 })
+    // Same array, new coordinates: the stale point must not be reused.
+    for (const v of r) { v.x += 100 }
+    expect(labelPoint([r])).toEqual({ x: 300, y: 150 })
+  })
 })
 
 describe('labelPlacement', () => {

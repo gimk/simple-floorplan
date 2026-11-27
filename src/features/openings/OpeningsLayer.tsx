@@ -1,7 +1,7 @@
 // Openings (doors, windows, gaps) of one artboard, drawn at 1px screen thickness (artboard-local cm).
 // Render inside <ArtboardContent> after RoomsLayer. Plan + select tool: select, move along walls, resize.
 // Design mode: drawn but not interactive.
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import type { Vec } from '../../model/geometry'
@@ -71,7 +71,7 @@ function arcD(a: OpeningSymbolArc): string {
  * already cuts the room border lines out of the opening, even when this opening sits on a flush wall
  * and `wall` is null (effective thickness 0). Default: the wall frame itself.
  */
-export function OpeningShape({ op, selected = false, ghost = false, wall = null, strokeMasked }: { op: Opening; selected?: boolean; ghost?: boolean; wall?: OpeningWall | null; strokeMasked?: boolean }) {
+function OpeningShapeImpl({ op, selected = false, ghost = false, wall = null, strokeMasked }: { op: Opening; selected?: boolean; ghost?: boolean; wall?: OpeningWall | null; strokeMasked?: boolean }) {
   const { px } = useViewport()
   const { start, end } = openingEndpoints(op)
   const color = selected ? ORANGE : ghost ? ORANGE : LINE
@@ -137,13 +137,16 @@ export function OpeningShape({ op, selected = false, ghost = false, wall = null,
   )
 }
 
-export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
+function OpeningsLayerImpl({ artboard }: { artboard: Artboard }) {
   const { px, toWorld } = useViewport()
   const mode = useUi((s) => s.mode)
   const tool = useUi((s) => s.tool)
   const selection = useUi((s) => s.selection)
   const interactive = mode === 'plan' && tool === 'select'
   const thickness = wallThicknessOf(artboard)
+  // Host wall + endpoints per opening: independent of zoom, so pan/zoom does not re-scan the rooms.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const openingGeo = useMemo(() => artboard.openings.map((op) => ({ op, ends: openingEndpoints(op), wall: openingWall(artboard.rooms, op, thickness) })), [artboard.openings, artboard.rooms, thickness])
   const selectedId = selection.kind === 'opening' && selection.artboardId === artboard.id ? selection.openingId : null
   const gesture = useRef<Gesture | null>(null)
 
@@ -269,15 +272,14 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
     // Design mode: the arcs stay visible above the furniture but never take the pointer, so drags
     // and clicks reach the furniture drawn underneath them.
     <g data-testid={`openings-layer-${artboard.id}`} pointerEvents={interactive ? undefined : 'none'}>
-      {artboard.openings.map((op) => {
-        const { start, end } = openingEndpoints(op)
-        const wall = openingWall(artboard.rooms, op, thickness)
+      {openingGeo.map(({ op, ends, wall }) => {
+        const { start, end } = ends
         const sel = op.id === selectedId
         // Thick wall: the hit band sits on the wall centreline, across the whole wall thickness.
         // A null frame (thin artboard, or a flush wall whose body is masked away) keeps it on the line.
         const hit = openingHitEndpoints(start, end, wall)
         return (
-          <g key={op.id} data-opening-id={op.id}>
+          <g key={op.id} data-opening-id={op.id} data-entity="opening" data-id={op.id} aria-label={`${op.kind} (${Math.round(op.widthCm)} cm)`}>
             <OpeningShape op={op} selected={sel} wall={wall} strokeMasked={thickness > 0} />
             {interactive && (
               <line
@@ -289,10 +291,9 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
           </g>
         )
       })}
-      {interactive && artboard.openings.filter((o) => o.id === selectedId).map((op) => {
-        const ends = openingEndpoints(op)
+      {interactive && openingGeo.filter((g) => g.op.id === selectedId).map(({ op, ends, wall: selWall }) => {
         // The end handles sit on the middle of the jambs: same wall-centred line as the hit band.
-        const { start: a, end: b } = openingHitEndpoints(ends.start, ends.end, openingWall(artboard.rooms, op, thickness))
+        const { start: a, end: b } = openingHitEndpoints(ends.start, ends.end, selWall)
         const rad = (op.angleDeg * Math.PI) / 180
         const lx = (a.x + b.x) / 2 + Math.sin(rad) * px(14), ly = (a.y + b.y) / 2 - Math.cos(rad) * px(14)
         return (
@@ -315,3 +316,6 @@ export function OpeningsLayer({ artboard }: { artboard: Artboard }) {
     </g>
   )
 }
+
+export const OpeningShape = memo(OpeningShapeImpl)
+export const OpeningsLayer = memo(OpeningsLayerImpl)

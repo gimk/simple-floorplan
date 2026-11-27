@@ -71,7 +71,7 @@ export function PlanToolbar() {
       aria-label={mode === 'plan' ? 'Plan tools' : 'Design tools'}
       aria-orientation="horizontal"
       onKeyDown={onKeyDown}
-      className="pointer-events-auto absolute bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-white/15 bg-surface-2/95 p-1 shadow-xl backdrop-blur max-md:bottom-[max(1rem,env(safe-area-inset-bottom))]"
+      className="pointer-events-auto absolute bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-white/15 bg-surface-2 p-1 shadow-xl max-md:bottom-[max(1rem,env(safe-area-inset-bottom))]"
     >
       {tools.map((t, i) => {
         const active = tool === t.tool

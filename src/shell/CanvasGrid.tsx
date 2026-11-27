@@ -1,179 +1,109 @@
-// Subtle canvas grid drawn in world space . Spacing adapts to zoom so
-// lines stay ~32 screen px apart. Rendered inside the world <g>, pointer-events off.
-// The lines are aligned to the origin of the active artboard (falling back to the first artboard,
-// then to the world origin), so a major line passes through that origin.
+// Subtle canvas grid drawn in world space. Spacing adapts to zoom so lines stay ~32 screen px apart.
+// Rendered inside the world <g>, pointer-events off.
 //
-// The grid only shows at full contrast inside the active artboard: the crisp lines are clipped to
-// `#active-artboard-grid-clip`, which holds the active artboard frame. A faint grid covers the whole
-// viewport but is masked by `#outside-grid-mask`, whose black rects cut out EVERY artboard frame,
-// so no grid at all is drawn inside the unselected artboards. With no artboard, only the crisp grid
-// is drawn, over the whole viewport.
-import { useEffect, useState } from 'react'
+// The grid is an SVG <pattern> in world units (one tile = 5 grid steps, so every 5th line is a major
+// one). It is painted on ONE rect that is only as big as the visible viewport. Viewport tells us the
+// live view on every pan frame and we move/resize that rect imperatively in the same rAF as the <g>
+// transform. The pattern stays anchored in world space, so it never needs an update while panning.
+// No giant coordinates, no even-odd path, no mask. The pattern hangs from the origin of the active
+// artboard (else the first, else the world origin), so a major line passes through that origin.
+//
+// Crisp grid: over the active artboard frame only (whole viewport when there is no artboard).
+// Faint grid: the viewport rect at low opacity, with an opaque canvas-colour cover over every artboard.
+import { useEffect, useRef } from 'react'
 import { useViewport } from '../canvas/Viewport'
 import { useDoc } from '../model/store'
 import { artboardFrame } from '../features/artboards/frame'
+import { CANVAS_BG } from './canvasTokens'
 import { useUi } from './uiStore'
 import { gridStep } from './viewMath'
-
-type Size = { w: number; h: number }
-
-const FALLBACK: Size = { w: 800, h: 600 }
 
 /** Opacity of the grid outside the artboards, relative to its normal contrast. */
 const OUTSIDE_OPACITY = 0.42
 
-/** Id of the clip path that keeps the crisp grid inside the active artboard frame. */
-const ACTIVE_CLIP_ID = 'active-artboard-grid-clip'
+const PATTERN_ID = 'canvas-grid-pattern'
 
-/** Id of the mask that removes the faint grid from every artboard frame. */
-const OUTSIDE_MASK_ID = 'outside-grid-mask'
-
-/** Current size of the canvas element, in screen px, with a safe fallback. */
-const readSize = (svg: SVGSVGElement | null): Size => ({
-  w: svg?.clientWidth || FALLBACK.w,
-  h: svg?.clientHeight || FALLBACK.h,
-})
+/** Extra screen px painted past each viewport edge, so a sub-pixel move never shows a gap. */
+const PAD_PX = 24
 
 export function CanvasGrid() {
-  const { zoom, px, svg } = useViewport()
-  const view = useUi((s) => s.view)
+  const { zoom, px, svg, subscribeLive } = useViewport()
+  const followRef = useRef<SVGRectElement>(null)
+  const sizeRef = useRef({ w: 0, h: 0 })
   const activeArtboardId = useUi((s) => s.activeArtboardId)
   const artboards = useDoc((s) => s.doc.artboards)
-  // The grid must cover the whole visible canvas after a window resize: keep the size in state and
-  // follow the element with a ResizeObserver instead of reading clientWidth once per render.
-  const [size, setSize] = useState<Size>(() => readSize(svg))
-
-  useEffect(() => {
-    if (!svg) return
-    const update = () => {
-      const next = readSize(svg)
-      setSize((prev) => (prev.w === next.w && prev.h === next.h ? prev : next))
-    }
-    update()
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', update)
-      return () => window.removeEventListener('resize', update)
-    }
-    const ro = new ResizeObserver(update)
-    ro.observe(svg)
-    return () => ro.disconnect()
-  }, [svg])
 
   const step = gridStep(zoom)
-  const { w, h } = size
-  const x0 = view.x - step
-  const y0 = view.y - step
-  const x1 = view.x + w / zoom + step
-  const y1 = view.y + h / zoom + step
+  const tile = step * 5
 
   // Origin the grid hangs from: the active artboard, else the first one, else the world origin.
   const origin = artboards.find((a) => a.id === activeArtboardId) ?? artboards[0]
   const ox = origin?.xCm ?? 0
   const oy = origin?.yCm ?? 0
+  const activeFrame = origin ? artboardFrame(origin) : null
 
-  // The active artboard gets the crisp grid; the other frames get no grid at all.
-  const active = origin ?? null
-  const activeFrame = active ? artboardFrame(active) : null
+  const unit = px(1)
+  // Shift the tile by half a step so no line sits on the tile edge (it would be clipped in half).
+  const half = step / 2
+  const lines = [0, 1, 2, 3, 4]
 
-  // One line every `step` cm from the origin; every 5th line is a major one (integer count from
-  // the origin avoids floating-point modulo tests).
-  const xs: { x: number; major: boolean }[] = []
-  for (let i = Math.floor((x0 - ox) / step); ox + i * step <= x1; i++) {
-    xs.push({ x: ox + i * step, major: i % 5 === 0 })
-  }
-  const ys: { y: number; major: boolean }[] = []
-  for (let i = Math.floor((y0 - oy) / step); oy + i * step <= y1; i++) {
-    ys.push({ y: oy + i * step, major: i % 5 === 0 })
-  }
+  // Keep the viewport-sized rect on the visible world area, in the same frame as the <g> transform.
+  useEffect(() => {
+    if (!svg) return
+    const place = (v: { x: number; y: number; zoom: number }) => {
+      const r = followRef.current
+      if (!r) return
+      const { w, h } = sizeRef.current
+      const pad = PAD_PX / v.zoom
+      r.setAttribute('x', String(v.x - pad))
+      r.setAttribute('y', String(v.y - pad))
+      r.setAttribute('width', String(w / v.zoom + 2 * pad))
+      r.setAttribute('height', String(h / v.zoom + 2 * pad))
+    }
+    const measure = () => {
+      sizeRef.current = { w: svg.clientWidth, h: svg.clientHeight }
+      place(useUi.getState().view)
+    }
+    measure()
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    ro?.observe(svg)
+    const off = subscribeLive(place)
+    return () => { ro?.disconnect(); off() }
+  }, [svg, subscribeLive])
 
   return (
     <g pointerEvents="none" aria-hidden="true">
       <defs>
-        <clipPath id={ACTIVE_CLIP_ID} clipPathUnits="userSpaceOnUse">
-          {activeFrame && (
-            <rect
-              x={activeFrame.x}
-              y={activeFrame.y}
-              width={activeFrame.width}
-              height={activeFrame.height}
-            />
-          )}
-        </clipPath>
-        <mask
-          id={OUTSIDE_MASK_ID}
-          maskUnits="userSpaceOnUse"
-          x={x0}
-          y={y0}
-          width={x1 - x0}
-          height={y1 - y0}
+        <pattern
+          id={PATTERN_ID}
+          patternUnits="userSpaceOnUse"
+          x={ox - half}
+          y={oy - half}
+          width={tile}
+          height={tile}
         >
-          {/* White shows the faint grid, the black artboard rects hide it inside every frame. */}
-          <rect x={x0} y={y0} width={x1 - x0} height={y1 - y0} fill="white" />
-          {artboards.map((a) => {
-            const f = artboardFrame(a)
+          {lines.map((i) => {
+            const at = half + i * step
+            const cls = i === 0 ? 'stroke-white/[0.14]' : 'stroke-white/[0.07]'
             return (
-              <rect
-                key={a.id}
-                x={f.x}
-                y={f.y}
-                width={f.width}
-                height={f.height}
-                fill="black"
-              />
+              <g key={i}>
+                <line x1={at} y1={0} x2={at} y2={tile} strokeWidth={unit} className={cls} />
+                <line x1={0} y1={at} x2={tile} y2={at} strokeWidth={unit} className={cls} />
+              </g>
             )
           })}
-        </mask>
+        </pattern>
       </defs>
-      {/* Faint grid outside the artboards only: the black rects of the mask cut the frames out. */}
-      {artboards.length > 0 && (
-        <g opacity={OUTSIDE_OPACITY} mask={`url(#${OUTSIDE_MASK_ID})`}>
-          <GridLines xs={xs} ys={ys} x0={x0} y0={y0} x1={x1} y1={y1} unit={px(1)} />
-        </g>
+      {/* Viewport-sized grid rect (position set imperatively): faint when artboards exist. */}
+      <rect ref={followRef} fill={`url(#${PATTERN_ID})`} opacity={artboards.length > 0 ? OUTSIDE_OPACITY : 1} />
+      {/* Artboards hide the faint grid; the active one gets the crisp grid back on top. */}
+      {artboards.map((a) => {
+        const f = artboardFrame(a)
+        return <rect key={a.id} x={f.x} y={f.y} width={f.width} height={f.height} fill={CANVAS_BG} />
+      })}
+      {activeFrame && (
+        <rect x={activeFrame.x} y={activeFrame.y} width={activeFrame.width} height={activeFrame.height} fill={`url(#${PATTERN_ID})`} />
       )}
-      {/* Crisp grid, inside the active artboard only (whole viewport when there is no artboard). */}
-      <g clipPath={activeFrame ? `url(#${ACTIVE_CLIP_ID})` : undefined}>
-        <GridLines xs={xs} ys={ys} x0={x0} y0={y0} x1={x1} y1={y1} unit={px(1)} />
-      </g>
     </g>
-  )
-}
-
-/** The grid lines themselves: one line per entry of `xs` / `ys`, `unit` is 1 screen px in cm. */
-function GridLines({
-  xs,
-  ys,
-  x0,
-  y0,
-  x1,
-  y1,
-  unit,
-}: {
-  xs: { x: number; major: boolean }[]
-  ys: { y: number; major: boolean }[]
-  x0: number
-  y0: number
-  x1: number
-  y1: number
-  unit: number
-}) {
-  return (
-    <>
-      {xs.map(({ x, major }) => (
-        <line
-          key={`x${x}`}
-          x1={x} y1={y0} x2={x} y2={y1}
-          strokeWidth={unit}
-          className={major ? 'stroke-white/[0.14]' : 'stroke-white/[0.07]'}
-        />
-      ))}
-      {ys.map(({ y, major }) => (
-        <line
-          key={`y${y}`}
-          x1={x0} y1={y} x2={x1} y2={y}
-          strokeWidth={unit}
-          className={major ? 'stroke-white/[0.14]' : 'stroke-white/[0.07]'}
-        />
-      ))}
-    </>
   )
 }

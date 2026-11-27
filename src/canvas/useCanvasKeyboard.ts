@@ -3,7 +3,7 @@
 //    (focus leaves the canvas after the last / before the first item, so nobody gets trapped);
 //  - arrow keys nudge the selected room, opening or furniture by 1 cm (10 cm with Shift), as one undo step;
 //  - `announce` returns the text for an aria-live region that describes the selection.
-import { useCallback, useMemo, type KeyboardEvent } from 'react'
+import { useCallback, type KeyboardEvent } from 'react'
 import type { Artboard, ProjectDoc, Selection } from '../model/types'
 import { area } from '../model/geometry'
 import { useDoc } from '../model/store'
@@ -139,8 +139,9 @@ export function describeSelection(doc: ProjectDoc, sel: Selection): string {
 /** Key handler for the focused canvas, plus the live-region text. */
 export function useCanvasKeyboard() {
   const selection = useUi((s) => s.selection)
-  const doc = useDoc((s) => s.doc)
-  const announcement = useMemo(() => describeSelection(doc, selection), [doc, selection])
+  // Subscribe to the announcement string only: a doc mutation that leaves the text unchanged
+  // (every drag frame) must not re-render the viewport.
+  const announcement = useDoc(useCallback((s) => describeSelection(s.doc, selection), [selection]))
 
   const onKeyDown = useCallback((e: KeyboardEvent<SVGSVGElement>) => {
     // Only when the canvas itself has focus, not a control inside it.

@@ -37,8 +37,10 @@ describe('RoomsLayer with thick walls', () => {
   it('adds a stroke mask and masks the room border of both rooms', () => {
     const html = renderToStaticMarkup(<RoomsLayer artboard={board(10)} />)
     expect(html).toContain(`wall-stroke-mask-${AB}`)
-    // One masked stroke group per room, declared after the interactive fill polygons.
-    expect(count(html, 'data-testid="room-strokes-')).toBe(2)
+    // ONE masked stroke group for all rooms (a single mask pass), holding one entry per room.
+    expect(count(html, 'data-testid="room-strokes-')).toBe(1)
+    expect(count(html, 'data-room-stroke="')).toBe(2)
+    expect(count(html, 'mask="url(#wall-stroke-mask-')).toBe(1)
     expect(html).toContain(`mask="url(#wall-stroke-mask-${AB})"`)
     // The interactive fill keeps its handlers and loses its stroke, so no line crosses the opening.
     expect(count(html, 'stroke="none"')).toBe(2)

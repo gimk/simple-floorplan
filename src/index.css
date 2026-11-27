@@ -55,3 +55,7 @@ body { font-family: system-ui, -apple-system, sans-serif; background: var(--colo
     outline-offset: 1px;
   }
 }
+
+/* Active pan (set imperatively by Viewport): skip SVG hit-testing and cheapen text while the view moves. */
+svg[data-panning="true"] * { pointer-events: none !important; }
+svg[data-panning="true"] text { text-rendering: optimizeSpeed; paint-order: normal; stroke: none; }

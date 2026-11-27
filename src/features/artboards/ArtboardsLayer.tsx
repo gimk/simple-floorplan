@@ -16,7 +16,7 @@
 //
 // Draw the frame and the header OUTSIDE `ArtboardContent`; render the rooms, openings and
 // furniture of the artboard INSIDE `ArtboardContent`, which applies the artboard offset.
-import { useEffect, useRef, type ReactNode } from 'react'
+import { memo, useEffect, useRef, type ReactNode } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { useDoc } from '../../model/store'
 import type { Artboard } from '../../model/types'
@@ -90,7 +90,7 @@ type DragState = {
 }
 
 /** Screen-sized header of one artboard: name (select + drag) and a duplicate button. */
-function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; frame: ArtboardFrame; highlighted: boolean }) {
+const ArtboardHeader = memo(function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; frame: ArtboardFrame; highlighted: boolean }) {
   const { px, toWorld } = useViewport()
   const mode = useUi((s) => s.mode)
   const drag = useRef<DragState | null>(null)
@@ -232,7 +232,7 @@ function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; 
       </g>
     </g>
   )
-}
+})
 
 /** Which frame edges a resize drag moves: -1 = the left / top edge, 0 = fixed, 1 = the right / bottom edge. */
 type HandleSide = -1 | 0 | 1
@@ -305,7 +305,7 @@ const GRIPS: Grip[] = [
  * Each drag is one undo step, clamped to the minimum frame size and rounded to `a.precisionCm`
  * unless Cmd is held. The frame never gets smaller than its content, so a shrink stops there.
  */
-function ArtboardResizeHandles({ artboard, frame, selected }: { artboard: Artboard; frame: ArtboardFrame; selected: boolean }) {
+const ArtboardResizeHandles = memo(function ArtboardResizeHandles({ artboard, frame, selected }: { artboard: Artboard; frame: ArtboardFrame; selected: boolean }) {
   const { px, toWorld } = useViewport()
   const drag = useRef<ResizeState | null>(null)
 
@@ -489,14 +489,14 @@ function ArtboardResizeHandles({ artboard, frame, selected }: { artboard: Artboa
       })}
     </g>
   )
-}
+})
 
 /**
  * Every artboard of the document as a frame, with its header, duplicate button, a border click
  * target and (Plan mode, select tool) its resize hit zones and corner handles.
  * Render it inside the world `<g>` of the Viewport, under the rooms of the artboards.
  */
-export function ArtboardsLayer() {
+function ArtboardsLayerImpl() {
   const artboards = useDoc((s) => s.doc.artboards)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
   const selection = useUi((s) => s.selection)
@@ -557,3 +557,5 @@ export function ArtboardsLayer() {
     </g>
   )
 }
+
+export const ArtboardsLayer = memo(ArtboardsLayerImpl)

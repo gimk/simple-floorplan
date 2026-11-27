@@ -1,7 +1,7 @@
 // Furniture of one artboard (artboard-local cm). Render inside <ArtboardContent>.
 // Plan mode: drawn dimmed and not interactive. Design mode: select, move (Alt = duplicate, Alt mid-drag =
 // no snap), resize from the 4 corners (Shift = keep ratio) and rotate (15 deg, Shift 45, Alt 1).
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import type { Vec } from '../../model/geometry'
@@ -51,7 +51,7 @@ const CORNER_CURSOR = (c: Corner) => (c.sx === c.sy ? 'nwse-resize' : 'nesw-resi
 
 const fmtCm = (v: number): string => String(Math.round(v * 10) / 10)
 
-export function FurnitureLayer({ artboard }: { artboard: Artboard }) {
+function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const { px, toWorld, zoom } = useViewport()
   const mode = useUi((s) => s.mode)
   const selection = useUi((s) => s.selection)
@@ -250,7 +250,7 @@ export function FurnitureLayer({ artboard }: { artboard: Artboard }) {
       pointerEvents={design ? undefined : 'none'}
     >
       {artboard.furniture.map((item) => (
-        <g key={item.id} data-furniture-id={item.id}>
+        <g key={item.id} data-furniture-id={item.id} data-entity="furniture" data-id={item.id} aria-label={`${item.name} (${Math.round(item.widthCm)}×${Math.round(item.depthCm)} cm)`}>
           <g
             transform={`translate(${item.xCm} ${item.yCm}) rotate(${item.rotationDeg})`}
             style={design ? { cursor: draggingId === item.id ? 'grabbing' : 'grab' } : undefined}
@@ -322,3 +322,5 @@ export function FurnitureLayer({ artboard }: { artboard: Artboard }) {
     </g>
   )
 }
+
+export const FurnitureLayer = memo(FurnitureLayerImpl)

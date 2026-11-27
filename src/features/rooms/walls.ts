@@ -210,8 +210,9 @@ export function wallStrokeMaskModel(
       width: op.widthCm,
     })
   }
-  // Room strokes, wall paint lines and the cutouts all stay well inside this box.
-  return { ...maskArea(rooms, thicknessCm * 4 + 20 + pad), cutouts }
+  // Room strokes and paint lines lie on the room edges; cutouts reach at most `thicknessCm + pad`
+  // outward from them. Keep the box tight: it sets the size of the offscreen mask raster.
+  return { ...maskArea(rooms, thicknessCm + pad * 2 + 5), cutouts }
 }
 
 /** Axis box of the room polygons grown by `pad` on every side, with finite values. */
