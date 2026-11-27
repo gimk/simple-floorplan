@@ -24,8 +24,9 @@ async function boot() {
   createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
   if (params.project) {
     try {
-      useDoc.getState().hydrate(await loadProjectFromCloud(params.project))
-      markCloudSynced(useDoc.getState().doc)
+      const { doc, version } = await loadProjectFromCloud(params.project)
+      useDoc.getState().hydrate(doc)
+      markCloudSynced(useDoc.getState().doc, version)
       applyInitialUiParams(params)
     } catch (err) {
       toast(`Could not load project "${params.project}": ${err instanceof Error ? err.message : 'unknown error'}`)

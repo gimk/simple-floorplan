@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDefaultProject } from '../model/schema'
 import type { ProjectDoc, RefImage } from '../model/types'
 import {
+  CloudConflictError,
   CloudUnauthorizedError,
   clearCloudToken,
   deleteCloudProject,
@@ -51,10 +52,11 @@ describe('cloud sync', () => {
 
   it('uploads data: images to R2 and sends stripped URLs to D1', async () => {
     const f = vi.fn(async (url: string) =>
-      url.startsWith('/api/images/') ? ok({ ok: true }) : ok({ ok: true, updatedAt: '2026-01-01T00:00:00Z' }))
+      url.startsWith('/api/images/') ? ok({ ok: true }) : ok({ ok: true, version: 3, updatedAt: '2026-01-01T00:00:00Z' }))
     const doc = docWithImage(DATA_URL)
-    const res = await saveProjectToCloud(doc, f as unknown as typeof fetch)
+    const res = await saveProjectToCloud(doc, f as unknown as typeof fetch, { baseVersion: 2 })
     expect(res.updatedAt).toBe('2026-01-01T00:00:00Z')
+    expect(res.version).toBe(3)
 
     const [imgUrl, imgInit] = f.mock.calls[0] as unknown as [string, RequestInit]
     expect(imgUrl).toBe('/api/images/p1/img1')
@@ -65,19 +67,45 @@ describe('cloud sync', () => {
     expect(projUrl).toBe('/api/projects/p1')
     const body = String(projInit.body)
     expect(body).not.toContain('base64')
-    const parsed = JSON.parse(body) as { title: string; doc: ProjectDoc }
+    const parsed = JSON.parse(body) as { title: string; doc: ProjectDoc; baseVersion?: number }
     expect(parsed.title).toBe('Flat')
+    expect(parsed.baseVersion).toBe(2)
     expect(parsed.doc.refImages[0].src).toBe('/api/images/p1/img1')
     expect(doc.refImages[0].src).toBe(DATA_URL)
+  })
+
+  it('omits baseVersion when not provided and throws CloudConflictError on 409', async () => {
+    const fNoBase = vi.fn(async () => ok({ ok: true, version: 1, updatedAt: 't' }))
+    const doc = { ...createDefaultProject(), id: 'p1', title: 'Flat' }
+    await saveProjectToCloud(doc, fNoBase as unknown as typeof fetch)
+    const sent = JSON.parse(String((fNoBase.mock.calls[0] as unknown as [string, RequestInit])[1].body)) as {
+      baseVersion?: number
+    }
+    expect(sent.baseVersion).toBeUndefined()
+
+    const f409 = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: 'version_conflict', currentVersion: 7 }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    )
+    const err = await saveProjectToCloud(doc, f409 as unknown as typeof fetch, { baseVersion: 5 }).catch(
+      (e: unknown) => e,
+    )
+    expect(err).toBeInstanceOf(CloudConflictError)
+    expect((err as CloudConflictError).name).toBe('CloudConflictError')
+    expect((err as CloudConflictError).currentVersion).toBe(7)
   })
 
   it('loads a project and restores images as data URLs', async () => {
     const stored = docWithImage('/api/images/p1/img1')
     const f = vi.fn(async (url: string) =>
       url === '/api/projects/p1'
-        ? ok({ id: 'p1', title: 'Flat', doc: stored, updatedAt: 't' })
+        ? ok({ id: 'p1', title: 'Flat', doc: stored, version: 4, updatedAt: 't' })
         : new Response(Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0)), { headers: { 'Content-Type': 'image/png' } }))
-    const doc = await loadProjectFromCloud('p1', f as unknown as typeof fetch)
+    const { doc, version } = await loadProjectFromCloud('p1', f as unknown as typeof fetch)
+    expect(version).toBe(4)
     expect(doc.refImages[0].src).toBe(DATA_URL)
     expect(f).toHaveBeenCalledWith('/api/images/p1/img1', expect.anything())
   })

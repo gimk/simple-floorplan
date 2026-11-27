@@ -3,7 +3,7 @@
 import { parseProjectDoc } from '../model/schema'
 import type { ProjectDoc } from '../model/types'
 
-export type CloudProjectSummary = { id: string; title: string; updatedAt: string }
+export type CloudProjectSummary = { id: string; title: string; version?: number; updatedAt: string }
 
 export const CLOUD_TOKEN_KEY = 'sfp-cloud-token'
 const IMAGE_PREFIX = '/api/images/'
@@ -13,6 +13,16 @@ export class CloudUnauthorizedError extends Error {
   constructor(message = 'Passcode required') {
     super(message)
     this.name = 'CloudUnauthorizedError'
+  }
+}
+
+/** Thrown when PUT /api/projects/:id answers 409: the cloud has a newer version. */
+export class CloudConflictError extends Error {
+  readonly currentVersion: number
+  constructor(currentVersion: number, message = `Cloud version conflict (current version ${currentVersion})`) {
+    super(message)
+    this.name = 'CloudConflictError'
+    this.currentVersion = currentVersion
   }
 }
 
@@ -92,6 +102,12 @@ async function call(fetchFn: FetchFn, url: string, init: RequestInit = {}): Prom
     headers: { ...authHeaders(), ...(init.headers as Record<string, string> | undefined) },
   })
   if (res.status === 401) throw new CloudUnauthorizedError('Passcode required')
+  if (res.status === 409) {
+    const body = (await res.clone().json().catch(() => null)) as { currentVersion?: unknown } | null
+    if (body && typeof body.currentVersion === 'number') {
+      throw new CloudConflictError(body.currentVersion)
+    }
+  }
   if (!res.ok) {
     const detail = await errorDetail(res)
     const method = init.method ?? 'GET'
@@ -130,7 +146,15 @@ export async function listCloudProjects(fetchFn: FetchFn = fetch): Promise<Cloud
   return data.projects
 }
 
-export async function saveProjectToCloud(doc: ProjectDoc, fetchFn: FetchFn = fetch): Promise<{ updatedAt: string }> {
+export type SaveCloudOptions = {
+  baseVersion?: number | null
+}
+
+export async function saveProjectToCloud(
+  doc: ProjectDoc,
+  fetchFn: FetchFn = fetch,
+  options?: SaveCloudOptions,
+): Promise<{ updatedAt: string; version: number }> {
   const refImages = []
   for (const img of doc.refImages) {
     if (img.src.startsWith('data:')) {
@@ -143,18 +167,23 @@ export async function saveProjectToCloud(doc: ProjectDoc, fetchFn: FetchFn = fet
     }
   }
   const cloudDoc: ProjectDoc = { ...doc, refImages }
+  const payload: { title: string; doc: ProjectDoc; baseVersion?: number } = { title: doc.title, doc: cloudDoc }
+  if (typeof options?.baseVersion === 'number') payload.baseVersion = options.baseVersion
   const res = await call(fetchFn, `/api/projects/${encodeURIComponent(doc.id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: doc.title, doc: cloudDoc }),
+    body: JSON.stringify(payload),
   })
-  const data = (await res.json()) as { updatedAt: string }
-  return { updatedAt: data.updatedAt }
+  const data = (await res.json()) as { updatedAt: string; version: number }
+  return { updatedAt: data.updatedAt, version: data.version }
 }
 
-export async function loadProjectFromCloud(id: string, fetchFn: FetchFn = fetch): Promise<ProjectDoc> {
+export async function loadProjectFromCloud(
+  id: string,
+  fetchFn: FetchFn = fetch,
+): Promise<{ doc: ProjectDoc; version: number }> {
   const res = await call(fetchFn, `/api/projects/${encodeURIComponent(id)}`)
-  const data = (await res.json()) as { doc: unknown }
+  const data = (await res.json()) as { doc: unknown; version: number }
   const parsed = parseProjectDoc(data.doc)
   if (!parsed.ok) throw new Error(`Invalid cloud project: ${parsed.error}`)
   const doc = parsed.doc
@@ -168,7 +197,7 @@ export async function loadProjectFromCloud(id: string, fetchFn: FetchFn = fetch)
       refImages.push(img)
     }
   }
-  return { ...doc, refImages }
+  return { doc: { ...doc, refImages }, version: data.version }
 }
 
 export async function deleteCloudProject(id: string, fetchFn: FetchFn = fetch): Promise<void> {

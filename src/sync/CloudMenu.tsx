@@ -8,6 +8,7 @@ import { BTN, BTN_DANGER, BTN_PRIMARY, IconButton, INPUT } from '../shell/panel'
 import { useUi } from '../shell/uiStore'
 import { useDialogFocus } from '../shell/useDialogFocus'
 import {
+  CloudConflictError,
   CloudUnauthorizedError,
   clearCloudToken,
   deleteCloudProject,
@@ -20,9 +21,12 @@ import {
 } from './cloud'
 import { relativeTime } from './relativeTime'
 import {
+  getSyncedVersion,
   hasUnsyncedChanges,
   isCloudAutosaveEnabled,
+  markCloudConflict,
   markCloudSynced,
+  pullCloudProject,
   resumeCloudAutosave,
   setCloudAutosaveEnabled,
   useCloudAutosave,
@@ -192,15 +196,60 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
     setBusy(true)
     setSaving(true)
     const doc = useDoc.getState().doc
+    const baseVersion = getSyncedVersion(doc.id)
     try {
-      await saveProjectToCloud(doc)
-      markCloudSynced(doc)
+      const { version } = await saveProjectToCloud(doc, undefined, baseVersion !== null ? { baseVersion } : undefined)
+      markCloudSynced(doc, version)
       setFailed(false)
       toast(`Saved "${doc.title || 'Untitled plan'}" to cloud`, { kind: 'success' })
       await refresh()
     } catch (err) {
       if (err instanceof CloudUnauthorizedError) showLocked()
+      else if (err instanceof CloudConflictError) {
+        markCloudConflict(err.currentVersion)
+        setFailed(false)
+      } else {
+        setFailed(true)
+        toast(`Cloud save failed: ${errorText(err)}`, { kind: 'error' })
+      }
+    } finally {
+      setSaving(false)
+      setBusy(false)
+    }
+  }
+
+  const onResolveLoadCloud = async () => {
+    setBusy(true)
+    try {
+      await pullCloudProject(useDoc.getState().doc.id)
+      setFailed(false)
+      close()
+    } catch (err) {
+      if (err instanceof CloudUnauthorizedError) showLocked()
       else {
+        setFailed(true)
+        toast(`Cloud load failed: ${errorText(err)}`, { kind: 'error' })
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onResolveKeepMine = async () => {
+    setBusy(true)
+    setSaving(true)
+    const doc = useDoc.getState().doc
+    try {
+      const { version } = await saveProjectToCloud(doc, undefined, { baseVersion: auto.conflictVersion })
+      markCloudSynced(doc, version)
+      setFailed(false)
+      toast(`Saved "${doc.title || 'Untitled plan'}" to cloud`, { kind: 'success' })
+      await refresh()
+    } catch (err) {
+      if (err instanceof CloudUnauthorizedError) showLocked()
+      else if (err instanceof CloudConflictError) {
+        markCloudConflict(err.currentVersion)
+      } else {
         setFailed(true)
         toast(`Cloud save failed: ${errorText(err)}`, { kind: 'error' })
       }
@@ -214,9 +263,9 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
     setBusy(true)
     setPending(null)
     try {
-      const doc = await loadProjectFromCloud(id)
+      const { doc, version } = await loadProjectFromCloud(id)
       useDoc.getState().hydrate(doc)
-      markCloudSynced(useDoc.getState().doc)
+      markCloudSynced(useDoc.getState().doc, version)
       useUi.getState().set({ activeArtboardId: null, selection: { kind: 'none' } })
       setFailed(false)
       close()
@@ -257,21 +306,30 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
     }
   }
 
+  const isConflict = auto.status === 'conflict'
   const statusText = busy
     ? 'working'
     : locked
       ? 'locked'
       : unavailable
         ? 'unavailable'
-        : failed
-          ? 'last action failed'
-          : synced
-            ? 'connected'
-            : ''
-  const StatusIcon = locked || unavailable ? CloudOff : failed ? CloudAlert : Cloud
+        : isConflict
+          ? 'conflict'
+          : failed
+            ? 'last action failed'
+            : synced
+              ? 'connected'
+              : ''
+  const StatusIcon = locked || unavailable ? CloudOff : failed || isConflict ? CloudAlert : Cloud
   const autoBusy = autoOn && auto.status === 'saving'
   const dot =
-    busy || autoBusy ? 'animate-pulse bg-amber-400' : synced && !failed && !locked && !unavailable ? 'bg-emerald-400' : ''
+    isConflict
+      ? 'bg-amber-400'
+      : busy || autoBusy
+        ? 'animate-pulse bg-amber-400'
+        : synced && !failed && !locked && !unavailable
+          ? 'bg-emerald-400'
+          : ''
   const triggerIcon = (
     <span className="relative flex">
       <StatusIcon size={18} aria-hidden="true" />
@@ -283,21 +341,23 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
   const saveName = title.trim() || 'Untitled plan'
 
   /** Short autosave state, or nothing while the feature is off. */
-  const autoLabel = !autoOn
-    ? ''
-    : auto.status === 'pending'
-      ? 'Unsaved…'
-      : auto.status === 'saving'
-        ? 'Saving…'
-        : auto.status === 'saved'
-          ? auto.lastSavedAt
-            ? `Saved ${relativeTime(new Date(auto.lastSavedAt).toISOString())}`
-            : 'Saved'
-          : auto.status === 'error'
-            ? 'Failed'
-            : auto.status === 'paused'
-              ? 'Locked'
-              : ''
+  const autoLabel = isConflict
+    ? 'Conflict'
+    : !autoOn
+      ? ''
+      : auto.status === 'pending'
+        ? 'Unsaved…'
+        : auto.status === 'saving'
+          ? 'Saving…'
+          : auto.status === 'saved'
+            ? auto.lastSavedAt
+              ? `Saved ${relativeTime(new Date(auto.lastSavedAt).toISOString())}`
+              : 'Saved'
+            : auto.status === 'error'
+              ? 'Failed'
+              : auto.status === 'paused'
+                ? 'Locked'
+                : ''
 
   return (
     <div ref={rootRef} className="relative">
@@ -375,6 +435,29 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
             </form>
           ) : (
             <>
+              {isConflict && (
+                <div role="alert" className="mb-3 space-y-2 rounded-md border border-amber-400/30 bg-amber-400/10 p-2">
+                  <p className="text-xs leading-snug text-amber-200">The cloud has a newer version.</p>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void onResolveLoadCloud()}
+                      className={`${BTN} flex-1`}
+                    >
+                      Load cloud version
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void onResolveKeepMine()}
+                      className={`${BTN_PRIMARY} flex-1`}
+                    >
+                      Keep mine
+                    </button>
+                  </div>
+                </div>
+              )}
               <button
                 ref={saveRef}
                 type="button"

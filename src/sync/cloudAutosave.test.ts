@@ -45,7 +45,7 @@ beforeEach(() => {
   __resetCloudAutosaveForTests()
   saveMock.mockReset()
   toastMock.mockReset()
-  saveMock.mockResolvedValue({ updatedAt: '2026-01-01T00:00:00.000Z' })
+  saveMock.mockResolvedValue({ updatedAt: '2026-01-01T00:00:00.000Z', version: 1 })
   useDoc.getState().hydrate(createDefaultProject())
   useDoc.temporal.getState().clear()
 })
