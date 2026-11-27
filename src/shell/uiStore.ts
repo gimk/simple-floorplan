@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import type { Vec } from '../model/geometry'
 import type { OpeningKind, Selection } from '../model/types'
+import type { TapeSnap } from '../features/tape/geometry'
 
 export type View = { x: number; y: number; zoom: number }
 export type Mode = 'plan' | 'design'
@@ -28,6 +29,12 @@ type UiData = {
   shortcutsOpen: boolean
   /** 90° angle lock (Plan mode): drawn and edited room angles stay orthogonal. */
   ortho: boolean
+  /**
+   * The pinned (locked) Tape measurement, in world cm. It stays on the canvas after the Tape tool is
+   * left, until its x button is pressed or a new measurement starts (one at a time).
+   * UI state only: never saved in the document, never in the undo history.
+   */
+  pinnedTape: { a: TapeSnap; b: TapeSnap } | null
 }
 
 type UiState = UiData & {
@@ -47,7 +54,14 @@ export const useUi = create<UiState>((set) => ({
   drawer: null,
   shortcutsOpen: false,
   ortho: false,
+  pinnedTape: null,
   set: (patch) => set(patch),
 }))
+
+/** Pin a locked Tape measurement: it replaces the previous pinned one (only one at a time). */
+export const pinTape = (a: TapeSnap, b: TapeSnap): void => useUi.getState().set({ pinnedTape: { a, b } })
+
+/** Drop the pinned Tape measurement (its × button, or the first pointer down of a new measurement). */
+export const clearPinnedTape = (): void => useUi.getState().set({ pinnedTape: null })
 
 export type { Vec }

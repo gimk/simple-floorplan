@@ -266,7 +266,7 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
       const { doc, version } = await loadProjectFromCloud(id)
       useDoc.getState().hydrate(doc)
       markCloudSynced(useDoc.getState().doc, version)
-      useUi.getState().set({ activeArtboardId: null, selection: { kind: 'none' } })
+      useUi.getState().set({ activeArtboardId: null, selection: { kind: 'none' }, pinnedTape: null })
       setFailed(false)
       close()
       toast(`Loaded "${doc.title}"`, { kind: 'success' })

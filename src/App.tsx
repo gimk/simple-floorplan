@@ -31,7 +31,7 @@ import { ArtboardToolOverlay } from './features/artboards/ArtboardToolOverlay'
 import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
-import { TapeOverlay } from './features/tape/TapeOverlay'
+import { PinnedTape, TapeOverlay } from './features/tape/TapeOverlay'
 import { toast, undoShortcut } from './features/toast'
 import { ToastHost } from './features/toast/ToastHost'
 import { selectRoom } from './features/artboards/selection'
@@ -469,7 +469,7 @@ export default function App() {
     const r = await importProjectJson(file)
     if (r.ok) {
       useDoc.getState().hydrate(r.doc)
-      setUi({ activeArtboardId: null, selection: { kind: 'none' } })
+      setUi({ activeArtboardId: null, selection: { kind: 'none' }, pinnedTape: null })
       toast(`Imported "${r.doc.title}"`)
     } else toast(`Import failed: ${r.error}`)
   }
@@ -485,7 +485,7 @@ export default function App() {
 
   const onPasted = (doc: ProjectDoc) => {
     useDoc.getState().hydrate(doc)
-    setUi({ activeArtboardId: null, selection: { kind: 'none' } })
+    setUi({ activeArtboardId: null, selection: { kind: 'none' }, pinnedTape: null })
     setPasteOpen(false)
     toast(`Imported "${doc.title}"`)
   }
@@ -763,6 +763,8 @@ export default function App() {
                 <RoomToolsOverlay />
                 <ArtboardToolOverlay />
                 <PlaceOpeningOverlay />
+                {/* The pinned Tape measurement outlives the Tape tool: drawn under the live overlay. */}
+                <PinnedTape />
                 <TapeOverlay />
                 <MarqueeOverlay />
               </>

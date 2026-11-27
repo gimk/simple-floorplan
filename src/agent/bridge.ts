@@ -170,7 +170,7 @@ export function createAgentBridge(): SfpAgentBridge {
       if (!v.doc) return { ok: false, error: v.issues[0] ? `${v.issues[0].path}: ${v.issues[0].message}` : 'Invalid project', issues: v.issues }
       if (!v.ok) return { ok: false, error: 'The project has validation errors.', issues: v.issues }
       useDoc.getState().hydrate(v.doc)
-      useUi.getState().set({ activeArtboardId: null, selection: { kind: 'none' } })
+      useUi.getState().set({ activeArtboardId: null, selection: { kind: 'none' }, pinnedTape: null })
       return { ok: true, ...(v.issues.length ? { issues: v.issues } : {}) }
     },
     exportProject: () => JSON.stringify(useDoc.getState().doc, null, 2),
