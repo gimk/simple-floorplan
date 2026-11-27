@@ -584,7 +584,7 @@ export default function App() {
     isMd
       ? 'fixed bottom-0 right-0 top-12 z-50 w-72 max-w-[85vw] border-l border-white/10 shadow-2xl'
       : `fixed inset-x-0 bottom-0 z-50 max-h-[75dvh] rounded-t-xl border-t border-white/10 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-2xl`
-  const asideBase = 'space-y-3 overflow-y-auto bg-surface-1 p-3 text-sm text-slate-400'
+  const asideBase = 'min-h-0 space-y-3 overflow-y-auto overscroll-contain bg-surface-1 p-3 text-sm text-slate-400'
   const sheetHeader = (name: string) => (
     <div className="-mt-1 flex items-center justify-between">
       <h2 className="text-sm font-semibold text-slate-100">{name}</h2>
@@ -596,7 +596,7 @@ export default function App() {
     'flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-slate-200 hover:bg-white/10 disabled:opacity-40 disabled:hover:bg-transparent pointer-coarse:h-11'
 
   return (
-    <div className="flex h-dvh flex-col bg-surface-0 text-zinc-100">
+    <div className="flex h-dvh flex-col overflow-hidden bg-surface-0 text-zinc-100">
       <h1 className="sr-only">Simple Floorplan</h1>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/10 bg-surface-1 px-3">
         <div className="group relative flex min-w-0 flex-1 basis-0 items-center">

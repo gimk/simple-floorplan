@@ -41,7 +41,8 @@ html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 /* No visible scroll bars anywhere: the panels still scroll with the wheel, the trackpad and touch. */
 * { scrollbar-width: none; }
 *::-webkit-scrollbar { display: none; }
-body { font-family: system-ui, -apple-system, sans-serif; background: var(--color-surface-0); color: var(--app-fg); overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
+html, body { overscroll-behavior: none; }
+body { font-family: system-ui, -apple-system, sans-serif; background: var(--color-surface-0); color: var(--app-fg); -webkit-tap-highlight-color: transparent; }
 
 @layer base {
   button:focus-visible,
