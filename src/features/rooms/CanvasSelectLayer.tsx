@@ -1,6 +1,6 @@
 // Canvas background hit target (select tool): click selects the artboard under the pointer or
-// clears the selection; a Plan-mode drag draws a marquee that selects the rooms it touches.
-// Design mode: a click only selects the artboard (or clears the selection) — no marquee.
+// clears the selection; a drag draws a marquee that selects the rooms (Plan mode) or the furniture
+// items (Design mode) it touches.
 // `MarqueeOverlay` draws the live box. Render it ABOVE the rooms (Viewport overlay).
 import { useEffect, useRef } from 'react'
 import { useViewport } from '../../canvas/Viewport'
@@ -8,6 +8,8 @@ import type { Vec } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import { useUi } from '../../shell/uiStore'
 import { selectArtboard } from '../artboards/selection'
+import { findFurnitureInBox } from '../furniture/geometry'
+import { setFurnitureSelection } from '../furniture/actions'
 import { boxFromPoints, findArtboardAtPoint, findRoomsInBox } from './boxSelect'
 import { useMarquee } from './marqueeStore'
 import { CANVAS_MARQUEE_FILL, CANVAS_SELECT_STRONG } from '../../shell/canvasTokens'
@@ -59,7 +61,7 @@ export function CanvasSelectLayer() {
     const g = gesture.current
     if (!g || g.pointerId !== e.pointerId) return
     if (!g.marquee) {
-      if (useUi.getState().mode !== 'plan') return
+      // Both modes drag a marquee: rooms in Plan mode, furniture in Design mode.
       if (Math.hypot(e.clientX - g.startClientX, e.clientY - g.startClientY) < DRAG_PX) return
       g.marquee = true
     }
@@ -74,12 +76,42 @@ export function CanvasSelectLayer() {
     useMarquee.getState().set(null)
     if (cancelled) return
     const artboards = useDoc.getState().doc.artboards
-    // Design mode edits no geometry: a click only selects the artboard under the pointer (or clears
-    // the selection), and no marquee ever selects rooms.
-    if (useUi.getState().mode === 'design') {
-      const hit = findArtboardAtPoint(g.startWorld, artboards)
-      if (hit) selectArtboard(hit.id)
-      else useUi.getState().set({ selection: { kind: 'none' } })
+    const ui = useUi.getState()
+    // Design mode edits no geometry: a plain click only selects the artboard under the pointer (or
+    // clears the selection); a drag selects the furniture items of one artboard.
+    if (ui.mode === 'design') {
+      if (!g.marquee) {
+        const hit = findArtboardAtPoint(g.startWorld, artboards)
+        if (hit) selectArtboard(hit.id)
+        else ui.set({ selection: { kind: 'none' } })
+        return
+      }
+      const artboardId = g.startArtboardId ?? ui.activeArtboardId
+      const artboard = artboards.find((a) => a.id === artboardId)
+      const world = boxFromPoints(g.startWorld, toWorld(e.clientX, e.clientY))
+      // The item bounds are artboard-local: shift the world box by the artboard origin.
+      const local = {
+        minX: world.minX - (artboard?.xCm ?? 0),
+        minY: world.minY - (artboard?.yCm ?? 0),
+        maxX: world.maxX - (artboard?.xCm ?? 0),
+        maxY: world.maxY - (artboard?.yCm ?? 0),
+      }
+      const hits = artboard ? findFurnitureInBox(local, artboard) : []
+      const sel = ui.selection
+      const before =
+        artboard && 'artboardId' in sel && sel.artboardId === artboard.id
+          ? sel.kind === 'furniture'
+            ? [sel.furnitureId]
+            : sel.kind === 'furnitureMulti'
+              ? sel.furnitureIds
+              : []
+          : []
+      const ids = e.shiftKey ? [...new Set([...before, ...hits])] : hits
+      if (!artboard || ids.length === 0) {
+        ui.set({ selection: { kind: 'none' } })
+        return
+      }
+      setFurnitureSelection(artboard.id, ids)
       return
     }
     if (!g.marquee) {
@@ -89,16 +121,15 @@ export function CanvasSelectLayer() {
       return
     }
     const box = boxFromPoints(g.startWorld, toWorld(e.clientX, e.clientY))
-    const ui = useUi.getState()
     const match = findRoomsInBox(box, artboards, g.startArtboardId ?? ui.activeArtboardId)
     if (!match) {
       ui.set({ selection: { kind: 'none' } })
       return
     }
-    const sel = ui.selection
+    const planSel = ui.selection
     const roomIds =
-      e.shiftKey && sel.kind === 'room' && sel.artboardId === match.artboardId
-        ? [...new Set([...sel.roomIds, ...match.roomIds])]
+      e.shiftKey && planSel.kind === 'room' && planSel.artboardId === match.artboardId
+        ? [...new Set([...planSel.roomIds, ...match.roomIds])]
         : match.roomIds
     ui.set({
       activeArtboardId: match.artboardId,

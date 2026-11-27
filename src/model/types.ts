@@ -133,4 +133,9 @@ export type Selection =
   | { kind: 'vertex'; artboardId: string; roomId: string; vertexIndex: number }
   | { kind: 'opening'; artboardId: string; openingId: string }
   | { kind: 'furniture'; artboardId: string; furnitureId: string }
+  /**
+   * Several furniture items of one artboard (always 2 or more ids). One item keeps the 'furniture'
+   * kind; shift-click and the Design-mode marquee build this one.
+   */
+  | { kind: 'furnitureMulti'; artboardId: string; furnitureIds: string[] }
   | { kind: 'refImage'; imageId: string }

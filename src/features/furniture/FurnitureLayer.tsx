@@ -11,13 +11,15 @@ import type { Artboard, FurnitureItem } from '../../model/types'
 import { getModifiers, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import { roundToPrecision } from '../rooms/ops'
-import { updateFurnitureSilent } from './actions'
+import { moveFurnitureGroup, setFurnitureSelection, updateFurnitureSilent } from './actions'
+import type { FurnitureStart } from './actions'
 import {
   MAX_FURNITURE_CM,
   MIN_FURNITURE_CM,
   computeDistanceGuides,
   computeMeasureGuides,
   directionArrowGeometry,
+  furnitureAxisBounds,
   furnitureCornerRadiusCm,
   pickMeasureTarget,
   snapFurnitureMove,
@@ -58,7 +60,18 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const mode = useUi((s) => s.mode)
   const selection = useUi((s) => s.selection)
   const design = mode === 'design'
-  const selectedId = selection.kind === 'furniture' && selection.artboardId === artboard.id ? selection.furnitureId : null
+  // Ids of the selected items of THIS artboard: one id for a single selection, 2+ for a group.
+  const selIds =
+    (selection.kind === 'furniture' || selection.kind === 'furnitureMulti') && selection.artboardId === artboard.id
+      ? selection.kind === 'furniture'
+        ? [selection.furnitureId]
+        : selection.furnitureIds
+      : []
+  // A group that lost items (undo, a delete elsewhere) is stale: draw nothing until the next click.
+  const activeIds = selection.kind === 'furnitureMulti' && selIds.length < 2 ? [] : selIds
+  // Handles, resize, rotate and the Option/Alt measure stay single-selection only.
+  const selectedId = activeIds.length === 1 ? activeIds[0] : null
+  const multiIds = activeIds.length > 1 ? activeIds : null
   const gesture = useRef<Gesture | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [guides, setGuides] = useState<DistanceGuide[]>([])
@@ -152,8 +165,46 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
 
   const patch = (id: string, p: Partial<Omit<FurnitureItem, 'id'>>) => updateFurnitureSilent(artboard.id, id, p)
 
+  /**
+   * Drag every item of the group by the delta of the grabbed one. `starts` holds the position each
+   * item had when the pointer went down, so the whole drag is one undo step (beginDrag/endDrag) and
+   * the snap of the grabbed item decides the delta of all of them. No Alt-duplicate for a group.
+   */
+  const startGroupDrag = (e: ReactPointerEvent<SVGGElement>, item: FurnitureItem, ids: string[]) => {
+    const p0 = toLocal(e.clientX, e.clientY)
+    const grab = { x: p0.x - item.xCm, y: p0.y - item.yCm }
+    const starts = new Map<string, FurnitureStart>()
+    for (const f of liveArtboard().furniture) {
+      if (ids.includes(f.id)) starts.set(f.id, { xCm: f.xCm, yCm: f.yCm })
+    }
+    start(e, (p) => {
+      setDraggingId(item.id)
+      const cur = live(item.id)
+      const startPos = starts.get(item.id)
+      if (!cur || !startPos) return
+      const mods = getModifiers()
+      const s = snapFurnitureMove(cur, p.x - grab.x, p.y - grab.y, liveArtboard(), px(10), { disableSnap: mods.alt })
+      moveFurnitureGroup(artboard.id, starts, s.xCm - startPos.xCm, s.yCm - startPos.yCm)
+      setGuides(computeDistanceGuides({ ...cur, xCm: s.xCm, yCm: s.yCm }, liveArtboard()))
+    })
+  }
+
   const onBodyDown = (e: ReactPointerEvent<SVGGElement>, item: FurnitureItem) => {
     if (e.button !== 0 || !design) return
+    // Shift-click toggles the item in the group selection of this artboard and never starts a drag.
+    if (e.shiftKey) {
+      e.stopPropagation()
+      setFurnitureSelection(
+        artboard.id,
+        activeIds.includes(item.id) ? activeIds.filter((id) => id !== item.id) : [...activeIds, item.id],
+      )
+      return
+    }
+    // An item of the group keeps the group: the pointer drags all of them together.
+    if (multiIds && multiIds.includes(item.id)) {
+      startGroupDrag(e, item, multiIds)
+      return
+    }
     select(item.id)
     // Read Alt from this very event before deciding to duplicate: a keydown that the tracker never
     // saw (key held during a focus change, synthetic events) must not swallow the duplicate.
@@ -305,6 +356,20 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const selected = selectedId ? artboard.furniture.find((f) => f.id === selectedId) : undefined
   const hs = px(8)
 
+  // One dashed orange rectangle around the union of the bounds of every item of the group.
+  const multiBox = (() => {
+    if (!multiIds) return null
+    const boxes = artboard.furniture.filter((f) => multiIds.includes(f.id)).map((f) => furnitureAxisBounds(f))
+    if (boxes.length === 0) return null
+    const pad = px(4)
+    return {
+      x: Math.min(...boxes.map((b) => b.minX)) - pad,
+      y: Math.min(...boxes.map((b) => b.minY)) - pad,
+      w: Math.max(...boxes.map((b) => b.maxX)) - Math.min(...boxes.map((b) => b.minX)) + 2 * pad,
+      h: Math.max(...boxes.map((b) => b.maxY)) - Math.min(...boxes.map((b) => b.minY)) + 2 * pad,
+    }
+  })()
+
   // Option/Alt measure overlay: the hovered target outline, then its distance guides.
   const measureView = measure && !gesturing ? measure : null
   const measureOutline = (() => {
@@ -341,11 +406,20 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
             style={design ? { cursor: draggingId === item.id ? 'grabbing' : 'grab' } : undefined}
             onPointerDown={(e) => onBodyDown(e, item)} {...gp}
           >
-            {renderShape(item, item.id === selectedId)}
+            {renderShape(item, item.id === selectedId || !!multiIds?.includes(item.id))}
           </g>
           <g transform={`translate(${item.xCm} ${item.yCm})`} pointerEvents="none">{renderLabel(item)}</g>
         </g>
       ))}
+
+      {design && multiBox && (
+        <rect
+          data-testid="furniture-multi-outline"
+          x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h}
+          fill="none" stroke={ORANGE} strokeWidth={px(1)}
+          strokeDasharray={`${px(4)} ${px(3)}`} pointerEvents="none"
+        />
+      )}
 
       {design && selected && (
         <g

@@ -89,6 +89,44 @@ describe('describeSelection', () => {
     expect(describeSelection(doc, { kind: 'opening', artboardId: 'ab1', openingId: 'o1' })).toMatch(/^Door, 90/)
     expect(describeSelection(doc, { kind: 'furniture', artboardId: 'ab1', furnitureId: 'f1' })).toMatch(/^Sofa, 200 by 90/)
   })
+  it('counts the items of a furniture group that still exist', () => {
+    expect(describeSelection(doc, { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['f1'] })).toBe(
+      '1 furniture item selected',
+    )
+    expect(describeSelection(doc, { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['f1', 'gone'] })).toBe(
+      '1 furniture item selected',
+    )
+    expect(describeSelection(doc, { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['gone'] })).toBe('')
+  })
+})
+
+describe('arrow nudge of a furniture group', () => {
+  it('moves every selected item by the same delta in one undo step', () => {
+    const doc = makeDoc()
+    const second: FurnitureItem = { id: 'f2', name: 'Chair', shape: 'rect', xCm: 300, yCm: 200, widthCm: 50, depthCm: 50, rotationDeg: 0, color: '#888' }
+    doc.artboards[0].furniture = [...doc.artboards[0].furniture, second]
+    useDoc.getState().hydrate(doc)
+    const change = nudgeSelection(
+      useDoc.getState().doc,
+      { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['f1', 'f2'] },
+      0,
+      10,
+    )!
+    useDoc.getState().update(change)
+    expect(useDoc.getState().doc.artboards[0].furniture.map((f) => [f.xCm, f.yCm])).toEqual([
+      [100, 110],
+      [300, 210],
+    ])
+    useDoc.getState().undo()
+    expect(useDoc.getState().doc.artboards[0].furniture.map((f) => [f.xCm, f.yCm])).toEqual([
+      [100, 100],
+      [300, 200],
+    ])
+    // A group whose ids are all gone cannot move.
+    expect(
+      nudgeSelection(makeDoc(), { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['zz', 'yy'] }, 1, 0),
+    ).toBeNull()
+  })
 })
 
 describe('Viewport markup', () => {

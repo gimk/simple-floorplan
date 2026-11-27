@@ -70,6 +70,22 @@ export function furnitureAxisBounds(item: ItemShape): { minX: number; minY: numb
   }
 }
 
+/** Axis-aligned box in artboard-local cm. */
+export type ItemBounds = { minX: number; minY: number; maxX: number; maxY: number }
+
+/**
+ * Ids of the items whose axis-aligned bounds overlap `box` (artboard-local cm), in stack order.
+ * A box that only touches an edge counts, like the room marquee of Plan mode.
+ */
+export function findFurnitureInBox(box: ItemBounds, artboard: Artboard): string[] {
+  return artboard.furniture
+    .filter((f) => {
+      const b = furnitureAxisBounds(f)
+      return b.minX <= box.maxX && b.maxX >= box.minX && b.minY <= box.maxY && b.maxY >= box.minY
+    })
+    .map((f) => f.id)
+}
+
 /** Smallest correction (candidate - mine) with |correction| <= threshold, or null. */
 const bestShift = (mine: number[], candidates: number[], thresholdCm: number): number | null => {
   let best: number | null = null

@@ -10,12 +10,13 @@ import { RefImageInspect } from './features/background/RefImageInspect'
 import { RefImagesLayer } from './features/background/RefImagesLayer'
 import { loadRefImageFile } from './features/background/upload'
 import { copyArtboardPng, isCopyPngShortcut } from './features/export/download'
-import { deleteFurniture, duplicateFurniture, reorderFurniture } from './features/furniture/actions'
+import { deleteFurniture, deleteFurnitureGroup, duplicateFurniture, duplicateFurnitureGroup, reorderFurniture } from './features/furniture/actions'
 import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
 import { MeasurementCheatsheet } from './features/furniture/MeasurementCheatsheet'
 import { DesignRoomsInspect } from './features/furniture/DesignRoomsInspect'
 import { FurnitureInspect } from './features/furniture/FurnitureInspect'
 import { FurnitureLayer } from './features/furniture/FurnitureLayer'
+import { FurnitureMultiInspect } from './features/furniture/FurnitureMultiInspect'
 import { FurniturePanel } from './features/furniture/FurniturePanel'
 import { deleteOpening } from './features/openings/actions'
 import { ObjectsPanel } from './features/openings/ObjectsPanel'
@@ -170,7 +171,12 @@ const modeUiPatch = (mode: Mode, selection: Selection) =>
         placingOpeningKind: null,
         calibratingImageId: null,
       }
-    : { mode, ...(selection.kind === 'furniture' ? { selection: { kind: 'none' } as Selection } : {}) }
+    : {
+        mode,
+        ...(selection.kind === 'furniture' || selection.kind === 'furnitureMulti'
+          ? { selection: { kind: 'none' } as Selection }
+          : {}),
+      }
 
 /** Modal to paste project JSON text (no file picker). Same parsing as the file import, incl. v1 conversion. */
 function PasteJsonModal({ onClose, onImported }: { onClose: () => void; onImported: (doc: ProjectDoc) => void }) {
@@ -329,6 +335,10 @@ export default function App() {
         if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
           e.preventDefault()
           duplicateFurniture(ui.selection.artboardId, ui.selection.furnitureId)
+        } else if (ui.mode === 'design' && ui.selection.kind === 'furnitureMulti') {
+          // One update for the whole group, then the copies become the selection.
+          e.preventDefault()
+          duplicateFurnitureGroup(ui.selection.artboardId, ui.selection.furnitureIds)
         } else if (ui.mode === 'plan' && ui.selection.kind === 'artboard') {
           e.preventDefault()
           const copyId = useDoc.getState().duplicateArtboard(ui.selection.artboardId)
@@ -385,6 +395,10 @@ export default function App() {
         if (ui.selection.kind === 'furniture') {
           e.preventDefault()
           deleteFurniture(ui.selection.artboardId, ui.selection.furnitureId)
+        } else if (ui.selection.kind === 'furnitureMulti') {
+          // One update for the whole group = one undo step; the selection is cleared by the action.
+          e.preventDefault()
+          deleteFurnitureGroup(ui.selection.artboardId, ui.selection.furnitureIds)
         }
         return
       }
@@ -554,7 +568,12 @@ export default function App() {
               ? !!artboards
                   .find((a) => a.id === selection.artboardId)
                   ?.furniture.some((f) => f.id === selection.furnitureId)
-              : true
+              : selection.kind === 'furnitureMulti'
+                ? // A group needs at least 2 items that still exist; a lone survivor shows as missing.
+                  (artboards
+                    .find((a) => a.id === selection.artboardId)
+                    ?.furniture.filter((f) => selection.furnitureIds.includes(f.id)).length ?? 0) >= 2
+                : true
 
   /**
    * The wall-length input only lives while the selection that opened it is still current, and only
@@ -855,6 +874,9 @@ export default function App() {
               {/* Design mode edits no geometry: furniture and room floors only. */}
               {selection.kind === 'furniture' && selectionExists ? (
                 <FurnitureInspect artboardId={selection.artboardId} furnitureId={selection.furnitureId} />
+              ) : selection.kind === 'furnitureMulti' && selectionExists ? (
+                // Several items: one colour card for all of them, plus group Duplicate / Delete.
+                <FurnitureMultiInspect artboardId={selection.artboardId} furnitureIds={selection.furnitureIds} />
               ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 1 ? (
                 // Several rooms: one floor card that styles all of them (one undo step per click).
                 <DesignRoomsInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
@@ -899,6 +921,7 @@ function selectionAttr(sel: Selection): string {
     case 'vertex': return `vertex:${sel.roomId}:${sel.vertexIndex}`
     case 'opening': return `opening:${sel.openingId}`
     case 'furniture': return `furniture:${sel.furnitureId}`
+    case 'furnitureMulti': return `furnitureMulti:${sel.furnitureIds.join(',')}`
     case 'refImage': return `refImage:${sel.imageId}`
   }
 }

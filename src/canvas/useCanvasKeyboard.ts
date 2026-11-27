@@ -100,6 +100,16 @@ export function nudgeSelection(doc: ProjectDoc, sel: Selection, dx: number, dy: 
       f.xCm += dx; f.yCm += dy
     }
   }
+  if (sel.kind === 'furnitureMulti') {
+    const ids = new Set(sel.furnitureIds)
+    if (!doc.artboards.find((a) => a.id === sel.artboardId)?.furniture.some((f) => ids.has(f.id))) return null
+    return (d) => {
+      for (const f of d.artboards.find((a) => a.id === sel.artboardId)!.furniture) {
+        if (!ids.has(f.id)) continue
+        f.xCm += dx; f.yCm += dy
+      }
+    }
+  }
   return null
 }
 
@@ -131,6 +141,11 @@ export function describeSelection(doc: ProjectDoc, sel: Selection): string {
   if (sel.kind === 'opening') {
     const o = ab.openings.find((x) => x.id === sel.openingId)
     return o ? `${o.kind === 'opening' ? 'Opening' : o.kind === 'door' ? 'Door' : 'Window'}, ${formatLengthCm(o.widthCm, precision)} centimeters wide` : ''
+  }
+  if (sel.kind === 'furnitureMulti') {
+    const count = ab.furniture.filter((x) => sel.furnitureIds.includes(x.id)).length
+    if (count === 0) return ''
+    return `${count} furniture item${count === 1 ? '' : 's'} selected`
   }
   const f = ab.furniture.find((x) => x.id === sel.furnitureId)
   return f ? `${f.name}, ${formatLengthCm(f.widthCm, precision)} by ${formatLengthCm(f.depthCm, precision)} centimeters` : ''

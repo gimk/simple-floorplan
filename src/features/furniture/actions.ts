@@ -2,7 +2,7 @@
 // record nothing and are meant for drags (wrap them in beginDrag/endDrag).
 import { useDoc } from '../../model/store'
 import { useUi } from '../../shell/uiStore'
-import type { FloorPattern, FurnitureItem } from '../../model/types'
+import type { FloorPattern, FurnitureItem, ProjectDoc } from '../../model/types'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
 
 type FurniturePatch = Partial<Omit<FurnitureItem, 'id'>>
@@ -17,6 +17,27 @@ const findFurniture = (artboardId: string, furnitureId: string) =>
 /** Select the item and make its artboard active. */
 const select = (artboardId: string, furnitureId: string): void => {
   useUi.getState().set({ selection: { kind: 'furniture', artboardId, furnitureId }, activeArtboardId: artboardId })
+}
+
+/**
+ * Select 0, 1 or many furniture items of one artboard and make that artboard active: 0 ids clear the
+ * selection, 1 id is the usual single 'furniture' selection, 2+ ids are a 'furnitureMulti' one.
+ * Duplicate ids are dropped; the order of the ids is kept.
+ */
+export function setFurnitureSelection(artboardId: string, ids: string[]): void {
+  const unique = [...new Set(ids)]
+  if (unique.length === 0) {
+    useUi.getState().set({ activeArtboardId: artboardId, selection: { kind: 'none' } })
+    return
+  }
+  if (unique.length === 1) {
+    select(artboardId, unique[0])
+    return
+  }
+  useUi.getState().set({
+    activeArtboardId: artboardId,
+    selection: { kind: 'furnitureMulti', artboardId, furnitureIds: unique },
+  })
 }
 
 /** Where a new item lands in the stack: 'top' appends (draws last, over the others), 'bottom' prepends. */
@@ -113,6 +134,94 @@ export function deleteFurniture(artboardId: string, furnitureId: string): void {
   })
   const sel = useUi.getState().selection
   if (sel.kind === 'furniture' && sel.furnitureId === furnitureId) useUi.getState().set({ selection: { kind: 'none' } })
+}
+
+/** Start position of one item, in artboard-local cm. */
+export type FurnitureStart = { xCm: number; yCm: number }
+
+/**
+ * Move many items by the same delta, from the positions they had when the drag started: `starts`
+ * maps each id to its start position, so every move of a drag computes from the same origin.
+ * `silent` (the default) records nothing and is meant inside beginDrag/endDrag; false = one undo
+ * step. Ids that left the document are skipped.
+ */
+export function moveFurnitureGroup(
+  artboardId: string,
+  starts: ReadonlyMap<string, FurnitureStart>,
+  dx: number,
+  dy: number,
+  silent = true,
+): void {
+  if (starts.size === 0) return
+  const artboard = findArtboard(artboardId)
+  if (!artboard || !artboard.furniture.some((f) => starts.has(f.id))) return
+  const apply = (d: ProjectDoc) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    for (const f of ab.furniture) {
+      const start = starts.get(f.id)
+      if (!start) continue
+      f.xCm = start.xCm + dx
+      f.yCm = start.yCm + dy
+    }
+  }
+  if (silent) useDoc.getState().updateSilent(apply)
+  else useDoc.getState().update(apply)
+}
+
+/** Patch many items of one artboard in one write (one undo step). Unknown ids are skipped. */
+export function updateFurnitureMany(artboardId: string, furnitureIds: string[], patch: FurniturePatch): void {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return
+  const ids = new Set(furnitureIds)
+  if (!artboard.furniture.some((f) => ids.has(f.id))) return
+  useDoc.getState().update((d) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    for (const f of ab.furniture) {
+      if (ids.has(f.id)) Object.assign(f, patch)
+    }
+  })
+}
+
+/**
+ * Copy many items, each shifted by (+offsetCm, +offsetCm), in one undo step. The copies are selected
+ * as a group. Returns the new ids, in the order of `furnitureIds`.
+ */
+export function duplicateFurnitureGroup(artboardId: string, furnitureIds: string[], offsetCm = 20): string[] {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return []
+  const wanted = new Set(furnitureIds)
+  const copies = artboard.furniture
+    .filter((f) => wanted.has(f.id))
+    .map((f): FurnitureItem => ({ ...f, id: crypto.randomUUID(), xCm: f.xCm + offsetCm, yCm: f.yCm + offsetCm }))
+  if (copies.length === 0) return []
+  useDoc.getState().update((d) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    ab.furniture.push(...copies.map((c) => ({ ...c })))
+  })
+  const ids = copies.map((c) => c.id)
+  setFurnitureSelection(artboardId, ids)
+  return ids
+}
+
+/** Delete many items of one artboard in one undo step, then clear the selection. */
+export function deleteFurnitureGroup(artboardId: string, furnitureIds: string[]): void {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return
+  const ids = new Set(furnitureIds)
+  if (!artboard.furniture.some((f) => ids.has(f.id))) return
+  useDoc.getState().update((d) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    ab.furniture = ab.furniture.filter((f) => !ids.has(f.id))
+  })
+  const sel = useUi.getState().selection
+  const touchesSelection =
+    (sel.kind === 'furnitureMulti' && sel.furnitureIds.some((id) => ids.has(id))) ||
+    (sel.kind === 'furniture' && ids.has(sel.furnitureId))
+  if (touchesSelection) useUi.getState().set({ selection: { kind: 'none' } })
 }
 
 /** Set (or with undefined, clear) the floor fill of many rooms: one undo step. */
