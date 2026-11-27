@@ -13,7 +13,7 @@ import { useUi } from '../../shell/uiStore'
 import { toast } from '../toast'
 import { measureSegment } from '../tape/geometry'
 import { cutoutArtboardRooms, addRoom } from './actions'
-import { MIN_ROOM_SIDE_CM, constrainAngle45, createRectRoom, nextRoomName } from './ops'
+import { MIN_ROOM_SIDE_CM, constrainAngle45, constrainAxis, createRectRoom, nextRoomName } from './ops'
 import { pickArtboard } from '../artboards/frame'
 import { snapPoint } from './snap'
 import { wallThicknessOf } from './walls'
@@ -119,21 +119,53 @@ function ToolSurface({ tool }: { tool: 'rect' | 'pen' | 'cutout' }) {
     setLockedId(target.id)
     if (useUi.getState().activeArtboardId !== target.id) useUi.getState().set({ activeArtboardId: target.id })
   }
-  const snap = (p: Vec, anchor: Vec | undefined, mods: Modifiers): Vec => {
+  const snap = (p: Vec, anchors: Vec[] | undefined, mods: Modifiers): Vec => {
     const ab = artboardRef.current
-    const r = snapPoint(p, ab.rooms, { anchor, precisionCm: ab.precisionCm, disableSnap: isFreeSnap(mods), thresholdCm: px(10), wallThicknessCm: wallThicknessOf(ab) })
+    const r = snapPoint(p, ab.rooms, { anchors, precisionCm: ab.precisionCm, disableSnap: isFreeSnap(mods), thresholdCm: px(10), wallThicknessCm: wallThicknessOf(ab) })
     setGuides(r.guides)
     return r.point
   }
   /** Next pen point: Shift locks to 45° steps from the previous point, Cmd turns snapping off. */
   const penPoint = (raw: Vec, prev: Vec | undefined, mods: Modifiers): Vec => {
+    if (useUi.getState().ortho && prev && !mods.shift) {
+      const ab = artboardRef.current
+      const d = constrainAxis(raw.x - prev.x, raw.y - prev.y)
+      const c = { x: prev.x + d.x, y: prev.y + d.y }
+      const horizontal = d.y === 0
+      const first = pointsRef.current[0]
+      const r = snapPoint(c, ab.rooms, { anchors: pointsRef.current, precisionCm: ab.precisionCm, disableSnap: isFreeSnap(mods), thresholdCm: px(10), wallThicknessCm: wallThicknessOf(ab) })
+      // Keep the snapped point on the locked axis; only the free coordinate may move.
+      let out: Vec = horizontal ? { x: r.point.x, y: prev.y } : { x: prev.x, y: r.point.y }
+      if (first && !isFreeSnap(mods)) {
+        const free = horizontal ? out.x : out.y
+        const target = horizontal ? first.x : first.y
+        if (Math.abs(free - target) <= px(10)) out = horizontal ? { x: first.x, y: prev.y } : { x: prev.x, y: first.y }
+      }
+      // Keep the guides, moved onto the point we keep (snapping may have pulled the locked axis).
+      const move = (v: Vec): Vec => (dist(v, r.point) < 1e-6 ? out : v)
+      const next: SnapGuide[] = r.guides.map((g) =>
+        g.kind === 'line' && g.b ? { kind: 'line', a: move(g.a), b: move(g.b) } : { kind: 'point', a: move(g.a) },
+      )
+      // Alignment guide on the free axis: from the anchor that shares its coordinate to the point.
+      if (!isFreeSnap(mods)) {
+        const aligned = pointsRef.current.find((an) =>
+          horizontal
+            ? Math.abs(an.x - out.x) < 1e-6 && Math.abs(an.y - out.y) > 1e-6
+            : Math.abs(an.y - out.y) < 1e-6 && Math.abs(an.x - out.x) > 1e-6,
+        )
+        const shown = aligned && next.some((g) => g.kind === 'line' && g.b && g.a.x === aligned.x && g.a.y === aligned.y && g.b.x === out.x && g.b.y === out.y)
+        if (aligned && !shown) next.push({ kind: 'line', a: aligned, b: out })
+      }
+      setGuides(next)
+      return out
+    }
     if (mods.shift && prev) {
       const ab = artboardRef.current
       const r = snapPoint(constrainAngle45(prev, raw), ab.rooms, { precisionCm: ab.precisionCm, disableSnap: true, thresholdCm: px(10) })
       setGuides([])
       return r.point
     }
-    return snap(raw, prev, mods)
+    return snap(raw, pointsRef.current, mods)
   }
   /** Rect/cutout corners: Shift = square, Alt = from centre (start is the centre), Cmd = no snap. */
   const rectCorners = (from: Vec, raw: Vec, mods: Modifiers): { a: Vec; b: Vec } => {

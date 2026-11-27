@@ -29,6 +29,7 @@ export function PlanToolbar() {
   const mode = useUi((s) => s.mode)
   const tool = useUi((s) => s.tool)
   const set = useUi((s) => s.set)
+  const ortho = useUi((s) => s.ortho)
   const barRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -102,6 +103,26 @@ export function PlanToolbar() {
           </div>
         )
       })}
+      {mode === 'plan' && (
+        <div className="flex items-center gap-1">
+          <div className="mx-0.5 h-6 w-px bg-white/15" aria-hidden="true" />
+          <button
+            type="button"
+            data-testid="ortho-toggle"
+            title="90° angle lock (O)"
+            aria-label="90° angle lock"
+            aria-keyshortcuts="O"
+            aria-pressed={ortho}
+            tabIndex={-1}
+            onClick={() => useUi.getState().set({ ortho: !ortho })}
+            className={`flex h-9 min-w-9 items-center justify-center rounded-lg px-1.5 text-sm font-semibold transition-colors pointer-coarse:h-11 pointer-coarse:min-w-11 lg:h-12 lg:min-w-10 ${
+              ortho ? 'bg-orange-500/20 text-orange-300 ring-1 ring-inset ring-orange-400/50' : 'text-slate-300 hover:bg-white/10'
+            }`}
+          >
+            90°
+          </button>
+        </div>
+      )}
     </div>
   )
 }

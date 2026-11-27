@@ -118,3 +118,59 @@ describe('gap snapping with wall thickness', () => {
     expect(none.dx).toBe(0)
   })
 })
+
+describe('snapPoint with several connected anchors', () => {
+  it('snaps x and y to different anchors, however far they are on the other axis', () => {
+    // prev and next are 2000 cm apart on the perpendicular axis; both still align.
+    const prev = { x: 1000, y: 0 }
+    const next = { x: 0, y: 2000 }
+    const r = snapPoint({ x: 1003, y: 1998 }, [], { anchors: [prev, next] })
+    expect(r.point).toEqual({ x: 1000, y: 2000 })
+    expect(r.guides).toHaveLength(2)
+    // One vertical guide from prev down to the point, one horizontal guide from next to the point.
+    expect(r.guides).toContainEqual({ kind: 'line', a: { x: 1000, y: 0 }, b: { x: 1000, y: 2000 } })
+    expect(r.guides).toContainEqual({ kind: 'line', a: { x: 0, y: 2000 }, b: { x: 1000, y: 2000 } })
+  })
+  it('keeps the single anchor option working, mixed with anchors', () => {
+    const r = snapPoint({ x: 1003, y: 7 }, [], { anchor: { x: 1000, y: 0 }, anchors: [{ x: 0, y: 5 }] })
+    expect(r.point).toEqual({ x: 1000, y: 5 })
+    expect(r.guides).toHaveLength(2)
+  })
+  it('takes the closest anchor when two are within the threshold on the same axis', () => {
+    const far = { x: 1000, y: 0 }
+    const near = { x: 1004, y: 500 }
+    const r = snapPoint({ x: 1003, y: 250 }, [], { anchors: [far, near] })
+    expect(r.point.x).toBe(1004)
+    expect(r.guides).toContainEqual({ kind: 'line', a: { x: 1004, y: 500 }, b: { x: 1004, y: 250 } })
+    // Same result when the list is given the other way round.
+    expect(snapPoint({ x: 1003, y: 250 }, [], { anchors: [near, far] }).point.x).toBe(1004)
+  })
+  it('leaves an axis alone when no anchor is within the threshold', () => {
+    const r = snapPoint({ x: 1003, y: 700 }, [], { anchors: [{ x: 1000, y: 100 }] })
+    expect(r.point).toEqual({ x: 1000, y: 700 })
+    expect(r.guides).toHaveLength(1)
+  })
+  it('aligns the free axis to a connected anchor while sliding on a horizontal wall of another room', () => {
+    // `other` bottom wall is horizontal at y = 300, from x = 0 to 400.
+    const prev = { x: 200, y: 0 }
+    const next = { x: 150, y: 1000 }
+    const r = snapPoint({ x: 203, y: 306 }, [other], { anchors: [prev, next], gridCm: 0 })
+    expect(r.point.y).toBeCloseTo(300)
+    expect(r.point.x).toBeCloseTo(200)
+    expect(r.guides).toContainEqual({ kind: 'line', a: { x: 200, y: 0 }, b: { x: 200, y: 300 } })
+    // An anchor outside the wall span is not used.
+    const outside = snapPoint({ x: 203, y: 306 }, [other], { anchors: [{ x: 500, y: 0 }], gridCm: 0 })
+    expect(outside.point.x).toBeCloseTo(203)
+  })
+  it('aligns the free axis to a connected anchor while sliding on a vertical wall of another room', () => {
+    // `other` right wall is vertical at x = 400, from y = 0 to 300.
+    const prev = { x: 0, y: 148 }
+    const next = { x: 900, y: 260 }
+    const r = snapPoint({ x: 395, y: 150 }, [other], { anchors: [prev, next], gridCm: 0 })
+    expect(r.point.x).toBeCloseTo(400)
+    expect(r.point.y).toBeCloseTo(148)
+    expect(r.guides).toContainEqual({ kind: 'line', a: { x: 0, y: 148 }, b: { x: 400, y: 148 } })
+    const outside = snapPoint({ x: 395, y: 150 }, [other], { anchors: [{ x: 0, y: 500 }], gridCm: 0 })
+    expect(outside.point.y).toBeCloseTo(150)
+  })
+})

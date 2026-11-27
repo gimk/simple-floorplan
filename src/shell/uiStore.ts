@@ -26,6 +26,8 @@ type UiData = {
   drawer: 'left' | 'inspect' | null
   /** Keyboard shortcuts cheat-sheet is open. */
   shortcutsOpen: boolean
+  /** 90° angle lock (Plan mode): drawn and edited room angles stay orthogonal. */
+  ortho: boolean
 }
 
 type UiState = UiData & {
@@ -44,6 +46,7 @@ export const useUi = create<UiState>((set) => ({
   inspectCollapsed: false,
   drawer: null,
   shortcutsOpen: false,
+  ortho: false,
   set: (patch) => set(patch),
 }))
 

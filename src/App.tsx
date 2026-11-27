@@ -90,6 +90,7 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Cutout', 'X'],
       ['Artboard', 'A'],
       ['Tape measure', 'M'],
+      ['90° angle lock', 'O'],
     ],
   },
   {
@@ -308,6 +309,15 @@ export default function App() {
         if (ui.mode === 'design' && ui.tool === 'tape') {
           e.preventDefault()
           ui.set({ tool: 'select' })
+          return
+        }
+      }
+      // Plain 'o' toggles the 90° angle lock in Plan mode.
+      if (key === 'o' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const ui = useUi.getState()
+        if (ui.mode === 'plan') {
+          e.preventDefault()
+          ui.set({ ortho: !ui.ortho })
           return
         }
       }

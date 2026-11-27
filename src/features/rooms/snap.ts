@@ -11,6 +11,12 @@ export type SnapOpts = {
   gridCm?: number
   thresholdCm?: number
   anchor?: Vec
+  /**
+   * Extra alignment anchors (e.g. both connected vertices of the edited room).
+   * Each axis snaps independently: the closest anchor within the threshold wins,
+   * whatever the distance on the other axis.
+   */
+  anchors?: Vec[]
   /** Skip all snapping (Alt held): return the point rounded to precisionCm (or raw when not set). */
   disableSnap?: boolean
   /** Drawing precision in cm. Used as the grid when gridCm is omitted. */
@@ -27,12 +33,15 @@ const roundP = (v: number, p?: number) => (p && p > 0 ? roundToPrecision(v, p) :
 
 /**
  * Snap pt. Priority: 1) vertex of another room, 2) wall of another room (closest point),
- * 3) horizontal/vertical alignment with opts.anchor, each axis then the grid (default 5 cm; 0 = off).
+ * 3) horizontal/vertical alignment with opts.anchor + opts.anchors, each axis then the grid
+ * (default 5 cm; 0 = off). X and Y are resolved on their own, so a point can take x from one
+ * anchor and y from another one even when those anchors are far away on the other axis.
  */
 export function snapPoint(pt: Vec, otherRooms: Room[], opts: SnapOpts = {}): SnapResult {
   if (opts.disableSnap) return { point: { x: roundP(pt.x, opts.precisionCm), y: roundP(pt.y, opts.precisionCm) }, guides: [] }
   const grid = opts.gridCm ?? opts.precisionCm ?? DEFAULT_GRID_CM
   const thr = opts.thresholdCm ?? DEFAULT_SNAP_THRESHOLD_CM
+  const anchors = [...(opts.anchor ? [opts.anchor] : []), ...(opts.anchors ?? [])]
 
   let bestV: Vec | null = null, bestVd = thr
   let bestW: { point: Vec; a: Vec; b: Vec } | null = null, bestWd = thr
@@ -55,18 +64,65 @@ export function snapPoint(pt: Vec, otherRooms: Room[], opts: SnapOpts = {}): Sna
     }
   }
   if (bestV) return { point: { x: bestV.x, y: bestV.y }, guides: [{ kind: 'point', a: { x: bestV.x, y: bestV.y } }] }
-  if (bestW) return { point: bestW.point, guides: [{ kind: 'line', a: bestW.a, b: bestW.b }, { kind: 'point', a: bestW.point }] }
+  if (bestW) {
+    const guides: SnapGuide[] = [{ kind: 'line', a: bestW.a, b: bestW.b }, { kind: 'point', a: bestW.point }]
+    // A point sliding along another room's axis-aligned wall still lines up with a connected
+    // vertex on the free axis, so straight lines stay easy when rooms touch each other.
+    if (anchors.length) {
+      const flat = Math.abs(bestW.a.y - bestW.b.y) < 1e-6
+      const upright = Math.abs(bestW.a.x - bestW.b.x) < 1e-6
+      if (flat) {
+        const lo = Math.min(bestW.a.x, bestW.b.x), hi = Math.max(bestW.a.x, bestW.b.x)
+        const an = closestAnchor(anchors, pt.x, 'x', thr, (v) => v >= lo && v <= hi)
+        if (an) {
+          bestW.point.x = an.x
+          pushLine(guides, an, bestW.point)
+        }
+      } else if (upright) {
+        const lo = Math.min(bestW.a.y, bestW.b.y), hi = Math.max(bestW.a.y, bestW.b.y)
+        const an = closestAnchor(anchors, pt.y, 'y', thr, (v) => v >= lo && v <= hi)
+        if (an) {
+          bestW.point.y = an.y
+          pushLine(guides, an, bestW.point)
+        }
+      }
+    }
+    return { point: bestW.point, guides }
+  }
 
   const out = { x: snapToGrid(pt.x, grid), y: snapToGrid(pt.y, grid) }
   const guides: SnapGuide[] = []
-  const an = opts.anchor
-  if (an) {
-    if (Math.abs(pt.x - an.x) <= thr) out.x = an.x
-    if (Math.abs(pt.y - an.y) <= thr) out.y = an.y
-    if (out.x === an.x && out.y !== an.y) guides.push({ kind: 'line', a: { x: an.x, y: an.y }, b: { x: out.x, y: out.y } })
-    if (out.y === an.y && out.x !== an.x) guides.push({ kind: 'line', a: { x: an.x, y: an.y }, b: { x: out.x, y: out.y } })
-  }
+  // Each axis is resolved on its own: the perpendicular distance to the anchor does not matter.
+  const bestAnX = closestAnchor(anchors, pt.x, 'x', thr)
+  const bestAnY = closestAnchor(anchors, pt.y, 'y', thr)
+  if (bestAnX) out.x = bestAnX.x
+  if (bestAnY) out.y = bestAnY.y
+  if (bestAnX && out.x === bestAnX.x && out.y !== bestAnX.y) pushLine(guides, bestAnX, out)
+  if (bestAnY && out.y === bestAnY.y && out.x !== bestAnY.x) pushLine(guides, bestAnY, out)
   return { point: out, guides }
+}
+
+/**
+ * Closest anchor on one axis only (|pt[axis] - an[axis]| <= thr), ignoring the other axis.
+ * `accept` filters the candidate coordinate (used to stay inside a matched wall segment).
+ */
+function closestAnchor(anchors: Vec[], value: number, axis: 'x' | 'y', thr: number, accept?: (v: number) => boolean): Vec | null {
+  let best: Vec | null = null, bestD = thr
+  for (const an of anchors) {
+    const v = an[axis]
+    if (accept && !accept(v)) continue
+    const d = Math.abs(value - v)
+    if (d <= bestD) { bestD = d; best = an }
+  }
+  return best
+}
+
+/**
+ * Add a line guide, but never the same line twice (two anchors can share coordinates).
+ */
+function pushLine(guides: SnapGuide[], a: Vec, b: Vec) {
+  const same = guides.some((g) => g.kind === 'line' && g.a.x === a.x && g.a.y === a.y && g.b?.x === b.x && g.b?.y === b.y)
+  if (!same) guides.push({ kind: 'line', a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y } })
 }
 
 /** Smallest correction (other - mine) with |correction| <= thr, or null. */

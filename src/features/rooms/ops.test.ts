@@ -5,7 +5,7 @@ import { useDoc } from '../../model/store'
 import type { Room } from '../../model/types'
 import {
   constrainAngle45, constrainAxis, constrainWallPerpendicular, createRectRoom, cutoutRoom, formatLengthCm, deleteVertex, deleteWall, insertVertexOnEdge, isAxisAlignedRect, mergeRooms,
-  moveEdge, moveRoom, moveVertex, nextRoomName, roomWalls, roundToPrecision, scaleRoomFromVertex, setWallLength, wallResizeCursor,
+  moveEdge, moveRoom, moveVertex, moveVertexOrtho, nextRoomName, roomWalls, roundToPrecision, scaleRoomFromVertex, setWallLength, wallResizeCursor,
 } from './ops'
 import {
   addRoom, cutoutArtboardRooms, deleteRoomVertex, deleteRoomWall, deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength,
@@ -515,5 +515,36 @@ describe('deleteRoomVertex / deleteRoomWall actions', () => {
   it('deleteRoomWall returns false for a triangle', () => {
     const id = setup(tri)
     expect(deleteRoomWall(id, 't', 0)).toBe(false)
+  })
+})
+
+describe('moveVertexOrtho', () => {
+  const allRightAngles = (r: Room) => r.vertices.every((c, i) => {
+    const n = r.vertices.length
+    const p = r.vertices[(i + n - 1) % n], q = r.vertices[(i + 1) % n]
+    return Math.abs((c.x - p.x) * (q.x - c.x) + (c.y - p.y) * (q.y - c.y)) < 1e-9
+  })
+  it('keeps a rectangle rectangular', () => {
+    const r = rect('r', 0, 0, 100, 80)
+    const out = moveVertexOrtho(r, 2, { x: 130, y: 120 })
+    expect(out.vertices).toEqual([{ x: 0, y: 0 }, { x: 130, y: 0 }, { x: 130, y: 120 }, { x: 0, y: 120 }])
+    expect(allRightAngles(out)).toBe(true)
+    expect(r.vertices[2]).toEqual({ x: 100, y: 80 })
+  })
+  it('keeps an L-shape at 90° on every corner', () => {
+    const l: Room = { id: 'l', name: 'l', vertices: [
+      { x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 100 }, { x: 100, y: 100 }, { x: 100, y: 200 }, { x: 0, y: 200 },
+    ] }
+    for (let i = 0; i < 6; i++) {
+      const out = moveVertexOrtho(l, i, { x: l.vertices[i].x + 13, y: l.vertices[i].y + 7 })
+      expect(out.vertices).toHaveLength(6)
+      expect(allRightAngles(out)).toBe(true)
+    }
+  })
+  it('triangle only moves one vertex, axis-locked to the previous one', () => {
+    const out = moveVertexOrtho(tri, 1, { x: 350, y: 20 })
+    expect(out.vertices[1]).toEqual({ x: 350, y: 0 })
+    expect(out.vertices[0]).toEqual(tri.vertices[0])
+    expect(out.vertices[2]).toEqual(tri.vertices[2])
   })
 })

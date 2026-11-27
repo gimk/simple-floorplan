@@ -77,6 +77,35 @@ export function moveVertex(room: Room, idx: number, pos: Vec): Room {
   return withVertices(room, room.vertices.map((p, i) => (i === idx ? cp(pos) : cp(p))))
 }
 
+/**
+ * Move vertex idx to target and keep a 90° corner square: the two neighbours slide so both
+ * adjacent walls stay horizontal / vertical. A corner that is not 90° (or a room with fewer than
+ * 4 vertices) only moves the vertex, axis-locked to its previous neighbour.
+ */
+export function moveVertexOrtho(room: Room, idx: number, target: Vec): Room {
+  const n = room.vertices.length
+  if (idx < 0 || idx >= n) return room
+  const prevIdx = (idx + n - 1) % n, nextIdx = (idx + 1) % n
+  const curr = room.vertices[idx], prev = room.vertices[prevIdx], next = room.vertices[nextIdx]
+  const prevHorizontal = Math.abs(prev.y - curr.y) <= Math.abs(prev.x - curr.x)
+  const nextHorizontal = Math.abs(curr.y - next.y) <= Math.abs(curr.x - next.x)
+  const out = room.vertices.map(cp)
+  if (n >= 4 && prevHorizontal !== nextHorizontal) {
+    out[idx] = cp(target)
+    if (prevHorizontal) {
+      out[prevIdx] = { x: prev.x, y: target.y }
+      out[nextIdx] = { x: target.x, y: next.y }
+    } else {
+      out[prevIdx] = { x: target.x, y: prev.y }
+      out[nextIdx] = { x: next.x, y: target.y }
+    }
+    return withVertices(room, out)
+  }
+  const d = constrainAxis(target.x - prev.x, target.y - prev.y)
+  out[idx] = { x: prev.x + d.x, y: prev.y + d.y }
+  return withVertices(room, out)
+}
+
 /** Move both ends of a wall by delta (the neighbour walls stretch). */
 export function moveEdge(room: Room, edgeIndex: number, delta: Vec): Room {
   const n = room.vertices.length

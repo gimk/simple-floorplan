@@ -15,7 +15,7 @@ import { subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifier
 import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import {
-  constrainAxis, constrainWallPerpendicular, deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex,
+  constrainAxis, constrainWallPerpendicular, deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex, moveVertexOrtho,
   roomWalls, roundToPrecision, scaleRoomFromVertex, wallResizeCursor,
 } from './ops'
 import {
@@ -264,7 +264,13 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
     const origin = { rooms: artboard.rooms, openings: artboard.openings }
     startGesture(e, (_, d, mods) => {
       let delta: Vec
-      if (mods.shift) {
+      if (useUi.getState().ortho && !mods.shift) {
+        // 90° lock: the wall moves only along its normal, so adjacent 90° walls never skew.
+        const c = constrainWallPerpendicular(a, b, d.x, d.y)
+        const snap = snapPoint(add(a, c), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10), wallThicknessCm: thickness })
+        setGuides(snap.guides)
+        delta = constrainWallPerpendicular(a, b, snap.point.x - a.x, snap.point.y - a.y)
+      } else if (mods.shift) {
         const c = constrainWallPerpendicular(a, b, d.x, d.y)
         delta = mods.cmd ? c : { x: roundToPrecision(c.x, artboard.precisionCm), y: roundToPrecision(c.y, artboard.precisionCm) }
         setGuides([])
@@ -302,7 +308,11 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
     }
     const others = artboard.rooms.filter((r) => r.id !== room.id)
     const n = room.vertices.length
-    const anchor = room.vertices[(idx + n - 1) % n]
+    // Both connected vertices of the edited room: each axis snaps to whichever one is closer,
+    // so the moved point always keeps straight lines with its neighbours.
+    const prev = room.vertices[(idx + n - 1) % n]
+    const next = room.vertices[(idx + 1) % n]
+    const anchors = prev === next ? [prev] : [prev, next]
     const origin = { rooms: artboard.rooms, openings: artboard.openings }
     startGesture(e, (p, _d, mods) => {
       if (mods.shift) {
@@ -310,9 +320,10 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
         writeVertices(new Map([[room.id, scaleRoomFromVertex(room, idx, p, mods.cmd ? 0 : artboard.precisionCm).vertices]]), true, origin)
         return
       }
-      const snap = snapPoint(p, others, { anchor, precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10), wallThicknessCm: thickness })
+      const snap = snapPoint(p, others, { anchors, precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10), wallThicknessCm: thickness })
       setGuides(snap.guides)
-      writeVertices(new Map([[room.id, moveVertex(room, idx, snap.point).vertices]]), true, origin)
+      const moved = useUi.getState().ortho ? moveVertexOrtho(room, idx, snap.point) : moveVertex(room, idx, snap.point)
+      writeVertices(new Map([[room.id, moved.vertices]]), true, origin)
     })
   }
 
