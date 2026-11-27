@@ -145,10 +145,31 @@ describe('FurnitureLayer resize handles', () => {
     expect(edgeTag(turned, '0:-1')).toContain('cursor:ew-resize')
     expect(edgeTag(turned, '0:1')).toContain('cursor:ew-resize')
 
-    // A 45..135 deg turn swaps; 30 deg does not, 150 deg does not (folded to 30 on the other half turn).
-    expect(edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(30)} />), '-1:0')).toContain('cursor:ew-resize')
-    expect(edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(150)} />), '-1:0')).toContain('cursor:ew-resize')
-    expect(edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(60)} />), '-1:0')).toContain('cursor:ns-resize')
+    // Each cursor is the nearest of the 4 two-way cursors to the turned handle direction.
+    const edgeAt = (deg: number) => edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(deg)} />), '-1:0')
+    expect(edgeAt(10)).toContain('cursor:ew-resize')
+    expect(edgeAt(30)).toContain('cursor:nwse-resize')
+    expect(edgeAt(80)).toContain('cursor:ns-resize')
+    expect(edgeAt(150)).toContain('cursor:nesw-resize')
+    expect(edgeAt(190)).toContain('cursor:ew-resize')
+  })
+
+  it('turns the corner cursors with the item rotation', () => {
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f1' }
+    const cornerTag = (html: string, key: string): string => {
+      const at = html.indexOf(`data-corner-handle="${key}"`)
+      return at < 0 ? '' : html.slice(html.lastIndexOf('<rect', at), html.indexOf('>', at) + 1)
+    }
+    const flat = renderToStaticMarkup(<FurnitureLayer artboard={board(0)} />)
+    expect(cornerTag(flat, '-1:-1')).toContain('cursor:nwse-resize')
+    expect(cornerTag(flat, '1:-1')).toContain('cursor:nesw-resize')
+    const turned = renderToStaticMarkup(<FurnitureLayer artboard={board(90)} />)
+    expect(cornerTag(turned, '-1:-1')).toContain('cursor:nesw-resize')
+    expect(cornerTag(turned, '1:-1')).toContain('cursor:nwse-resize')
+    expect(cornerTag(turned, '1:1')).toContain('cursor:nesw-resize')
+    expect(cornerTag(turned, '-1:1')).toContain('cursor:nwse-resize')
+    const tilted = renderToStaticMarkup(<FurnitureLayer artboard={board(45)} />)
+    expect(cornerTag(tilted, '-1:-1')).toContain('cursor:ns-resize')
   })
 
   it('draws 4 edge strips, 4 corner handles and 1 rotate handle for a group selection', () => {

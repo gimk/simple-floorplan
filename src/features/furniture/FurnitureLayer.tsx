@@ -40,7 +40,7 @@ import {
   roundedRectPath,
   snapRotation,
 } from './geometry'
-import type { CornerHandle, CornerRadii, DistanceGuide, MeasureTarget, ResizeHandle } from './geometry'
+import type { CornerRadii, DistanceGuide, MeasureTarget, ResizeHandle } from './geometry'
 import { resizeFurnitureGroupWithAlt, setDirectFurnitureSelection } from './pointerActions'
 import { computeDragDistanceGuides, snapBoxMove } from './snapGuides'
 import type { SnapGuideLine } from './snapGuides'
@@ -63,22 +63,18 @@ type Gesture = {
   onMove: (p: Vec) => void
 }
 
-const CORNER_CURSOR = (c: CornerHandle) => (c.sx === c.sy ? 'nwse-resize' : 'nesw-resize')
+/**
+ * Resize cursor of a handle: the handle direction (sx, sy) in the item frame, turned by the item
+ * rotation, then snapped to the nearest of the 4 two-way cursors (screen Y runs down).
+ */
+const RESIZE_CURSOR = (rotationDeg: number, h: { sx: number; sy: number }): string => {
+  const deg = (Math.atan2(h.sy, h.sx) * 180) / Math.PI + rotationDeg
+  const i = Math.round((((deg % 180) + 180) % 180) / 45) % 4
+  return ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'][i]
+}
 
 /** Names of the 4 radius handles, in the order of the corner radii (top-left, then clockwise). */
 const CORNER_LABELS = ['Top-left', 'Top-right', 'Bottom-right', 'Bottom-left'] as const
-
-/**
- * Cursor of an edge handle: resize across the edge. A quarter turn (45..135 deg) swaps the two axes,
- * because the item's local X then runs down the screen.
- */
-const EDGE_CURSOR = (rotationDeg: number, edge: ResizeHandle): string => {
-  const n = ((rotationDeg % 360) + 360) % 360
-  const fold = n > 180 ? n - 180 : n // 0..180: the box looks the same after a half turn
-  const swapped = fold > 45 && fold < 135
-  const horizontal = edge.sx !== 0 // left / right edge: its normal is the local X axis
-  return horizontal !== swapped ? 'ew-resize' : 'ns-resize'
-}
 
 const fmtCm = (v: number): string => String(Math.round(v * 10) / 10)
 
@@ -621,7 +617,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
             width={across ? strip : w}
             height={across ? d : strip}
             fill="transparent"
-            style={{ cursor: EDGE_CURSOR(rotationDeg, edge) }}
+            style={{ cursor: RESIZE_CURSOR(rotationDeg, edge) }}
             onPointerDown={(e) => onResize(e, edge)}
             {...gp}
           />
@@ -638,9 +634,10 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       {CORNER_HANDLES.map((c) => (
         <rect
           key={`${c.sx}${c.sy}`}
+          data-corner-handle={`${c.sx}:${c.sy}`}
           x={(c.sx * w) / 2 - hs / 2} y={(c.sy * d) / 2 - hs / 2}
           width={hs} height={hs} fill="#fff" stroke={ORANGE} strokeWidth={px(1.5)}
-          style={{ cursor: CORNER_CURSOR(c) }} onPointerDown={(e) => onResize(e, c)} {...gp}
+          style={{ cursor: RESIZE_CURSOR(rotationDeg, c) }} onPointerDown={(e) => onResize(e, c)} {...gp}
         />
       ))}
       {/* Corner-radius handles, drawn last so they take the click over the resize handles. Each one
