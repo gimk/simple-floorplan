@@ -468,7 +468,7 @@ const PROJECT_DOC_DEFS = {
       name: { type: 'string' },
       vertices: { type: 'array', items: { $ref: '#/$defs/Vec' } },
       fill: { type: 'string', description: 'Fill colour (CSS colour string).' },
-      floorPattern: { type: 'string', enum: ['solid', 'wood', 'parquet', 'tile', 'stone', 'carpet'] },
+      floorPattern: { type: 'string', enum: ['solid', 'wood', 'parquet', 'tile', 'stone', 'carpet', 'grass'] },
       wallColors: {
         type: 'object',
         description: 'Accent colour per wall. Keys are edge indices ("0", "1", ...).',

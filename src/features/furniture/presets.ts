@@ -17,6 +17,7 @@ export const FLOOR_SWATCHES: Swatch[] = [
   { id: 'concrete', label: 'Concrete', color: '#6b7075' },
   { id: 'carpet', label: 'Carpet', color: '#6b5b73' },
   { id: 'terrace', label: 'Terrace', color: '#4f6b55' },
+  { id: 'lawn', label: 'Lawn', color: '#5b7a3e' },
 ]
 
 /** Floor textures offered in the room Inspect card. */
@@ -27,6 +28,7 @@ export const FLOOR_PATTERNS: { id: FloorPattern; label: string }[] = [
   { id: 'tile', label: 'Tile' },
   { id: 'stone', label: 'Stone' },
   { id: 'carpet', label: 'Carpet' },
+  { id: 'grass', label: 'Grass' },
 ]
 
 /** Accent paint colours for single walls. `color` undefined clears the paint. */

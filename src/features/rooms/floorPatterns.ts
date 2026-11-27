@@ -214,12 +214,87 @@ function carpetInner(): string {
   return out.join('')
 }
 
+// ---------- grass: 40 x 40 lawn, short blades of 1.5 to 4 cm ----------
+// The blades sit at pseudo-random but fixed places (seeded generator, never Math.random), so the tile is
+// deterministic and every render and export matches. Blades and patches that cross a tile edge are drawn
+// again shifted by +-GRASS_W / +-GRASS_H, so the tile wraps seamlessly.
+const GRASS_W = 40
+const GRASS_H = 40
+const GRASS_BLADES = 150
+const GRASS_PATCHES = 6
+
+/** Tiny deterministic PRNG (mulberry32): the same seed always gives the same blade layout. */
+function grassRandom(seed: number): () => number {
+  let a = seed
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), a | 1)
+    t = (t + Math.imul(t ^ (t >>> 7), t | 61)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * Draws one element and, when its box crosses a tile edge, its wrapped copies. `x0..y1` is the box in
+ * tile coordinates; `emit` renders it shifted by (dx, dy).
+ */
+function wrapTile(
+  w: number,
+  h: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  emit: (dx: number, dy: number) => string,
+): string[] {
+  const dxs = [0, ...(x0 < 0 ? [w] : []), ...(x1 > w ? [-w] : [])]
+  const dys = [0, ...(y0 < 0 ? [h] : []), ...(y1 > h ? [-h] : [])]
+  const out: string[] = []
+  for (const dx of dxs) for (const dy of dys) out.push(emit(dx, dy))
+  return out
+}
+
+const g2 = (n: number): number => Math.round(n * 100) / 100
+
+function grassInner(): string {
+  const rnd = grassRandom(0x5eed1234)
+  const out: string[] = []
+  // Soft tint patches first, so the blades read over them: light and dark tufts, very low opacity.
+  for (let i = 0; i < GRASS_PATCHES; i++) {
+    const pw = g2(10 + rnd() * 10)
+    const ph = g2(10 + rnd() * 10)
+    const x0 = g2(rnd() * GRASS_W - pw / 2)
+    const y0 = g2(rnd() * GRASS_H - ph / 2)
+    const t = g2((i % 2 ? 1 : -1) * (0.035 + rnd() * 0.025))
+    out.push(...wrapTile(GRASS_W, GRASS_H, x0, y0, x0 + pw, y0 + ph, (dx, dy) => tint(x0 + dx, y0 + dy, pw, ph, t)))
+  }
+  // Short blades, mostly upright with a tilt of +-30 degrees.
+  for (let i = 0; i < GRASS_BLADES; i++) {
+    const x = g2(rnd() * GRASS_W)
+    const y = g2(rnd() * GRASS_H)
+    const len = 1.5 + rnd() * 2.5
+    const tilt = (rnd() - 0.5) * (Math.PI / 3)
+    const x2 = g2(x + Math.sin(tilt) * len)
+    const y2 = g2(y - Math.cos(tilt) * len)
+    const sw = g2(0.3 + rnd() * 0.25)
+    const color = rnd() < 0.45 ? DARK : INK
+    const op = g2(0.12 + rnd() * 0.16)
+    out.push(...wrapTile(
+      GRASS_W, GRASS_H,
+      Math.min(x, x2), Math.min(y, y2), Math.max(x, x2), Math.max(y, y2),
+      (dx, dy) => line(x + dx, y + dy, x2 + dx, y2 + dy, sw, color, op),
+    ))
+  }
+  return out.join('')
+}
+
 export const PATTERN_DEFS: Record<Exclude<FloorPattern, 'solid'>, PatternDef> = {
   wood: { w: WOOD_W, h: 3 * WOOD_PLANK_H, inner: woodInner },
   parquet: { w: HB_W * HB_N, h: HB_W * HB_N, inner: parquetInner },
   tile: { w: 2 * TILE, h: 2 * TILE, inner: tileInner },
   stone: { w: 90, h: 60, inner: stoneInner },
   carpet: { w: 12, h: 12, inner: carpetInner },
+  grass: { w: GRASS_W, h: GRASS_H, inner: grassInner },
 }
 
 export const patternId = (roomId: string, scope = 'fp'): string => `${scope}-${roomId.replace(/[^A-Za-z0-9_-]/g, '_')}`

@@ -4,7 +4,7 @@ import type { Vec } from './geometry'
 export type { Vec }
 
 /** Floor texture drawn over the room fill. 'solid' (or unset) means no texture. */
-export type FloorPattern = 'solid' | 'wood' | 'parquet' | 'tile' | 'stone' | 'carpet'
+export type FloorPattern = 'solid' | 'wood' | 'parquet' | 'tile' | 'stone' | 'carpet' | 'grass'
 
 export type RoomShape = {
   id: string

@@ -43,11 +43,11 @@ beforeEach(() => {
 // ---------- presets ----------
 
 describe('presets and swatches', () => {
-  it('floor swatches: 9 entries, Default has no colour, ids and colours are valid', () => {
-    expect(FLOOR_SWATCHES).toHaveLength(9)
+  it('floor swatches: 10 entries, Default has no colour, ids and colours are valid', () => {
+    expect(FLOOR_SWATCHES).toHaveLength(10)
     expect(FLOOR_SWATCHES[0]).toMatchObject({ label: 'Default', color: undefined })
-    expect(new Set(FLOOR_SWATCHES.map((x) => x.id)).size).toBe(9)
-    expect(new Set(FLOOR_SWATCHES.map((x) => x.label)).size).toBe(9)
+    expect(new Set(FLOOR_SWATCHES.map((x) => x.id)).size).toBe(10)
+    expect(new Set(FLOOR_SWATCHES.map((x) => x.label)).size).toBe(10)
     for (const sw of FLOOR_SWATCHES.slice(1)) expect(sw.color).toMatch(/^#[0-9a-f]{6}$/)
   })
 

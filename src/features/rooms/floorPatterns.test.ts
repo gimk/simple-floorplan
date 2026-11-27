@@ -7,7 +7,7 @@ import {
   DESIGN_FLOOR_BASE, DESIGN_FLOOR_TINT_OPACITY, PATTERN_DEFS, PLAN_FLOOR_OPACITY, isPatterned, patternSvg, patternTransformOf,
 } from './floorPatterns'
 
-const IDS = ['wood', 'parquet', 'tile', 'stone', 'carpet'] as const
+const IDS = ['wood', 'parquet', 'tile', 'stone', 'carpet', 'grass'] as const
 
 /** Every opening tag has a closing one, and tags are balanced. */
 function balanced(svg: string): boolean {
@@ -22,6 +22,32 @@ function balanced(svg: string): boolean {
   return stack.length === 0
 }
 
+type Box = { box: [number, number, number, number]; signature: string }
+
+/** Bounding box (x, y, w, h) plus the remaining attributes of every rect, line and dot in a pattern. */
+function boxes(inner: string): Box[] {
+  const out: Box[] = []
+  for (const m of inner.matchAll(/<rect x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)"([^>]*)>/g))
+    out.push({ box: [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])], signature: m[5] })
+  for (const m of inner.matchAll(/<line x1="(-?[\d.]+)" y1="(-?[\d.]+)" x2="(-?[\d.]+)" y2="(-?[\d.]+)"([^>]*)>/g)) {
+    const [x1, y1, x2, y2] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])]
+    out.push({ box: [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)], signature: m[5] })
+  }
+  for (const m of inner.matchAll(/<circle cx="(-?[\d.]+)" cy="(-?[\d.]+)" r="([\d.]+)"([^>]*)>/g)) {
+    const r = Number(m[3])
+    out.push({ box: [Number(m[1]) - r, Number(m[2]) - r, 2 * r, 2 * r], signature: m[4] })
+  }
+  return out
+}
+
+const boxKey = (b: Box): string =>
+  `${b.box.map((v) => (Math.round(v * 100) / 100).toFixed(2)).join(',')}|${b.signature}`
+
+const shifted = (b: Box, dx: number, dy: number): Box => ({
+  box: [b.box[0] + dx, b.box[1] + dy, b.box[2], b.box[3]],
+  signature: b.signature,
+})
+
 describe('constants', () => {
   it('has the Design and Plan floor constants', () => {
     expect(DESIGN_FLOOR_BASE).toBe('#161b21')
@@ -31,7 +57,7 @@ describe('constants', () => {
 })
 
 describe('PATTERN_DEFS', () => {
-  it('defines the 5 patterns with positive sizes', () => {
+  it('defines the 6 patterns with positive sizes', () => {
     expect(Object.keys(PATTERN_DEFS).sort()).toEqual([...IDS].sort())
     for (const id of IDS) {
       expect(PATTERN_DEFS[id].w).toBeGreaterThan(0)
@@ -45,6 +71,7 @@ describe('PATTERN_DEFS', () => {
     expect(PATTERN_DEFS.tile).toMatchObject({ w: 60, h: 60 })
     expect(PATTERN_DEFS.stone).toMatchObject({ w: 90, h: 60 })
     expect(PATTERN_DEFS.carpet).toMatchObject({ w: 12, h: 12 })
+    expect(PATTERN_DEFS.grass).toMatchObject({ w: 40, h: 40 })
   })
 
   it.each(IDS)('%s produces valid, finite SVG markup', (id) => {
@@ -85,6 +112,30 @@ describe('PATTERN_DEFS', () => {
         expect(ox > 0 && oy > 0 ? ox * oy : 0).toBe(0)
       }
     }
+  })
+
+  it('grass is deterministic', () => {
+    const a = PATTERN_DEFS.grass.inner(1)
+    const b = PATTERN_DEFS.grass.inner(1)
+    expect(b).toBe(a)
+    expect(a.length).toBeGreaterThan(2000)
+  })
+
+  it('grass wraps seamlessly: every element that crosses a tile edge has a twin shifted by +-w / +-h', () => {
+    const { w, h } = PATTERN_DEFS.grass
+    const items = boxes(PATTERN_DEFS.grass.inner(1))
+    // 5 tint patches + 150 blades, plus their wrapped copies.
+    expect(items.length).toBeGreaterThanOrEqual(155)
+    const have = new Set(items.map(boxKey))
+    const missing: string[] = []
+    for (const b of items) {
+      const [x, y, bw, bh] = b.box
+      if (x < 0 && !have.has(boxKey(shifted(b, w, 0)))) missing.push(`left edge: ${boxKey(b)}`)
+      if (x + bw > w && !have.has(boxKey(shifted(b, -w, 0)))) missing.push(`right edge: ${boxKey(b)}`)
+      if (y < 0 && !have.has(boxKey(shifted(b, 0, h)))) missing.push(`top edge: ${boxKey(b)}`)
+      if (y + bh > h && !have.has(boxKey(shifted(b, 0, -h)))) missing.push(`bottom edge: ${boxKey(b)}`)
+    }
+    expect(missing).toEqual([])
   })
 })
 
