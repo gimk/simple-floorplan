@@ -130,3 +130,19 @@
 | d. Plan mode grid toggle (`Cmd+'`) | PASS | In Plan mode (`1`), `Meta+'` hid the grid (`<line>` `185 -> 175`, `<pattern>` `2 -> 1`, `<rect>` `39 -> 36`); pressing `Meta+'` again restored it (`175 -> 185`, `1 -> 2`, `36 -> 39`). |
 | e. Regression (`Cmd+C/V`, `Option+H`, `Shift+H`) | PASS | `Alt+h` aligned 3 items to `cx: 725`; `Shift+h` flipped `Bathtub` shape to `scale(-1 1)`; `Meta+c` / `Meta+v` pasted a copy (item count `6 -> 7`). |
 | f. Console errors (`error\|Error`) | PASS | `list_console_messages` returned `0` error messages (only 1 `[issue]` for form field `id`/`name`). |
+
+---
+
+## Option measure for multi-selection and groups
+
+| Check | Result | What you saw |
+| :--- | :--- | :--- |
+| Build proof (`Alt` + hover on 2-item selection) | PASS | Unregistered `1` service worker, deleted `2` caches, hard-reloaded `http://localhost:8788`, switched to Design mode (`2`), selected `Bathtub` + `Bed` (`2 items selected`), and hovered `Fridge` with `Alt`. A dashed `#22d3ee` (`4 3`) line (`457.8..582.5`) and `125 cm` pill appeared. |
+| a. Multi-selection + `Alt` hover another item | PASS | Selected `Bathtub` + `Bed` (`462.8×463.5` selection box) and hovered `Fridge` with `Alt`. Dashed `#22d3ee` gap line (`457.8, 208.3 -> 582.5, 208.3`) and `125 cm` pill appeared. |
+| b. Multi-selection + `Alt` hover wall | PASS | Hovered top wall (`500, 148`) and right wall (`1160, 300`) with `Alt`. Distance lines and pills appeared from the selection box to the top wall (`137 cm`, `230.4, 136.5 -> 230.4, 0.0`) and right wall (`362 cm`, `457.8, 300.0 -> 820.0, 300.0`). |
+| c. Multi-selection + `Alt` hover empty floor | PASS | Hovered empty floor (`500, 200` and `718, 640`) with `Alt`. Distance lines and pills appeared from the selection box to the surrounding walls (`28 cm` at `500, 200`; `302 cm`, `7 cm`, `236 cm`, `20 cm` at `718, 640`). |
+| d. Multi-selection + `Alt` hover selected item | PASS | Hovered selected `Bathtub` (`428, 322`) and `Bed` (`718, 640`) with `Alt`. Neither item became a target (no self-gap line; pointer fell through to floor/wall distances `28 cm` and `302 cm / 7 cm / 236 cm / 20 cm`). |
+| e. Group (`Cmd+G`, click to select) + a/b/c/members | PASS | Pressed `Meta+g`, deselected, and clicked `Bathtub` (`2 items selected`, `Ungroup`). `Alt` + hover `Fridge` showed `125 cm`; top/right walls showed `137 cm` and `362 cm`; empty floor showed `28 cm`; hovering group members `Bathtub` or `Bed` never targeted them (`28 cm` and `302 cm / 7 cm / 236 cm / 20 cm` wall distances only). |
+| f. Release `Alt` clears guides | PASS | Released `Alt` (`keyup`). All `cm` text labels (`0`) and dashed guide lines (`0`) disappeared. |
+| g. Regression: single item + `Alt` hover item | PASS | Ungrouped (`Meta+Shift+g`), selected only `Bathtub`, and hovered `Fridge` with `Alt`. Dashed `#22d3ee` line (`173.0, 174.0 -> 582.5, 174.0`) and `410 cm` pill appeared. |
+| h. Console errors (`error\|Error`) | PASS | `list_console_messages` returned `0` error messages (only `1` `[issue]` for form field `id`/`name`). |
