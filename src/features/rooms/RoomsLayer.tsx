@@ -15,12 +15,13 @@ import { subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifier
 import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import {
-  constrainAxis, constrainWallPerpendicular, deleteVertex, formatLengthCm, insertVertexOnEdge, moveEdge, moveRoom, moveVertex,
+  constrainAxis, constrainWallPerpendicular, deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex,
   roomWalls, roundToPrecision, scaleRoomFromVertex, wallResizeCursor,
 } from './ops'
 import { DEFAULT_PATTERN_FILL, PATTERN_DEFS, isPatterned, patternId } from './floorPatterns'
 import { snapPoint, snapRoomDelta } from './snap'
 import type { SnapGuide } from './snap'
+import { computeTextLod } from './textLod'
 import { WALL_COLOR, wallMaskModel, wallStrokeMaskModel, wallThicknessOf } from './walls'
 import { CANVAS_BG, CANVAS_HALO, CANVAS_SELECT } from '../../shell/canvasTokens'
 
@@ -41,6 +42,7 @@ export type RoomsLayerProps = {
 const ORANGE = CANVAS_SELECT
 const STROKE = 'rgba(226,232,240,0.85)'
 const DRAG_THRESHOLD_PX = 3
+const NO_IDS: string[] = []
 
 type Gesture = {
   pointerId: number
@@ -92,9 +94,15 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   const design = mode === 'design'
   const selectable = interactive || design
   const inArtboard = (s: Selection) => 'artboardId' in s && s.artboardId === artboard.id
-  const selectedIds = selection.kind === 'room' && inArtboard(selection) ? selection.roomIds : []
+  const selectedIds = selection.kind === 'room' && inArtboard(selection) ? selection.roomIds : NO_IDS
   const selectedWall = selection.kind === 'wall' && inArtboard(selection) ? selection : null
   const selectedVertex = selection.kind === 'vertex' && inArtboard(selection) ? selection : null
+
+  // Text level of detail: depends on zoom and selection, never on pan.
+  const textLod = useMemo(() => computeTextLod({
+    rooms: roomGeo, zoom, wallThicknessCm: thickness, precisionCm: artboard.precisionCm,
+    selectedRoomIds: selectedIds, selectedWall, selectedVertex,
+  }), [roomGeo, zoom, thickness, selectedIds, selectedWall, selectedVertex, artboard.precisionCm])
 
   const toLocal = (cx: number, cy: number): Vec => {
     const w = toWorld(cx, cy)
@@ -396,17 +404,28 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
               onClick={(e) => onRoomClick(e, room)}
               {...gestureProps}
             />
-            {label && (
-              <text
-                x={label.x} y={label.y} textAnchor="middle" pointerEvents="none"
-                fontSize={px(13)} fill="rgba(241,245,249,0.9)"
-              >
-                <tspan x={label.x} dy={px(-2)} fontWeight={600}>{room.name}</tspan>
-                <tspan x={label.x} dy={px(15)} fontSize={px(11)} fill="rgba(203,213,225,0.7)">
-                  {areaText} m²
-                </tspan>
-              </text>
-            )}
+            {(() => {
+              const lod = textLod.rooms.get(room.id)
+              if (!label || !lod || lod.tier === 'hidden') return null
+              const { p, vertical } = lod
+              return (
+                <text
+                  x={p.x} y={p.y} textAnchor="middle" pointerEvents="none"
+                  transform={vertical ? `rotate(-90 ${p.x} ${p.y})` : undefined}
+                  dominantBaseline={lod.showArea ? undefined : 'central'}
+                  fontSize={px(lod.nameFontPx)} fill="rgba(241,245,249,0.9)"
+                  stroke={CANVAS_HALO} strokeWidth={px(2.5)} paintOrder="stroke" strokeLinejoin="round"
+                  data-lod={lod.tier}
+                >
+                  <tspan x={p.x} dy={lod.showArea ? px(-2) : undefined} fontWeight={600}>{room.name}</tspan>
+                  {lod.showArea && (
+                    <tspan x={p.x} dy={px(15)} fontSize={px(lod.areaFontPx)} fill="rgba(203,213,225,0.7)">
+                      {areaText} m²
+                    </tspan>
+                  )}
+                </text>
+              )
+            })()}
           </g>
         )
       })}
@@ -431,15 +450,10 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
         </g>
       )}
 
-      {roomGeo.map(({ room, s, walls }) => {
+      {roomGeo.map(({ room, walls }) => {
         return walls.map((w) => {
           const isSel = selectedWall?.roomId === room.id && selectedWall.edgeIndex === w.index
-          const dx = (w.b.x - w.a.x) / (w.lengthCm || 1), dy = (w.b.y - w.a.y) / (w.lengthCm || 1)
-          const off = px(10) + thickness
-          const lx = w.mid.x - dy * s * off, ly = w.mid.y + dx * s * off
-          const flip = w.angleDeg > 90 || w.angleDeg <= -90
-          const rot = flip ? w.angleDeg + 180 : w.angleDeg
-          const showLabel = w.lengthCm * zoom >= 36
+          const wl = textLod.walls.get(`${room.id}:${w.index}`)
           return (
             <g key={`${room.id}-${w.index}`} data-wall={`${room.id}:${w.index}`} data-entity="wall" data-id={room.id} data-edge={w.index} aria-label={`Wall ${w.index + 1} of ${room.name}, ${Math.round(w.lengthCm)} cm`}>
               {/* Thick walls paint the wall lines inside the room group above, behind the stroke mask. */}
@@ -455,9 +469,9 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
                   {...gestureProps}
                 />
               )}
-              {showLabel && (
+              {wl && (
                 <g
-                  transform={`translate(${lx} ${ly}) rotate(${rot})`}
+                  transform={`translate(${wl.x} ${wl.y}) rotate(${wl.rotDeg})`}
                   pointerEvents={interactive ? 'all' : 'none'}
                   style={{ cursor: interactive ? 'text' : undefined }}
                   onPointerDown={(e) => { if (interactive && e.button === 0) e.stopPropagation() }}
@@ -473,7 +487,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
                     fill={isSel ? ORANGE : 'rgba(226,232,240,0.9)'}
                     stroke={CANVAS_HALO} strokeWidth={px(3)} paintOrder="stroke" strokeLinejoin="round"
                   >
-                    {formatLengthCm(w.lengthCm, artboard.precisionCm)}
+                    {wl.text}
                   </text>
                 </g>
               )}
