@@ -44,6 +44,7 @@ export const furnitureSchema = z.object({
   heightCm: num.positive().optional(),
   showDirection: z.boolean().optional(),
   cornerRadiusCm: z.number().min(0).optional(),
+  cornerRadiiCm: z.tuple([z.number().min(0), z.number().min(0), z.number().min(0), z.number().min(0)]).optional(),
   groupId: z.string().min(1).optional(),
   flipX: z.boolean().optional(),
   flipY: z.boolean().optional(),

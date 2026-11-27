@@ -165,9 +165,11 @@ describe('renderArtboardSvg', () => {
   it('renders rect furniture with its default corner radius and circle furniture as an ellipse', () => {
     const { svg } = renderArtboardSvg(populated())
     expect(svg).toContain('data-furniture="f1" transform="translate(60 60) rotate(0)"')
-    // Default 4 cm radius, as on the canvas.
-    expect(svg).toContain('<rect x="-30" y="-20" width="60" height="40" rx="4" ry="4"')
-    expect(svg).toContain('fill="#c2410c" fill-opacity="0.78"')
+    // Default 4 cm radius, as on the canvas: one path with an arc per corner.
+    expect(svg).toContain(
+      '<path d="M -30 -16 A 4 4 0 0 1 -26 -20 L 26 -20 A 4 4 0 0 1 30 -16 ' +
+        'L 30 16 A 4 4 0 0 1 26 20 L -26 20 A 4 4 0 0 1 -30 16 Z" fill="#c2410c" fill-opacity="0.78"',
+    )
     expect(svg).toContain('>Chair</text>')
     expect(svg).toContain('data-furniture="f2" transform="translate(250 200) rotate(15)"')
     expect(svg).toContain('<ellipse cx="0" cy="0" rx="40" ry="40"')
@@ -198,15 +200,23 @@ describe('renderArtboardSvg', () => {
 
   it('applies a custom corner radius on rect furniture, clamped to half the shorter side', () => {
     const custom = renderArtboardSvg(artboard({ furniture: [chair({ cornerRadiusCm: 12 })] })).svg
-    expect(custom).toContain('<rect x="-30" y="-20" width="60" height="40" rx="12" ry="12"')
-    expect(custom).not.toContain('rx="1.5"')
+    expect(custom).toContain(
+      '<path d="M -30 -8 A 12 12 0 0 1 -18 -20 L 18 -20 A 12 12 0 0 1 30 -8 ' +
+        'L 30 8 A 12 12 0 0 1 18 20 L -18 20 A 12 12 0 0 1 -30 8 Z"',
+    )
+    expect(custom).not.toContain('A 4 4 0 0 1')
 
+    // Radius 0: a sharp rectangle, so no arc at all.
     const zero = renderArtboardSvg(artboard({ furniture: [chair({ cornerRadiusCm: 0 })] })).svg
-    expect(zero).toContain('<rect x="-30" y="-20" width="60" height="40" rx="0" ry="0"')
+    expect(zero).toContain('<path d="M -30 -20 L 30 -20 L 30 20 L -30 20 Z"')
+    expect(zero).not.toContain(' A ')
 
     // 60 x 40: the radius can never pass 20 cm (half the depth).
     const huge = renderArtboardSvg(artboard({ furniture: [chair({ cornerRadiusCm: 500 })] })).svg
-    expect(huge).toContain('<rect x="-30" y="-20" width="60" height="40" rx="20" ry="20"')
+    expect(huge).toContain(
+      '<path d="M -30 0 A 20 20 0 0 1 -10 -20 L 10 -20 A 20 20 0 0 1 30 0 ' +
+        'A 20 20 0 0 1 10 20 L -10 20 A 20 20 0 0 1 -30 0 Z"',
+    )
   })
 
   it('escapes special characters in the artboard, project, room and furniture names', () => {

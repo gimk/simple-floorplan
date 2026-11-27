@@ -4,6 +4,7 @@ import { area } from '../model/geometry'
 import type { Vec } from '../model/geometry'
 import { artboardAreaM2, roomAreaM2 } from '../features/artboards/frame'
 import { hostWallIn } from '../features/openings/sync'
+import { furnitureCornerRadiiCm } from '../features/furniture/geometry'
 import { roomWalls } from '../features/rooms/ops'
 import { DEFAULT_WALL_THICKNESS_CM } from '../model/types'
 import type { Artboard, FloorPattern, FurnitureItem, Opening, OpeningKind, OpeningVariant, ProjectDoc, Room } from '../model/types'
@@ -60,6 +61,8 @@ export type FurnitureSummary = {
   heightCm: number | null
   showDirection: boolean
   cornerRadiusCm: number
+  /** Effective radii of a 'rect' item: top-left, top-right, bottom-right, bottom-left. */
+  cornerRadiiCm: [number, number, number, number]
 }
 
 export type ArtboardSummary = {
@@ -149,6 +152,7 @@ const summarizeFurniture = (f: FurnitureItem): FurnitureSummary => ({
   heightCm: f.heightCm ?? null,
   showDirection: f.showDirection ?? false,
   cornerRadiusCm: f.cornerRadiusCm ?? 0,
+  cornerRadiiCm: furnitureCornerRadiiCm(f),
 })
 
 function summarizeArtboard(a: Artboard): ArtboardSummary {

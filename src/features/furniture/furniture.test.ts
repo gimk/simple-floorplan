@@ -9,7 +9,8 @@ import {
 } from './actions'
 import {
   computeDistanceGuides, DEFAULT_MAX_GUIDE_DIST_CM, MAX_FURNITURE_CM, MIN_FURNITURE_CM, directionArrowGeometry,
-  furnitureAxisBounds, furnitureCornerRadiusCm, furnitureWorldCorners, normalizeAngle, snapFurnitureMove, snapRotation,
+  CORNER_SIGNS, cornerRadiiPatch, furnitureAxisBounds, furnitureCornerRadiiCm, furnitureCornerRadiusCm,
+  furnitureWorldCorners, normalizeAngle, radiusFromPointer, roundedRectPath, snapFurnitureMove, snapRotation,
 } from './geometry'
 import { FLOOR_SWATCHES, FURNITURE_CATEGORY_BY_ID, FURNITURE_COLORS, FURNITURE_PRESETS } from './presets'
 
@@ -141,6 +142,78 @@ describe('furnitureCornerRadiusCm / directionArrowGeometry', () => {
     expect(furnitureCornerRadiusCm(20, 10, 6)).toBe(5)
     expect(furnitureCornerRadiusCm(100, 60, 0)).toBe(0)
     expect(furnitureCornerRadiusCm(100, 60, -8)).toBe(0)
+  })
+
+  it('gives the effective radii of the 4 corners, clamped, with one radius for all as the fallback', () => {
+    const base = { widthCm: 100, depthCm: 60 }
+    // No radius in the document: the default 4 cm on all 4 corners.
+    expect(furnitureCornerRadiiCm(base)).toEqual([4, 4, 4, 4])
+    expect(furnitureCornerRadiiCm({ ...base, cornerRadiusCm: 12 })).toEqual([12, 12, 12, 12])
+    // The per-corner field wins over the single radius, top-left, top-right, bottom-right, bottom-left.
+    expect(furnitureCornerRadiiCm({ ...base, cornerRadiusCm: 12, cornerRadiiCm: [1, 2, 3, 4] })).toEqual([1, 2, 3, 4])
+    // Every radius is clamped to >= 0 and to half of the shorter side (30 cm here).
+    expect(furnitureCornerRadiiCm({ widthCm: 20, depthCm: 10, cornerRadiiCm: [-5, 900, 6, 2] })).toEqual([0, 5, 5, 2])
+    // A malformed per-corner field falls back to the single radius.
+    expect(furnitureCornerRadiiCm({ ...base, cornerRadiusCm: 7, cornerRadiiCm: [3] as unknown as [number, number, number, number] })).toEqual([7, 7, 7, 7])
+  })
+
+  it('turns a radius-handle drag into a radius: mean of the two inward distances, rounded, clamped', () => {
+    // 100 x 50 at the origin, no rotation. Top-left corner is (-50, -25), inward is (+1, +1).
+    const flat = { xCm: 0, yCm: 0, widthCm: 100, depthCm: 50, rotationDeg: 0 }
+    expect(radiusFromPointer(flat, 0, { x: -50, y: -25 })).toBe(0) // on the corner
+    expect(radiusFromPointer(flat, 0, { x: -20, y: -5 })).toBe(25) // 30 and 20 in: mean 25
+    expect(radiusFromPointer(flat, 0, { x: -40, y: -15 })).toBe(10) // 10 and 10 in
+    expect(radiusFromPointer(flat, 0, { x: 0, y: 0 })).toBe(25) // clamped to half the depth
+    expect(radiusFromPointer(flat, 0, { x: -80, y: -60 })).toBe(0) // outside the corner
+    // Top-right corner is (50, -25), inward is (-1, +1): 20 and 20 in gives 20.
+    expect(radiusFromPointer(flat, 1, { x: 30, y: -5 })).toBe(20)
+    // Bottom-left corner is (-50, 25), inward is (+1, -1).
+    expect(radiusFromPointer(flat, 3, { x: -30, y: 5 })).toBe(20)
+    // Whole cm only: 13 and 12 in means 12.5, which rounds to 13; 12 and 11 in means 11.5 -> 12.
+    expect(radiusFromPointer(flat, 0, { x: -37, y: -13 })).toBe(13)
+    expect(radiusFromPointer(flat, 0, { x: -38, y: -14 })).toBe(12)
+  })
+
+  it('reads the pointer in the rotated frame of the item', () => {
+    // The same item turned 90 deg clockwise: local (lx, ly) lands at (-ly, lx) around (0, 0).
+    const turned = { xCm: 0, yCm: 0, widthCm: 100, depthCm: 50, rotationDeg: 90 }
+    // Local point (-30, -5) of the top-left corner: 20 and 20 in, so a 20 cm radius.
+    expect(radiusFromPointer(turned, 0, { x: 5, y: -30 })).toBe(20)
+    // The item centre is still the centre after the turn.
+    expect(radiusFromPointer(turned, 0, { x: 0, y: 0 })).toBe(25)
+    // And a translated item: the pointer is measured from xCm, yCm, not from the origin.
+    const moved = { xCm: 200, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg: 0 }
+    expect(radiusFromPointer(moved, 0, { x: 180, y: 85 })).toBe(20)
+    // CORNER_SIGNS is the order of cornerRadiiCm: top-left, top-right, bottom-right, bottom-left.
+    expect(CORNER_SIGNS).toEqual([[-1, -1], [1, -1], [1, 1], [-1, 1]])
+  })
+
+  it('collapses 4 equal radii into the single cornerRadiusCm field', () => {
+    expect(cornerRadiiPatch('rect', [8, 8, 8, 8])).toEqual({ cornerRadiusCm: 8 })
+    expect(cornerRadiiPatch('rect', [0, 0, 0, 0])).toEqual({ cornerRadiusCm: 0 })
+    expect(cornerRadiiPatch('rect', [8, 4, 4, 4])).toEqual({ cornerRadiiCm: [8, 4, 4, 4] })
+    // A circle has no corners.
+    expect(cornerRadiiPatch('circle', [8, 8, 8, 8])).toBeNull()
+  })
+
+  it('builds the SVG path of a rounded rectangle, corner by corner', () => {
+    // Default 4 cm radius on a 60 x 40 box, centred on 0: one arc per corner, clockwise.
+    expect(roundedRectPath(60, 40, [4, 4, 4, 4])).toBe(
+      'M -30 -16 A 4 4 0 0 1 -26 -20 L 26 -20 A 4 4 0 0 1 30 -16 ' +
+        'L 30 16 A 4 4 0 0 1 26 20 L -26 20 A 4 4 0 0 1 -30 16 Z',
+    )
+    // 0 on every corner: a plain rectangle, with no arc at all.
+    expect(roundedRectPath(60, 40, [0, 0, 0, 0])).toBe('M -30 -20 L 30 -20 L 30 20 L -30 20 Z')
+    // One big corner only: the other three stay sharp.
+    expect(roundedRectPath(60, 40, [10, 0, 0, 0])).toBe('M -30 -10 A 10 10 0 0 1 -20 -20 L 30 -20 L 30 20 L -30 20 Z')
+    // Half the shorter side on all 4 corners: a stadium, with no zero-length side.
+    expect(roundedRectPath(60, 40, [20, 20, 20, 20])).toBe(
+      'M -30 0 A 20 20 0 0 1 -10 -20 L 10 -20 A 20 20 0 0 1 30 0 ' +
+        'A 20 20 0 0 1 10 20 L -10 20 A 20 20 0 0 1 -30 0 Z',
+    )
+    // Radii above half the shorter side are clamped, and float noise never reaches the path.
+    expect(roundedRectPath(60, 40, [500, 500, 500, 500])).toBe(roundedRectPath(60, 40, [20, 20, 20, 20]))
+    expect(roundedRectPath(3, 3, [0, 0, 0, 0])).toBe('M -1.5 -1.5 L 1.5 -1.5 L 1.5 1.5 L -1.5 1.5 Z')
   })
 
   it('points the direction arrow to local -Y, inside the top edge', () => {

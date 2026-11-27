@@ -470,6 +470,134 @@ export function furnitureCornerRadiusCm(widthCm: number, depthCm: number, corner
   return Math.max(0, Math.min(cornerRadiusCm ?? 4, widthCm / 2, depthCm / 2))
 }
 
+/** The 4 corner radii of a 'rect' item: top-left, top-right, bottom-right, bottom-left. */
+export type CornerRadii = [number, number, number, number]
+
+/** Default corner radius of a 'rect' item, in cm, when the document holds none. */
+export const DEFAULT_CORNER_RADIUS_CM = 4
+
+/** The radii a 'rect' item can hold: the source of the effective radii and of the write rules. */
+export type CornerRadiiSource = {
+  widthCm: number
+  depthCm: number
+  cornerRadiusCm?: number
+  cornerRadiiCm?: readonly number[]
+}
+
+/**
+ * Effective corner radii of a 'rect' item, in cm, in the order top-left, top-right, bottom-right,
+ * bottom-left of the unrotated local box. `cornerRadiiCm` wins when it holds 4 values; otherwise all
+ * 4 corners use `cornerRadiusCm` (default 4). Each radius is clamped to >= 0 and to half of the
+ * shorter side, the largest radius that still looks like a rounded rectangle.
+ */
+export function furnitureCornerRadiiCm(item: CornerRadiiSource): CornerRadii {
+  const max = Math.max(0, Math.min(item.widthCm, item.depthCm) / 2)
+  const r = item.cornerRadiiCm
+  const base = item.cornerRadiusCm ?? DEFAULT_CORNER_RADIUS_CM
+  const raw = r && r.length === 4 ? r : [base, base, base, base]
+  const one = (v: number): number => Math.max(0, Math.min(Number.isFinite(v) ? v : 0, max))
+  return [one(raw[0]), one(raw[1]), one(raw[2]), one(raw[3])]
+}
+
+/**
+ * Write rule of the corner radii: a patch of 4 equal values collapses to the single `cornerRadiusCm`
+ * field (and drops `cornerRadiiCm`), so a document never holds 4 equal radii twice. 4 values that
+ * differ stay in `cornerRadiiCm`. Circles have no corners: `null` for them.
+ */
+export function cornerRadiiPatch(
+  shape: 'rect' | 'circle',
+  radii: readonly number[],
+): { cornerRadiusCm: number } | { cornerRadiiCm: CornerRadii } | null {
+  if (shape === 'circle') return null
+  const r: CornerRadii = [radii[0] ?? 0, radii[1] ?? 0, radii[2] ?? 0, radii[3] ?? 0]
+  return r.every((v) => v === r[0]) ? { cornerRadiusCm: r[0] } : { cornerRadiiCm: r }
+}
+
+/**
+ * Signs of the 4 corner positions of the local box, in the order of `cornerRadiiCm`:
+ * top-left, top-right, bottom-right, bottom-left. The inward direction of a corner is the
+ * opposite of its signs on both axes.
+ */
+export const CORNER_SIGNS: readonly (readonly [number, number])[] = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, 1],
+]
+
+/** What a radius drag needs to know about the item. */
+export type RadiusDragItem = {
+  xCm: number
+  yCm: number
+  widthCm: number
+  depthCm: number
+  rotationDeg: number
+}
+
+/**
+ * Corner radius a radius-handle drag leads to, in whole cm. `p` is the pointer in artboard-local cm
+ * and `index` is the corner (0 = top-left, then clockwise). The pointer goes into the local frame of
+ * the item (translate back, then undo the rotation); the radius is the mean of the two inward
+ * distances from that corner, rounded and clamped to 0..half of the shorter side.
+ */
+export function radiusFromPointer(item: RadiusDragItem, index: number, p: Vec): number {
+  const [sx, sy] = CORNER_SIGNS[index] ?? CORNER_SIGNS[0]
+  const w2 = item.widthCm / 2, d2 = item.depthCm / 2
+  const a = item.rotationDeg * RAD
+  const cos = Math.cos(a), sin = Math.sin(a)
+  const wx = p.x - item.xCm, wy = p.y - item.yCm
+  // Inverse of the clockwise rotation of the item.
+  const lx = wx * cos + wy * sin
+  const ly = -wx * sin + wy * cos
+  const dx = (lx - sx * w2) * -sx // inward distance along local X
+  const dy = (ly - sy * d2) * -sy // inward distance along local Y
+  const max = Math.floor(Math.min(item.widthCm, item.depthCm) / 2)
+  return Math.max(0, Math.min(Math.round((dx + dy) / 2), max))
+}
+
+/** SVG number: at most 6 decimals, no float noise, and -0 becomes 0. */
+const svgNum = (v: number): string => String(Math.round(v * 1e6) / 1e6 + 0)
+
+/**
+ * SVG path `d` of a rectangle centred on (0, 0) with one radius per corner (top-left, top-right,
+ * bottom-right, bottom-left). A radius of 0 gives a sharp corner: that corner gets no arc. Every
+ * radius is clamped to half of the shorter side.
+ */
+export function roundedRectPath(widthCm: number, depthCm: number, radii: readonly number[]): string {
+  const hw = Math.abs(widthCm) / 2, hd = Math.abs(depthCm) / 2
+  const max = Math.min(hw, hd)
+  const r = [0, 1, 2, 3].map((i) => {
+    const v = radii[i] ?? 0
+    return Math.max(0, Math.min(Number.isFinite(v) ? v : 0, max))
+  })
+  const pt = (x: number, y: number): string => `${svgNum(x)} ${svgNum(y)}`
+  const out: string[] = []
+  // Current point of the walk, so no zero-length side is written (a full half-round has none).
+  let cx = -hw, cy = -hd + r[0]
+  out.push(`M ${pt(cx, cy)}`)
+  const lineTo = (x: number, y: number): void => {
+    if (x === cx && y === cy) return
+    out.push(`L ${pt(x, y)}`)
+    cx = x
+    cy = y
+  }
+  // Clockwise quarter arcs; a 0 radius leaves the corner sharp, so its arc is left out.
+  const arc = (i: number, x: number, y: number): void => {
+    if (r[i] > 0) out.push(`A ${svgNum(r[i])} ${svgNum(r[i])} 0 0 1 ${pt(x, y)}`)
+    cx = x
+    cy = y
+  }
+  arc(0, -hw + r[0], -hd)          // top-left
+  lineTo(hw - r[1], -hd)
+  arc(1, hw, -hd + r[1])           // top-right
+  lineTo(hw, hd - r[2])
+  arc(2, hw - r[2], hd)            // bottom-right
+  lineTo(-hw + r[3], hd)
+  arc(3, -hw, hd - r[3])           // bottom-left
+  out.push('Z')
+  return out.join(' ')
+}
+
 /** The three points of the subtle front-direction chevron of one item, in local cm. */
 export type DirectionArrow = {
   /** Tip, just inside the local -Y (front) edge. */

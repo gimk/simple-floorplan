@@ -1,7 +1,8 @@
 // Copy / paste of the visual style of furniture items (Alt+Cmd+C / Alt+Cmd+V, Ctrl+Alt+C / V).
 // The style fields are the visual-only fields of FurnitureItem: the colour, the direction arrow and
-// the corner radius. Position, size, rotation, name, id, groupId, shape/preset and height are never
-// copied. The copy lives in a module-level variable. Units: cm.
+// the corner radii (one radius for all 4 corners, or one per corner). Position, size, rotation,
+// name, id, groupId, shape/preset and height are never copied. The copy lives in a module-level
+// variable. Units: cm.
 import { useDoc } from '../../model/store'
 import type { FurnitureItem, ProjectDoc, Selection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
@@ -9,13 +10,15 @@ import { expandToGroups } from './groups'
 import { selectionArtboardId } from './selectionActions'
 
 /** Names of the fields that Copy properties copies. */
-export const STYLE_FIELDS = ['color', 'showDirection', 'cornerRadiusCm'] as const
+export const STYLE_FIELDS = ['color', 'showDirection', 'cornerRadiusCm', 'cornerRadiiCm'] as const
 
 /** The visual-only part of a furniture item. */
 export type FurnitureStyle = {
   color: string
   showDirection?: boolean
   cornerRadiusCm?: number
+  /** Per-corner radii (top-left, top-right, bottom-right, bottom-left); wins over cornerRadiusCm. */
+  cornerRadiiCm?: [number, number, number, number]
 }
 
 /** Style of one item: only the fields listed in STYLE_FIELDS. */
@@ -23,14 +26,24 @@ export function styleOf(item: FurnitureItem): FurnitureStyle {
   const style: FurnitureStyle = { color: item.color }
   if (item.showDirection !== undefined) style.showDirection = item.showDirection
   if (item.cornerRadiusCm !== undefined) style.cornerRadiusCm = item.cornerRadiusCm
+  if (item.cornerRadiiCm !== undefined) style.cornerRadiiCm = [...item.cornerRadiiCm]
   return style
+}
+
+/** The 4 effective radii of a style: the per-corner field wins, else the single radius (default 4). */
+const styleRadii = (s: FurnitureStyle): [number, number, number, number] => {
+  const r = s.cornerRadiiCm
+  if (r && r.length === 4) return [r[0], r[1], r[2], r[3]]
+  const v = s.cornerRadiusCm ?? 4
+  return [v, v, v, v]
 }
 
 /** True when both styles hold the same fields with the same values. */
 export function sameStyle(a: FurnitureStyle, b: FurnitureStyle): boolean {
-  return a.color === b.color &&
-    (a.showDirection ?? false) === (b.showDirection ?? false) &&
-    (a.cornerRadiusCm ?? 4) === (b.cornerRadiusCm ?? 4)
+  if (a.color !== b.color) return false
+  if ((a.showDirection ?? false) !== (b.showDirection ?? false)) return false
+  const ra = styleRadii(a), rb = styleRadii(b)
+  return ra[0] === rb[0] && ra[1] === rb[1] && ra[2] === rb[2] && ra[3] === rb[3]
 }
 
 let copiedStyle: FurnitureStyle | null = null
@@ -87,6 +100,8 @@ export function pasteStyle(): boolean {
       else f.showDirection = style.showDirection
       if (style.cornerRadiusCm === undefined) delete f.cornerRadiusCm
       else f.cornerRadiusCm = style.cornerRadiusCm
+      if (style.cornerRadiiCm === undefined) delete f.cornerRadiiCm
+      else f.cornerRadiiCm = [...style.cornerRadiiCm]
     }
   })
   return true

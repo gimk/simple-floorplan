@@ -28,16 +28,24 @@ beforeEach(() => {
 })
 
 describe('styleOf', () => {
-  it('keeps the colour, the direction arrow and the corner radius only', () => {
+  it('keeps the colour, the direction arrow and the corner radii only', () => {
     const style = styleOf(item({ color: '#ff0000', showDirection: true, cornerRadiusCm: 8 }))
     expect(style).toEqual({ color: '#ff0000', showDirection: true, cornerRadiusCm: 8 })
-    expect(STYLE_FIELDS).toEqual(['color', 'showDirection', 'cornerRadiusCm'])
+    expect(STYLE_FIELDS).toEqual(['color', 'showDirection', 'cornerRadiusCm', 'cornerRadiiCm'])
     expect(Object.keys(styleOf(item({ showDirection: undefined, cornerRadiusCm: undefined })))).toEqual(['color'])
+    // Per-corner radii travel too, as their own copy.
+    const perCorner = styleOf(item({ cornerRadiiCm: [1, 2, 3, 4] }))
+    expect(perCorner.cornerRadiiCm).toEqual([1, 2, 3, 4])
+    expect(perCorner.cornerRadiiCm).not.toBe(item({ cornerRadiiCm: [1, 2, 3, 4] }).cornerRadiiCm)
   })
 
   it('compares styles with the defaults of the optional fields', () => {
     expect(sameStyle({ color: '#fff' }, { color: '#fff', showDirection: false, cornerRadiusCm: 4 })).toBe(true)
     expect(sameStyle({ color: '#fff' }, { color: '#000' })).toBe(false)
+    // 4 equal per-corner radii are the same style as the single radius 4.
+    expect(sameStyle({ color: '#fff', cornerRadiiCm: [4, 4, 4, 4] }, { color: '#fff', cornerRadiusCm: 4 })).toBe(true)
+    expect(sameStyle({ color: '#fff', cornerRadiiCm: [8, 4, 4, 4] }, { color: '#fff' })).toBe(false)
+    expect(sameStyle({ color: '#fff', cornerRadiiCm: [8, 4, 4, 4] }, { color: '#fff', cornerRadiiCm: [8, 4, 4, 4] })).toBe(true)
   })
 })
 
@@ -99,6 +107,29 @@ describe('pasteStyle', () => {
     expect(pasteStyle()).toBe(false)
     copyStyle()
     expect(pasteStyle()).toBe(false)
+  })
+
+  it('copies and pastes the 4 per-corner radii', () => {
+    hydrate(
+      item({ id: 'src', cornerRadiiCm: [2, 6, 10, 14] }),
+      item({ id: 'a', cornerRadiusCm: 4 }),
+    )
+    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'src' } })
+    expect(copyStyle()).toBe(true)
+    expect(getCopiedStyle()?.cornerRadiiCm).toEqual([2, 6, 10, 14])
+    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'a' } })
+    expect(pasteStyle()).toBe(true)
+    expect(find('a').cornerRadiiCm).toEqual([2, 6, 10, 14])
+    // The copied style has no single radius, so the target's one goes (the 4 radii win anyway).
+    expect(find('a').cornerRadiusCm).toBeUndefined()
+
+    // And the other way round: a single radius clears the per-corner field of the target.
+    ui().set({ selection: { kind: 'none' } })
+    setCopiedStyle({ color: '#4b5563', cornerRadiusCm: 7 })
+    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'a' } })
+    expect(pasteStyle()).toBe(true)
+    expect(find('a').cornerRadiusCm).toBe(7)
+    expect(find('a').cornerRadiiCm).toBeUndefined()
   })
 
   it('lists only the items whose style differs', () => {

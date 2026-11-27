@@ -71,6 +71,13 @@ export type FurnitureItem = {
   showDirection?: boolean
   /** Border radius of a 'rect' item, in cm (>= 0). Ignored by 'circle' items. */
   cornerRadiusCm?: number
+  /**
+   * One border radius per corner of a 'rect' item, in cm (>= 0), in the order top-left,
+   * top-right, bottom-right, bottom-left of the unrotated local box (local -Y is the top).
+   * When set it wins over `cornerRadiusCm`; a write of 4 equal values stores `cornerRadiusCm`
+   * instead and drops this field. Ignored by 'circle' items.
+   */
+  cornerRadiiCm?: [number, number, number, number]
   /** Flat group identifier (no nesting). Items sharing a groupId act as one group. */
   groupId?: string
   /** Mirror the item shape about its own vertical axis. Omitted or false: no mirror. */

@@ -5,7 +5,7 @@ import type { Vec } from '../model/geometry'
 import { createArtboard, newId } from '../model/schema'
 import type { Artboard, FloorPattern, FurnitureItem, Opening, OpeningKind, OpeningVariant, ProjectDoc, Room } from '../model/types'
 import { artboardFrame } from '../features/artboards/frame'
-import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from '../features/furniture/geometry'
+import { cornerRadiiPatch, MAX_FURNITURE_CM, MIN_FURNITURE_CM } from '../features/furniture/geometry'
 import {
   cleanupSingleMemberGroups,
   groupFurnitureInArtboard,
@@ -82,6 +82,7 @@ export type AgentCommand =
       heightCm?: number
       showDirection?: boolean
       cornerRadiusCm?: number
+      cornerRadiiCm?: [number, number, number, number]
     } & OnArtboard)
   | ({ type: 'update_furniture'; furnitureId: string; patch: Partial<Omit<FurnitureItem, 'id'>> } & OnArtboard)
   | ({ type: 'reorder_furniture'; furnitureId: string; direction: 'front' | 'back' | 'forward' | 'backward' } & OnArtboard)
@@ -164,6 +165,27 @@ function definedEntries<T extends object>(patch: T): Partial<T> {
   const out: Partial<T> = {}
   for (const k of Object.keys(patch) as (keyof T)[]) if (patch[k] !== undefined) out[k] = patch[k]
   return out
+}
+
+/** The 4 corner radii of a 'rect' item: top-left, top-right, bottom-right, bottom-left. */
+const needRadii = (v: unknown, name: string): [number, number, number, number] => {
+  if (!Array.isArray(v) || v.length !== 4) return fail(`${name} must hold 4 numbers (top-left, top-right, bottom-right, bottom-left).`)
+  const out = v.map((n, i) => (isNum(n) && n >= 0 ? n : fail(`${name}[${i}] must be a number >= 0.`)))
+  return [out[0], out[1], out[2], out[3]]
+}
+
+/**
+ * Data rule of the corner radii after a write: 4 equal radii collapse into `cornerRadiusCm` and drop
+ * `cornerRadiiCm` (see cornerRadiiPatch), so a document never holds the same radius twice.
+ */
+function settleCornerRadii(f: FurnitureItem): void {
+  const r = f.cornerRadiiCm
+  if (!Array.isArray(r) || r.length !== 4) return
+  const settled = cornerRadiiPatch(f.shape, r)
+  if (settled && 'cornerRadiusCm' in settled) {
+    f.cornerRadiusCm = settled.cornerRadiusCm
+    delete f.cornerRadiiCm
+  }
 }
 
 // ---------- command handlers (mutate the draft; return a result) ----------
@@ -423,6 +445,10 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       const showDirection = cmd.showDirection ?? preset?.showDirection
       if (showDirection !== undefined) item.showDirection = showDirection
       if (cmd.cornerRadiusCm !== undefined) item.cornerRadiusCm = cmd.cornerRadiusCm
+      if (cmd.cornerRadiiCm !== undefined) {
+        item.cornerRadiiCm = needRadii(cmd.cornerRadiiCm, 'cornerRadiiCm')
+        settleCornerRadii(item)
+      }
       if (preset?.layer === 'bottom') ab.furniture.unshift(item)
       else ab.furniture.push(item)
       return { artboardId: ab.id, furnitureId: item.id, name: item.name }
@@ -435,7 +461,14 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       const patch = definedEntries(rest)
       if (isNum(patch.widthCm)) patch.widthCm = clampSize(patch.widthCm)
       if (isNum(patch.depthCm)) patch.depthCm = clampSize(patch.depthCm)
+      if (patch.cornerRadiiCm !== undefined) patch.cornerRadiiCm = needRadii(patch.cornerRadiiCm, 'cornerRadiiCm')
       Object.assign(f, patch)
+      // One single radius for all 4 corners wins over the per-corner field: an explicit
+      // cornerRadiiCm: undefined, or a cornerRadiusCm that comes without new radii, drops the
+      // per-corner field (an item never holds both rules at once).
+      if ('cornerRadiiCm' in rest && rest.cornerRadiiCm === undefined) delete f.cornerRadiiCm
+      else if (patch.cornerRadiusCm !== undefined && patch.cornerRadiiCm === undefined) delete f.cornerRadiiCm
+      settleCornerRadii(f)
       return { artboardId: ab.id, furnitureId: f.id }
     }
     case 'reorder_furniture': {

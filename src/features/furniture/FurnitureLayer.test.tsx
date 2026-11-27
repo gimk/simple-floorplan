@@ -9,16 +9,20 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Artboard, Selection } from '../../model/types'
 
-const { selectionRef } = vi.hoisted(() => ({ selectionRef: { current: { kind: 'none' } as Selection } }))
+const { selectionRef, toolRef } = vi.hoisted(() => ({
+  selectionRef: { current: { kind: 'none' } as Selection },
+  toolRef: { current: 'select' as string },
+}))
 
 // The server renderer asks zustand for the frozen initial snapshot, so the selection comes from this
 // fake instead of the real UI store.
 vi.mock('../../shell/uiStore', () => {
-  const useUi = (pick: (s: { mode: string; selection: Selection }) => unknown) =>
-    pick({ mode: 'design', selection: selectionRef.current })
+  const useUi = (pick: (s: { mode: string; selection: Selection; tool: string }) => unknown) =>
+    pick({ mode: 'design', selection: selectionRef.current, tool: toolRef.current })
   useUi.getState = () => ({
     mode: 'design',
     selection: selectionRef.current,
+    tool: toolRef.current,
     activeArtboardId: 'ab1',
     set: () => {},
   })
@@ -44,7 +48,7 @@ const itemSelected = (html: string, id: string): boolean => {
   const start = html.indexOf(`data-furniture-id="${id}"`)
   if (start < 0) return false
   // The first shape after the item marker is the item itself (the group has none).
-  const shape = /<(?:rect|ellipse)[^>]*>/.exec(html.slice(start))
+  const shape = /<(?:rect|ellipse|path)[^>]*>/.exec(html.slice(start))
   return !!shape && shape[0].includes('stroke="#fb923c"')
 }
 
@@ -157,5 +161,83 @@ describe('FurnitureLayer resize handles', () => {
     // 4 white corner rects + 1 white rotate circle.
     expect(handles.match(/fill="#fff"/g)).toHaveLength(5)
     expect(handles).toContain('<circle')
+  })
+})
+/** Markup of the radius handle circle of one corner. */
+const radiusTag = (html: string, index: number): string => {
+  const at = html.indexOf(`data-radius-handle="${index}"`)
+  if (at < 0) return ''
+  return html.slice(html.lastIndexOf('<circle', at), html.indexOf('></circle>', at) + 11)
+}
+
+describe('FurnitureLayer corner radius handles', () => {
+  it('draws one radius handle inside each corner of a single rect item', () => {
+    toolRef.current = 'select'
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f1' }
+    const html = renderToStaticMarkup(<FurnitureLayer artboard={board()} />)
+
+    for (const i of [0, 1, 2, 3]) expect(radiusTag(html, i)).not.toBe('')
+
+    // f1 is 100 x 50 with the default 4 cm radius. Each handle sits px(12) inside its corner on both
+    // axes (px = cm in this test): top-left = (-38, -13), and so on clockwise.
+    expect(radiusTag(html, 0)).toContain('cx="-38"')
+    expect(radiusTag(html, 0)).toContain('cy="-13"')
+    expect(radiusTag(html, 1)).toContain('cx="38"')
+    expect(radiusTag(html, 1)).toContain('cy="-13"')
+    expect(radiusTag(html, 2)).toContain('cx="38"')
+    expect(radiusTag(html, 2)).toContain('cy="13"')
+    expect(radiusTag(html, 3)).toContain('cx="-38"')
+    expect(radiusTag(html, 3)).toContain('cy="13"')
+    // A small white circle with the selection ring, and a plain cursor (no resize).
+    expect(radiusTag(html, 0)).toContain('r="4"')
+    expect(radiusTag(html, 0)).toContain('fill="#fff"')
+    expect(radiusTag(html, 0)).toContain('stroke="#fb923c"')
+    expect(radiusTag(html, 0)).toContain('cursor:default')
+
+    // Drawn last in the handle group, so they take the click over the edges and corners.
+    expect(html.indexOf('data-radius-handle="0"')).toBeGreaterThan(html.indexOf('data-edge-handle="0:1"'))
+    expect(html.indexOf('data-radius-handle="0"')).toBeGreaterThan(html.lastIndexOf('cursor:nwse-resize'))
+  })
+
+  it('follows a per-corner radius: the handle moves in by the radius of its own corner', () => {
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f1' }
+    const perCorner: Artboard = {
+      ...board(),
+      furniture: [
+        { id: 'f1', name: 'Sofa', shape: 'rect', xCm: 100, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg: 0, color: '#4b5563', cornerRadiiCm: [20, 4, 4, 4] },
+      ],
+    }
+    const html = renderToStaticMarkup(<FurnitureLayer artboard={perCorner} />)
+    // Top-left radius 20 > px(12): its handle sits 20 cm in from both edges.
+    expect(radiusTag(html, 0)).toContain('cx="-30"')
+    expect(radiusTag(html, 0)).toContain('cy="-5"')
+    // The other corners keep the px(12) inset.
+    expect(radiusTag(html, 1)).toContain('cx="38"')
+  })
+
+  it('draws no radius handles for a circle, a group, a tiny item or another tool', () => {
+    // A circle has no corners.
+    const circleBoard: Artboard = {
+      ...board(),
+      furniture: [
+        { id: 'f1', name: 'Table', shape: 'circle', xCm: 100, yCm: 100, widthCm: 100, depthCm: 100, rotationDeg: 0, color: '#4b5563' },
+      ],
+    }
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f1' }
+    expect(renderToStaticMarkup(<FurnitureLayer artboard={circleBoard} />)).not.toContain('data-radius-handle')
+
+    // A group selection keeps the shared handle group only.
+    selectionRef.current = { kind: 'furnitureMulti', artboardId: AB, furnitureIds: ['f1', 'f2'] }
+    expect(renderToStaticMarkup(<FurnitureLayer artboard={board()} />)).not.toContain('data-radius-handle')
+
+    // f2 (40 x 40) is too small on screen: 40 * zoom 1 stays under 48 px.
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f2' }
+    expect(renderToStaticMarkup(<FurnitureLayer artboard={board()} />)).not.toContain('data-radius-handle')
+
+    // The select tool is required.
+    toolRef.current = 'rect'
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f1' }
+    expect(renderToStaticMarkup(<FurnitureLayer artboard={board()} />)).not.toContain('data-radius-handle')
+    toolRef.current = 'select'
   })
 })

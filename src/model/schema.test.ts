@@ -36,6 +36,36 @@ describe('schema', () => {
     expect(parseProjectDoc(d).ok).toBe(true)
   })
 
+  it('accepts 4 corner radii on furniture and refuses bad ones', () => {
+    const d = createDefaultProject()
+    d.artboards[0].furniture.push({
+      id: 'f', name: 'Sofa', shape: 'rect', xCm: 10, yCm: 10, widthCm: 160, depthCm: 200,
+      rotationDeg: 0, color: '#abc', cornerRadiiCm: [2, 4, 6, 8],
+    })
+    const ok = parseProjectDoc(d)
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.doc.artboards[0].furniture[0].cornerRadiiCm).toEqual([2, 4, 6, 8])
+
+    const bad = (radii: unknown) => {
+      const doc = createDefaultProject()
+      doc.artboards[0].furniture.push({
+        id: 'f', name: 'Sofa', shape: 'rect', xCm: 10, yCm: 10, widthCm: 160, depthCm: 200,
+        rotationDeg: 0, color: '#abc', cornerRadiiCm: radii as [number, number, number, number],
+      })
+      return parseProjectDoc(doc).ok
+    }
+    expect(bad([1, 2, 3])).toBe(false) // needs exactly 4
+    expect(bad([1, 2, 3, -4])).toBe(false) // no negative radius
+    expect(bad([1, 2, 3, 'x'])).toBe(false)
+    // The old single radius keeps working (projects saved before the per-corner field).
+    const legacy = createDefaultProject()
+    legacy.artboards[0].furniture.push({
+      id: 'f', name: 'Sofa', shape: 'rect', xCm: 10, yCm: 10, widthCm: 160, depthCm: 200,
+      rotationDeg: 0, color: '#abc', cornerRadiusCm: 12,
+    })
+    expect(parseProjectDoc(legacy).ok).toBe(true)
+  })
+
   it('returns an error message, never throws', () => {
     const r = parseProjectDoc(null)
     expect(r.ok).toBe(false)

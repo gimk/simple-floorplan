@@ -2,8 +2,8 @@
 // (docs/simple-floorplan-2.md §6, Phase 4): name, shape, stack order, width × depth, rotation (with
 // quick quarter turns), optional height for the future 3D view, colour, Duplicate and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm and degrees.
-import { useEffect, useId } from 'react'
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, ArrowDown, BookmarkPlus, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, FlipHorizontal2, FlipVertical2, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, CornerUpLeft, ArrowDown, BookmarkPlus, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, FlipHorizontal2, FlipVertical2, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
@@ -13,6 +13,7 @@ import {
   ColorRow,
   DangerButton,
   FieldRow,
+  IconButton,
   LABEL,
   MUTED,
   NumberField,
@@ -26,7 +27,8 @@ import { toast } from '../toast'
 import { alignFurnitureInRoom, findFurnitureRoom, type FurnitureAlignment } from './align'
 import { deleteFurniture, duplicateFurniture, reorderFurniture, updateFurniture, type StackOp } from './actions'
 import { flipSelection } from './flip'
-import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, normalizeAngle } from './geometry'
+import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, cornerRadiiPatch, furnitureCornerRadiiCm, normalizeAngle } from './geometry'
+import type { CornerRadii } from './geometry'
 import { useCustomPresets } from './customPresets'
 import { FURNITURE_COLORS } from './presets'
 
@@ -59,6 +61,17 @@ const TURNS: readonly { label: string; delta: number; title: string }[] = [
   { label: '+90°', delta: 90, title: 'Turn 90° clockwise' },
 ]
 
+/**
+ * The 4 per-corner fields, in the 2x2 order of the panel (top-left, top-right, bottom-left,
+ * bottom-right). `index` is the place of that corner in `cornerRadiiCm`.
+ */
+const CORNER_FIELDS: readonly { label: string; ariaLabel: string; index: number }[] = [
+  { label: 'TL', ariaLabel: 'Top-left radius', index: 0 },
+  { label: 'TR', ariaLabel: 'Top-right radius', index: 1 },
+  { label: 'BL', ariaLabel: 'Bottom-left radius', index: 3 },
+  { label: 'BR', ariaLabel: 'Bottom-right radius', index: 2 },
+]
+
 /** Room alignment buttons: two rows of 3 (horizontal, then vertical) and one centre button. */
 const ALIGN_BUTTONS: readonly { op: FurnitureAlignment; label: string; Icon: typeof ArrowDown }[] = [
   { op: 'left', label: 'Align left', Icon: AlignStartVertical },
@@ -84,6 +97,8 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
   const renameRequestId = useUi((s) => s.renameRequestId)
   const nameId = useId()
   const heightId = useId()
+  // The 4 corner fields are open by default when the radii already differ; the toggle forces a view.
+  const [cornersOpen, setCornersOpen] = useState<boolean | null>(null)
 
   // Rename (Cmd/Ctrl+R): the shortcut only asks for the field, the card focuses and selects it.
   useEffect(() => {
@@ -152,11 +167,30 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
   /** Largest radius that still looks like a rounded rectangle. */
   const maxRadiusCm = Math.floor(Math.min(item.widthCm, item.depthCm) / 2)
 
+  // Effective radii, in the order top-left, top-right, bottom-right, bottom-left.
+  const radii = furnitureCornerRadiiCm(item)
+  const mixedRadii = radii.some((r) => r !== radii[0])
+  const independent = cornersOpen ?? mixedRadii
+
+  /** One radius for all 4 corners: clears any per-corner radius. */
   const commitRadius = (value: number | null): boolean | void => {
     if (value == null) return false
     const next = Math.max(0, Math.min(value, maxRadiusCm))
-    if (next === (item.cornerRadiusCm ?? 4)) return
-    patch({ cornerRadiusCm: next })
+    if (!mixedRadii && next === radii[0]) return
+    patch({ cornerRadiusCm: next, cornerRadiiCm: undefined })
+  }
+
+  /** Radius of one corner only (Alt-handle equivalent). 4 equal values fall back to the single field. */
+  const commitCornerRadius = (index: number) => (value: number | null): boolean | void => {
+    if (value == null) return false
+    const next = Math.max(0, Math.min(value, maxRadiusCm))
+    if (next === radii[index]) return
+    const all: CornerRadii = [radii[0], radii[1], radii[2], radii[3]]
+    all[index] = next
+    // 4 equal radii fall back to the single field, with no per-corner radius left behind.
+    const written = cornerRadiiPatch(item.shape, all)
+    if (written && 'cornerRadiusCm' in written) patch({ cornerRadiusCm: written.cornerRadiusCm, cornerRadiiCm: undefined })
+    else patch({ cornerRadiiCm: all })
   }
 
   const commitX = (value: number | null): boolean | void => {
@@ -260,16 +294,45 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
         </div>
 
         {item.shape === 'rect' && (
-          <FieldRow label="Corner radius" hint="rounded corners">
-            <NumberField
-              ariaLabel="Furniture corner radius"
-              unit="cm"
-              min={0}
-              max={maxRadiusCm}
-              value={item.cornerRadiusCm ?? 4}
-              onCommit={commitRadius}
-            />
-          </FieldRow>
+          <>
+            <FieldRow label="Corner radius" hint="rounded corners">
+              <div className="flex items-center gap-1">
+                <NumberField
+                  ariaLabel="Furniture corner radius"
+                  unit="cm"
+                  min={0}
+                  max={maxRadiusCm}
+                  placeholder={mixedRadii ? 'Mixed' : undefined}
+                  value={mixedRadii ? null : radii[0]}
+                  onCommit={commitRadius}
+                />
+                <IconButton
+                  label="Independent corners"
+                  icon={<CornerUpLeft size={16} aria-hidden="true" />}
+                  pressed={independent}
+                  onClick={() => setCornersOpen(!independent)}
+                />
+              </div>
+            </FieldRow>
+
+            {independent && (
+              <div className="grid grid-cols-2 gap-2" role="group" aria-label="Corner radii">
+                {CORNER_FIELDS.map((f) => (
+                  <div key={f.label} className="flex min-w-0 flex-col gap-1">
+                    <span className={label}>{f.label}</span>
+                    <NumberField
+                      ariaLabel={f.ariaLabel}
+                      unit="cm"
+                      min={0}
+                      max={maxRadiusCm}
+                      value={radii[f.index]}
+                      onCommit={commitCornerRadius(f.index)}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         <FieldRow label="Height" hint="for 3D" htmlFor={heightId}>

@@ -514,7 +514,14 @@ const PROJECT_DOC_DEFS = {
       color: { type: 'string' },
       heightCm: { type: 'number', exclusiveMinimum: 0 },
       showDirection: { type: 'boolean', description: 'Draw a front-direction arrow near the local -Y edge.' },
-      cornerRadiusCm: { type: 'number', minimum: 0, description: 'Border radius of a rect item. Ignored for circle.' },
+      cornerRadiusCm: { type: 'number', minimum: 0, description: 'Border radius of a rect item, for all 4 corners. Ignored for circle.' },
+      cornerRadiiCm: {
+        type: 'array',
+        minItems: 4,
+        maxItems: 4,
+        items: { type: 'number', minimum: 0 },
+        description: 'One border radius per corner of a rect item, in the order top-left, top-right, bottom-right, bottom-left. Wins over cornerRadiusCm. Ignored for circle.',
+      },
     },
   },
   Artboard: {

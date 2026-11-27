@@ -238,6 +238,14 @@ describe('summarizeProject', () => {
     expect(room.walls[2].openingIds).toEqual([])
     expect(ab.openings[0]).toMatchObject({ kind: 'door', variant: 'standard', roomId, xCm: 100, yCm: 0, angleDeg: 0, widthCm: 85, hinge: 'left', swing: 'in', heightCm: null, sillCm: null })
     expect(ab.furniture[0]).toMatchObject({ name: 'Sofa', shape: 'rect', xCm: 200, yCm: 150, widthCm: 220, depthCm: 95, rotationDeg: 0, heightCm: 80, showDirection: true, cornerRadiusCm: 0 })
+    // The summary always holds the 4 effective radii. The sofa preset has no radius of its own, so
+    // the canvas default (4 cm) applies to every corner.
+    expect(ab.furniture[0].cornerRadiiCm).toEqual([4, 4, 4, 4])
+    // A per-corner radius of the document shows up as is, top-left first.
+    const perCorner = summarizeProject(
+      ok(d3, { type: 'update_furniture', furnitureId: ab.furniture[0].id, patch: { cornerRadiiCm: [1, 2, 3, 4] } }).doc,
+    )
+    expect(perCorner.artboards[0].furniture[0].cornerRadiiCm).toEqual([1, 2, 3, 4])
   })
 
   it('is JSON-serializable and does not change the doc', () => {
@@ -709,6 +717,44 @@ describe('applyCommand: furniture', () => {
     expect(r.doc.artboards[0].furniture[0]).toMatchObject({ id: furnitureId, xCm: 50, rotationDeg: 45, widthCm: 1000, showDirection: false })
     expect(applyCommand(added.doc, { type: 'update_furniture', furnitureId, patch: { shape: 'triangle' as unknown as 'rect' } }).ok).toBe(false)
     expect(applyCommand(added.doc, { type: 'update_furniture', furnitureId: 'nope', patch: {} }).ok).toBe(false)
+  })
+
+  it('update_furniture writes the 4 corner radii, and collapses 4 equal radii to one', () => {
+    const added = ok(createDefaultProject(), { type: 'add_furniture', xCm: 0, yCm: 0, widthCm: 100, depthCm: 60 })
+    const furnitureId = added.result.furnitureId as string
+    const item = (d: ProjectDoc) => d.artboards[0].furniture[0]
+
+    // 4 different radii stay in cornerRadiiCm, in the order top-left, top-right, bottom-right, bottom-left.
+    const perCorner = ok(added.doc, { type: 'update_furniture', furnitureId, patch: { cornerRadiiCm: [10, 0, 6, 12] } })
+    expect(item(perCorner.doc).cornerRadiiCm).toEqual([10, 0, 6, 12])
+    expect(item(perCorner.doc).cornerRadiusCm).toBeUndefined()
+
+    // 4 equal radii collapse into the single field and drop the per-corner one.
+    const equal = ok(perCorner.doc, { type: 'update_furniture', furnitureId, patch: { cornerRadiiCm: [8, 8, 8, 8] } })
+    expect(item(equal.doc).cornerRadiusCm).toBe(8)
+    expect('cornerRadiiCm' in item(equal.doc)).toBe(false)
+
+    // A single radius clears the per-corner field: one radius for all 4 corners wins.
+    const single = ok(perCorner.doc, { type: 'update_furniture', furnitureId, patch: { cornerRadiusCm: 5 } })
+    expect(item(single.doc).cornerRadiusCm).toBe(5)
+    expect('cornerRadiiCm' in item(single.doc)).toBe(false)
+
+    // An explicit cornerRadiiCm: undefined clears it too.
+    const cleared = ok(perCorner.doc, { type: 'update_furniture', furnitureId, patch: { cornerRadiiCm: undefined } })
+    expect('cornerRadiiCm' in item(cleared.doc)).toBe(false)
+
+    // Bad values are refused.
+    expect(applyCommand(added.doc, { type: 'update_furniture', furnitureId, patch: { cornerRadiiCm: [1, 2, 3] as unknown as [number, number, number, number] } }).ok).toBe(false)
+    expect(applyCommand(added.doc, { type: 'update_furniture', furnitureId, patch: { cornerRadiiCm: [1, 2, 3, -4] } }).ok).toBe(false)
+  })
+
+  it('add_furniture takes 4 corner radii and collapses them when they are equal', () => {
+    const perCorner = ok(createDefaultProject(), { type: 'add_furniture', xCm: 0, yCm: 0, cornerRadiiCm: [2, 4, 6, 8] }).doc.artboards[0].furniture[0]
+    expect(perCorner.cornerRadiiCm).toEqual([2, 4, 6, 8])
+    const equal = ok(createDefaultProject(), { type: 'add_furniture', xCm: 0, yCm: 0, cornerRadiiCm: [6, 6, 6, 6] }).doc.artboards[0].furniture[0]
+    expect(equal.cornerRadiusCm).toBe(6)
+    expect('cornerRadiiCm' in equal).toBe(false)
+    expect(applyCommand(createDefaultProject(), { type: 'add_furniture', xCm: 0, yCm: 0, cornerRadiiCm: [1, 2] as unknown as [number, number, number, number] }).ok).toBe(false)
   })
 
   it('reorder_furniture moves in the stack', () => {

@@ -1,7 +1,8 @@
 // Furniture of one artboard (artboard-local cm). Render inside <ArtboardContent>.
 // Plan mode: drawn dimmed and not interactive. Design mode: select (single or group), move
 // (Alt = duplicate, Alt mid-drag = no snap), resize from the 4 corners and the 4 edges
-// (Shift = keep ratio) and rotate (15 deg, Shift 45, Alt 1).
+// (Shift = keep ratio), rotate (15 deg, Shift 45, Alt 1) and, for one 'rect' item, drag the corner
+// radii (Figma style: all 4 corners, or only the dragged one with Alt).
 import { memo, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
@@ -29,13 +30,17 @@ import {
   computeMeasureGuides,
   computeMeasureGuidesForBox,
   directionArrowGeometry,
+  CORNER_SIGNS,
+  cornerRadiiPatch,
   furnitureAxisBounds,
-  furnitureCornerRadiusCm,
+  furnitureCornerRadiiCm,
   pickMeasureTarget,
+  radiusFromPointer,
   resizeFurnitureFromHandle,
+  roundedRectPath,
   snapRotation,
 } from './geometry'
-import type { CornerHandle, DistanceGuide, MeasureTarget, ResizeHandle } from './geometry'
+import type { CornerHandle, CornerRadii, DistanceGuide, MeasureTarget, ResizeHandle } from './geometry'
 import { resizeFurnitureGroupWithAlt, setDirectFurnitureSelection } from './pointerActions'
 import { computeDragDistanceGuides, snapBoxMove } from './snapGuides'
 import type { SnapGuideLine } from './snapGuides'
@@ -60,6 +65,9 @@ type Gesture = {
 
 const CORNER_CURSOR = (c: CornerHandle) => (c.sx === c.sy ? 'nwse-resize' : 'nesw-resize')
 
+/** Names of the 4 radius handles, in the order of the corner radii (top-left, then clockwise). */
+const CORNER_LABELS = ['Top-left', 'Top-right', 'Bottom-right', 'Bottom-left'] as const
+
 /**
  * Cursor of an edge handle: resize across the edge. A quarter turn (45..135 deg) swaps the two axes,
  * because the item's local X then runs down the screen.
@@ -77,6 +85,7 @@ const fmtCm = (v: number): string => String(Math.round(v * 10) / 10)
 function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const { px, toWorld, zoom } = useViewport()
   const mode = useUi((s) => s.mode)
+  const tool = useUi((s) => s.tool)
   const selection = useUi((s) => s.selection)
   const design = mode === 'design'
   // Ids of the selected items of THIS artboard: one id for a single selection, 2+ for a group.
@@ -102,6 +111,9 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   // Render-safe mirror of "a gesture is active" (a ref must not be read during render).
   const [gesturing, setGesturing] = useState(false)
   const [rotBadge, setRotBadge] = useState<{ x: number; y: number; deg: number } | null>(null)
+  // Corner-radius badge and drag flag: the handles stay drawn while their own drag runs.
+  const [radiusBadge, setRadiusBadge] = useState<{ x: number; y: number; cm: number } | null>(null)
+  const [radiusDrag, setRadiusDrag] = useState(false)
 
   // Shift / Alt can change while the pointer is down: replay the last pointer position at once.
   useEffect(() => subscribeModifiers(() => {
@@ -196,6 +208,8 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     setGuides([])
     setSnapLines([])
     setRotBadge(null)
+    setRadiusBadge(null)
+    setRadiusDrag(false)
   }
   const gp = { onPointerMove: move, onPointerUp: end, onPointerCancel: end }
 
@@ -376,6 +390,42 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     })
   }
 
+  /**
+   * Drag one corner radius, Figma style: a handle sits on the diagonal of its corner, inside the
+   * item. The radius is the mean of the two inward distances from the corner, rounded to whole cm.
+   * Without Alt every corner takes the new radius (the single cornerRadiusCm field wins); with Alt
+   * only the dragged corner changes (cornerRadiiCm). One drag = one undo step (start/patch).
+   */
+  const onRadiusDown = (e: ReactPointerEvent<SVGCircleElement>, item: FurnitureItem, index: number) => {
+    if (e.button !== 0 || !design) return
+    const [sx, sy] = CORNER_SIGNS[index] ?? CORNER_SIGNS[0]
+    const w2 = item.widthCm / 2, d2 = item.depthCm / 2
+    const a = item.rotationDeg * RAD
+    const cos = Math.cos(a), sin = Math.sin(a)
+    setRadiusDrag(true)
+    start(e, (p) => {
+      const mods = getModifiers()
+      const cm = radiusFromPointer(item, index, p)
+      const cur = live(item.id) ?? item
+      const radii = furnitureCornerRadiiCm(cur)
+      if (mods.alt) {
+        // Only the dragged corner changes; 4 equal corners collapse back to the single radius.
+        const next: CornerRadii = [radii[0], radii[1], radii[2], radii[3]]
+        next[index] = cm
+        const written = cornerRadiiPatch('rect', next)
+        if (written && 'cornerRadiusCm' in written) patch(item.id, { cornerRadiusCm: written.cornerRadiusCm, cornerRadiiCm: undefined })
+        else patch(item.id, { cornerRadiiCm: next })
+      } else {
+        patch(item.id, { cornerRadiusCm: cm, cornerRadiiCm: undefined })
+      }
+      // Badge just above the dragged handle, in artboard cm (the handle keeps its on-screen inset).
+      const inset = Math.max(cm, px(12))
+      const hx = sx * (w2 - Math.min(inset, w2))
+      const hy = sy * (d2 - Math.min(inset, d2))
+      setRadiusBadge({ x: item.xCm + hx * cos - hy * sin, y: item.yCm + hx * sin + hy * cos - px(18), cm })
+    })
+  }
+
   const collectTransformStarts = (ids: string[]) => {
     const starts = new Map<string, FurnitureTransformStart>()
     const items: FurnitureItem[] = []
@@ -437,13 +487,13 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       strokeWidth: selected ? 2 : 1,
       vectorEffect: 'non-scaling-stroke' as const,
     }
-    const rx = furnitureCornerRadiusCm(w, d, item.cornerRadiusCm)
+    const radii = furnitureCornerRadiiCm(item)
     const arrow = item.showDirection ? directionArrowGeometry(w, d, px) : null
     return (
       <>
         {item.shape === 'circle'
           ? <ellipse cx={0} cy={0} rx={w / 2} ry={d / 2} {...common} />
-          : <rect x={-w / 2} y={-d / 2} width={w} height={d} rx={rx} ry={rx} {...common} />}
+          : <path d={roundedRectPath(w, d, radii)} {...common} />}
         {arrow && (
           // Optional subtle front-direction chevron (local -Y), never bigger than the item.
           <path
@@ -500,6 +550,12 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
 
   const selected = selectedId ? artboard.furniture.find((f) => f.id === selectedId) : undefined
   const hs = px(8)
+  // Corner-radius handles: one 'rect' item, the select tool, big enough on screen, and no other
+  // gesture running. Their own drag keeps them drawn (radiusDrag), so the pointer capture holds.
+  const showRadiusHandles =
+    design && tool === 'select' && selected?.shape === 'rect' &&
+    Math.min(selected.widthCm, selected.depthCm) * zoom >= 48 &&
+    (!gesturing || radiusDrag)
 
   // One dashed orange rectangle around the union of the bounds of every item of the group.
   const multiBox = (() => {
@@ -515,20 +571,21 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     }
   })()
 
-  // Option/Alt measure overlay: the hovered target outline, then its distance guides.
+  // Option/Alt measure overlay: the hovered target outline, then its distance guides. A radius drag
+  // is a gesture, so `gesturing` hides the overlay then too.
   const measureView = measure && !gesturing ? measure : null
+  const radiusLabel = radiusBadge ? `Radius ${radiusBadge.cm} cm` : ''
   const measureOutline = (() => {
     if (!measureView) return null
     const t = measureView.target
     if (t.kind === 'furniture') {
       const it = t.item
       const w = it.widthCm, d = it.depthCm
-      const rx = furnitureCornerRadiusCm(w, d, it.cornerRadiusCm)
       return (
         <g transform={`translate(${it.xCm} ${it.yCm}) rotate(${it.rotationDeg})`}>
           {it.shape === 'circle'
             ? <ellipse cx={0} cy={0} rx={w / 2} ry={d / 2} fill="none" stroke={CYAN} strokeWidth={px(1.5)} />
-            : <rect x={-w / 2} y={-d / 2} width={w} height={d} rx={rx} ry={rx} fill="none" stroke={CYAN} strokeWidth={px(1.5)} />}
+            : <path d={roundedRectPath(w, d, furnitureCornerRadiiCm(it))} fill="none" stroke={CYAN} strokeWidth={px(1.5)} />}
         </g>
       )
     }
@@ -546,6 +603,8 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     rotationDeg: number,
     onResize: (e: ReactPointerEvent<SVGRectElement>, handle: ResizeHandle) => void,
     onRotate: (e: ReactPointerEvent<SVGCircleElement>) => void,
+    /** Corner-radius handles of one 'rect' item: their local positions and the drag start. */
+    radius?: { radii: readonly number[]; onDown: (e: ReactPointerEvent<SVGCircleElement>, index: number) => void } | null,
   ) => (
     <g data-testid={testId} transform={transform}>
       {/* Edge handles first, so the corner handles stay on top. Invisible hit strips: the
@@ -584,6 +643,22 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
           style={{ cursor: CORNER_CURSOR(c) }} onPointerDown={(e) => onResize(e, c)} {...gp}
         />
       ))}
+      {/* Corner-radius handles, drawn last so they take the click over the resize handles. Each one
+          sits inward from its corner by the radius (never closer than px(12) to the corner). */}
+      {radius && CORNER_SIGNS.map(([sx, sy], i) => {
+        const inset = Math.max(radius.radii[i] ?? 0, px(12))
+        return (
+          <circle
+            key={`radius-${i}`}
+            data-radius-handle={i}
+            aria-label={`${CORNER_LABELS[i]} corner radius`}
+            cx={sx * (w / 2 - Math.min(inset, w / 2))}
+            cy={sy * (d / 2 - Math.min(inset, d / 2))}
+            r={px(4)} fill="#fff" stroke={ORANGE} strokeWidth={px(1.5)}
+            style={{ cursor: 'default' }} onPointerDown={(e) => radius.onDown(e, i)} {...gp}
+          />
+        )
+      })}
     </g>
   )
 
@@ -643,6 +718,9 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
         selected.rotationDeg,
         (e, h) => onResizeDown(e, selected, h),
         (e) => onRotateDown(e, selected),
+        showRadiusHandles
+          ? { radii: furnitureCornerRadiiCm(selected), onDown: (e, i) => onRadiusDown(e, selected, i) }
+          : null,
       )}
 
       {rotBadge && (
@@ -650,6 +728,19 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
           <rect x={rotBadge.x - px(18)} y={rotBadge.y - px(9)} width={px(36)} height={px(18)} rx={px(9)} fill={BG} stroke={ORANGE} strokeWidth={px(1)} />
           <text x={rotBadge.x} y={rotBadge.y} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill={ORANGE}>
             {Math.round(rotBadge.deg)}°
+          </text>
+        </g>
+      )}
+
+      {radiusBadge && (
+        <g pointerEvents="none">
+          <rect
+            x={radiusBadge.x - px(radiusLabel.length * 6.2 + 12) / 2} y={radiusBadge.y - px(9)}
+            width={px(radiusLabel.length * 6.2 + 12)} height={px(18)} rx={px(9)}
+            fill={BG} stroke={ORANGE} strokeWidth={px(1)}
+          />
+          <text x={radiusBadge.x} y={radiusBadge.y} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill={ORANGE}>
+            {radiusLabel}
           </text>
         </g>
       )}

@@ -7,7 +7,7 @@ import type { Vec } from '../../model/geometry'
 import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
 import { DEFAULT_PATTERN_FILL, isPatterned, patternId, patternSvg } from '../rooms/floorPatterns'
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
-import { directionArrowGeometry, furnitureCornerRadiusCm } from '../furniture/geometry'
+import { directionArrowGeometry, furnitureCornerRadiiCm, roundedRectPath } from '../furniture/geometry'
 import {
   WALL_COLOR, jambSegment, openingSymbolShift, openingWall, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
 } from '../rooms/walls'
@@ -291,7 +291,7 @@ function strokeMaskSvg(artboard: Artboard, ctx: Ctx): string[] {
   ]
 }
 
-/** Furniture: rect with a front-edge tick (local -Y) or ellipse, fill at 0.78, name in the middle. */
+/** Furniture: rounded shape with a front-edge tick (local -Y) or ellipse, fill at 0.78, name in the middle. */
 function furnitureSvg(f: FurnitureItem, ctx: Ctx): string[] {
   const w = f.widthCm, d = f.depthCm
   const common = `fill="${esc(f.color)}" fill-opacity="0.78" stroke="${LINE}" stroke-opacity="0.45" stroke-width="${num(ctx.u(1))}"`
@@ -301,11 +301,8 @@ function furnitureSvg(f: FurnitureItem, ctx: Ctx): string[] {
   if (f.shape === 'circle') {
     out.push(`      <ellipse cx="0" cy="0" rx="${num(w / 2)}" ry="${num(d / 2)}" ${common} />`)
   } else {
-    const rx = furnitureCornerRadiusCm(w, d, f.cornerRadiusCm)
-    out.push(
-      `      <rect x="${num(-w / 2)}" y="${num(-d / 2)}" width="${num(w)}" height="${num(d)}" ` +
-        `rx="${num(rx)}" ry="${num(rx)}" ${common} />`,
-    )
+    // One radius per corner (a path, because SVG rect only carries a single rx/ry pair).
+    out.push(`      <path d="${roundedRectPath(w, d, furnitureCornerRadiiCm(f))}" ${common} />`)
   }
   // Optional subtle front-direction chevron on local -Y, as on the canvas.
   const arrow = f.showDirection ? directionArrowGeometry(w, d, ctx.u) : null
