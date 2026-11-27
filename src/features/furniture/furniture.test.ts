@@ -4,7 +4,8 @@ import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem, Room } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import {
-  addFurniture, deleteFurniture, duplicateFurniture, reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomWallColor, updateFurniture, updateFurnitureSilent,
+  addFurniture, deleteFurniture, duplicateFurniture, reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomWallColor,
+  setRoomsFill, setRoomsFloorPattern, setRoomsFloorPatternAngle, updateFurniture, updateFurnitureSilent,
 } from './actions'
 import {
   computeDistanceGuides, DEFAULT_MAX_GUIDE_DIST_CM, MAX_FURNITURE_CM, MIN_FURNITURE_CM, directionArrowGeometry,
@@ -576,6 +577,121 @@ describe('setRoomFloorPattern', () => {
     expect(s().doc.artboards[0].rooms[0].floorPattern).toBeUndefined()
     const before = past()
     setRoomFloorPattern(artboardId, 'nope', 'wood')
+    expect(past()).toBe(before)
+  })
+})
+
+describe('setRoomsFill', () => {
+  /** Two rooms, r1 and r2, on the first artboard. */
+  const twoRooms = (): string => {
+    const artboardId = s().doc.artboards[0].id
+    s().update((d) => { d.artboards[0].rooms.push(rect('r1', 0, 0, 400, 300), rect('r2', 0, 0, 100, 100)) })
+    return artboardId
+  }
+  const fills = () => s().doc.artboards[0].rooms.map((r) => r.fill)
+
+  it('paints two rooms in one undo step, and one undo restores both', () => {
+    const artboardId = twoRooms()
+    const before = past()
+    setRoomsFill(artboardId, ['r1', 'r2'], '#8a6b4a')
+    expect(fills()).toEqual(['#8a6b4a', '#8a6b4a'])
+    expect(past()).toBe(before + 1)
+    s().undo()
+    expect(fills()).toEqual([undefined, undefined])
+    s().redo()
+    expect(fills()).toEqual(['#8a6b4a', '#8a6b4a'])
+  })
+
+  it('clears the fill of every room with undefined', () => {
+    const artboardId = twoRooms()
+    setRoomsFill(artboardId, ['r1', 'r2'], '#8a6b4a')
+    setRoomsFill(artboardId, ['r1', 'r2'], undefined)
+    expect(fills()).toEqual([undefined, undefined])
+    expect('fill' in s().doc.artboards[0].rooms[0]).toBe(false)
+  })
+
+  it('skips unknown ids and only touches the rooms it knows', () => {
+    const artboardId = twoRooms()
+    setRoomsFill(artboardId, ['nope', 'r2'], '#fff')
+    expect(fills()).toEqual([undefined, '#fff'])
+    const before = past()
+    setRoomsFill(artboardId, ['nope'], '#fff')
+    setRoomsFill('nope', ['r1', 'r2'], '#fff')
+    expect(past()).toBe(before)
+    expect(fills()).toEqual([undefined, '#fff'])
+  })
+})
+
+describe('setRoomsFloorPattern', () => {
+  const twoRooms = (): string => {
+    const artboardId = s().doc.artboards[0].id
+    s().update((d) => { d.artboards[0].rooms.push(rect('r1', 0, 0, 400, 300), rect('r2', 0, 0, 100, 100)) })
+    return artboardId
+  }
+  const patterns = () => s().doc.artboards[0].rooms.map((r) => r.floorPattern)
+
+  it('sets a pattern on two rooms in one undo step, and solid/undefined store nothing', () => {
+    const artboardId = twoRooms()
+    const before = past()
+    setRoomsFloorPattern(artboardId, ['r1', 'r2'], 'wood')
+    expect(patterns()).toEqual(['wood', 'wood'])
+    expect(past()).toBe(before + 1)
+    s().undo()
+    expect(patterns()).toEqual([undefined, undefined])
+    setRoomsFloorPattern(artboardId, ['r1', 'r2'], 'wood')
+    setRoomsFloorPattern(artboardId, ['r1', 'r2'], 'solid')
+    expect('floorPattern' in s().doc.artboards[0].rooms[0]).toBe(false)
+    expect('floorPattern' in s().doc.artboards[0].rooms[1]).toBe(false)
+    setRoomsFloorPattern(artboardId, ['r1', 'r2'], 'tile')
+    setRoomsFloorPattern(artboardId, ['r1', 'r2'], undefined)
+    expect('floorPattern' in s().doc.artboards[0].rooms[1]).toBe(false)
+  })
+
+  it('skips unknown ids and an unknown artboard', () => {
+    const artboardId = twoRooms()
+    setRoomsFloorPattern(artboardId, ['r1', 'nope'], 'tile')
+    expect(patterns()).toEqual(['tile', undefined])
+    const before = past()
+    setRoomsFloorPattern(artboardId, ['nope'], 'tile')
+    setRoomsFloorPattern('nope', ['r1', 'r2'], 'tile')
+    expect(past()).toBe(before)
+  })
+})
+
+describe('setRoomsFloorPatternAngle', () => {
+  const twoRooms = (): string => {
+    const artboardId = s().doc.artboards[0].id
+    s().update((d) => { d.artboards[0].rooms.push(rect('r1', 0, 0, 400, 300), rect('r2', 0, 0, 100, 100)) })
+    setRoomsFloorPattern(artboardId, ['r1', 'r2'], 'wood')
+    return artboardId
+  }
+  const angles = () => s().doc.artboards[0].rooms.map((r) => r.floorPatternAngleDeg)
+
+  it('normalises the angle for two rooms in one undo step', () => {
+    const artboardId = twoRooms()
+    const before = past()
+    setRoomsFloorPatternAngle(artboardId, ['r1', 'r2'], 370)
+    expect(angles()).toEqual([10, 10])
+    expect(past()).toBe(before + 1)
+    s().undo()
+    expect(angles()).toEqual([undefined, undefined])
+  })
+
+  it('deletes the key for 0', () => {
+    const artboardId = twoRooms()
+    setRoomsFloorPatternAngle(artboardId, ['r1', 'r2'], 45)
+    expect(angles()).toEqual([45, 45])
+    setRoomsFloorPatternAngle(artboardId, ['r1', 'r2'], 0)
+    for (const r of s().doc.artboards[0].rooms) expect('floorPatternAngleDeg' in r).toBe(false)
+  })
+
+  it('skips unknown ids and an unknown artboard', () => {
+    const artboardId = twoRooms()
+    setRoomsFloorPatternAngle(artboardId, ['r2', 'nope'], 90)
+    expect(angles()).toEqual([undefined, 90])
+    const before = past()
+    setRoomsFloorPatternAngle(artboardId, ['nope'], 90)
+    setRoomsFloorPatternAngle('nope', ['r1', 'r2'], 90)
     expect(past()).toBe(before)
   })
 })

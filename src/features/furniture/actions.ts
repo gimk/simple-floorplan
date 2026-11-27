@@ -115,43 +115,79 @@ export function deleteFurniture(artboardId: string, furnitureId: string): void {
   if (sel.kind === 'furniture' && sel.furnitureId === furnitureId) useUi.getState().set({ selection: { kind: 'none' } })
 }
 
+/** Set (or with undefined, clear) the floor fill of many rooms: one undo step. */
+export function setRoomsFill(artboardId: string, roomIds: string[], fill: string | undefined): void {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return
+  const ids = new Set(roomIds)
+  if (!artboard.rooms.some((r) => ids.has(r.id))) return
+  useDoc.getState().update((d) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    for (const r of ab.rooms) {
+      if (!ids.has(r.id)) continue
+      if (fill === undefined) delete r.fill
+      else r.fill = fill
+    }
+  })
+}
+
 /** Set (or with undefined, clear) the floor fill of one room. */
 export function setRoomFill(artboardId: string, roomId: string, fill: string | undefined): void {
-  const room = findArtboard(artboardId)?.rooms.find((r) => r.id === roomId)
-  if (!room) return
+  setRoomsFill(artboardId, [roomId], fill)
+}
+
+/** Set the floor pattern of many rooms: 'solid' and undefined store nothing. One undo step. */
+export function setRoomsFloorPattern(artboardId: string, roomIds: string[], pattern: FloorPattern | undefined): void {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return
+  const ids = new Set(roomIds)
+  if (!artboard.rooms.some((r) => ids.has(r.id))) return
   useDoc.getState().update((d) => {
-    const r = d.artboards.find((a) => a.id === artboardId)!.rooms.find((x) => x.id === roomId)
-    if (!r) return
-    if (fill === undefined) delete r.fill
-    else r.fill = fill
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    for (const r of ab.rooms) {
+      if (!ids.has(r.id)) continue
+      if (pattern === undefined || pattern === 'solid') delete r.floorPattern
+      else r.floorPattern = pattern
+    }
   })
 }
 
 /** Set the floor pattern of one room. 'solid' and undefined store nothing, so the JSON stays clean. */
 export function setRoomFloorPattern(artboardId: string, roomId: string, pattern: FloorPattern | undefined): void {
-  if (!findArtboard(artboardId)?.rooms.some((r) => r.id === roomId)) return
+  setRoomsFloorPattern(artboardId, [roomId], pattern)
+}
+
+/** Normalise a pattern angle to [0, 360), rounded to 0.1 degree. 0 (= none) is returned as 0. */
+const normalizePatternAngle = (angleDeg: number | undefined): number => {
+  if (angleDeg === undefined || !Number.isFinite(angleDeg)) return 0
+  let a = Math.round((((angleDeg % 360) + 360) % 360) * 10) / 10
+  if (a >= 360) a = 0
+  return a
+}
+
+/** Set the floor pattern angle (degrees) of many rooms. undefined and 0 store nothing. One undo step. */
+export function setRoomsFloorPatternAngle(artboardId: string, roomIds: string[], angleDeg: number | undefined): void {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return
+  const ids = new Set(roomIds)
+  if (!artboard.rooms.some((r) => ids.has(r.id))) return
+  const a = normalizePatternAngle(angleDeg)
   useDoc.getState().update((d) => {
-    const r = d.artboards.find((a) => a.id === artboardId)!.rooms.find((x) => x.id === roomId)
-    if (!r) return
-    if (pattern === undefined || pattern === 'solid') delete r.floorPattern
-    else r.floorPattern = pattern
+    const ab = d.artboards.find((x) => x.id === artboardId)
+    if (!ab) return
+    for (const r of ab.rooms) {
+      if (!ids.has(r.id)) continue
+      if (a === 0) delete r.floorPatternAngleDeg
+      else r.floorPatternAngleDeg = a
+    }
   })
 }
 
 /** Set the floor pattern angle (degrees) of one room. Normalised to [0, 360); undefined and 0 store nothing. */
 export function setRoomFloorPatternAngle(artboardId: string, roomId: string, angleDeg: number | undefined): void {
-  if (!findArtboard(artboardId)?.rooms.some((r) => r.id === roomId)) return
-  let a = 0
-  if (angleDeg !== undefined && Number.isFinite(angleDeg)) {
-    a = Math.round((((angleDeg % 360) + 360) % 360) * 10) / 10
-    if (a >= 360) a = 0
-  }
-  useDoc.getState().update((d) => {
-    const r = d.artboards.find((x) => x.id === artboardId)!.rooms.find((x) => x.id === roomId)
-    if (!r) return
-    if (a === 0) delete r.floorPatternAngleDeg
-    else r.floorPatternAngleDeg = a
-  })
+  setRoomsFloorPatternAngle(artboardId, [roomId], angleDeg)
 }
 
 /** Paint (or with undefined, clear) one wall of a room. The map is removed when it becomes empty. */

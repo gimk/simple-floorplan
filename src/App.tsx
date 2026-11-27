@@ -12,6 +12,7 @@ import { loadRefImageFile } from './features/background/upload'
 import { copyArtboardPng, isCopyPngShortcut } from './features/export/download'
 import { deleteFurniture, duplicateFurniture, reorderFurniture } from './features/furniture/actions'
 import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
+import { DesignRoomsInspect } from './features/furniture/DesignRoomsInspect'
 import { FurnitureInspect } from './features/furniture/FurnitureInspect'
 import { FurnitureLayer } from './features/furniture/FurnitureLayer'
 import { FurniturePanel } from './features/furniture/FurniturePanel'
@@ -850,6 +851,9 @@ export default function App() {
             // Design mode edits no geometry: furniture and room floors only.
             selection.kind === 'furniture' && selectionExists ? (
               <FurnitureInspect artboardId={selection.artboardId} furnitureId={selection.furnitureId} />
+            ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 1 ? (
+              // Several rooms: one floor card that styles all of them (one undo step per click).
+              <DesignRoomsInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
             ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 0 ? (
               <DesignRoomInspect artboardId={selection.artboardId} roomId={selection.roomIds[0]} />
             ) : (

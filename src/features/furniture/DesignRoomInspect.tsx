@@ -26,7 +26,7 @@ export type DesignRoomInspectProps = {
 }
 
 /** One floor swatch: the colour circle, or a diagonal slash when the room has no fill. */
-function FloorSwatch({
+export function FloorSwatch({
   label,
   color,
   active,

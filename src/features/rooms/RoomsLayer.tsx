@@ -174,8 +174,18 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   const onRoomClick = (e: React.MouseEvent, room: Room) => {
     if (!design) return
     e.stopPropagation()
+    // Shift-click adds or removes the room, so one floor card can paint several rooms at once.
+    const sel = useUi.getState().selection
+    let roomIds = [room.id]
+    if (e.shiftKey && sel.kind === 'room' && sel.artboardId === artboard.id) {
+      roomIds = sel.roomIds.includes(room.id) ? sel.roomIds.filter((id) => id !== room.id) : [...sel.roomIds, room.id]
+    }
+    if (roomIds.length === 0) {
+      useUi.getState().set({ selection: { kind: 'none' } })
+      return
+    }
     useUi.getState().set({
-      selection: { kind: 'room', artboardId: artboard.id, roomIds: [room.id] },
+      selection: { kind: 'room', artboardId: artboard.id, roomIds },
       activeArtboardId: artboard.id,
     })
   }
