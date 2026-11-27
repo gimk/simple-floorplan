@@ -8,7 +8,8 @@ import { artboardFrame } from '../features/artboards/frame'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from '../features/furniture/geometry'
 import { FURNITURE_PRESETS } from '../features/furniture/presets'
 import { DEFAULT_OPENING_WIDTH_CM, MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM } from '../features/openings/geometry'
-import { syncOpeningsForRoomChange } from '../features/openings/sync'
+import { syncOpeningsForMerge, syncOpeningsForRoomChange } from '../features/openings/sync'
+import { wallThicknessOf } from '../features/rooms/walls'
 import { MIN_ROOM_SIDE_CM, createRectRoom, cutoutRoom, deleteVertex, insertVertexOnEdge, mergeRooms, moveRoom, moveVertex, nextRoomName, setWallLength } from '../features/rooms/ops'
 import { clampOpeningOffset, computeOpeningOnWall } from './query'
 import { semanticIssues, validateProject } from './validate'
@@ -310,11 +311,11 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       const ab = getArtboard(d, cmd.artboardId)
       if (!Array.isArray(cmd.roomIds) || cmd.roomIds.length < 2) return fail('merge_rooms needs at least 2 roomIds.')
       const picked = cmd.roomIds.map((id) => getRoom(ab, id))
-      const merged = mergeRooms(picked)
-      if (!merged) return fail('The rooms cannot be merged: they must touch or overlap and form one outline without a hole.')
+      const merged = mergeRooms(picked, wallThicknessOf(ab))
+      if (!merged) return fail('The rooms cannot be merged: they must touch, overlap or share a wall and form one outline without a hole.')
       const prev = ab.rooms
       ab.rooms = ab.rooms.filter((r) => r.id === merged.id || !cmd.roomIds.includes(r.id)).map((r) => (r.id === merged.id ? merged : r))
-      ab.openings = syncOpeningsForRoomChange(ab.openings, prev, ab.rooms)
+      ab.openings = syncOpeningsForMerge(ab.openings, cmd.roomIds, prev, merged, ab.rooms)
       return { artboardId: ab.id, roomId: merged.id, mergedRoomIds: [...cmd.roomIds] }
     }
     case 'set_room_style': {

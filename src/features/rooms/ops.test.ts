@@ -178,6 +178,53 @@ describe('mergeRooms', () => {
   })
 })
 
+describe('mergeRooms with wall thickness', () => {
+  const T = 10
+  const L = (id: string, pts: [number, number][]): Room => ({ id, name: id, vertices: pts.map(([x, y]) => ({ x, y })) })
+  const sorted = (r: Room) => r.vertices.map((p) => `${p.x},${p.y}`).sort()
+
+  it('merges two rectangles separated by the wall thickness into one exact rectangle', () => {
+    const m = mergeRooms([rect('a', 0, 0, 200, 200), rect('b', 210, 0, 400, 200)], T)!
+    expect(m.id).toBe('a')
+    expect(m.vertices).toHaveLength(4)
+    expect(sorted(m)).toEqual(['0,0', '0,200', '400,0', '400,200'])
+    expect(area(m.vertices)).toBe(80000)
+  })
+  it('merges an L-shaped room with a room tucked in its notch (two shared walls, 10x10 corner)', () => {
+    // Salon: 0..400 x 0..300 minus the notch 200..400 x 0..150. Cuisine fills the notch with a 10 cm gap.
+    const salon = L('s', [[0, 0], [200, 0], [200, 150], [400, 150], [400, 300], [0, 300]])
+    const cuisine = rect('c', 210, 0, 400, 140)
+    const m = mergeRooms([salon, cuisine], T)!
+    expect(m).not.toBeNull()
+    expect(m.vertices).toHaveLength(4)
+    expect(sorted(m)).toEqual(['0,0', '0,300', '400,0', '400,300'])
+    expect(area(m.vertices)).toBe(120000)
+  })
+  it('merges 3 rooms chained with wall-thickness gaps', () => {
+    const m = mergeRooms([rect('a', 0, 0, 100, 100), rect('b', 110, 0, 210, 100), rect('c', 220, 0, 320, 100)], T)!
+    expect(sorted(m)).toEqual(['0,0', '0,100', '320,0', '320,100'])
+  })
+  it('does not merge rooms farther apart than the wall thickness', () => {
+    expect(mergeRooms([rect('a', 0, 0, 200, 200), rect('b', 211, 0, 400, 200)], T)).toBeNull()
+  })
+  it('does not merge rooms that only meet at a corner', () => {
+    expect(mergeRooms([rect('a', 0, 0, 100, 100), rect('b', 110, 110, 210, 210)], T)).toBeNull()
+  })
+  it('returns null for 4 rooms around a hole', () => {
+    const ring = [rect('t', 0, 0, 300, 100), rect('r', 310, 0, 410, 300), rect('b', 110, 310, 410, 410), rect('l', 0, 110, 100, 410)]
+    expect(mergeRooms(ring, T)).toBeNull()
+  })
+  it('thickness 0 keeps touch-only behaviour', () => {
+    expect(mergeRooms([rect('a', 0, 0, 200, 200), rect('b', 210, 0, 400, 200)])).toBeNull()
+    expect(mergeRooms([rect('a', 0, 0, 200, 200), rect('b', 210, 0, 400, 200)], 0)).toBeNull()
+    expect(mergeRooms([rect('a', 0, 0, 200, 200), rect('b', 200, 0, 400, 200)], 0)).not.toBeNull()
+  })
+  it('still merges flush rooms when the thickness is set', () => {
+    const m = mergeRooms([rect('a', 0, 0, 200, 200), rect('b', 200, 0, 400, 200)], T)!
+    expect(area(m.vertices)).toBe(80000)
+  })
+})
+
 describe('store actions', () => {
   let ab: string
   beforeEach(() => {
@@ -220,6 +267,34 @@ describe('store actions', () => {
     expect(rooms().map((r) => r.id)).toEqual(['a', 'c'])
     expect(mergeArtboardRooms(ab, ['a', 'c'])).toBeNull()
     expect(rooms()).toHaveLength(2)
+  })
+})
+
+describe('merge with wall thickness: store action and openings', () => {
+  it('keeps outer openings at their exact position and drops the ones on the removed wall', () => {
+    useDoc.getState().hydrate(createDefaultProject())
+    const ab = useDoc.getState().doc.artboards[0].id
+    addRoom(ab, rect('a', 0, 0, 200, 200))
+    addRoom(ab, rect('b', 210, 0, 400, 200))
+    useDoc.getState().update((d) => {
+      const base = { kind: 'door' as const, widthCm: 90, heightCm: 210 }
+      d.artboards[0].openings.push(
+        { ...base, id: 'outer-a', roomId: 'a', xCm: 50, yCm: 0, angleDeg: 0 },
+        { ...base, id: 'outer-b', roomId: 'b', xCm: 300, yCm: 200, angleDeg: 0 },
+        { ...base, id: 'inner', roomId: 'a', xCm: 200, yCm: 100, angleDeg: 90 },
+        { ...base, id: 'far', roomId: 'z', xCm: 900, yCm: 900, angleDeg: 0 },
+      )
+    })
+    const merged = mergeArtboardRooms(ab, ['a', 'b'])!
+    expect(merged).not.toBeNull()
+    expect(merged.vertices).toHaveLength(4)
+    const a = useDoc.getState().doc.artboards[0]
+    expect(a.rooms.map((r) => r.id)).toEqual(['a'])
+    const byId = Object.fromEntries(a.openings.map((o) => [o.id, o]))
+    expect(Object.keys(byId).sort()).toEqual(['far', 'outer-a', 'outer-b'])
+    expect(byId['outer-a']).toMatchObject({ xCm: 50, yCm: 0, roomId: 'a' })
+    expect(byId['outer-b']).toMatchObject({ xCm: 300, yCm: 200, roomId: 'a' })
+    expect(byId.far).toMatchObject({ xCm: 900, yCm: 900, roomId: 'z' })
   })
 })
 

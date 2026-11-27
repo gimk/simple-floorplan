@@ -170,3 +170,39 @@ export function syncOpeningsForRoomChange(openings: Opening[], prevRooms: Room[]
   }
   return out
 }
+
+/** True when edge `edgeIndex` of `room` is parallel to the opening axis (either direction). */
+function edgeParallelToOpening(room: Room, edgeIndex: number, o: Opening): boolean {
+  const v = room.vertices
+  const a = v[edgeIndex], b = v[(edgeIndex + 1) % v.length]
+  const len = Math.hypot(b.x - a.x, b.y - a.y)
+  if (len < 1e-9) return false
+  const d = ((b.x - a.x) / len) * Math.cos(o.angleDeg * RAD) + ((b.y - a.y) / len) * Math.sin(o.angleDeg * RAD)
+  return Math.abs(d) >= 0.999
+}
+
+/**
+ * Rooms `mergedIds` (state `prevRooms`) became one room `merged`; `nextRooms` is the room list after
+ * the merge. Openings of other rooms stay as they are. For an opening of a merged room:
+ * - still on a wall of `merged` (within WALL_HOST_TOL_CM, edge parallel to it): kept at its EXACT
+ *   position (it does not slide along the longer wall), `roomId` = merged.id;
+ * - else on a wall of another room of `nextRooms`: kept, `roomId` points at that room;
+ * - else (it was on the wall that was knocked down): removed.
+ * An opening that was not on any wall of the merged rooms is kept.
+ */
+export function syncOpeningsForMerge(openings: Opening[], mergedIds: string[], prevRooms: Room[], merged: Room, nextRooms: Room[]): Opening[] {
+  const ids = new Set(mergedIds)
+  const prevMerged = prevRooms.filter((r) => ids.has(r.id))
+  const others = nextRooms.filter((r) => r.id !== merged.id)
+  const out: Opening[] = []
+  for (const o of openings) {
+    const hosted = o.roomId ? ids.has(o.roomId) : prevMerged.some((r) => hostWall(r, o))
+    if (!hosted) { out.push(o); continue }
+    if (!prevMerged.some((r) => hostWall(r, o))) { out.push(o.roomId && ids.has(o.roomId) ? { ...o, roomId: merged.id } : o); continue }
+    const h = hostWall(merged, o)
+    if (h && edgeParallelToOpening(merged, h.edgeIndex, o)) { out.push({ ...o, roomId: merged.id }); continue }
+    const other = hostWallIn(others, { ...o, roomId: undefined })
+    if (other) out.push({ ...o, roomId: other.room.id })
+  }
+  return out
+}

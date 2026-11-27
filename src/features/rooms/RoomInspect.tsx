@@ -33,6 +33,7 @@ import { syncOpeningsForRoomChange } from '../openings/sync'
 import { NumInput } from './NumInput'
 import { deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength } from './actions'
 import { mergeRooms, roomWalls } from './ops'
+import { wallThicknessOf } from './walls'
 
 export type RoomInspectProps = {
   /** Artboard that holds the selected rooms. */
@@ -214,8 +215,8 @@ function MultiRoomCard({
   const ids = rooms.map((r) => r.id)
 
   // Rooms can be merged only when their union is one outline (they touch or overlap).
-  const canMerge = mergeRooms(rooms) !== null
-  const mergeHint = 'Rooms must touch or overlap to be merged. Move them next to each other first.'
+  const canMerge = mergeRooms(rooms, wallThicknessOf(artboard)) !== null
+  const mergeHint = 'Rooms must touch, overlap or share a wall to be merged. Move them next to each other first.'
 
   const merge = () => {
     const merged = mergeArtboardRooms(artboard.id, ids)

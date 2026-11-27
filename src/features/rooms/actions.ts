@@ -3,7 +3,8 @@ import { useDoc } from '../../model/store'
 import type { Vec } from '../../model/geometry'
 import { area } from '../../model/geometry'
 import type { Room } from '../../model/types'
-import { syncOpeningsForRoomChange } from '../openings/sync'
+import { syncOpeningsForMerge, syncOpeningsForRoomChange } from '../openings/sync'
+import { wallThicknessOf } from './walls'
 import { cutoutRoom, deleteVertex, deleteWall, mergeRooms, setWallLength } from './ops'
 
 const findArtboard = (artboardId: string) => useDoc.getState().doc.artboards.find((a) => a.id === artboardId)
@@ -78,13 +79,13 @@ export function mergeArtboardRooms(artboardId: string, roomIds: string[]): Room 
   const ab = findArtboard(artboardId)
   if (!ab) return null
   const picked = roomIds.map((id) => ab.rooms.find((r) => r.id === id)).filter((r): r is Room => !!r)
-  const merged = mergeRooms(picked)
+  const merged = mergeRooms(picked, wallThicknessOf(ab))
   if (!merged) return null
   useDoc.getState().update((d) => {
     const a = d.artboards.find((x) => x.id === artboardId)!
     const prev = a.rooms
     a.rooms = a.rooms.filter((r) => r.id === merged.id || !roomIds.includes(r.id)).map((r) => (r.id === merged.id ? merged : r))
-    a.openings = syncOpeningsForRoomChange(a.openings, prev, a.rooms)
+    a.openings = syncOpeningsForMerge(a.openings, roomIds, prev, merged, a.rooms)
   })
   return merged
 }

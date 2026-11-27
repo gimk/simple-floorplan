@@ -507,6 +507,25 @@ describe('applyCommand: rooms', () => {
     expect(summarizeProject(r.doc).artboards[0].rooms[0].areaM2).toBeCloseTo(18)
   })
 
+  it('merge_rooms merges rooms that share a wall (wall thickness gap) and syncs openings', () => {
+    const { doc, roomId } = withRoom()
+    const d1 = ok(doc, { type: 'add_room_rect', xCm: 410, yCm: 0, widthCm: 200, heightCm: 300 })
+    const second = d1.result.roomId as string
+    const base = { kind: 'door' as const, widthCm: 90, heightCm: 210, angleDeg: 0 }
+    const d2 = clone(d1.doc)
+    d2.artboards[0].openings.push(
+      { ...base, id: 'outer', roomId: second, xCm: 500, yCm: 0 },
+      { ...base, id: 'inner', roomId, xCm: 400, yCm: 150, angleDeg: 90 },
+    )
+    const r = ok(d2, { type: 'merge_rooms', roomIds: [roomId, second] })
+    const ab = r.doc.artboards[0]
+    expect(ab.rooms).toHaveLength(1)
+    expect(ab.rooms[0].vertices).toHaveLength(4)
+    expect(summarizeProject(r.doc).artboards[0].rooms[0].areaM2).toBeCloseTo(18.3)
+    expect(ab.openings.map((o) => o.id)).toEqual(['outer'])
+    expect(ab.openings[0]).toMatchObject({ xCm: 500, yCm: 0, roomId })
+  })
+
   it('merge_rooms fails for disjoint rooms, one id, and unknown ids', () => {
     const { doc, roomId } = withRoom()
     const d1 = ok(doc, { type: 'add_room_rect', xCm: 1000, yCm: 0, widthCm: 200, heightCm: 300 })

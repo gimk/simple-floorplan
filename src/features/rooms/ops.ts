@@ -2,10 +2,11 @@
 // Every function returns a new object; inputs are never changed.
 import polygonClipping from 'polygon-clipping'
 import type { Ring } from 'polygon-clipping'
-import { add, area, dist, len, lerp, norm, signedArea, sub } from '../../model/geometry'
+import { add, area, dist, dot, innerRing, len, lerp, norm, signedArea, sub } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { newId } from '../../model/schema'
 import type { Room } from '../../model/types'
+import { edgeOutwardNormal } from './walls'
 
 export const MIN_ROOM_SIDE_CM = 10
 const EPS = 1e-6
@@ -195,17 +196,94 @@ export function cutoutRoom(room: Room, cutter: Vec[]): Room[] {
   }))
 }
 
+/** Extra gap allowed on top of the wall thickness when looking for a shared wall, in cm. */
+const SHARED_WALL_SLACK_CM = 0.5
+/** Extra offset of the closing (cm): the grown rooms overlap a little, so the union has no seam. */
+const CLOSING_EXTRA_CM = 0.25
+
+/** True when an edge of `a` faces a parallel edge of `b` (gap 0..maxGap) with a positive overlap along the wall. */
+function facingEdges(a: Room, b: Room, maxGap: number): boolean {
+  const va = a.vertices, vb = b.vertices
+  for (let i = 0; i < va.length; i++) {
+    const nA = edgeOutwardNormal(a, i)
+    if (!nA) continue
+    const a0 = va[i], a1 = va[(i + 1) % va.length]
+    const lenA = dist(a0, a1), dA = norm(sub(a1, a0))
+    for (let j = 0; j < vb.length; j++) {
+      const nB = edgeOutwardNormal(b, j)
+      if (!nB || dot(nA, nB) >= -0.999) continue
+      const b0 = vb[j], b1 = vb[(j + 1) % vb.length]
+      const gap = dot(nA, sub(b0, a0))
+      if (gap < -EPS || gap > maxGap) continue
+      const t0 = dot(sub(b0, a0), dA), t1 = dot(sub(b1, a0), dA)
+      const overlap = Math.min(lenA, Math.max(t0, t1)) - Math.max(0, Math.min(t0, t1))
+      if (overlap > 1e-3) return true
+    }
+  }
+  return false
+}
+
+/** True when all rooms form ONE group where neighbours touch, overlap or share a wall (gap <= maxGap). */
+function connectedByWalls(rooms: Room[], maxGap: number): boolean {
+  const linked = (a: Room, b: Room) =>
+    polygonClipping.union([toRing(a.vertices)], [toRing(b.vertices)]).length === 1 || facingEdges(a, b, maxGap)
+  const seen = new Set<number>([0])
+  const queue = [0]
+  while (queue.length) {
+    const i = queue.pop()!
+    for (let k = 0; k < rooms.length; k++) {
+      if (!seen.has(k) && linked(rooms[i], rooms[k])) { seen.add(k); queue.push(k) }
+    }
+  }
+  return seen.size === rooms.length
+}
+
+/** Remove float noise: coordinates near an integer or near an input vertex coordinate become exact. */
+function snapNoise(pts: Vec[], inputs: Vec[]): Vec[] {
+  const xs = inputs.map((p) => p.x), ys = inputs.map((p) => p.y)
+  const snap = (v: number, refs: number[]) => {
+    for (const r of refs) if (Math.abs(v - r) <= 1e-4) return r
+    const n = Math.round(v)
+    return Math.abs(v - n) <= 1e-6 ? n : v
+  }
+  return pts.map((p) => ({ x: snap(p.x, xs) + 0, y: snap(p.y, ys) + 0 }))
+}
+
 /**
  * Union of rooms. When the result is one outer ring (rooms touch or overlap, no hole), returns one
  * room that keeps the first room's id, name and fill. Otherwise (disjoint, or a hole) returns null.
+ *
+ * With wallThicknessCm > 0, rooms that share a wall (interiors a gap of 0..wallThicknessCm apart, facing
+ * parallel edges that overlap) merge too: the wall strip becomes part of the room (morphological
+ * closing: grow every room by half the thickness, union, shrink back). All rooms must form one
+ * connected group, and the result must have no hole.
  */
-export function mergeRooms(rooms: Room[]): Room | null {
+export function mergeRooms(rooms: Room[], wallThicknessCm = 0): Room | null {
   if (rooms.length < 2 || rooms.some((r) => r.vertices.length < 3)) return null
   const [first, ...rest] = rooms.map((r) => [toRing(r.vertices)])
   const result = polygonClipping.union(first, ...rest)
-  if (result.length !== 1 || result[0].length !== 1) return null
-  const vertices = fromRing(result[0][0])
-  if (vertices.length < 3) return null
+  if (result.length === 1 && result[0].length === 1) {
+    const vertices = fromRing(result[0][0])
+    return vertices.length >= 3 ? { ...rooms[0], vertices } : null
+  }
+  if (!(wallThicknessCm > 0)) return null
+  if (!connectedByWalls(rooms, wallThicknessCm + SHARED_WALL_SLACK_CM)) return null
+
+  const r = wallThicknessCm / 2 + CLOSING_EXTRA_CM
+  const grown = rooms.map((room) => [toRing(innerRing(room.vertices, room.vertices.map(() => -r)))])
+  const [g0, ...gRest] = grown
+  const closed = polygonClipping.union(g0, ...gRest)
+  if (closed.length !== 1 || closed[0].length !== 1) return null
+  const grownUnion = fromRing(closed[0][0])
+  if (grownUnion.length < 3) return null
+  const shrunk = innerRing(grownUnion, grownUnion.map(() => r))
+  const inputs = rooms.flatMap((room) => room.vertices)
+  const cleaned = snapNoise(shrunk, inputs)
+  if (cleaned.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y))) return null
+  const vertices = fromRing(toRing(cleaned))
+  if (vertices.length < 3 || !(area(vertices) > EPS)) return null
+  // The closing never removes area: a smaller result means the shrink folded over itself.
+  if (area(vertices) < Math.max(...rooms.map((room) => area(room.vertices))) - 1e-6) return null
   return { ...rooms[0], vertices }
 }
 
