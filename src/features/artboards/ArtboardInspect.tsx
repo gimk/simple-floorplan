@@ -39,8 +39,8 @@ export type ArtboardInspectProps = {
   artboardId?: string | null
   className?: string
   /**
-   * Read-only card (Design mode): no name, ceiling, precision, room selection, duplicate, add or
-   * delete edit. The measured values (area, room list) stay visible.
+   * Read-only card (Design mode): no frame, ceiling, precision, room selection, duplicate, add or
+   * delete edit. The name stays editable. The measured values (area, room list) stay visible.
    */
   readOnly?: boolean
 }
@@ -192,7 +192,6 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
             ariaLabel="Artboard name"
             value={artboard.name}
             onCommit={commitName}
-            disabled={readOnly}
             invalidMessage="Type a name for the artboard."
           />
         </FieldRow>
@@ -287,7 +286,7 @@ export function ArtboardInspect({ artboardId, className, readOnly = false }: Art
         </div>
 
         {readOnly && (
-          <EmptyHint>Read-only in Design mode. Switch to Plan mode to rename, duplicate, add or delete artboards.</EmptyHint>
+          <EmptyHint>Only the name is editable in Design mode. Switch to Plan mode to move, resize, duplicate, add or delete artboards.</EmptyHint>
         )}
 
         <div className="flex flex-wrap gap-2">
