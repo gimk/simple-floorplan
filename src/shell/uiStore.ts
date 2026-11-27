@@ -29,6 +29,15 @@ type UiData = {
   shortcutsOpen: boolean
   /** 90° angle lock (Plan mode): drawn and edited room angles stay orthogonal. */
   ortho: boolean
+  /** Cmd/Ctrl+': draw the canvas grid in Plan mode. */
+  showGrid: boolean
+  /** Cmd/Ctrl+\: all panels and toolbars are hidden, the canvas keeps the whole window. */
+  uiHidden: boolean
+  /**
+   * Furniture item whose name field the Rename shortcut (Cmd/Ctrl+R) has to focus. The Inspect card
+   * of that item focuses the field and clears the request.
+   */
+  renameRequestId: string | null
   /**
    * The pinned (locked) Tape measurement, in world cm. It stays on the canvas after the Tape tool is
    * left, until its x button is pressed or a new measurement starts (one at a time).
@@ -54,6 +63,9 @@ export const useUi = create<UiState>((set) => ({
   drawer: null,
   shortcutsOpen: false,
   ortho: false,
+  showGrid: true,
+  uiHidden: false,
+  renameRequestId: null,
   pinnedTape: null,
   set: (patch) => set(patch),
 }))

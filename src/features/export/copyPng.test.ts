@@ -29,24 +29,29 @@ const artboard = (p: Partial<Artboard> = {}): Artboard => ({
 })
 
 describe('isCopyPngShortcut', () => {
-  it('accepts Option+Cmd+C with a lowercase key', () => {
-    expect(isCopyPngShortcut(press({ key: 'c', metaKey: true, altKey: true }))).toBe(true)
+  it('accepts Shift+Cmd+C with a lowercase key', () => {
+    expect(isCopyPngShortcut(press({ key: 'c', metaKey: true, shiftKey: true }))).toBe(true)
   })
 
-  it('accepts Option+Cmd+C on macOS where Option+C gives the key "ç" and the code KeyC', () => {
-    expect(isCopyPngShortcut(press({ key: 'ç', code: 'KeyC', metaKey: true, altKey: true }))).toBe(true)
+  it('accepts Shift+Cmd+C on macOS where the key comes in as an uppercase C', () => {
+    expect(isCopyPngShortcut(press({ key: 'C', code: 'KeyC', metaKey: true, shiftKey: true }))).toBe(true)
   })
 
-  it('accepts Ctrl+Alt+C', () => {
-    expect(isCopyPngShortcut(press({ key: 'c', ctrlKey: true, altKey: true }))).toBe(true)
+  it('accepts Ctrl+Shift+C', () => {
+    expect(isCopyPngShortcut(press({ key: 'C', ctrlKey: true, shiftKey: true }))).toBe(true)
   })
 
-  it('rejects Cmd+C without Alt', () => {
+  it('accepts an event that only carries the physical code', () => {
+    expect(isCopyPngShortcut(press({ key: 'Unidentified', code: 'KeyC', metaKey: true, shiftKey: true }))).toBe(true)
+  })
+
+  it('rejects Cmd+C without Shift (that is Copy furniture)', () => {
     expect(isCopyPngShortcut(press({ metaKey: true }))).toBe(false)
   })
 
-  it('rejects Shift+Cmd+C (Shift instead of Alt)', () => {
-    expect(isCopyPngShortcut(press({ key: 'c', metaKey: true, shiftKey: true }))).toBe(false)
+  it('rejects Alt+Cmd+C (that is Copy properties now)', () => {
+    expect(isCopyPngShortcut(press({ key: 'c', metaKey: true, altKey: true }))).toBe(false)
+    expect(isCopyPngShortcut(press({ key: 'ç', code: 'KeyC', metaKey: true, altKey: true }))).toBe(false)
   })
 
   it('rejects Option+Shift+Cmd+C', () => {
@@ -57,12 +62,12 @@ describe('isCopyPngShortcut', () => {
     expect(isCopyPngShortcut(press())).toBe(false)
   })
 
-  it('rejects Option+C without Cmd or Ctrl', () => {
-    expect(isCopyPngShortcut(press({ key: 'c', altKey: true }))).toBe(false)
+  it('rejects Shift+C without Cmd or Ctrl', () => {
+    expect(isCopyPngShortcut(press({ key: 'C', shiftKey: true }))).toBe(false)
   })
 
-  it('rejects Option+Cmd+D', () => {
-    expect(isCopyPngShortcut(press({ key: 'd', code: 'KeyD', metaKey: true, altKey: true }))).toBe(false)
+  it('rejects Shift+Cmd+D', () => {
+    expect(isCopyPngShortcut(press({ key: 'D', code: 'KeyD', metaKey: true, shiftKey: true }))).toBe(false)
   })
 })
 

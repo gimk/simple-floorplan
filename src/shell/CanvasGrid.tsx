@@ -32,6 +32,7 @@ export function CanvasGrid() {
   const sizeRef = useRef({ w: 0, h: 0 })
   const activeArtboardId = useUi((s) => s.activeArtboardId)
   const mode = useUi((s) => s.mode)
+  const showGrid = useUi((s) => s.showGrid)
   const artboards = useDoc((s) => s.doc.artboards)
 
   const step = gridStep(zoom)
@@ -72,8 +73,8 @@ export function CanvasGrid() {
     return () => { ro?.disconnect(); off() }
   }, [svg, subscribeLive])
 
-  // Design mode shows a clean canvas: no grid (hooks above must still run).
-  if (mode === 'design') return null
+  // Design mode shows a clean canvas: no grid (hooks above must still run). Cmd/Ctrl+' hides it too.
+  if (mode === 'design' || !showGrid) return null
 
   return (
     <g pointerEvents="none" aria-hidden="true">

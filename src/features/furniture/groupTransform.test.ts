@@ -100,6 +100,29 @@ describe('resizeGroupFromHandle', () => {
     expect(res.get('f1')!.widthCm).toBeGreaterThanOrEqual(MIN_FURNITURE_CM)
     expect(res.get('f1')!.depthCm).toBeGreaterThanOrEqual(MIN_FURNITURE_CM)
   })
+
+  it('alt keeps the group center fixed and scales 2x delta (with and without shift)', () => {
+    // f1 at (150, 125) 100x50, f2 at (250, 175) 100x50 -> bounds x: 100..300 (w=200), y: 100..200 (h=100), center (200, 150).
+    const f1 = item({ id: 'f1', xCm: 150, yCm: 125, widthCm: 100, depthCm: 50, rotationDeg: 0 })
+    const f2 = item({ id: 'f2', xCm: 250, yCm: 175, widthCm: 100, depthCm: 50, rotationDeg: 0 })
+    const starts = toStarts([f1, f2])
+    const bounds = groupBounds([f1, f2])!
+
+    // Drag BR to (400, 225): dx from center = 200 (sx = 2), dy from center = 75 (sy = 1.5).
+    const res = resizeGroupFromHandle(starts, bounds, { sx: 1, sy: 1 }, { x: 400, y: 225 }, { shift: false, alt: true })
+    expect(res.get('f1')).toEqual({ xCm: 100, yCm: 112.5, widthCm: 200, depthCm: 75 })
+    expect(res.get('f2')).toEqual({ xCm: 300, yCm: 187.5, widthCm: 200, depthCm: 75 })
+
+    // With shift + alt: bigger factor (sx = 2) wins -> both sx=2, sy=2 around center (200, 150).
+    const resShift = resizeGroupFromHandle(starts, bounds, { sx: 1, sy: 1 }, { x: 400, y: 225 }, { shift: true, alt: true })
+    expect(resShift.get('f1')).toEqual({ xCm: 100, yCm: 100, widthCm: 200, depthCm: 100 })
+    expect(resShift.get('f2')).toEqual({ xCm: 300, yCm: 200, widthCm: 200, depthCm: 100 })
+
+    // Edge handle with alt: right edge dragged to 350 (dx from center = 150 -> sx = 1.5, sy = 1).
+    const resEdge = resizeGroupFromHandle(starts, bounds, { sx: 1, sy: 0 }, { x: 350, y: 150 }, { shift: false, alt: true })
+    expect(resEdge.get('f1')).toEqual({ xCm: 125, yCm: 125, widthCm: 150, depthCm: 50 })
+    expect(resEdge.get('f2')).toEqual({ xCm: 275, yCm: 175, widthCm: 150, depthCm: 50 })
+  })
 })
 
 describe('rotateGroupByDelta', () => {

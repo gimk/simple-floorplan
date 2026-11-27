@@ -115,12 +115,29 @@ export const EDGE_HANDLES: EdgeHandle[] = [
 export const roundSize = (v: number, precisionCm: number): number => (precisionCm > 0 ? roundP(v, precisionCm) : v)
 
 /**
+ * Apply Shift axis-lock to a move target relative to `start`. Locks the axis with smaller movement
+ * since drag start; returns the locked position and which axis ('x' | 'y' | null) is locked.
+ */
+export function applyAxisLock(
+  start: Vec,
+  current: Vec,
+  lock: boolean,
+): { pos: Vec; lockedAxis: 'x' | 'y' | null } {
+  if (!lock) return { pos: current, lockedAxis: null }
+  const dx = current.x - start.x
+  const dy = current.y - start.y
+  return Math.abs(dx) >= Math.abs(dy)
+    ? { pos: { x: current.x, y: start.y }, lockedAxis: 'y' }
+    : { pos: { x: start.x, y: current.y }, lockedAxis: 'x' }
+}
+
+/**
  * New size and centre of an item when one handle of its selection box is dragged to `p` (the pointer
  * in artboard-local cm). Pure: no store, no React.
  *
  * The handle names the sides that move: sx = -1 is the left side, sx = 1 the right one, sx = 0 no
- * side of that axis. The OPPOSITE side stays where it is, so the centre moves by half the change
- * along the item's own (rotated) axes.
+ * side of that axis. Normally the OPPOSITE side stays where it is; when `opts.alt` is true, the
+ * centre stays fixed and both opposite sides grow symmetrically (2x the delta).
  *  - corner (sx and sy both set): both dimensions follow the pointer; Shift keeps the aspect ratio
  *    and the bigger of the two factors wins;
  *  - edge (sx or sy is 0): only the dimension of the dragged axis changes; Shift scales the other
@@ -132,7 +149,7 @@ export function resizeFurnitureFromHandle(
   item: Pick<FurnitureItem, 'xCm' | 'yCm' | 'widthCm' | 'depthCm' | 'rotationDeg'>,
   handle: ResizeHandle,
   p: Vec,
-  opts: { shift: boolean; precisionCm: number },
+  opts: { shift: boolean; alt?: boolean; precisionCm: number },
 ): ResizeResult {
   const w0 = item.widthCm, d0 = item.depthCm
   const a = item.rotationDeg * RAD
@@ -144,13 +161,15 @@ export function resizeFurnitureFromHandle(
   if (handle.sx === 0 && handle.sy === 0) {
     return { widthCm: w0, depthCm: d0, xCm: item.xCm, yCm: item.yCm }
   }
+  const fromCenter = !!opts.alt
   // The fixed side (or corner) in the start frame. 0 = that axis keeps its centre line.
   const o = {
-    x: handle.sx === 0 ? 0 : (-handle.sx * w0) / 2,
-    y: handle.sy === 0 ? 0 : (-handle.sy * d0) / 2,
+    x: fromCenter || handle.sx === 0 ? 0 : (-handle.sx * w0) / 2,
+    y: fromCenter || handle.sy === 0 ? 0 : (-handle.sy * d0) / 2,
   }
-  let w = handle.sx === 0 ? w0 : (lx - o.x) * handle.sx
-  let d = handle.sy === 0 ? d0 : (ly - o.y) * handle.sy
+  const mult = fromCenter ? 2 : 1
+  let w = handle.sx === 0 ? w0 : (lx - o.x) * handle.sx * mult
+  let d = handle.sy === 0 ? d0 : (ly - o.y) * handle.sy * mult
   if (opts.shift) {
     // Corners: the bigger factor wins, as before. Edges: the dragged axis gives the factor.
     const s =
@@ -164,8 +183,8 @@ export function resizeFurnitureFromHandle(
   const clamp = (v: number) => Math.min(MAX_FURNITURE_CM, Math.max(MIN_FURNITURE_CM, v))
   w = clamp(roundSize(w, opts.precisionCm))
   d = clamp(roundSize(d, opts.precisionCm))
-  // New centre: midway between the fixed side and the dragged one, in the start frame.
-  const cl = { x: o.x + (handle.sx * w) / 2, y: o.y + (handle.sy * d) / 2 }
+  // New centre: fixed at (0, 0) when resizing from center, else midway between fixed and dragged side.
+  const cl = fromCenter ? { x: 0, y: 0 } : { x: o.x + (handle.sx * w) / 2, y: o.y + (handle.sy * d) / 2 }
   return {
     widthCm: w,
     depthCm: d,

@@ -3,7 +3,7 @@
 // buttons act on the whole group (same behaviour as Cmd/Ctrl+D and Delete). Per-item things (name,
 // shape, size, rotation, stack order) have no meaning for a group, so this card does not show them.
 // Styling, swatch row and buttons come from FurnitureInspect.tsx (single item card). Units: cm.
-import { Armchair, Copy, Group, Layers, Palette, Ungroup } from 'lucide-react'
+import { Armchair, Copy, FlipHorizontal2, FlipVertical2, Group, Layers, Palette, Ungroup } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import { BTN, ColorRow, DangerButton, LABEL, MUTED, PanelSection } from '../../shell/panel'
@@ -15,6 +15,7 @@ import {
   ungroupFurniture,
   updateFurnitureMany,
 } from './actions'
+import { flipSelection } from './flip'
 import { hasAnyGroupedItem, isSingleWholeGroup } from './groups'
 import { FURNITURE_COLORS } from './presets'
 
@@ -79,6 +80,29 @@ export function FurnitureMultiInspect({ artboardId, furnitureIds }: FurnitureMul
           />
         </div>
         <p className={MUTED}>{currentLabel}</p>
+
+        <div className="grid grid-cols-2 gap-1" role="group" aria-label="Flip">
+          <button
+            type="button"
+            className={BTN}
+            title="Flip horizontal (Shift+H)"
+            aria-label="Flip horizontal"
+            onClick={() => flipSelection('x')}
+          >
+            <FlipHorizontal2 size={14} aria-hidden="true" />
+            Flip H
+          </button>
+          <button
+            type="button"
+            className={BTN}
+            title="Flip vertical (Shift+V)"
+            aria-label="Flip vertical"
+            onClick={() => flipSelection('y')}
+          >
+            <FlipVertical2 size={14} aria-hidden="true" />
+            Flip V
+          </button>
+        </div>
       </PanelSection>
 
       <PanelSection title="Arrange" icon={<Layers size={14} aria-hidden="true" />}>

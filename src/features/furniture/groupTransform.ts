@@ -68,7 +68,7 @@ export function resizeGroupFromHandle(
   startBounds: ItemBounds,
   handle: ResizeHandle,
   p: Vec,
-  opts: { shift: boolean; precisionCm?: number },
+  opts: { shift: boolean; alt?: boolean; precisionCm?: number },
 ): Map<string, GroupResizeItemResult> {
   const out = new Map<string, GroupResizeItemResult>()
   if (starts.size === 0) return out
@@ -82,13 +82,17 @@ export function resizeGroupFromHandle(
     return out
   }
 
+  const fromCenter = !!opts.alt
+  const centerX = (startBounds.minX + startBounds.maxX) / 2
+  const centerY = (startBounds.minY + startBounds.maxY) / 2
   const anchor: Vec = {
-    x: handle.sx === -1 ? startBounds.maxX : handle.sx === 1 ? startBounds.minX : (startBounds.minX + startBounds.maxX) / 2,
-    y: handle.sy === -1 ? startBounds.maxY : handle.sy === 1 ? startBounds.minY : (startBounds.minY + startBounds.maxY) / 2,
+    x: fromCenter || handle.sx === 0 ? centerX : handle.sx === -1 ? startBounds.maxX : startBounds.minX,
+    y: fromCenter || handle.sy === 0 ? centerY : handle.sy === -1 ? startBounds.maxY : startBounds.minY,
   }
+  const mult = fromCenter ? 2 : 1
 
-  const rawW = handle.sx === 0 ? w0 : (p.x - anchor.x) * handle.sx
-  const rawH = handle.sy === 0 ? h0 : (p.y - anchor.y) * handle.sy
+  const rawW = handle.sx === 0 ? w0 : (p.x - anchor.x) * handle.sx * mult
+  const rawH = handle.sy === 0 ? h0 : (p.y - anchor.y) * handle.sy * mult
 
   let sx: number
   let sy: number

@@ -20,7 +20,17 @@ import {
   setFurnitureSelection,
   ungroupFurniture,
 } from './features/furniture/actions'
+import { alignSelection, distributeSelection, type AlignOp } from './features/furniture/alignSelection'
+import { copyFurniture, cutFurniture, pasteFurniture } from './features/furniture/clipboard'
+import { flipSelection } from './features/furniture/flip'
 import { resolveEscapeGroupSelection } from './features/furniture/groups'
+import { moveSelectionToEnd } from './features/furniture/layerOrder'
+import { nudgeFurnitureSelection } from './features/furniture/nudge'
+import { copyStyle, pasteStyle } from './features/furniture/properties'
+import { clearSelection, enterGroup, exitGroupToSelection, selectAll } from './features/furniture/selectionActions'
+import { zoomToSelection } from './features/furniture/selectionBounds'
+import { selectNextFurniture } from './features/furniture/tabOrder'
+import { arrowDelta } from './canvas/useCanvasKeyboard'
 import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
 import { MeasurementCheatsheet } from './features/furniture/MeasurementCheatsheet'
 import { DesignRoomsInspect } from './features/furniture/DesignRoomsInspect'
@@ -83,6 +93,16 @@ const isEditable = (t: EventTarget | null) => {
   )
 }
 
+/** Alt + this physical key aligns the furniture selection. Option changes e.key on macOS: use e.code. */
+const ALIGN_CODES: Record<string, AlignOp> = {
+  KeyA: 'left',
+  KeyD: 'right',
+  KeyW: 'top',
+  KeyS: 'bottom',
+  KeyH: 'center-h',
+  KeyV: 'center-v',
+}
+
 const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
   {
     group: 'General',
@@ -113,6 +133,9 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Zoom out', '-'],
       ['Zoom to 100%', '0'],
       ['Fit all', 'F or Shift+1'],
+      ['Zoom to selection', 'Shift+2'],
+      ['Hide all panels', isMac ? '⌘\\' : 'Ctrl+\\'],
+      ['Show / hide grid', isMac ? "⌘'" : "Ctrl+'"],
     ],
   },
   {
@@ -121,8 +144,46 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Delete selection', 'Del'],
       ['Duplicate', isMac ? '⌘D' : 'Ctrl+D'],
       ['Group / Ungroup', isMac ? '⌘G / ⇧⌘G' : 'Ctrl+G / Ctrl+Shift+G'],
-      ['Copy as PNG', isMac ? '⌥⌘C' : 'Ctrl+Alt+C'],
+      ['Copy as PNG', isMac ? '⇧⌘C' : 'Ctrl+Shift+C'],
       ['Furniture back / front', '[ / ]'],
+      ['Furniture to back / front', isMac ? '⌘[ / ⌘]' : 'Ctrl+[ / Ctrl+]'],
+      ['Copy / cut furniture', isMac ? '⌘C / ⌘X' : 'Ctrl+C / Ctrl+X'],
+      ['Paste furniture', isMac ? '⌘V' : 'Ctrl+V'],
+      ['Copy properties', isMac ? '⌥⌘C' : 'Ctrl+Alt+C'],
+      ['Paste properties', isMac ? '⌥⌘V' : 'Ctrl+Alt+V'],
+      ['Rename item', isMac ? '⌘R' : 'Ctrl+R'],
+    ],
+  },
+  {
+    group: 'Selection',
+    rows: [
+      ['Select all', isMac ? '⌘A' : 'Ctrl+A'],
+      ['Next / previous item', 'Tab / Shift+Tab'],
+      ['Clear selection', 'Esc'],
+      ['Enter group', 'Enter'],
+      ['Select whole group', 'Shift+Enter'],
+      ['Move by 1 cm', 'Arrows'],
+      ['Move by 10 cm', 'Shift+Arrows'],
+    ],
+  },
+  {
+    group: 'Arrange',
+    rows: [
+      ['Align left / right', 'Alt+A / Alt+D'],
+      ['Align top / bottom', 'Alt+W / Alt+S'],
+      ['Align centers', 'Alt+H / Alt+V'],
+      ['Distribute horizontally', 'Ctrl+Alt+H'],
+      ['Distribute vertically', 'Ctrl+Alt+V'],
+      ['Flip horizontal / vertical', 'Shift+H / Shift+V'],
+    ],
+  },
+  {
+    group: 'Mouse',
+    rows: [
+      ['Pan the canvas', 'Space+drag'],
+      ['Lock move to axis', 'Shift+drag'],
+      ['Resize from center', 'Option/Alt+drag handle'],
+      ['Select inside group', isMac ? '⌘+click' : 'Ctrl+click'],
     ],
   },
 ]
@@ -266,6 +327,7 @@ export default function App() {
   const leftCollapsed = useUi((s) => s.leftCollapsed)
   const inspectCollapsed = useUi((s) => s.inspectCollapsed)
   const shortcutsOpen = useUi((s) => s.shortcutsOpen)
+  const uiHidden = useUi((s) => s.uiHidden)
   const isMd = useMediaQuery('(min-width: 768px)')
   const isLg = useMediaQuery('(min-width: 1024px)')
   // Wall-length editor request + the selection object that opened it (see `wallEditor` below).
@@ -288,6 +350,12 @@ export default function App() {
           ui.set({ drawer: null })
           return
         }
+        // A hidden UI (Cmd/Ctrl+\) comes back before anything else.
+        if (ui.uiHidden) {
+          e.preventDefault()
+          ui.set({ uiHidden: false })
+          return
+        }
         if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
           const sel = ui.selection
           const ab = useDoc.getState().doc.artboards.find((a) => a.id === sel.artboardId)
@@ -298,6 +366,12 @@ export default function App() {
             return
           }
         }
+        // Esc has no other job left: clear the selection.
+        if (ui.selection.kind !== 'none') {
+          e.preventDefault()
+          clearSelection()
+        }
+        return
       }
       // '?' toggles the keyboard shortcuts cheat sheet.
       if (plain && e.key === '?') {
@@ -319,6 +393,132 @@ export default function App() {
         if (key === 'y' || e.shiftKey) useDoc.getState().redo()
         else useDoc.getState().undo()
         return
+      }
+      // Shift+2 zooms to fit the current selection (F / Shift+1 fit everything).
+      if (plain && e.shiftKey && e.code === 'Digit2') {
+        if (zoomToSelection()) e.preventDefault()
+        return
+      }
+      // Cmd/Ctrl+\ hides every panel and toolbar; Esc or the same key shows them again.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === 'Backslash' || e.key === '\\')) {
+        e.preventDefault()
+        const ui = useUi.getState()
+        ui.set({ uiHidden: !ui.uiHidden })
+        return
+      }
+      // Cmd/Ctrl+' shows or hides the canvas grid.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === 'Quote' || e.key === "'")) {
+        e.preventDefault()
+        const ui = useUi.getState()
+        ui.set({ showGrid: !ui.showGrid })
+        return
+      }
+      // Cmd/Ctrl+A selects all furniture of the artboard (Plan mode: all rooms of a multi-room selection).
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === 'KeyA' || key === 'a')) {
+        if (selectAll()) {
+          e.preventDefault()
+          return
+        }
+        if (useUi.getState().mode === 'design') e.preventDefault()
+        return
+      }
+      // Cmd/Ctrl+R renames the single selected item: the Inspect card focuses its name field.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === 'KeyR' || key === 'r')) {
+        const ui = useUi.getState()
+        if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
+          e.preventDefault()
+          // The name field lives in the Inspect panel: make sure the panel is on screen.
+          ui.set({ renameRequestId: ui.selection.furnitureId, inspectCollapsed: false })
+          return
+        }
+        return
+      }
+      // Option+Cmd+C / Option+Cmd+V copy and paste the style of the selected furniture.
+      if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
+        if (e.code === 'KeyC') {
+          if (copyStyle()) {
+            e.preventDefault()
+            return
+          }
+        }
+        if (e.code === 'KeyV') {
+          if (pasteStyle()) {
+            e.preventDefault()
+            return
+          }
+        }
+      }
+      // Cmd/Ctrl+C, Cmd/Ctrl+X and Cmd/Ctrl+V copy, cut and paste the selected furniture.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && useUi.getState().mode === 'design') {
+        if (e.code === 'KeyC' || key === 'c') {
+          if (copyFurniture() > 0) {
+            e.preventDefault()
+            return
+          }
+        }
+        if (e.code === 'KeyX' || key === 'x') {
+          if (cutFurniture() > 0) {
+            e.preventDefault()
+            return
+          }
+        }
+        if (e.code === 'KeyV' || key === 'v') {
+          if (pasteFurniture().length > 0) {
+            e.preventDefault()
+            return
+          }
+        }
+      }
+      // Alt + A / D / W / S / H / V align the selected furniture inside the selection bounds.
+      if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+        const op = ALIGN_CODES[e.code]
+        if (op && alignSelection(op)) {
+          e.preventDefault()
+          return
+        }
+      }
+      // Ctrl+Alt+H / Ctrl+Alt+V (Cmd+Alt on a Mac) give the selected furniture equal gaps.
+      if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
+        if (e.code === 'KeyH' && distributeSelection('horizontal')) {
+          e.preventDefault()
+          return
+        }
+        if (e.code === 'KeyV' && distributeSelection('vertical')) {
+          e.preventDefault()
+          return
+        }
+      }
+      // Tab / Shift+Tab step through the furniture of the artboard, in layer order and wrapping around.
+      if (plain && e.key === 'Tab' && useUi.getState().mode === 'design' && !e.defaultPrevented) {
+        if (selectNextFurniture(e.shiftKey)) {
+          e.preventDefault()
+          return
+        }
+      }
+      // Enter enters a selected group (its top member), Shift+Enter selects the whole group again.
+      if (plain && e.key === 'Enter' && useUi.getState().mode === 'design') {
+        if (e.shiftKey ? exitGroupToSelection() : enterGroup()) {
+          e.preventDefault()
+          return
+        }
+        return
+      }
+      // Arrow keys nudge the selected furniture by 1 cm (10 cm with Shift). The focused canvas
+      // already handles them, so a handled event is left alone.
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && useUi.getState().mode === 'design' && e.key.startsWith('Arrow')) {
+        if (e.defaultPrevented) return
+        const delta = arrowDelta(e.key, e.shiftKey)
+        if (delta && nudgeFurnitureSelection(delta.dx, delta.dy)) {
+          e.preventDefault()
+          return
+        }
+      }
+      // Shift+H / Shift+V flip the selected furniture.
+      if (plain && e.shiftKey && (e.code === 'KeyH' || e.code === 'KeyV')) {
+        if (flipSelection(e.code === 'KeyH' ? 'x' : 'y')) {
+          e.preventDefault()
+          return
+        }
       }
       // Plain '1' / '2' switch the mode (same state reset as the Mode control).
       if ((key === '1' || key === '2') && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -389,7 +589,7 @@ export default function App() {
         }
         return
       }
-      // Option+Cmd+C (Mac) / Ctrl+Alt+C copies the selected (or active) artboard to the clipboard as a PNG picture.
+      // Shift+Cmd+C (Mac) / Ctrl+Shift+C copies the selected (or active) artboard to the clipboard as a PNG.
       if (isCopyPngShortcut(e)) {
         const ui = useUi.getState()
         const doc = useDoc.getState().doc
@@ -408,19 +608,17 @@ export default function App() {
         return
       }
       // Cmd/Ctrl+[ / ] send the selected furniture to the back / front; [ and ] step it once.
-      if (!e.altKey && (e.key === '[' || e.key === ']')) {
+      if (!e.altKey && (e.key === '[' || e.key === ']' || e.code === 'BracketLeft' || e.code === 'BracketRight')) {
         const ui = useUi.getState()
-        if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
+        const back = e.key === '[' || e.code === 'BracketLeft'
+        if (ui.mode === 'design' && (ui.selection.kind === 'furniture' || ui.selection.kind === 'furnitureMulti')) {
           e.preventDefault()
-          const op =
-            e.key === '['
-              ? e.metaKey || e.ctrlKey
-                ? 'back'
-                : 'backward'
-              : e.metaKey || e.ctrlKey
-                ? 'front'
-                : 'forward'
-          reorderFurniture(ui.selection.artboardId, ui.selection.furnitureId, op)
+          if (e.metaKey || e.ctrlKey) {
+            // Whole selection (groups included) to one end of the stack, relative order kept.
+            moveSelectionToEnd(back ? 'back' : 'front')
+          } else if (ui.selection.kind === 'furniture') {
+            reorderFurniture(ui.selection.artboardId, ui.selection.furnitureId, back ? 'backward' : 'forward')
+          }
           return
         }
       }
@@ -623,10 +821,10 @@ export default function App() {
 
   const activeBoard = artboards.find((a) => a.id === activeArtboardId) ?? artboards[0]
   const emptyPlan = mode === 'plan' && tool === 'select' && !!activeBoard && activeBoard.rooms.length === 0
-  const leftInline = isMd && !leftCollapsed
-  const inspectInline = isLg && !inspectCollapsed
-  const leftSheet = !isMd && drawer === 'left'
-  const inspectSheet = !isLg && drawer === 'inspect'
+  const leftInline = isMd && !leftCollapsed && !uiHidden
+  const inspectInline = isLg && !inspectCollapsed && !uiHidden
+  const leftSheet = !isMd && drawer === 'left' && !uiHidden
+  const inspectSheet = !isLg && drawer === 'inspect' && !uiHidden
   const closeDrawer = () => setUi({ drawer: null })
   const hasSelection = selection.kind !== 'none' && selectionExists
   const leftName = mode === 'plan' ? 'Objects panel' : 'Furniture panel'
@@ -655,7 +853,7 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-surface-0 text-zinc-100">
       <h1 className="sr-only">Simple Floorplan</h1>
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-white/10 bg-surface-1 px-3">
+      <header className={uiHidden ? 'hidden' : 'flex h-12 shrink-0 items-center gap-2 border-b border-white/10 bg-surface-1 px-3'}>
         <div className="group relative flex min-w-0 flex-1 basis-0 items-center">
           <input
             aria-label="Project title"
@@ -843,38 +1041,42 @@ export default function App() {
               </ArtboardContent>
             ))}
           </Viewport>
-          <div className="pointer-events-none absolute left-2 top-2 z-30">
-            <IconButton
-              label={`${leftShown ? 'Hide' : 'Show'} ${leftName.toLowerCase()}`}
-              variant="bar"
-              icon={<PanelLeft size={18} />}
-              pressed={leftShown}
-              onClick={toggleLeft}
-              className="pointer-events-auto"
-            />
-          </div>
-          <div className="pointer-events-none absolute right-2 top-2 z-30">
-            <IconButton
-              label={`${inspectShown ? 'Hide' : 'Show'} inspect panel`}
-              variant="bar"
-              icon={
-                <span className="relative flex">
-                  <PanelRight size={18} />
-                  {hasSelection && !inspectShown && (
-                    <span data-testid="inspect-badge" className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-orange-500 ring-2 ring-surface-2" aria-hidden="true" />
-                  )}
-                </span>
-              }
-              pressed={inspectShown}
-              onClick={toggleInspect}
-              className="pointer-events-auto"
-            />
-          </div>
-          <div className="pointer-events-none absolute bottom-3 left-3 max-md:bottom-[calc(4.75rem+env(safe-area-inset-bottom))]">
-            <ZoomControls />
-          </div>
-          <PlanToolbar />
-          {emptyPlan && (
+          {!uiHidden && (
+            <>
+            <div className="pointer-events-none absolute left-2 top-2 z-30">
+              <IconButton
+                label={`${leftShown ? 'Hide' : 'Show'} ${leftName.toLowerCase()}`}
+                variant="bar"
+                icon={<PanelLeft size={18} />}
+                pressed={leftShown}
+                onClick={toggleLeft}
+                className="pointer-events-auto"
+              />
+            </div>
+            <div className="pointer-events-none absolute right-2 top-2 z-30">
+              <IconButton
+                label={`${inspectShown ? 'Hide' : 'Show'} inspect panel`}
+                variant="bar"
+                icon={
+                  <span className="relative flex">
+                    <PanelRight size={18} />
+                    {hasSelection && !inspectShown && (
+                      <span data-testid="inspect-badge" className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-orange-500 ring-2 ring-surface-2" aria-hidden="true" />
+                    )}
+                  </span>
+                }
+                pressed={inspectShown}
+                onClick={toggleInspect}
+                className="pointer-events-auto"
+              />
+            </div>
+            <div className="pointer-events-none absolute bottom-3 left-3 max-md:bottom-[calc(4.75rem+env(safe-area-inset-bottom))]">
+              <ZoomControls />
+            </div>
+            <PlanToolbar />
+            </>
+          )}
+          {emptyPlan && !uiHidden && (
             <div className="pointer-events-none absolute inset-x-0 top-1/3 z-20 flex justify-center px-4" data-testid="empty-state">
               <div className="pointer-events-auto w-full max-w-xs rounded-xl border border-white/10 bg-surface-2/95 p-4 text-center shadow-xl">
                 <h2 className="text-sm font-semibold text-slate-100">Draw your first room</h2>

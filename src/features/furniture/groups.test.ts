@@ -216,6 +216,39 @@ describe('pure group selection helpers', () => {
     ).toEqual(['g2a', 'g2b'])
   })
 
+  it('Cmd/Ctrl+click selects a single grouped item; Cmd/Ctrl+Shift+click toggles a single item in multi-selection', () => {
+    // Cmd+click on grouped item selects only that item
+    expect(resolveFurnitureClick(ab, { kind: 'none' }, 'g1a', { shiftKey: false, cmdKey: true })).toEqual(['g1a'])
+    expect(
+      resolveFurnitureClick(
+        ab,
+        { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['g1a', 'g1b'] },
+        'g2a',
+        { shiftKey: false, cmdKey: true },
+      ),
+    ).toEqual(['g2a'])
+
+    // Cmd+Shift+click adds only g1a (not g1b) to u1
+    expect(
+      resolveFurnitureClick(
+        ab,
+        { kind: 'furniture', artboardId: 'ab1', furnitureId: 'u1' },
+        'g1a',
+        { shiftKey: true, cmdKey: true },
+      ),
+    ).toEqual(['u1', 'g1a'])
+
+    // Cmd+Shift+click removes only g1a from ['g1a', 'g1b', 'u1']
+    expect(
+      resolveFurnitureClick(
+        ab,
+        { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['g1a', 'g1b', 'u1'] },
+        'g1a',
+        { shiftKey: true, cmdKey: true },
+      ),
+    ).toEqual(['g1b', 'u1'])
+  })
+
   it('resolveEscapeGroupSelection returns whole group only for single grouped selection', () => {
     expect(resolveEscapeGroupSelection(ab, { kind: 'furniture', artboardId: 'ab1', furnitureId: 'g1a' })).toEqual([
       'g1a',

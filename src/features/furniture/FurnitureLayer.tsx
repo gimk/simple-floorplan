@@ -14,7 +14,6 @@ import { useUi } from '../../shell/uiStore'
 import {
   duplicateFurnitureGroup,
   moveFurnitureGroup,
-  resizeFurnitureGroup,
   rotateFurnitureGroup,
   setFurnitureSelection,
   updateFurnitureSilent,
@@ -26,20 +25,24 @@ import type { FurnitureTransformStart } from './groupTransform'
 import {
   CORNER_HANDLES,
   EDGE_HANDLES,
-  computeDistanceGuides,
+  applyAxisLock,
   computeMeasureGuides,
   directionArrowGeometry,
+  furnitureAxisBounds,
   furnitureCornerRadiusCm,
   pickMeasureTarget,
   resizeFurnitureFromHandle,
-  snapFurnitureMove,
   snapRotation,
 } from './geometry'
 import type { CornerHandle, DistanceGuide, MeasureTarget, ResizeHandle } from './geometry'
+import { resizeFurnitureGroupWithAlt, setDirectFurnitureSelection } from './pointerActions'
+import { computeDragDistanceGuides, snapBoxMove } from './snapGuides'
+import type { SnapGuideLine } from './snapGuides'
 import { CANVAS_BG, CANVAS_SELECT } from '../../shell/canvasTokens'
 
 const ORANGE = CANVAS_SELECT
 const CYAN = '#22d3ee'
+const SNAP_LINE_COLOR = '#f43f5e'
 const BG = CANVAS_BG
 const DRAG_THRESHOLD_PX = 3
 const RAD = Math.PI / 180
@@ -90,6 +93,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const gesture = useRef<Gesture | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [guides, setGuides] = useState<DistanceGuide[]>([])
+  const [snapLines, setSnapLines] = useState<SnapGuideLine[]>([])
   // Option/Alt measure overlay: display only, never touches the document.
   const [measure, setMeasure] = useState<{ guides: DistanceGuide[]; target: MeasureTarget } | null>(null)
   const lastPointer = useRef<Vec | null>(null)
@@ -174,6 +178,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     if (g.moved) useDoc.getState().endDrag()
     setDraggingId(null)
     setGuides([])
+    setSnapLines([])
     setRotBadge(null)
   }
   const gp = { onPointerMove: move, onPointerUp: end, onPointerCancel: end }
@@ -193,48 +198,85 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     const grab = { x: p0.x - item.xCm, y: p0.y - item.yCm }
     let duplicated = false
     let grabbedId = item.id
+    let dragIds = [...ids]
     let starts = new Map<string, FurnitureStart>()
+    const startItems: FurnitureItem[] = []
     for (const f of liveArtboard().furniture) {
-      if (ids.includes(f.id)) starts.set(f.id, { xCm: f.xCm, yCm: f.yCm })
+      if (ids.includes(f.id)) {
+        starts.set(f.id, { xCm: f.xCm, yCm: f.yCm })
+        startItems.push(f)
+      }
     }
+    let startBounds = groupBounds(startItems)
     start(e, (p) => {
       if (duplicate && !duplicated) {
         duplicated = true
         const newIds = duplicateFurnitureGroup(artboard.id, ids, 0, true)
+        dragIds = newIds
         const list = liveArtboard().furniture
         const origIdx = list.findIndex((f) => f.id === item.id)
         const copyItem = origIdx >= 0 ? list[origIdx + 1] : undefined
         if (copyItem && newIds.includes(copyItem.id)) grabbedId = copyItem.id
         const nextStarts = new Map<string, FurnitureStart>()
+        const nextItems: FurnitureItem[] = []
         for (const f of list) {
-          if (newIds.includes(f.id)) nextStarts.set(f.id, { xCm: f.xCm, yCm: f.yCm })
+          if (newIds.includes(f.id)) {
+            nextStarts.set(f.id, { xCm: f.xCm, yCm: f.yCm })
+            nextItems.push(f)
+          }
         }
         starts = nextStarts
+        startBounds = groupBounds(nextItems)
       }
       setDraggingId(grabbedId)
       const cur = live(grabbedId)
       const startPos = starts.get(grabbedId)
-      if (!cur || !startPos) return
+      if (!cur || !startPos || !startBounds) return
       const mods = getModifiers()
-      const s = snapFurnitureMove(cur, p.x - grab.x, p.y - grab.y, liveArtboard(), px(10), { disableSnap: mods.alt })
-      moveFurnitureGroup(artboard.id, starts, s.xCm - startPos.xCm, s.yCm - startPos.yCm)
-      setGuides(computeDistanceGuides({ ...cur, xCm: s.xCm, yCm: s.yCm }, liveArtboard()))
+      const rawTarget = { x: p.x - grab.x, y: p.y - grab.y }
+      const { pos, lockedAxis } = applyAxisLock({ x: startPos.xCm, y: startPos.yCm }, rawTarget, mods.shift)
+      const dx = pos.x - startPos.xCm
+      const dy = pos.y - startPos.yCm
+      const shiftedBounds = {
+        minX: startBounds.minX + dx,
+        minY: startBounds.minY + dy,
+        maxX: startBounds.maxX + dx,
+        maxY: startBounds.maxY + dy,
+      }
+      const ab = liveArtboard()
+      const exclude = new Set(dragIds)
+      const snap = snapBoxMove(shiftedBounds, ab, exclude, px(6), {
+        disableSnap: mods.alt,
+        lockAxis: lockedAxis ?? undefined,
+        precisionCm: ab.precisionCm,
+      })
+      const finalDx = dx + snap.dx
+      const finalDy = dy + snap.dy
+      moveFurnitureGroup(artboard.id, starts, finalDx, finalDy)
+      const finalBounds = {
+        minX: startBounds.minX + finalDx,
+        minY: startBounds.minY + finalDy,
+        maxX: startBounds.maxX + finalDx,
+        maxY: startBounds.maxY + finalDy,
+      }
+      setSnapLines(snap.snapLines)
+      setGuides(computeDragDistanceGuides(finalBounds, ab, exclude))
     })
   }
 
   const onBodyDown = (e: ReactPointerEvent<SVGGElement>, item: FurnitureItem) => {
     if (e.button !== 0 || !design) return
     const curSelection = useUi.getState().selection
+    const cmdKey = e.metaKey || e.ctrlKey
     // Shift-click adds/removes the item (or its whole group) in the selection and never starts a drag.
     if (e.shiftKey) {
       e.stopPropagation()
-      setFurnitureSelection(
-        artboard.id,
-        resolveFurnitureClick(liveArtboard(), curSelection, item.id, { shiftKey: true }),
-      )
+      const nextIds = resolveFurnitureClick(liveArtboard(), curSelection, item.id, { shiftKey: true, cmdKey })
+      if (cmdKey) setDirectFurnitureSelection(artboard.id, nextIds)
+      else setFurnitureSelection(artboard.id, nextIds)
       return
     }
-    const nextIds = resolveFurnitureClick(liveArtboard(), curSelection, item.id, { shiftKey: false })
+    const nextIds = resolveFurnitureClick(liveArtboard(), curSelection, item.id, { shiftKey: false, cmdKey })
     if (nextIds.length > 1) {
       if (!multiIds || nextIds.length !== multiIds.length || nextIds.some((id, i) => multiIds[i] !== id)) {
         setFurnitureSelection(artboard.id, nextIds)
@@ -247,6 +289,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     // saw (key held during a focus change, synthetic events) must not swallow the duplicate.
     syncModifiersFromEvent(e)
     const p0 = toLocal(e.clientX, e.clientY)
+    const startPos = { x: item.xCm, y: item.yCm }
     const grab = { x: p0.x - item.xCm, y: p0.y - item.yCm }
     const duplicate = getModifiers().alt
     let movingId = item.id
@@ -267,21 +310,41 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       const cur = live(movingId)
       if (!cur) return
       const mods = getModifiers()
-      const s = snapFurnitureMove(cur, p.x - grab.x, p.y - grab.y, liveArtboard(), px(10), { disableSnap: mods.alt })
-      patch(movingId, { xCm: s.xCm, yCm: s.yCm })
-      setGuides(computeDistanceGuides({ ...cur, xCm: s.xCm, yCm: s.yCm }, liveArtboard()))
+      const rawTarget = { x: p.x - grab.x, y: p.y - grab.y }
+      const { pos, lockedAxis } = applyAxisLock(startPos, rawTarget, mods.shift)
+      const ab = liveArtboard()
+      const box = furnitureAxisBounds({ ...cur, xCm: pos.x, yCm: pos.y })
+      const exclude = new Set([movingId])
+      const snap = snapBoxMove(box, ab, exclude, px(6), {
+        disableSnap: mods.alt,
+        lockAxis: lockedAxis ?? undefined,
+        precisionCm: ab.precisionCm,
+      })
+      const finalX = pos.x + snap.dx
+      const finalY = pos.y + snap.dy
+      patch(movingId, { xCm: finalX, yCm: finalY })
+      const finalBox = furnitureAxisBounds({ ...cur, xCm: finalX, yCm: finalY })
+      setSnapLines(snap.snapLines)
+      setGuides(computeDragDistanceGuides(finalBox, ab, exclude))
     })
   }
 
   /**
    * Resize from one handle of the selection box: 4 corners, then 4 edges. The math lives in the pure
-   * resizeFurnitureFromHandle (cm, degrees); Shift keeps the ratio, Alt changes nothing here.
+   * resizeFurnitureFromHandle (cm, degrees); Shift keeps the ratio, Alt resizes from center.
    */
   const onResizeDown = (e: ReactPointerEvent<SVGRectElement>, item: FurnitureItem, handle: ResizeHandle) => {
     if (e.button !== 0 || !design) return
     start(e, (p) => {
       const mods = getModifiers()
-      patch(item.id, resizeFurnitureFromHandle(item, handle, p, { shift: mods.shift, precisionCm: artboard.precisionCm }))
+      patch(
+        item.id,
+        resizeFurnitureFromHandle(item, handle, p, {
+          shift: mods.shift,
+          alt: mods.alt,
+          precisionCm: artboard.precisionCm,
+        }),
+      )
     })
   }
 
@@ -322,8 +385,9 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     start(e, (p) => {
       const mods = getModifiers()
       const adj = { x: p.x - handle.sx * pad, y: p.y - handle.sy * pad }
-      resizeFurnitureGroup(artboard.id, starts, bounds, handle, adj, {
+      resizeFurnitureGroupWithAlt(artboard.id, starts, bounds, handle, adj, {
         shift: mods.shift,
+        alt: mods.alt,
         precisionCm: artboard.precisionCm,
       })
     })
@@ -516,7 +580,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       {artboard.furniture.map((item) => (
         <g key={item.id} data-furniture-id={item.id} data-entity="furniture" data-id={item.id} aria-label={`${item.name} (${Math.round(item.widthCm)}×${Math.round(item.depthCm)} cm)`}>
           <g
-            transform={`translate(${item.xCm} ${item.yCm}) rotate(${item.rotationDeg})`}
+            transform={`translate(${item.xCm} ${item.yCm}) rotate(${item.rotationDeg})${item.flipX || item.flipY ? ` scale(${item.flipX ? -1 : 1} ${item.flipY ? -1 : 1})` : ''}`}
             style={design ? { cursor: draggingId === item.id ? 'grabbing' : 'grab' } : undefined}
             onPointerDown={(e) => onBodyDown(e, item)}
             onDoubleClick={(e) => {
@@ -573,6 +637,21 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
           </text>
         </g>
       )}
+
+      {snapLines.map((l, i) => (
+        <line
+          key={`snap-${i}`}
+          data-testid="furniture-snap-guide"
+          x1={l.axis === 'x' ? l.coord : l.from}
+          y1={l.axis === 'x' ? l.from : l.coord}
+          x2={l.axis === 'x' ? l.coord : l.to}
+          y2={l.axis === 'x' ? l.to : l.coord}
+          stroke={SNAP_LINE_COLOR}
+          strokeWidth={px(1)}
+          strokeDasharray={`${px(3)} ${px(3)}`}
+          pointerEvents="none"
+        />
+      ))}
 
       {guides.map(renderGuide)}
 

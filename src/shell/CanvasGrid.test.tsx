@@ -2,10 +2,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 
-const ui = vi.hoisted(() => ({ mode: 'design' as 'plan' | 'design' }))
+const ui = vi.hoisted(() => ({ mode: 'design' as 'plan' | 'design', showGrid: true }))
 
 vi.mock('./uiStore', () => {
-  const state = () => ({ mode: ui.mode, activeArtboardId: null, view: { x: 0, y: 0, zoom: 1 } })
+  const state = () => ({ mode: ui.mode, showGrid: ui.showGrid, activeArtboardId: null, view: { x: 0, y: 0, zoom: 1 } })
   type State = ReturnType<typeof state>
   const useUi = (sel: (s: State) => unknown) => sel(state())
   useUi.getState = state
@@ -27,6 +27,12 @@ describe('CanvasGrid', () => {
   })
   it('renders the grid pattern in Plan mode', () => {
     ui.mode = 'plan'
+    ui.showGrid = true
     expect(renderToStaticMarkup(<CanvasGrid />)).toContain('canvas-grid-pattern')
+  })
+  it('renders nothing when Cmd/Ctrl+\' hid the grid', () => {
+    ui.mode = 'plan'
+    ui.showGrid = false
+    expect(renderToStaticMarkup(<CanvasGrid />)).toBe('')
   })
 })

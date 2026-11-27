@@ -73,6 +73,10 @@ export type FurnitureItem = {
   cornerRadiusCm?: number
   /** Flat group identifier (no nesting). Items sharing a groupId act as one group. */
   groupId?: string
+  /** Mirror the item shape about its own vertical axis. Omitted or false: no mirror. */
+  flipX?: boolean
+  /** Mirror the item shape about its own horizontal axis. Omitted or false: no mirror. */
+  flipY?: boolean
 }
 
 /** Default wall thickness of an artboard, in cm. 0 turns the thick walls off. */

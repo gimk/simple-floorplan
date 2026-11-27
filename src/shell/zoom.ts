@@ -26,6 +26,15 @@ export function fitAll() {
   useUi.getState().set({ view: fitView(docBounds(useDoc.getState().doc), w, h) })
 }
 
+/** Fit the view to one world box (cm): the "zoom to fit the selection" shortcut (Shift+2). */
+export function fitBounds(b: { minX: number; minY: number; maxX: number; maxY: number }) {
+  const svg = document.querySelector('svg[data-testid="floorplan-canvas"]')
+  const r = svg?.getBoundingClientRect()
+  const w = r?.width || window.innerWidth
+  const h = r?.height || window.innerHeight
+  useUi.getState().set({ view: fitView(b, w, h) })
+}
+
 const zoomBy = (factor: number) => zoomTo(useUi.getState().view.zoom * factor)
 
 /** Zoom step of the buttons and of the + / - keys. */

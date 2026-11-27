@@ -241,4 +241,38 @@ describe('edge resize', () => {
     expect(keys.size).toBe(8)
     expect(keys.has('0:0')).toBe(false)
   })
+
+  it('alt keeps center fixed and scales 2x delta on corners and edges (with and without shift)', () => {
+    // Center is (200, 150), w0 = 120, d0 = 80 (right edge at 260, bottom at 190).
+    const it = item({ xCm: 200, yCm: 150, widthCm: 120, depthCm: 80, rotationDeg: 0 })
+    // Drag right edge +20 cm (260 -> 280): width grows by 40 (120 -> 160), center stays (200, 150).
+    const edgeRes = resizeFurnitureFromHandle(it, right, { x: 280, y: 150 }, { shift: false, alt: true, precisionCm: 0.1 })
+    expect(edgeRes).toEqual({ widthCm: 160, depthCm: 80, xCm: 200, yCm: 150 })
+
+    // Drag BR corner to (290, 200): dx from center = 90 (w = 180, 1.5x), dy = 50 (d = 100, 1.25x).
+    const cornerRes = resizeFurnitureFromHandle(
+      it,
+      { sx: 1, sy: 1 },
+      { x: 290, y: 200 },
+      { shift: false, alt: true, precisionCm: 0.1 },
+    )
+    expect(cornerRes).toEqual({ widthCm: 180, depthCm: 100, xCm: 200, yCm: 150 })
+
+    // With shift + alt: bigger factor (1.5x) wins -> w = 180, d = 120, center fixed.
+    const cornerShift = resizeFurnitureFromHandle(
+      it,
+      { sx: 1, sy: 1 },
+      { x: 290, y: 200 },
+      { shift: true, alt: true, precisionCm: 0.1 },
+    )
+    expect(cornerShift).toEqual({ widthCm: 180, depthCm: 120, xCm: 200, yCm: 150 })
+
+    // Rotated 90 deg: center still stays fixed.
+    const rot = item({ xCm: 200, yCm: 150, widthCm: 120, depthCm: 80, rotationDeg: 90 })
+    const rotRes = resizeFurnitureFromHandle(rot, right, { x: 200, y: 230 }, { shift: false, alt: true, precisionCm: 0.1 })
+    expect(rotRes.widthCm).toBe(160)
+    expect(rotRes.depthCm).toBe(80)
+    expect(rotRes.xCm).toBe(200)
+    expect(rotRes.yCm).toBe(150)
+  })
 })

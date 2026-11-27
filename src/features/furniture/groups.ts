@@ -154,19 +154,23 @@ export function resolveFurnitureClick(
   artboard: Pick<Artboard, 'id' | 'furniture'>,
   currentSelection: Selection,
   clickedItemId: string,
-  opts: { shiftKey: boolean },
+  opts: { shiftKey: boolean; cmdKey?: boolean },
 ): string[] {
   const clicked = artboard.furniture.find((f) => f.id === clickedItemId)
   if (!clicked) return []
   const activeIds = activeSelectionIds(artboard.id, currentSelection)
 
   if (opts.shiftKey) {
-    const targetIds = clicked.groupId ? groupMemberIds(artboard, clicked.groupId) : [clicked.id]
+    const targetIds = !opts.cmdKey && clicked.groupId ? groupMemberIds(artboard, clicked.groupId) : [clicked.id]
     const allSelected = targetIds.every((id) => activeIds.includes(id))
     if (allSelected) {
       return activeIds.filter((id) => !targetIds.includes(id))
     }
     return [...new Set([...activeIds, ...targetIds])]
+  }
+
+  if (opts.cmdKey) {
+    return [clicked.id]
   }
 
   if (clicked.groupId) {

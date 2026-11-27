@@ -86,8 +86,8 @@ export async function copyArtboardPng(artboard: Artboard, opts?: ExportOptions):
 }
 
 /**
- * True for Option+Cmd+C (Mac) and Ctrl+Alt+C (other platforms): copy the artboard as a PNG.
- * On macOS Option+C sets `e.key` to 'ç', so the `e.code === 'KeyC'` check is required there.
+ * True for Shift+Cmd+C (Mac) and Ctrl+Shift+C (other platforms): copy the artboard as a PNG.
+ * Alt/Option+Cmd+C is Copy properties now, so the Alt check stays strict.
  */
 export function isCopyPngShortcut(e: {
   key: string
@@ -99,8 +99,8 @@ export function isCopyPngShortcut(e: {
 }): boolean {
   return (
     (e.metaKey || e.ctrlKey) &&
-    e.altKey &&
-    !e.shiftKey &&
+    e.shiftKey &&
+    !e.altKey &&
     (e.key.toLowerCase() === 'c' || e.code === 'KeyC')
   )
 }

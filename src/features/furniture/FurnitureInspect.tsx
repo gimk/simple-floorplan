@@ -2,10 +2,11 @@
 // (docs/simple-floorplan-2.md §6, Phase 4): name, shape, stack order, width × depth, rotation (with
 // quick quarter turns), optional height for the future 3D view, colour, Duplicate and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm and degrees.
-import { useId } from 'react'
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, ArrowDown, BookmarkPlus, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
+import { useEffect, useId } from 'react'
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, ArrowDown, BookmarkPlus, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, FlipHorizontal2, FlipVertical2, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
+import { useUi } from '../../shell/uiStore'
 import {
   BTN,
   BackLink,
@@ -24,6 +25,7 @@ import { selectArtboard } from '../artboards/selection'
 import { toast } from '../toast'
 import { alignFurnitureInRoom, findFurnitureRoom, type FurnitureAlignment } from './align'
 import { deleteFurniture, duplicateFurniture, reorderFurniture, updateFurniture, type StackOp } from './actions'
+import { flipSelection } from './flip'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, normalizeAngle } from './geometry'
 import { useCustomPresets } from './customPresets'
 import { FURNITURE_COLORS } from './presets'
@@ -79,8 +81,21 @@ const clampCm = (v: number): number => Math.min(MAX_FURNITURE_CM, Math.max(MIN_F
 export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectProps) {
   const artboard = useDoc((s) => s.doc.artboards.find((a) => a.id === artboardId))
   const item: FurnitureItem | undefined = artboard?.furniture.find((f) => f.id === furnitureId)
+  const renameRequestId = useUi((s) => s.renameRequestId)
   const nameId = useId()
   const heightId = useId()
+
+  // Rename (Cmd/Ctrl+R): the shortcut only asks for the field, the card focuses and selects it.
+  useEffect(() => {
+    if (!item || renameRequestId !== item.id) return
+    const el = document.getElementById(nameId)
+    useUi.getState().set({ renameRequestId: null })
+    if (el instanceof HTMLInputElement) {
+      el.focus()
+      el.select()
+    }
+  }, [renameRequestId, item, nameId])
+
   if (!artboard || !item) return null
 
   // Stack place of the item: index 0 is the bottom of the pile, the last index is the top.
@@ -307,6 +322,33 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
             </button>
           ))}
         </div>
+
+        <FieldRow label="Flip" hint="mirror the item" stacked>
+          <div className="grid grid-cols-2 gap-1" role="group" aria-label="Flip">
+            <button
+              type="button"
+              className={BTN}
+              title="Flip horizontal (Shift+H)"
+              aria-label="Flip horizontal"
+              aria-pressed={!!item.flipX}
+              onClick={() => flipSelection('x')}
+            >
+              <FlipHorizontal2 size={14} aria-hidden="true" />
+              Flip H
+            </button>
+            <button
+              type="button"
+              className={BTN}
+              title="Flip vertical (Shift+V)"
+              aria-label="Flip vertical"
+              aria-pressed={!!item.flipY}
+              onClick={() => flipSelection('y')}
+            >
+              <FlipVertical2 size={14} aria-hidden="true" />
+              Flip V
+            </button>
+          </div>
+        </FieldRow>
 
         <FieldRow label={alignRoom ? `Align in ${alignRoom.name.trim() === '' ? 'room' : alignRoom.name}` : 'Align in room'} stacked>
           <div className="grid grid-cols-3 gap-1" role="group" aria-label="Align in room">

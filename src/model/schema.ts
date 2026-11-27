@@ -45,6 +45,8 @@ export const furnitureSchema = z.object({
   showDirection: z.boolean().optional(),
   cornerRadiusCm: z.number().min(0).optional(),
   groupId: z.string().min(1).optional(),
+  flipX: z.boolean().optional(),
+  flipY: z.boolean().optional(),
 })
 
 export const artboardSchema = z.object({
