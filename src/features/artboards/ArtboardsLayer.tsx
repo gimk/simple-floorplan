@@ -3,7 +3,8 @@
 // Each artboard is a clean Figma-style frame: a subtle 1 px border over the dark canvas,
 // highlighted when it is the active artboard or the selection. A crisp, screen-sized header
 // sits above the frame's top-left corner: the name selects the artboard and drags it in Plan
-// mode (one undo step per drag), and a compact button duplicates it.
+// mode (one undo step per drag), and a compact button duplicates it. A double-click on the name
+// renames the artboard in place, in Plan AND Design mode (Enter or blur saves, Escape cancels).
 //
 // In Plan mode with the select tool the border of each frame is a click target (a transparent
 // hit stroke around the frame: a click inside the frame still passes through to the rooms and
@@ -16,7 +17,7 @@
 //
 // Draw the frame and the header OUTSIDE `ArtboardContent`; render the rooms, openings and
 // furniture of the artboard INSIDE `ArtboardContent`, which applies the artboard offset.
-import { memo, useEffect, useRef, type ReactNode } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useViewport } from '../../canvas/Viewport'
 import { useDoc } from '../../model/store'
 import type { Artboard } from '../../model/types'
@@ -89,11 +90,18 @@ type DragState = {
   moved: boolean
 }
 
-/** Screen-sized header of one artboard: name (select + drag) and a duplicate button. */
+/** Screen-sized header of one artboard: name (select + drag, double-click renames) and a duplicate button. */
 const ArtboardHeader = memo(function ArtboardHeader({ artboard, frame, highlighted }: { artboard: Artboard; frame: ArtboardFrame; highlighted: boolean }) {
   const { px, toWorld } = useViewport()
   const mode = useUi((s) => s.mode)
   const drag = useRef<DragState | null>(null)
+  const [editing, setEditing] = useState(false)
+  /** True once Enter, Escape or blur ended the current edit: the blur of the unmounting field is ignored. */
+  const editDone = useRef(false)
+  const startEdit = () => {
+    editDone.current = false
+    setEditing(true)
+  }
 
   const fontSize = px(12)
   const rowH = px(22)
@@ -176,6 +184,19 @@ const ArtboardHeader = memo(function ArtboardHeader({ artboard, frame, highlight
     useDoc.getState().endDrag()
   }
 
+  /** Save the typed name (one undo step). An empty or unchanged name changes nothing. */
+  const commitName = (value: string) => {
+    if (editDone.current) return
+    editDone.current = true
+    setEditing(false)
+    const name = value.trim()
+    if (name === '' || name === artboard.name) return
+    useDoc.getState().update((doc) => {
+      const a = doc.artboards.find((x) => x.id === artboard.id)
+      if (a) a.name = name
+    })
+  }
+
   const duplicate = () => {
     const id = useDoc.getState().duplicateArtboard(artboard.id)
     if (id) selectArtboard(id)
@@ -192,7 +213,17 @@ const ArtboardHeader = memo(function ArtboardHeader({ artboard, frame, highlight
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+          selectArtboard(artboard.id)
+          startEdit()
+        }}
         onKeyDown={(e) => {
+          if (e.key === 'F2') {
+            e.preventDefault()
+            startEdit()
+            return
+          }
           if (e.key !== 'Enter' && e.key !== ' ') return
           e.preventDefault()
           selectArtboard(artboard.id)
@@ -210,6 +241,31 @@ const ArtboardHeader = memo(function ArtboardHeader({ artboard, frame, highlight
           {label}
         </text>
       </g>
+      {editing && (
+        // In-place name field, sized in world units so it scales with the screen-constant header.
+        <foreignObject x={frame.x} y={top} width={px(260)} height={rowH}>
+          <input
+            aria-label="Artboard name"
+            data-testid={`artboard-name-input-${artboard.id}`}
+            defaultValue={artboard.name}
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation()
+              if (e.key === 'Enter') commitName(e.currentTarget.value)
+              else if (e.key === 'Escape') {
+                editDone.current = true
+                setEditing(false)
+              }
+            }}
+            onBlur={(e) => commitName(e.currentTarget.value)}
+            className="w-full rounded border border-orange-500 bg-slate-900 text-slate-100 outline-none"
+            style={{ fontSize, height: rowH, padding: `0 ${px(4)}px`, borderWidth: px(1), fontWeight: 600, boxSizing: 'border-box' }}
+          />
+        </foreignObject>
+      )}
       <g
         role="button"
         tabIndex={0}
