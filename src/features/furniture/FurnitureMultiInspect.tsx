@@ -3,12 +3,19 @@
 // buttons act on the whole group (same behaviour as Cmd/Ctrl+D and Delete). Per-item things (name,
 // shape, size, rotation, stack order) have no meaning for a group, so this card does not show them.
 // Styling, swatch row and buttons come from FurnitureInspect.tsx (single item card). Units: cm.
-import { Armchair, Copy, Layers, Palette } from 'lucide-react'
+import { Armchair, Copy, Group, Layers, Palette, Ungroup } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import { BTN, ColorRow, DangerButton, LABEL, MUTED, PanelSection } from '../../shell/panel'
 import { toast } from '../toast'
-import { deleteFurnitureGroup, duplicateFurnitureGroup, updateFurnitureMany } from './actions'
+import {
+  deleteFurnitureGroup,
+  duplicateFurnitureGroup,
+  groupFurniture,
+  ungroupFurniture,
+  updateFurnitureMany,
+} from './actions'
+import { hasAnyGroupedItem, isSingleWholeGroup } from './groups'
 import { FURNITURE_COLORS } from './presets'
 
 export type FurnitureMultiInspectProps = {
@@ -75,6 +82,32 @@ export function FurnitureMultiInspect({ artboardId, furnitureIds }: FurnitureMul
       </PanelSection>
 
       <PanelSection title="Arrange" icon={<Layers size={14} aria-hidden="true" />}>
+        {!isSingleWholeGroup(artboard, ids) && (
+          <button
+            type="button"
+            className={BTN}
+            onClick={() => {
+              groupFurniture(artboard.id, ids)
+            }}
+            title="Group selected items"
+          >
+            <Group size={14} aria-hidden="true" />
+            Group
+          </button>
+        )}
+        {hasAnyGroupedItem(artboard, ids) && (
+          <button
+            type="button"
+            className={BTN}
+            onClick={() => {
+              ungroupFurniture(artboard.id, ids)
+            }}
+            title="Ungroup selected items"
+          >
+            <Ungroup size={14} aria-hidden="true" />
+            Ungroup
+          </button>
+        )}
         <button
           type="button"
           className={BTN}

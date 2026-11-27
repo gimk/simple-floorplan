@@ -6,6 +6,11 @@ import { createArtboard, newId } from '../model/schema'
 import type { Artboard, FloorPattern, FurnitureItem, Opening, OpeningKind, OpeningVariant, ProjectDoc, Room } from '../model/types'
 import { artboardFrame } from '../features/artboards/frame'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from '../features/furniture/geometry'
+import {
+  cleanupSingleMemberGroups,
+  groupFurnitureInArtboard,
+  ungroupFurnitureInArtboard,
+} from '../features/furniture/groups'
 import { FURNITURE_PRESETS } from '../features/furniture/presets'
 import { DEFAULT_OPENING_WIDTH_CM, MAX_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM } from '../features/openings/geometry'
 import { syncOpeningsForMerge, syncOpeningsForRoomChange } from '../features/openings/sync'
@@ -82,6 +87,8 @@ export type AgentCommand =
   | ({ type: 'reorder_furniture'; furnitureId: string; direction: 'front' | 'back' | 'forward' | 'backward' } & OnArtboard)
   | ({ type: 'duplicate_furniture'; furnitureId: string } & OnArtboard)
   | ({ type: 'delete_furniture'; furnitureId: string } & OnArtboard)
+  | ({ type: 'group_furniture'; furnitureIds: string[] } & OnArtboard)
+  | ({ type: 'ungroup_furniture'; furnitureIds: string[] } & OnArtboard)
 
 export type CommandResult =
   | { ok: true; doc: ProjectDoc; result: Record<string, unknown>; dryRun: boolean }
@@ -197,7 +204,18 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       const roomIds = new Map<string, string>()
       c.rooms.forEach((r) => { const id = newId(); roomIds.set(r.id, id); r.id = id })
       c.openings.forEach((o) => { o.id = newId(); const rid = o.roomId && roomIds.get(o.roomId); if (rid) o.roomId = rid })
-      c.furniture.forEach((f) => { f.id = newId() })
+      const groupIds = new Map<string, string>()
+      c.furniture.forEach((f) => {
+        f.id = newId()
+        if (f.groupId) {
+          let gid = groupIds.get(f.groupId)
+          if (!gid) {
+            gid = newId()
+            groupIds.set(f.groupId, gid)
+          }
+          f.groupId = gid
+        }
+      })
       placeRightOf(c, d.artboards)
       d.artboards.push(c)
       return { artboardId: c.id, sourceArtboardId: src.id }
@@ -437,7 +455,8 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
     case 'duplicate_furniture': {
       const ab = getArtboard(d, cmd.artboardId)
       const src = getFurniture(ab, cmd.furnitureId)
-      const copy: FurnitureItem = { ...src, id: newId(), xCm: src.xCm + 20, yCm: src.yCm + 20 }
+      const { groupId: _g, ...rest } = src
+      const copy: FurnitureItem = { ...rest, id: newId(), xCm: src.xCm + 20, yCm: src.yCm + 20 }
       ab.furniture.splice(ab.furniture.indexOf(src) + 1, 0, copy)
       return { artboardId: ab.id, furnitureId: copy.id, sourceFurnitureId: src.id }
     }
@@ -445,7 +464,29 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       const ab = getArtboard(d, cmd.artboardId)
       getFurniture(ab, cmd.furnitureId)
       ab.furniture = ab.furniture.filter((f) => f.id !== cmd.furnitureId)
+      cleanupSingleMemberGroups(ab.furniture)
       return { artboardId: ab.id, deletedFurnitureId: cmd.furnitureId }
+    }
+    case 'group_furniture': {
+      const ab = getArtboard(d, cmd.artboardId)
+      if (!Array.isArray(cmd.furnitureIds) || cmd.furnitureIds.length < 2) {
+        return fail('group_furniture needs at least 2 furnitureIds.')
+      }
+      const uniqueIds = [...new Set(cmd.furnitureIds)]
+      if (uniqueIds.length < 2) return fail('group_furniture needs at least 2 distinct furnitureIds.')
+      for (const id of uniqueIds) getFurniture(ab, id)
+      const groupId = newId()
+      groupFurnitureInArtboard(ab, uniqueIds, groupId)
+      return { artboardId: ab.id, groupId, furnitureIds: uniqueIds }
+    }
+    case 'ungroup_furniture': {
+      const ab = getArtboard(d, cmd.artboardId)
+      if (!Array.isArray(cmd.furnitureIds) || cmd.furnitureIds.length === 0) {
+        return fail('ungroup_furniture needs a non-empty furnitureIds array.')
+      }
+      for (const id of cmd.furnitureIds) getFurniture(ab, id)
+      const ungroupedIds = ungroupFurnitureInArtboard(ab, cmd.furnitureIds)
+      return { artboardId: ab.id, ungroupedIds }
     }
     default:
       return fail(`Unknown command type "${(cmd as { type?: unknown }).type}".`)

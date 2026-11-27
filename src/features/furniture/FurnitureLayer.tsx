@@ -20,6 +20,7 @@ import {
   updateFurnitureSilent,
 } from './actions'
 import type { FurnitureStart } from './actions'
+import { resolveFurnitureClick, resolveFurnitureDoubleClick } from './groups'
 import { groupBounds } from './groupTransform'
 import type { FurnitureTransformStart } from './groupTransform'
 import {
@@ -223,18 +224,22 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
 
   const onBodyDown = (e: ReactPointerEvent<SVGGElement>, item: FurnitureItem) => {
     if (e.button !== 0 || !design) return
-    // Shift-click toggles the item in the group selection of this artboard and never starts a drag.
+    const curSelection = useUi.getState().selection
+    // Shift-click adds/removes the item (or its whole group) in the selection and never starts a drag.
     if (e.shiftKey) {
       e.stopPropagation()
       setFurnitureSelection(
         artboard.id,
-        activeIds.includes(item.id) ? activeIds.filter((id) => id !== item.id) : [...activeIds, item.id],
+        resolveFurnitureClick(liveArtboard(), curSelection, item.id, { shiftKey: true }),
       )
       return
     }
-    // An item of the group keeps the group: the pointer drags all of them together.
-    if (multiIds && multiIds.includes(item.id)) {
-      startGroupDrag(e, item, multiIds)
+    const nextIds = resolveFurnitureClick(liveArtboard(), curSelection, item.id, { shiftKey: false })
+    if (nextIds.length > 1) {
+      if (!multiIds || nextIds.length !== multiIds.length || nextIds.some((id, i) => multiIds[i] !== id)) {
+        setFurnitureSelection(artboard.id, nextIds)
+      }
+      startGroupDrag(e, item, nextIds)
       return
     }
     select(item.id)
@@ -251,8 +256,9 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
         const src = live(item.id)
         if (!src) return
         const id = newId()
+        const { groupId: _g, ...rest } = src
         useDoc.getState().updateSilent((d) => {
-          d.artboards.find((a) => a.id === artboard.id)?.furniture.push({ ...src, id })
+          d.artboards.find((a) => a.id === artboard.id)?.furniture.push({ ...rest, id })
         })
         movingId = id
         select(id)
@@ -512,7 +518,16 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
           <g
             transform={`translate(${item.xCm} ${item.yCm}) rotate(${item.rotationDeg})`}
             style={design ? { cursor: draggingId === item.id ? 'grabbing' : 'grab' } : undefined}
-            onPointerDown={(e) => onBodyDown(e, item)} {...gp}
+            onPointerDown={(e) => onBodyDown(e, item)}
+            onDoubleClick={(e) => {
+              if (!design || e.button !== 0) return
+              e.stopPropagation()
+              if (item.groupId) {
+                const ids = resolveFurnitureDoubleClick(liveArtboard(), item.id)
+                if (ids.length === 1) select(ids[0])
+              }
+            }}
+            {...gp}
           >
             {renderShape(item, item.id === selectedId || !!multiIds?.includes(item.id))}
           </g>

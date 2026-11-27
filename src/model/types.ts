@@ -71,6 +71,8 @@ export type FurnitureItem = {
   showDirection?: boolean
   /** Border radius of a 'rect' item, in cm (>= 0). Ignored by 'circle' items. */
   cornerRadiusCm?: number
+  /** Flat group identifier (no nesting). Items sharing a groupId act as one group. */
+  groupId?: string
 }
 
 /** Default wall thickness of an artboard, in cm. 0 turns the thick walls off. */

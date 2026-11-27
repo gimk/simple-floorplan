@@ -10,7 +10,17 @@ import { RefImageInspect } from './features/background/RefImageInspect'
 import { RefImagesLayer } from './features/background/RefImagesLayer'
 import { loadRefImageFile } from './features/background/upload'
 import { copyArtboardPng, isCopyPngShortcut } from './features/export/download'
-import { deleteFurniture, deleteFurnitureGroup, duplicateFurniture, duplicateFurnitureGroup, reorderFurniture } from './features/furniture/actions'
+import {
+  deleteFurniture,
+  deleteFurnitureGroup,
+  duplicateFurniture,
+  duplicateFurnitureGroup,
+  groupFurniture,
+  reorderFurniture,
+  setFurnitureSelection,
+  ungroupFurniture,
+} from './features/furniture/actions'
+import { resolveEscapeGroupSelection } from './features/furniture/groups'
 import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
 import { MeasurementCheatsheet } from './features/furniture/MeasurementCheatsheet'
 import { DesignRoomsInspect } from './features/furniture/DesignRoomsInspect'
@@ -110,6 +120,7 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
     rows: [
       ['Delete selection', 'Del'],
       ['Duplicate', isMac ? '⌘D' : 'Ctrl+D'],
+      ['Group / Ungroup', isMac ? '⌘G / ⇧⌘G' : 'Ctrl+G / Ctrl+Shift+G'],
       ['Copy as PNG', isMac ? '⌥⌘C' : 'Ctrl+Alt+C'],
       ['Furniture back / front', '[ / ]'],
     ],
@@ -277,6 +288,16 @@ export default function App() {
           ui.set({ drawer: null })
           return
         }
+        if (ui.mode === 'design' && ui.selection.kind === 'furniture') {
+          const sel = ui.selection
+          const ab = useDoc.getState().doc.artboards.find((a) => a.id === sel.artboardId)
+          const groupIds = resolveEscapeGroupSelection(ab, sel)
+          if (groupIds) {
+            e.preventDefault()
+            setFurnitureSelection(sel.artboardId, groupIds)
+            return
+          }
+        }
       }
       // '?' toggles the keyboard shortcuts cheat sheet.
       if (plain && e.key === '?') {
@@ -327,6 +348,23 @@ export default function App() {
           e.preventDefault()
           ui.set({ ortho: !ui.ortho })
           return
+        }
+      }
+      // Cmd/Ctrl+G groups 2+ selected furniture items; Cmd/Ctrl+Shift+G ungroups touched groups.
+      if ((e.metaKey || e.ctrlKey) && key === 'g' && !e.altKey) {
+        const ui = useUi.getState()
+        if (ui.mode === 'design') {
+          if (e.shiftKey && (ui.selection.kind === 'furniture' || ui.selection.kind === 'furnitureMulti')) {
+            e.preventDefault()
+            const ids = ui.selection.kind === 'furniture' ? [ui.selection.furnitureId] : ui.selection.furnitureIds
+            ungroupFurniture(ui.selection.artboardId, ids)
+            return
+          }
+          if (!e.shiftKey && ui.selection.kind === 'furnitureMulti' && ui.selection.furnitureIds.length >= 2) {
+            e.preventDefault()
+            groupFurniture(ui.selection.artboardId, ui.selection.furnitureIds)
+            return
+          }
         }
       }
       // Cmd/Ctrl+D duplicates the selected item: furniture in Design mode, the artboard in Plan mode.

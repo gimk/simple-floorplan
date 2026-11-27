@@ -701,7 +701,7 @@ const OPENAPI_SCHEMAS = toComponentRefs({
       'One command, for example {"type":"add_room_rect","xCm":0,"yCm":0,"widthCm":400,"heightCm":300}. ' +
       'Types: set_title, add_artboard, update_artboard, duplicate_artboard, delete_artboard, add_room_rect, add_room_polygon, rename_room, ' +
       'move_room, set_wall_length, move_vertex, insert_vertex, delete_vertex, delete_rooms, cutout_rooms, merge_rooms, set_room_style, ' +
-      'add_opening_on_wall, update_opening, delete_opening, add_furniture, update_furniture, reorder_furniture, duplicate_furniture, delete_furniture. ' +
+      'add_opening_on_wall, update_opening, delete_opening, add_furniture, update_furniture, reorder_furniture, duplicate_furniture, delete_furniture, group_furniture, ungroup_furniture. ' +
       'Most commands take an optional artboardId (default: the first artboard).',
     properties: { type: { type: 'string' } },
     additionalProperties: true,

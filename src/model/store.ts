@@ -94,7 +94,18 @@ const cloneArtboard = (src: Artboard, xCm: number, yCm: number): Artboard => {
   const roomIds = new Map<string, string>()
   c.rooms.forEach((r) => { const id = newId(); roomIds.set(r.id, id); r.id = id })
   c.openings.forEach((o) => { o.id = newId(); const roomId = o.roomId && roomIds.get(o.roomId); if (roomId) o.roomId = roomId })
-  c.furniture.forEach((f) => { f.id = newId() })
+  const groupIds = new Map<string, string>()
+  c.furniture.forEach((f) => {
+    f.id = newId()
+    if (f.groupId) {
+      let gid = groupIds.get(f.groupId)
+      if (!gid) {
+        gid = newId()
+        groupIds.set(f.groupId, gid)
+      }
+      f.groupId = gid
+    }
+  })
   return c
 }
 

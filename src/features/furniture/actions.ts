@@ -6,6 +6,12 @@ import type { FloorPattern, FurnitureItem, ProjectDoc } from '../../model/types'
 import type { Vec } from '../../model/geometry'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
 import type { ItemBounds, ResizeHandle } from './geometry'
+import {
+  cleanupSingleMemberGroups,
+  expandToGroups,
+  groupFurnitureInArtboard,
+  ungroupFurnitureInArtboard,
+} from './groups'
 import { resizeGroupFromHandle, rotateGroupByDelta } from './groupTransform'
 import type { FurnitureTransformStart } from './groupTransform'
 
@@ -29,7 +35,7 @@ const select = (artboardId: string, furnitureId: string): void => {
  * Duplicate ids are dropped; the order of the ids is kept.
  */
 export function setFurnitureSelection(artboardId: string, ids: string[]): void {
-  const unique = [...new Set(ids)]
+  const unique = expandToGroups(findArtboard(artboardId), ids)
   if (unique.length === 0) {
     useUi.getState().set({ activeArtboardId: artboardId, selection: { kind: 'none' } })
     return
@@ -124,7 +130,8 @@ export function duplicateFurniture(artboardId: string, furnitureId: string, offs
   const src = findFurniture(artboardId, furnitureId)
   if (!src) return null
   const id = crypto.randomUUID()
-  const copy: FurnitureItem = { ...src, id, xCm: src.xCm + offsetCm, yCm: src.yCm + offsetCm }
+  const { groupId: _g, ...rest } = src
+  const copy: FurnitureItem = { ...rest, id, xCm: src.xCm + offsetCm, yCm: src.yCm + offsetCm }
   useDoc.getState().update((d) => {
     const list = d.artboards.find((a) => a.id === artboardId)!.furniture
     const at = list.findIndex((f) => f.id === furnitureId)
@@ -139,6 +146,7 @@ export function deleteFurniture(artboardId: string, furnitureId: string): void {
   useDoc.getState().update((d) => {
     const a = d.artboards.find((x) => x.id === artboardId)!
     a.furniture = a.furniture.filter((f) => f.id !== furnitureId)
+    cleanupSingleMemberGroups(a.furniture)
   })
   const sel = useUi.getState().selection
   if (sel.kind === 'furniture' && sel.furnitureId === furnitureId) useUi.getState().set({ selection: { kind: 'none' } })
@@ -207,14 +215,31 @@ export function duplicateFurnitureGroup(
   if (!artboard) return []
   const wanted = new Set(furnitureIds)
   const copyOf = new Map<string, FurnitureItem>()
+  const groupMap = new Map<string, string>()
   const copies = artboard.furniture
     .filter((f) => wanted.has(f.id))
     .map((f): FurnitureItem => {
-      const copy: FurnitureItem = { ...f, id: crypto.randomUUID(), xCm: f.xCm + offsetCm, yCm: f.yCm + offsetCm }
+      let groupId = f.groupId
+      if (groupId) {
+        let nextGid = groupMap.get(groupId)
+        if (!nextGid) {
+          nextGid = crypto.randomUUID()
+          groupMap.set(groupId, nextGid)
+        }
+        groupId = nextGid
+      }
+      const copy: FurnitureItem = {
+        ...f,
+        id: crypto.randomUUID(),
+        xCm: f.xCm + offsetCm,
+        yCm: f.yCm + offsetCm,
+        ...(groupId ? { groupId } : {}),
+      }
       copyOf.set(f.id, copy)
       return copy
     })
   if (copies.length === 0) return []
+  cleanupSingleMemberGroups(copies)
   const apply = (d: ProjectDoc) => {
     const ab = d.artboards.find((a) => a.id === artboardId)
     if (!ab) return
@@ -303,12 +328,52 @@ export function deleteFurnitureGroup(artboardId: string, furnitureIds: string[])
     const ab = d.artboards.find((a) => a.id === artboardId)
     if (!ab) return
     ab.furniture = ab.furniture.filter((f) => !ids.has(f.id))
+    cleanupSingleMemberGroups(ab.furniture)
   })
   const sel = useUi.getState().selection
   const touchesSelection =
     (sel.kind === 'furnitureMulti' && sel.furnitureIds.some((id) => ids.has(id))) ||
     (sel.kind === 'furniture' && ids.has(sel.furnitureId))
   if (touchesSelection) useUi.getState().set({ selection: { kind: 'none' } })
+}
+
+/**
+ * Group 2+ selected furniture items under one new groupId, moving them to be contiguous at the
+ * topmost selected item's layer position. One undo step. Selection stays the same items.
+ */
+export function groupFurniture(artboardId: string, furnitureIds: string[]): boolean {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return false
+  const unique = [...new Set(furnitureIds)].filter((id) => artboard.furniture.some((f) => f.id === id))
+  if (unique.length < 2) return false
+  const newGroupId = crypto.randomUUID()
+  useDoc.getState().update((d) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    groupFurnitureInArtboard(ab, unique, newGroupId)
+  })
+  setFurnitureSelection(artboardId, unique)
+  return true
+}
+
+/**
+ * Ungroup every group touched by `furnitureIds`. One undo step. Selection becomes `furnitureMulti`
+ * with the same (and any other ungrouped) items.
+ */
+export function ungroupFurniture(artboardId: string, furnitureIds: string[]): boolean {
+  const artboard = findArtboard(artboardId)
+  if (!artboard) return false
+  const wanted = new Set(furnitureIds)
+  if (!artboard.furniture.some((f) => wanted.has(f.id) && !!f.groupId)) return false
+  let ungroupedIds: string[] = []
+  useDoc.getState().update((d) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    ungroupedIds = ungroupFurnitureInArtboard(ab, furnitureIds)
+  })
+  const nextIds = [...new Set([...furnitureIds, ...ungroupedIds])]
+  setFurnitureSelection(artboardId, nextIds)
+  return true
 }
 
 /** Set (or with undefined, clear) the floor fill of many rooms: one undo step. */
