@@ -5,7 +5,15 @@ import { createArtboard, createDefaultProject } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
-import { alignMoves, alignSelection, distributeMoves, distributeSelection, selectionBounds } from './alignSelection'
+import {
+  alignBlockMoves,
+  alignMoves,
+  alignSelection,
+  distributeMoves,
+  distributeSelection,
+  selectionBlocks,
+  selectionBounds,
+} from './alignSelection'
 
 /** 100 x 50 item, top-left corner at (x, y). */
 const box = (id: string, x: number, y: number): FurnitureItem => ({
@@ -119,5 +127,82 @@ describe('distributeSelection action', () => {
     hydrate(box('a', 0, 0), box('b', 300, 0), box('c', 600, 0))
     ui().set({ selection: { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['a', 'b', 'c'] } })
     expect(distributeSelection('horizontal')).toBe(false)
+  })
+})
+
+describe('selectionBlocks and alignBlockMoves', () => {
+  const grouped = (id: string, x: number, y: number, gid: string): FurnitureItem => ({ ...box(id, x, y), groupId: gid })
+
+  it('makes one block per group and one per ungrouped item', () => {
+    const blocks = selectionBlocks([grouped('g1', 0, 0, 'g'), grouped('g2', 300, 0, 'g'), box('c', 600, 0)])
+    expect(blocks.map((b) => b.members.map((m) => m.id))).toEqual([['g1', 'g2'], ['c']])
+    // The block bounds are the union of its members' boxes.
+    expect(blocks[0].bounds).toEqual({ minX: 0, minY: 0, maxX: 400, maxY: 50 })
+    expect(blocks[1].bounds).toEqual({ minX: 600, minY: 0, maxX: 700, maxY: 50 })
+  })
+
+  it('moves every member of a block by the same delta', () => {
+    const blocks = selectionBlocks([grouped('g1', 100, 0, 'g'), grouped('g2', 400, 0, 'g'), box('c', 0, 0)])
+    const moves = alignBlockMoves(blocks, { minX: 0, minY: 0, maxX: 500, maxY: 50 }, 'left')
+    // Block bounds start at 100, selection left is 0: both members move -100, c does not move.
+    expect(moves.get('g1')).toEqual({ xCm: 50, yCm: 25 })
+    expect(moves.get('g2')).toEqual({ xCm: 350, yCm: 25 })
+    expect(moves.has('c')).toBe(false)
+  })
+})
+
+describe('groups move as one block', () => {
+  /** Same 100 x 50 item, put in group `gid`. */
+  const grouped = (id: string, x: number, y: number, gid: string): FurnitureItem => ({ ...box(id, x, y), groupId: gid })
+
+  it('aligns a group and another item to the selection left without breaking the group', () => {
+    // Group g: g1 at 384, g2 at 923 (offset 539). Lone item c at 323.
+    hydrate(grouped('g1', 384, 0, 'g'), grouped('g2', 923, 0, 'g'), box('c', 323, 100))
+    ui().set({ selection: { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['g1', 'g2', 'c'] } })
+
+    expect(alignSelection('left')).toBe(true)
+    // The group keeps its internal offset and its left edge sits on the selection left edge.
+    expect(pos('g1')).toEqual({ xCm: 434 - 61, yCm: 25 })
+    expect(pos('g2')).toEqual({ xCm: 973 - 61, yCm: 25 })
+    // The lone item was already on the left edge: it does not move.
+    expect(pos('c')).toEqual({ xCm: 373, yCm: 125 })
+  })
+
+  it('distributes with a group as one block', () => {
+    // Blocks: c at 0..100, group g at 250..450 (members at 250 and 350), d at 700..800.
+    hydrate(box('c', 0, 0), grouped('g1', 250, 0, 'g'), grouped('g2', 350, 0, 'g'), box('d', 700, 0))
+    ui().set({ selection: { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['g1', 'g2', 'c', 'd'] } })
+
+    expect(distributeSelection('horizontal')).toBe(true)
+    // Span 0..800, block widths 100 + 200 + 100, gap = (800 - 400) / 2 = 200.
+    // The group block starts at 300: both members move +50 and keep their 100 offset.
+    expect(pos('g1')).toEqual({ xCm: 300 + 50, yCm: 25 })
+    expect(pos('g2')).toEqual({ xCm: 400 + 50, yCm: 25 })
+    // The outer blocks stay still.
+    expect(pos('c')).toEqual({ xCm: 50, yCm: 25 })
+    expect(pos('d')).toEqual({ xCm: 750, yCm: 25 })
+    expect(distributeSelection('horizontal')).toBe(false)
+  })
+
+  it('moves both members of a group by the same distribute delta', () => {
+    // Blocks: c at 0..100, group g at 500..700, d at 800..900.
+    hydrate(box('c', 0, 0), grouped('g1', 500, 0, 'g'), grouped('g2', 600, 0, 'g'), box('d', 800, 0))
+    ui().set({ selection: { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['g1', 'g2', 'c', 'd'] } })
+
+    expect(distributeSelection('horizontal')).toBe(true)
+    // Span 0..900, block widths 100 + 200 + 100, gap = (900 - 400) / 2 = 250.
+    // The group block must start at 350, so both members move by -150.
+    expect(pos('g1')).toEqual({ xCm: 550 - 150, yCm: 25 })
+    expect(pos('g2')).toEqual({ xCm: 650 - 150, yCm: 25 })
+  })
+
+  it('aligns the members of one whole group per item, like before', () => {
+    hydrate(grouped('g1', 0, 0, 'g'), grouped('g2', 300, 200, 'g'))
+    ui().set({ selection: { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['g1', 'g2'] } })
+
+    expect(alignSelection('left')).toBe(true)
+    // One block only: each member lands on the left edge (old behaviour).
+    expect(pos('g1')).toEqual({ xCm: 50, yCm: 25 })
+    expect(pos('g2')).toEqual({ xCm: 50, yCm: 225 })
   })
 })

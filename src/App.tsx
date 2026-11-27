@@ -63,6 +63,7 @@ import { IconButton, Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
 import { useUi, type Mode } from './shell/uiStore'
 import { shortcutsBlocked, useDialogFocus } from './shell/useDialogFocus'
+import { isGridToggleShortcut } from './shell/shortcuts'
 import { useMediaQuery } from './shell/useDesktop'
 import { ZoomControls } from './shell/ZoomControls'
 import { canvasCenterWorld, fitAll, zoomIn, zoomOut, zoomReset } from './shell/zoom'
@@ -135,7 +136,7 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Fit all', 'F or Shift+1'],
       ['Zoom to selection', 'Shift+2'],
       ['Hide all panels', isMac ? '⌘\\' : 'Ctrl+\\'],
-      ['Show / hide grid', isMac ? "⌘'" : "Ctrl+'"],
+      ['Show / hide grid (Plan mode)', isMac ? "⌘'" : "Ctrl+'"],
     ],
   },
   {
@@ -172,8 +173,8 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Align left / right', 'Alt+A / Alt+D'],
       ['Align top / bottom', 'Alt+W / Alt+S'],
       ['Align centers', 'Alt+H / Alt+V'],
-      ['Distribute horizontally', 'Ctrl+Alt+H'],
-      ['Distribute vertically', 'Ctrl+Alt+V'],
+      ['Distribute horizontally', isMac ? '⌃⌥H' : 'Shift+Alt+H'],
+      ['Distribute vertically', isMac ? '⌃⌥V' : 'Shift+Alt+V'],
       ['Flip horizontal / vertical', 'Shift+H / Shift+V'],
     ],
   },
@@ -406,8 +407,9 @@ export default function App() {
         ui.set({ uiHidden: !ui.uiHidden })
         return
       }
-      // Cmd/Ctrl+' shows or hides the canvas grid.
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (e.code === 'Quote' || e.key === "'")) {
+      // Cmd/Ctrl+' shows or hides the canvas grid. Matched on the key character and on the
+      // physical code, so a French AZERTY keyboard (where `'` is not Quote) works too.
+      if (isGridToggleShortcut(e)) {
         e.preventDefault()
         const ui = useUi.getState()
         ui.set({ showGrid: !ui.showGrid })
@@ -433,8 +435,18 @@ export default function App() {
         }
         return
       }
-      // Option+Cmd+C / Option+Cmd+V copy and paste the style of the selected furniture.
-      if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
+      // Distribute (equal gaps): Ctrl+Option+H / V on a Mac (as in Figma), Shift+Alt+H / V elsewhere,
+      // because Ctrl+Alt+V is Paste properties there. Kept apart from Option+Cmd+V on a Mac.
+      const distributeChord = isMac
+        ? e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey
+        : e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey
+      if (distributeChord && (e.code === 'KeyH' || e.code === 'KeyV')) {
+        e.preventDefault()
+        distributeSelection(e.code === 'KeyH' ? 'horizontal' : 'vertical')
+        return
+      }
+      // Option+Cmd+C / Option+Cmd+V (Ctrl+Alt elsewhere) copy and paste the style of the selected furniture.
+      if ((isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && e.altKey && !e.shiftKey) {
         if (e.code === 'KeyC') {
           if (copyStyle()) {
             e.preventDefault()
@@ -473,17 +485,6 @@ export default function App() {
       if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
         const op = ALIGN_CODES[e.code]
         if (op && alignSelection(op)) {
-          e.preventDefault()
-          return
-        }
-      }
-      // Ctrl+Alt+H / Ctrl+Alt+V (Cmd+Alt on a Mac) give the selected furniture equal gaps.
-      if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
-        if (e.code === 'KeyH' && distributeSelection('horizontal')) {
-          e.preventDefault()
-          return
-        }
-        if (e.code === 'KeyV' && distributeSelection('vertical')) {
           e.preventDefault()
           return
         }
