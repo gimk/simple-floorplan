@@ -86,6 +86,94 @@ export function findFurnitureInBox(box: ItemBounds, artboard: Artboard): string[
     .map((f) => f.id)
 }
 
+/** Resize handle of a selection box: -1 = left / top side, 0 = that axis is not dragged, 1 = right / bottom. */
+export type ResizeHandle = { sx: -1 | 0 | 1; sy: -1 | 0 | 1 }
+
+export type ResizeResult = { widthCm: number; depthCm: number; xCm: number; yCm: number }
+
+/** A corner handle: both axes move. */
+export type CornerHandle = { sx: -1 | 1; sy: -1 | 1 }
+/** An edge handle: one axis moves, the other keeps its centre line. */
+export type EdgeHandle = { sx: -1 | 1; sy: 0 } | { sx: 0; sy: -1 | 1 }
+
+/** The 4 corners of a selection box, in screen order: top-left, top-right, bottom-right, bottom-left. */
+export const CORNER_HANDLES: CornerHandle[] = [
+  { sx: -1, sy: -1 },
+  { sx: 1, sy: -1 },
+  { sx: 1, sy: 1 },
+  { sx: -1, sy: 1 },
+]
+/** The 4 edges of a selection box: left, right, top, bottom. */
+export const EDGE_HANDLES: EdgeHandle[] = [
+  { sx: -1, sy: 0 },
+  { sx: 1, sy: 0 },
+  { sx: 0, sy: -1 },
+  { sx: 0, sy: 1 },
+]
+
+/** Round a size like the room ops do: 0 or negative precision keeps the value. */
+const roundSize = (v: number, precisionCm: number): number => (precisionCm > 0 ? roundP(v, precisionCm) : v)
+
+/**
+ * New size and centre of an item when one handle of its selection box is dragged to `p` (the pointer
+ * in artboard-local cm). Pure: no store, no React.
+ *
+ * The handle names the sides that move: sx = -1 is the left side, sx = 1 the right one, sx = 0 no
+ * side of that axis. The OPPOSITE side stays where it is, so the centre moves by half the change
+ * along the item's own (rotated) axes.
+ *  - corner (sx and sy both set): both dimensions follow the pointer; Shift keeps the aspect ratio
+ *    and the bigger of the two factors wins;
+ *  - edge (sx or sy is 0): only the dimension of the dragged axis changes; Shift scales the other
+ *    dimension by the same factor around the centre line, so the item grows symmetrically there.
+ * Sizes are clamped to MIN/MAX_FURNITURE_CM and rounded to `precisionCm`. A handle of {0, 0} returns
+ * the item unchanged.
+ */
+export function resizeFurnitureFromHandle(
+  item: Pick<FurnitureItem, 'xCm' | 'yCm' | 'widthCm' | 'depthCm' | 'rotationDeg'>,
+  handle: ResizeHandle,
+  p: Vec,
+  opts: { shift: boolean; precisionCm: number },
+): ResizeResult {
+  const w0 = item.widthCm, d0 = item.depthCm
+  const a = item.rotationDeg * RAD
+  const cos = Math.cos(a), sin = Math.sin(a)
+  const dx = p.x - item.xCm, dy = p.y - item.yCm
+  // Pointer in the start frame of the item: local X along the width, local Y along the depth.
+  const lx = dx * cos + dy * sin
+  const ly = -dx * sin + dy * cos
+  if (handle.sx === 0 && handle.sy === 0) {
+    return { widthCm: w0, depthCm: d0, xCm: item.xCm, yCm: item.yCm }
+  }
+  // The fixed side (or corner) in the start frame. 0 = that axis keeps its centre line.
+  const o = {
+    x: handle.sx === 0 ? 0 : (-handle.sx * w0) / 2,
+    y: handle.sy === 0 ? 0 : (-handle.sy * d0) / 2,
+  }
+  let w = handle.sx === 0 ? w0 : (lx - o.x) * handle.sx
+  let d = handle.sy === 0 ? d0 : (ly - o.y) * handle.sy
+  if (opts.shift) {
+    // Corners: the bigger factor wins, as before. Edges: the dragged axis gives the factor.
+    const s =
+      handle.sx !== 0 && handle.sy !== 0 ? Math.max(w / w0, d / d0) : handle.sx !== 0 ? w / w0 : d / d0
+    const lo = Math.max(MIN_FURNITURE_CM / w0, MIN_FURNITURE_CM / d0)
+    const hi = Math.min(MAX_FURNITURE_CM / w0, MAX_FURNITURE_CM / d0)
+    const k = Math.min(hi, Math.max(lo, s))
+    w = w0 * k
+    d = d0 * k
+  }
+  const clamp = (v: number) => Math.min(MAX_FURNITURE_CM, Math.max(MIN_FURNITURE_CM, v))
+  w = clamp(roundSize(w, opts.precisionCm))
+  d = clamp(roundSize(d, opts.precisionCm))
+  // New centre: midway between the fixed side and the dragged one, in the start frame.
+  const cl = { x: o.x + (handle.sx * w) / 2, y: o.y + (handle.sy * d) / 2 }
+  return {
+    widthCm: w,
+    depthCm: d,
+    xCm: item.xCm + cl.x * cos - cl.y * sin,
+    yCm: item.yCm + cl.x * sin + cl.y * cos,
+  }
+}
+
 /** Smallest correction (candidate - mine) with |correction| <= threshold, or null. */
 const bestShift = (mine: number[], candidates: number[], thresholdCm: number): number | null => {
   let best: number | null = null

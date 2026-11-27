@@ -29,11 +29,11 @@ const { FurnitureLayer } = await import('./FurnitureLayer')
 
 const AB = 'ab1'
 
-const board = (): Artboard => ({
+const board = (rotationDeg = 0): Artboard => ({
   id: AB, name: 'Plan A', xCm: 1000, yCm: 500, ceilingHeightCm: 250, precisionCm: 1,
   rooms: [], openings: [],
   furniture: [
-    { id: 'f1', name: 'Sofa', shape: 'rect', xCm: 100, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg: 0, color: '#4b5563' },
+    { id: 'f1', name: 'Sofa', shape: 'rect', xCm: 100, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg, color: '#4b5563' },
     { id: 'f2', name: 'Chair', shape: 'rect', xCm: 300, yCm: 200, widthCm: 40, depthCm: 40, rotationDeg: 0, color: '#4b5563' },
     { id: 'f3', name: 'Rug', shape: 'rect', xCm: 500, yCm: 500, widthCm: 200, depthCm: 200, rotationDeg: 0, color: '#4b5563' },
   ],
@@ -87,5 +87,68 @@ describe('FurnitureLayer with a furniture group', () => {
     expect(html).not.toContain('furniture-multi-outline')
     expect(itemSelected(html, 'f1')).toBe(false)
     expect(html).not.toContain('data-testid="furniture-handles"')
+  })
+})
+
+/** The markup of the <rect> that carries that edge handle. */
+const edgeTag = (html: string, key: string): string => {
+  const at = html.indexOf(`data-edge-handle="${key}"`)
+  if (at < 0) return ''
+  return html.slice(html.lastIndexOf('<rect', at), html.indexOf('>', at) + 1)
+}
+
+describe('FurnitureLayer resize handles', () => {
+  it('adds one invisible edge strip per side, before the corner handles', () => {
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f1' }
+    const html = renderToStaticMarkup(<FurnitureLayer artboard={board()} />)
+
+    for (const key of ['-1:0', '1:0', '0:-1', '0:1']) {
+      const tag = edgeTag(html, key)
+      expect(tag).not.toBe('')
+      expect(tag).toContain('fill="transparent"')
+    }
+
+    // Left and right strips span the depth (thickness 10 across), top and bottom span the width.
+    expect(edgeTag(html, '-1:0')).toContain('height="50"')
+    expect(edgeTag(html, '-1:0')).toContain('width="10"')
+    expect(edgeTag(html, '0:-1')).toContain('width="100"')
+    expect(edgeTag(html, '0:-1')).toContain('height="10"')
+    // A left strip is centred on the edge: x = -width/2 - 10/2.
+    expect(edgeTag(html, '-1:0')).toContain('x="-55"')
+
+    // Corners stay on top: every edge strip comes before the first white (corner) handle.
+    const handles = html.slice(html.indexOf('data-testid="furniture-handles"'))
+    const lastEdge = Math.max(...['-1:0', '1:0', '0:-1', '0:1'].map((k) => handles.indexOf(`data-edge-handle="${k}"`)))
+    const firstWhite = handles.indexOf('fill="#fff"')
+    expect(lastEdge).toBeGreaterThan(-1)
+    expect(firstWhite).toBeGreaterThan(-1)
+    expect(lastEdge).toBeLessThan(firstWhite)
+  })
+
+  it('points the edge cursors across the edge, swapping them for a quarter turn', () => {
+    selectionRef.current = { kind: 'furniture', artboardId: AB, furnitureId: 'f1' }
+
+    const flat = renderToStaticMarkup(<FurnitureLayer artboard={board(0)} />)
+    expect(edgeTag(flat, '-1:0')).toContain('cursor:ew-resize')
+    expect(edgeTag(flat, '1:0')).toContain('cursor:ew-resize')
+    expect(edgeTag(flat, '0:-1')).toContain('cursor:ns-resize')
+    expect(edgeTag(flat, '0:1')).toContain('cursor:ns-resize')
+
+    const turned = renderToStaticMarkup(<FurnitureLayer artboard={board(90)} />)
+    expect(edgeTag(turned, '-1:0')).toContain('cursor:ns-resize')
+    expect(edgeTag(turned, '1:0')).toContain('cursor:ns-resize')
+    expect(edgeTag(turned, '0:-1')).toContain('cursor:ew-resize')
+    expect(edgeTag(turned, '0:1')).toContain('cursor:ew-resize')
+
+    // A 45..135 deg turn swaps; 30 deg does not, 150 deg does not (folded to 30 on the other half turn).
+    expect(edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(30)} />), '-1:0')).toContain('cursor:ew-resize')
+    expect(edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(150)} />), '-1:0')).toContain('cursor:ew-resize')
+    expect(edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(60)} />), '-1:0')).toContain('cursor:ns-resize')
+  })
+
+  it('draws no edge strip and no handle for a group selection', () => {
+    selectionRef.current = { kind: 'furnitureMulti', artboardId: AB, furnitureIds: ['f1', 'f2'] }
+    const html = renderToStaticMarkup(<FurnitureLayer artboard={board()} />)
+    expect(html).not.toContain('data-edge-handle')
   })
 })

@@ -1,6 +1,7 @@
 // Furniture of one artboard (artboard-local cm). Render inside <ArtboardContent>.
 // Plan mode: drawn dimmed and not interactive. Design mode: select, move (Alt = duplicate, Alt mid-drag =
-// no snap), resize from the 4 corners (Shift = keep ratio) and rotate (15 deg, Shift 45, Alt 1).
+// no snap), resize from the 4 corners and the 4 edges (Shift = keep ratio) and rotate
+// (15 deg, Shift 45, Alt 1).
 import { memo, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
@@ -10,22 +11,22 @@ import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem } from '../../model/types'
 import { getModifiers, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
-import { roundToPrecision } from '../rooms/ops'
 import { moveFurnitureGroup, setFurnitureSelection, updateFurnitureSilent } from './actions'
 import type { FurnitureStart } from './actions'
 import {
-  MAX_FURNITURE_CM,
-  MIN_FURNITURE_CM,
+  CORNER_HANDLES,
+  EDGE_HANDLES,
   computeDistanceGuides,
   computeMeasureGuides,
   directionArrowGeometry,
   furnitureAxisBounds,
   furnitureCornerRadiusCm,
   pickMeasureTarget,
+  resizeFurnitureFromHandle,
   snapFurnitureMove,
   snapRotation,
 } from './geometry'
-import type { DistanceGuide, MeasureTarget } from './geometry'
+import type { CornerHandle, DistanceGuide, MeasureTarget, ResizeHandle } from './geometry'
 import { CANVAS_BG, CANVAS_SELECT } from '../../shell/canvasTokens'
 
 const ORANGE = CANVAS_SELECT
@@ -44,14 +45,20 @@ type Gesture = {
   onMove: (p: Vec) => void
 }
 
-type Corner = { sx: -1 | 1; sy: -1 | 1 }
-const CORNERS: Corner[] = [
-  { sx: -1, sy: -1 },
-  { sx: 1, sy: -1 },
-  { sx: 1, sy: 1 },
-  { sx: -1, sy: 1 },
-]
+type Corner = CornerHandle
 const CORNER_CURSOR = (c: Corner) => (c.sx === c.sy ? 'nwse-resize' : 'nesw-resize')
+
+/**
+ * Cursor of an edge handle: resize across the edge. A quarter turn (45..135 deg) swaps the two axes,
+ * because the item's local X then runs down the screen.
+ */
+const EDGE_CURSOR = (rotationDeg: number, edge: ResizeHandle): string => {
+  const n = ((rotationDeg % 360) + 360) % 360
+  const fold = n > 180 ? n - 180 : n // 0..180: the box looks the same after a half turn
+  const swapped = fold > 45 && fold < 135
+  const horizontal = edge.sx !== 0 // left / right edge: its normal is the local X axis
+  return horizontal !== swapped ? 'ew-resize' : 'ns-resize'
+}
 
 const fmtCm = (v: number): string => String(Math.round(v * 10) / 10)
 
@@ -235,40 +242,20 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     })
   }
 
-  const onCornerDown = (e: ReactPointerEvent<SVGRectElement>, item: FurnitureItem, c: Corner) => {
+  /**
+   * Resize from one handle of the selection box: 4 corners, then 4 edges. The math lives in the pure
+   * resizeFurnitureFromHandle (cm, degrees); Shift keeps the ratio, Alt changes nothing here.
+   */
+  const onResizeDown = (e: ReactPointerEvent<SVGRectElement>, item: FurnitureItem, handle: ResizeHandle) => {
     if (e.button !== 0 || !design) return
-    const a = item.rotationDeg * RAD
-    const cos = Math.cos(a), sin = Math.sin(a)
-    const w0 = item.widthCm, d0 = item.depthCm
-    const o = { x: -c.sx * w0 / 2, y: -c.sy * d0 / 2 } // opposite corner, item-local, stays fixed
     start(e, (p) => {
       const mods = getModifiers()
-      const dx = p.x - item.xCm, dy = p.y - item.yCm
-      // Pointer in the start frame of the item.
-      const lx = dx * cos + dy * sin
-      const ly = -dx * sin + dy * cos
-      let w = (lx - o.x) * c.sx
-      let d = (ly - o.y) * c.sy
-      if (mods.shift) {
-        const s = Math.max(w / w0, d / d0)
-        const lo = Math.max(MIN_FURNITURE_CM / w0, MIN_FURNITURE_CM / d0)
-        const hi = Math.min(MAX_FURNITURE_CM / w0, MAX_FURNITURE_CM / d0)
-        const k = Math.min(hi, Math.max(lo, s))
-        w = w0 * k
-        d = d0 * k
-      }
-      const clamp = (v: number) => Math.min(MAX_FURNITURE_CM, Math.max(MIN_FURNITURE_CM, v))
-      w = clamp(roundToPrecision(w, artboard.precisionCm))
-      d = clamp(roundToPrecision(d, artboard.precisionCm))
-      const cl = { x: o.x + c.sx * w / 2, y: o.y + c.sy * d / 2 }
-      patch(item.id, {
-        widthCm: w,
-        depthCm: d,
-        xCm: item.xCm + cl.x * cos - cl.y * sin,
-        yCm: item.yCm + cl.x * sin + cl.y * cos,
-      })
+      patch(item.id, resizeFurnitureFromHandle(item, handle, p, { shift: mods.shift, precisionCm: artboard.precisionCm }))
     })
   }
+
+  const onCornerDown = (e: ReactPointerEvent<SVGRectElement>, item: FurnitureItem, c: Corner) =>
+    onResizeDown(e, item, c)
 
   const onRotateDown = (e: ReactPointerEvent<SVGCircleElement>, item: FurnitureItem) => {
     if (e.button !== 0 || !design) return
@@ -426,6 +413,26 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
           data-testid="furniture-handles"
           transform={`translate(${selected.xCm} ${selected.yCm}) rotate(${selected.rotationDeg})`}
         >
+          {/* Edge handles first, so the corner handles stay on top. Invisible hit strips: the
+              selection outline already shows where the edge is. */}
+          {EDGE_HANDLES.map((edge) => {
+            const strip = px(10)
+            const across = edge.sx !== 0 // left / right edge: the strip runs along the depth
+            return (
+              <rect
+                key={`edge-${edge.sx}:${edge.sy}`}
+                data-edge-handle={`${edge.sx}:${edge.sy}`}
+                x={across ? (edge.sx * selected.widthCm) / 2 - strip / 2 : -selected.widthCm / 2}
+                y={across ? -selected.depthCm / 2 : (edge.sy * selected.depthCm) / 2 - strip / 2}
+                width={across ? strip : selected.widthCm}
+                height={across ? selected.depthCm : strip}
+                fill="transparent"
+                style={{ cursor: EDGE_CURSOR(selected.rotationDeg, edge) }}
+                onPointerDown={(e) => onResizeDown(e, selected, edge)}
+                {...gp}
+              />
+            )
+          })}
           <line
             x1={0} y1={-selected.depthCm / 2} x2={0} y2={-selected.depthCm / 2 - px(22)}
             stroke={ORANGE} strokeWidth={px(1)} pointerEvents="none"
@@ -434,7 +441,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
             cx={0} cy={-selected.depthCm / 2 - px(22)} r={px(5)} fill="#fff" stroke={ORANGE} strokeWidth={px(1.5)}
             style={{ cursor: 'grab' }} onPointerDown={(e) => onRotateDown(e, selected)} {...gp}
           />
-          {CORNERS.map((c) => (
+          {CORNER_HANDLES.map((c) => (
             <rect
               key={`${c.sx}${c.sy}`}
               x={c.sx * selected.widthCm / 2 - hs / 2} y={c.sy * selected.depthCm / 2 - hs / 2}
