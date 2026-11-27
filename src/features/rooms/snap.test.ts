@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Room } from '../../model/types'
-import { snapPoint, snapRoomDelta } from './snap'
+import { snapPoint, snapRoomDelta, snapWallDelta } from './snap'
 
 const rect = (id: string, x0: number, y0: number, x1: number, y1: number): Room => ({
   id, name: id,
@@ -172,5 +172,69 @@ describe('snapPoint with several connected anchors', () => {
     expect(r.guides).toContainEqual({ kind: 'line', a: { x: 0, y: 148 }, b: { x: 400, y: 148 } })
     const outside = snapPoint({ x: 395, y: 150 }, [other], { anchors: [{ x: 0, y: 500 }], gridCm: 0 })
     expect(outside.point.y).toBeCloseTo(150)
+  })
+})
+
+describe('snapWallDelta', () => {
+  const thr = 12
+  it('snaps a horizontal wall flush onto a parallel edge', () => {
+    // `other` has horizontal edges at y = 0 and y = 300, both from x = 0 to 400.
+    const r = snapWallDelta({ x: 100, y: 6 }, { x: 200, y: 6 }, { x: 0, y: 4 }, [other], thr)
+    expect(r.delta).toEqual({ x: 0, y: -6 }) // the line lands on y = 0
+    expect(r.guides.some((g) => g.kind === 'line')).toBe(true)
+  })
+  it('snaps a horizontal wall at one wall thickness from the other wall', () => {
+    const t = 10
+    // A 10 cm gap above the wall at y = 0 is closer than flush: y = -8 -> -10.
+    const gap = snapWallDelta({ x: 100, y: -8 }, { x: 200, y: -8 }, { x: 0, y: 0 }, [other], thr, { wallThicknessCm: t })
+    expect(gap.delta).toEqual({ x: 0, y: -2 })
+    // Flush still wins when it is the nearer candidate: y = -3 -> 0.
+    const flush = snapWallDelta({ x: 100, y: -3 }, { x: 200, y: -3 }, { x: 0, y: 0 }, [other], thr, { wallThicknessCm: t })
+    expect(flush.delta).toEqual({ x: 0, y: 3 })
+  })
+  it('snaps a vertical wall on X, flush and at one wall thickness', () => {
+    // `other` has vertical edges at x = 0 and x = 400, both from y = 0 to 300.
+    const r = snapWallDelta({ x: 6, y: 100 }, { x: 6, y: 200 }, { x: 4, y: 0 }, [other], thr)
+    expect(r.delta).toEqual({ x: -6, y: 0 })
+    expect(r.guides.some((g) => g.kind === 'line')).toBe(true)
+    const gap = snapWallDelta({ x: -8, y: 100 }, { x: -8, y: 200 }, { x: 0, y: 0 }, [other], thr, { wallThicknessCm: 10 })
+    expect(gap.delta).toEqual({ x: -2, y: 0 })
+  })
+  it('does not snap beyond the threshold', () => {
+    const r = snapWallDelta({ x: 1000, y: 1000 }, { x: 1100, y: 1000 }, { x: 10, y: 10 }, [other], thr)
+    expect(r).toEqual({ delta: { x: 10, y: 10 }, guides: [] })
+    const noRooms = snapWallDelta({ x: 100, y: 6 }, { x: 200, y: 6 }, { x: 0, y: 4 }, [], thr)
+    expect(noRooms.guides).toEqual([])
+  })
+  it('keeps the raw delta with disableSnap (precision rounding only)', () => {
+    const a = { x: 100, y: 6 }, b = { x: 200, y: 6 }
+    expect(snapWallDelta(a, b, { x: 0.4, y: 4.4 }, [other], thr, { disableSnap: true })).toEqual({ delta: { x: 0.4, y: 4.4 }, guides: [] })
+    expect(snapWallDelta(a, b, { x: 0.4, y: 4.4 }, [other], thr, { disableSnap: true, precisionCm: 1 })).toEqual({ delta: { x: 0, y: 4 }, guides: [] })
+  })
+  it('snaps through endpoint b when only b is near a corner', () => {
+    // b = (404, 302) is 5 cm from the corner (400, 300); a = (600, 302) is far from anything.
+    const r = snapWallDelta({ x: 600, y: 302 }, { x: 404, y: 302 }, { x: 0, y: 0 }, [other], thr)
+    expect(r.delta).toEqual({ x: -4, y: -2 }) // b lands on (400, 300)
+    expect(r.guides.some((g) => g.kind === 'point')).toBe(true)
+    // Endpoint a alone would not move the wall along X.
+    const aOnly = snapWallDelta({ x: 600, y: 302 }, { x: 600, y: 402 }, { x: 0, y: 0 }, [other], thr)
+    expect(aOnly.delta.x).toBe(0)
+  })
+  it('perpendicularOnly snaps the line and leaves the along axis at the given delta', () => {
+    const r = snapWallDelta({ x: 600, y: 302 }, { x: 404, y: 302 }, { x: 0, y: 0 }, [other], thr, { perpendicularOnly: true })
+    expect(r.delta).toEqual({ x: 0, y: -2 })
+    expect(r.guides.some((g) => g.kind === 'line')).toBe(true)
+  })
+  it('anchors the perpendicular axis on the precision grid when no wall is in reach', () => {
+    const r = snapWallDelta({ x: 1000, y: 1003 }, { x: 1100, y: 1003 }, { x: 0, y: 0 }, [other], thr)
+    expect(r.delta.y).toBe(2) // 1003 -> 1005 on the 5 cm grid
+    const p = snapWallDelta({ x: 1000, y: 1003 }, { x: 1100, y: 1003 }, { x: 0, y: 0 }, [other], thr, { precisionCm: 1 })
+    expect(p.delta.y).toBe(0) // already on the 1 cm grid
+  })
+  it('a slanted wall moves with the endpoint that snaps closer', () => {
+    // Not axis-aligned: |dy| = 50, |dx| = 100. a is 5.7 cm from the corner (400, 300).
+    const r = snapWallDelta({ x: 396, y: 296 }, { x: 496, y: 346 }, { x: 0, y: 0 }, [other], thr)
+    expect(r.delta).toEqual({ x: 4, y: 4 })
+    expect(r.guides.length).toBeGreaterThan(0)
   })
 })

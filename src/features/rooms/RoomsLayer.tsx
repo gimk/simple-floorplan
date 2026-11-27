@@ -4,7 +4,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
-import { add, area, fmtCm, labelPoint, projectOnSegment, signedArea } from '../../model/geometry'
+import { area, fmtCm, labelPoint, projectOnSegment, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { newId } from '../../model/schema'
 import { useDoc } from '../../model/store'
@@ -16,13 +16,13 @@ import type { Modifiers } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
 import {
   constrainAxis, constrainWallPerpendicular, deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex, moveVertexOrtho,
-  roomWalls, roundToPrecision, scaleRoomFromVertex, wallResizeCursor,
+  roomWalls, scaleRoomFromVertex, wallResizeCursor,
 } from './ops'
 import {
   DEFAULT_PATTERN_FILL, DESIGN_FLOOR_BASE, DESIGN_FLOOR_TINT_OPACITY, PATTERN_DEFS, PLAN_FLOOR_OPACITY,
   isPatterned, patternId, patternTransformOf,
 } from './floorPatterns'
-import { snapPoint, snapRoomDelta } from './snap'
+import { snapPoint, snapRoomDelta, snapWallDelta } from './snap'
 import type { SnapGuide } from './snap'
 import { computeTextLod } from './textLod'
 import type { TextLod } from './textLod'
@@ -263,21 +263,25 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
     const b = room.vertices[(edgeIndex + 1) % room.vertices.length]
     const origin = { rooms: artboard.rooms, openings: artboard.openings }
     startGesture(e, (_, d, mods) => {
+      // The wall is a line: it snaps like a moved room, onto the walls that face it (snapWallDelta).
+      const snapOpts = { precisionCm: artboard.precisionCm, disableSnap: mods.cmd, wallThicknessCm: thickness }
       let delta: Vec
       if (useUi.getState().ortho && !mods.shift) {
         // 90° lock: the wall moves only along its normal, so adjacent 90° walls never skew.
         const c = constrainWallPerpendicular(a, b, d.x, d.y)
-        const snap = snapPoint(add(a, c), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10), wallThicknessCm: thickness })
+        const snap = snapWallDelta(a, b, c, others, px(10), { ...snapOpts, perpendicularOnly: true })
         setGuides(snap.guides)
-        delta = constrainWallPerpendicular(a, b, snap.point.x - a.x, snap.point.y - a.y)
+        delta = constrainWallPerpendicular(a, b, snap.delta.x, snap.delta.y)
       } else if (mods.shift) {
+        // Shift: still only along the normal, but the wall line now snaps onto the parallel walls.
         const c = constrainWallPerpendicular(a, b, d.x, d.y)
-        delta = mods.cmd ? c : { x: roundToPrecision(c.x, artboard.precisionCm), y: roundToPrecision(c.y, artboard.precisionCm) }
-        setGuides([])
-      } else {
-        const snap = snapPoint(add(a, d), others, { precisionCm: artboard.precisionCm, disableSnap: mods.cmd, thresholdCm: px(10), wallThicknessCm: thickness })
+        const snap = snapWallDelta(a, b, c, others, px(10), { ...snapOpts, perpendicularOnly: true })
         setGuides(snap.guides)
-        delta = { x: snap.point.x - a.x, y: snap.point.y - a.y }
+        delta = constrainWallPerpendicular(a, b, snap.delta.x, snap.delta.y)
+      } else {
+        const snap = snapWallDelta(a, b, d, others, px(10), snapOpts)
+        setGuides(snap.guides)
+        delta = snap.delta
       }
       writeVertices(new Map([[room.id, moveEdge(room, edgeIndex, delta).vertices]]), true, origin)
     })

@@ -1,8 +1,8 @@
 // Pure magnetic snapping for room drawing and moving (no React). Units: cm.
-import { dist, projectOnSegment } from '../../model/geometry'
+import { add, dist, projectOnSegment } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import type { Room } from '../../model/types'
-import { roundToPrecision } from './ops'
+import { constrainWallPerpendicular, roundToPrecision } from './ops'
 import { edgeOutwardNormal } from './walls'
 
 export type SnapGuide = { kind: 'point' | 'line'; a: Vec; b?: Vec }
@@ -172,4 +172,116 @@ export function snapRoomDelta(
   }
   for (const v of moved) for (const o of others) if (near(v.x, o.x) && near(v.y, o.y)) guides.push({ kind: 'point', a: { x: o.x, y: o.y } })
   return { dx: ox, dy: oy, guides }
+}
+
+/** Options of snapWallDelta. */
+export type WallSnapOpts = {
+  disableSnap?: boolean
+  precisionCm?: number
+  wallThicknessCm?: number
+  /** Snap only the axis perpendicular to the wall (ortho 90° lock / Shift): the along axis keeps `delta`. */
+  perpendicularOnly?: boolean
+}
+
+const AXIS_EPS = 1e-6
+
+/**
+ * Snap the wall a -> b, dragged by `delta`, onto the other rooms. A wall is a line, so it snaps the
+ * way a whole room does (snapRoomDelta): its own line is pulled onto the parallel walls of the other
+ * rooms and its two endpoints try to meet their vertices.
+ * - Horizontal wall (|dy| <= |dx| of a -> b): the Y of the moved line snaps to the Y of every
+ *   horizontal edge of the other rooms, plus and minus `wallThicknessCm` (flush stays, and the wall
+ *   can stop at one wall thickness from the other wall). The X comes from the better endpoint snap.
+ * - Vertical wall: the same on X, with Y from the endpoints.
+ * - Slanted wall (not axis-aligned): no line snap, the endpoint with the better snap drags the wall.
+ * A parallel edge whose span overlaps the moved wall (or ends within the threshold of it) wins over a
+ * nearer edge far away along the wall: a wall prefers the wall it actually faces.
+ */
+export function snapWallDelta(
+  a: Vec, b: Vec, delta: Vec, otherRooms: Room[],
+  thresholdCm = DEFAULT_SNAP_THRESHOLD_CM, opts: WallSnapOpts = {},
+): { delta: Vec; guides: SnapGuide[] } {
+  if (opts.disableSnap) return { delta: { x: roundP(delta.x, opts.precisionCm), y: roundP(delta.y, opts.precisionCm) }, guides: [] }
+  const snapOpts: SnapOpts = { precisionCm: opts.precisionCm, thresholdCm, wallThicknessCm: opts.wallThicknessCm }
+  const pa = add(a, delta), pb = add(b, delta)
+  const flat = Math.abs(b.y - a.y) < AXIS_EPS
+  const upright = Math.abs(b.x - a.x) < AXIS_EPS
+
+  if (!flat && !upright) {
+    // Slanted wall: no line to align, only the endpoint that meets another wall or vertex moves the wall.
+    const sa = snapPoint(pa, otherRooms, snapOpts)
+    const sb = snapPoint(pb, otherRooms, snapOpts)
+    const pick = bestEndpointSnap(pa, sa, pb, sb)
+    const out = { x: delta.x + (pick.snap.point.x - pick.raw.x), y: delta.y + (pick.snap.point.y - pick.raw.y) }
+    return { delta: opts.perpendicularOnly ? constrainWallPerpendicular(a, b, out.x, out.y) : out, guides: pick.snap.guides }
+  }
+
+  // Axis-aligned wall: `perp` is the axis of the line snap, `along` the axis of the free slide.
+  const perp: 'x' | 'y' = flat ? 'y' : 'x'
+  const along: 'x' | 'y' = flat ? 'x' : 'y'
+  const t = opts.wallThicknessCm && opts.wallThicknessCm > 0 ? opts.wallThicknessCm : 0
+  const offsets = t > 0 ? [0, t, -t] : [0]
+  const movedPerp = a[perp] + delta[perp]
+  const lo = Math.min(a[along], b[along]) + delta[along]
+  const hi = Math.max(a[along], b[along]) + delta[along]
+
+  type Cand = { value: number; lo: number; hi: number; shift: number; facing: boolean }
+  const cands: Cand[] = []
+  for (const room of otherRooms) {
+    const vs = room.vertices
+    for (let i = 0; i < vs.length; i++) {
+      const e0 = vs[i], e1 = vs[(i + 1) % vs.length]
+      const parallel = flat ? Math.abs(e1.y - e0.y) < AXIS_EPS : Math.abs(e1.x - e0.x) < AXIS_EPS
+      if (!parallel) continue
+      const candLo = Math.min(e0[along], e1[along]), candHi = Math.max(e0[along], e1[along])
+      // The edge is "facing" when its span overlaps the moved wall, or ends within the threshold of it.
+      const isFacing = candHi >= lo - thresholdCm && candLo <= hi + thresholdCm
+      for (const k of offsets) {
+        const value = e0[perp] + k
+        const shift = value - movedPerp
+        if (Math.abs(shift) <= thresholdCm) cands.push({ value, lo: candLo, hi: candHi, shift, facing: isFacing })
+      }
+    }
+  }
+  // Facing edges win: they share the wall line the user sees behind the dragged wall. Then the nearest.
+  const nearestOf = (list: Cand[]) => list.reduce<Cand | null>((b, c) => (!b || Math.abs(c.shift) < Math.abs(b.shift) ? c : b), null)
+  const chosen = nearestOf(cands.filter((c) => c.facing)) ?? nearestOf(cands)
+
+  const out: Vec = { x: delta.x, y: delta.y }
+  if (chosen) out[perp] = delta[perp] + chosen.shift
+  else {
+    // No wall at reach: stay on the precision grid, like the old endpoint snap did.
+    const grid = opts.precisionCm ?? DEFAULT_GRID_CM
+    if (grid > 0) out[perp] = snapToGrid(movedPerp, grid) - a[perp]
+  }
+
+  const guides: SnapGuide[] = []
+  if (chosen) {
+    // One line along the matched axis, from the other wall to the dragged one.
+    const gLo = Math.min(lo, chosen.lo), gHi = Math.max(hi, chosen.hi)
+    const guide: SnapGuide = perp === 'y'
+      ? { kind: 'line', a: { x: gLo, y: chosen.value }, b: { x: gHi, y: chosen.value } }
+      : { kind: 'line', a: { x: chosen.value, y: gLo }, b: { x: chosen.value, y: gHi } }
+    guides.push(guide)
+  }
+  if (!opts.perpendicularOnly) {
+    // Free slide along the wall: both endpoints try the vertices/walls of the other rooms, the
+    // closer match sets the along coordinate. Neither matches: grid, as before.
+    const sa = snapPoint(pa, otherRooms, snapOpts)
+    const sb = snapPoint(pb, otherRooms, snapOpts)
+    const pick = bestEndpointSnap(pa, sa, pb, sb)
+    out[along] = delta[along] + (pick.snap.point[along] - pick.raw[along])
+    for (const g of pick.snap.guides) if (g.kind === 'point') guides.push(g)
+  }
+  return { delta: out, guides }
+}
+
+/** The endpoint snap that matches something, the fewer corrected of the two (endpoint a by default). */
+function bestEndpointSnap(
+  pa: Vec, sa: SnapResult, pb: Vec, sb: SnapResult,
+): { raw: Vec; snap: SnapResult } {
+  const ra = sa.guides.length > 0, rb = sb.guides.length > 0
+  if (ra && rb) return dist(sa.point, pa) <= dist(sb.point, pb) ? { raw: pa, snap: sa } : { raw: pb, snap: sb }
+  if (rb && !ra) return { raw: pb, snap: sb }
+  return { raw: pa, snap: sa }
 }
