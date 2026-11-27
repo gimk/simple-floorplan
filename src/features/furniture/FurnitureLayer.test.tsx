@@ -57,9 +57,10 @@ describe('FurnitureLayer with a furniture group', () => {
     expect(itemSelected(html, 'f2')).toBe(true)
     expect(itemSelected(html, 'f3')).toBe(false)
 
-    // One rectangle, no resize or rotate handles.
+    // One rectangle and group handles (no single-item handle group).
     expect(html.split('data-testid="furniture-multi-outline"')).toHaveLength(2)
     expect(html).not.toContain('data-testid="furniture-handles"')
+    expect(html).toContain('data-testid="furniture-multi-handles"')
 
     // Union box + px(4) padding, in cm (px = cm in this test).
     const rect = /<rect data-testid="furniture-multi-outline"[^>]*>/.exec(html)![0]
@@ -146,9 +147,15 @@ describe('FurnitureLayer resize handles', () => {
     expect(edgeTag(renderToStaticMarkup(<FurnitureLayer artboard={board(60)} />), '-1:0')).toContain('cursor:ns-resize')
   })
 
-  it('draws no edge strip and no handle for a group selection', () => {
+  it('draws 4 edge strips, 4 corner handles and 1 rotate handle for a group selection', () => {
     selectionRef.current = { kind: 'furnitureMulti', artboardId: AB, furnitureIds: ['f1', 'f2'] }
     const html = renderToStaticMarkup(<FurnitureLayer artboard={board()} />)
-    expect(html).not.toContain('data-edge-handle')
+    const handles = html.slice(html.indexOf('data-testid="furniture-multi-handles"'))
+    for (const key of ['-1:0', '1:0', '0:-1', '0:1']) {
+      expect(edgeTag(handles, key)).toContain('fill="transparent"')
+    }
+    // 4 white corner rects + 1 white rotate circle.
+    expect(handles.match(/fill="#fff"/g)).toHaveLength(5)
+    expect(handles).toContain('<circle')
   })
 })

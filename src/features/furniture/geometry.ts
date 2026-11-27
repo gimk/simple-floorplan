@@ -112,7 +112,7 @@ export const EDGE_HANDLES: EdgeHandle[] = [
 ]
 
 /** Round a size like the room ops do: 0 or negative precision keeps the value. */
-const roundSize = (v: number, precisionCm: number): number => (precisionCm > 0 ? roundP(v, precisionCm) : v)
+export const roundSize = (v: number, precisionCm: number): number => (precisionCm > 0 ? roundP(v, precisionCm) : v)
 
 /**
  * New size and centre of an item when one handle of its selection box is dragged to `p` (the pointer

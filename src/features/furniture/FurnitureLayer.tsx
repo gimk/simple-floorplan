@@ -1,7 +1,7 @@
 // Furniture of one artboard (artboard-local cm). Render inside <ArtboardContent>.
-// Plan mode: drawn dimmed and not interactive. Design mode: select, move (Alt = duplicate, Alt mid-drag =
-// no snap), resize from the 4 corners and the 4 edges (Shift = keep ratio) and rotate
-// (15 deg, Shift 45, Alt 1).
+// Plan mode: drawn dimmed and not interactive. Design mode: select (single or group), move
+// (Alt = duplicate, Alt mid-drag = no snap), resize from the 4 corners and the 4 edges
+// (Shift = keep ratio) and rotate (15 deg, Shift 45, Alt 1).
 import { memo, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useViewport } from '../../canvas/Viewport'
@@ -11,15 +11,23 @@ import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem } from '../../model/types'
 import { getModifiers, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
-import { moveFurnitureGroup, setFurnitureSelection, updateFurnitureSilent } from './actions'
+import {
+  duplicateFurnitureGroup,
+  moveFurnitureGroup,
+  resizeFurnitureGroup,
+  rotateFurnitureGroup,
+  setFurnitureSelection,
+  updateFurnitureSilent,
+} from './actions'
 import type { FurnitureStart } from './actions'
+import { groupBounds } from './groupTransform'
+import type { FurnitureTransformStart } from './groupTransform'
 import {
   CORNER_HANDLES,
   EDGE_HANDLES,
   computeDistanceGuides,
   computeMeasureGuides,
   directionArrowGeometry,
-  furnitureAxisBounds,
   furnitureCornerRadiusCm,
   pickMeasureTarget,
   resizeFurnitureFromHandle,
@@ -45,8 +53,7 @@ type Gesture = {
   onMove: (p: Vec) => void
 }
 
-type Corner = CornerHandle
-const CORNER_CURSOR = (c: Corner) => (c.sx === c.sy ? 'nwse-resize' : 'nesw-resize')
+const CORNER_CURSOR = (c: CornerHandle) => (c.sx === c.sy ? 'nwse-resize' : 'nesw-resize')
 
 /**
  * Cursor of an edge handle: resize across the edge. A quarter turn (45..135 deg) swaps the two axes,
@@ -76,7 +83,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       : []
   // A group that lost items (undo, a delete elsewhere) is stale: draw nothing until the next click.
   const activeIds = selection.kind === 'furnitureMulti' && selIds.length < 2 ? [] : selIds
-  // Handles, resize, rotate and the Option/Alt measure stay single-selection only.
+  // Option/Alt measure stays single-selection only; handles, resize, rotate and Alt-duplicate work for groups too.
   const selectedId = activeIds.length === 1 ? activeIds[0] : null
   const multiIds = activeIds.length > 1 ? activeIds : null
   const gesture = useRef<Gesture | null>(null)
@@ -87,7 +94,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const lastPointer = useRef<Vec | null>(null)
   // Render-safe mirror of "a gesture is active" (a ref must not be read during render).
   const [gesturing, setGesturing] = useState(false)
-  const [rotBadge, setRotBadge] = useState<{ id: string; deg: number } | null>(null)
+  const [rotBadge, setRotBadge] = useState<{ x: number; y: number; deg: number } | null>(null)
 
   // Shift / Alt can change while the pointer is down: replay the last pointer position at once.
   useEffect(() => subscribeModifiers(() => {
@@ -175,19 +182,37 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   /**
    * Drag every item of the group by the delta of the grabbed one. `starts` holds the position each
    * item had when the pointer went down, so the whole drag is one undo step (beginDrag/endDrag) and
-   * the snap of the grabbed item decides the delta of all of them. No Alt-duplicate for a group.
+   * the snap of the grabbed item decides the delta of all of them. Alt at pointer down duplicates
+   * the group at offset 0 and drags the copies (still one undo step).
    */
   const startGroupDrag = (e: ReactPointerEvent<SVGGElement>, item: FurnitureItem, ids: string[]) => {
+    syncModifiersFromEvent(e)
+    const duplicate = getModifiers().alt
     const p0 = toLocal(e.clientX, e.clientY)
     const grab = { x: p0.x - item.xCm, y: p0.y - item.yCm }
-    const starts = new Map<string, FurnitureStart>()
+    let duplicated = false
+    let grabbedId = item.id
+    let starts = new Map<string, FurnitureStart>()
     for (const f of liveArtboard().furniture) {
       if (ids.includes(f.id)) starts.set(f.id, { xCm: f.xCm, yCm: f.yCm })
     }
     start(e, (p) => {
-      setDraggingId(item.id)
-      const cur = live(item.id)
-      const startPos = starts.get(item.id)
+      if (duplicate && !duplicated) {
+        duplicated = true
+        const newIds = duplicateFurnitureGroup(artboard.id, ids, 0, true)
+        const list = liveArtboard().furniture
+        const origIdx = list.findIndex((f) => f.id === item.id)
+        const copyItem = origIdx >= 0 ? list[origIdx + 1] : undefined
+        if (copyItem && newIds.includes(copyItem.id)) grabbedId = copyItem.id
+        const nextStarts = new Map<string, FurnitureStart>()
+        for (const f of list) {
+          if (newIds.includes(f.id)) nextStarts.set(f.id, { xCm: f.xCm, yCm: f.yCm })
+        }
+        starts = nextStarts
+      }
+      setDraggingId(grabbedId)
+      const cur = live(grabbedId)
+      const startPos = starts.get(grabbedId)
       if (!cur || !startPos) return
       const mods = getModifiers()
       const s = snapFurnitureMove(cur, p.x - grab.x, p.y - grab.y, liveArtboard(), px(10), { disableSnap: mods.alt })
@@ -254,9 +279,6 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     })
   }
 
-  const onCornerDown = (e: ReactPointerEvent<SVGRectElement>, item: FurnitureItem, c: Corner) =>
-    onResizeDown(e, item, c)
-
   const onRotateDown = (e: ReactPointerEvent<SVGCircleElement>, item: FurnitureItem) => {
     if (e.button !== 0 || !design) return
     start(e, (p) => {
@@ -265,7 +287,57 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
       const step = mods.alt ? 1 : mods.shift ? 45 : 15
       const deg = snapRotation(ang, step)
       patch(item.id, { rotationDeg: deg })
-      setRotBadge({ id: item.id, deg })
+      setRotBadge({ x: item.xCm, y: item.yCm - Math.max(item.widthCm, item.depthCm) / 2 - px(46), deg })
+    })
+  }
+
+  const collectTransformStarts = (ids: string[]) => {
+    const starts = new Map<string, FurnitureTransformStart>()
+    const items: FurnitureItem[] = []
+    for (const f of liveArtboard().furniture) {
+      if (!ids.includes(f.id)) continue
+      starts.set(f.id, {
+        xCm: f.xCm,
+        yCm: f.yCm,
+        widthCm: f.widthCm,
+        depthCm: f.depthCm,
+        rotationDeg: f.rotationDeg,
+      })
+      items.push(f)
+    }
+    return { starts, bounds: groupBounds(items) }
+  }
+
+  const onMultiResizeDown = (e: ReactPointerEvent<SVGRectElement>, ids: string[], handle: ResizeHandle) => {
+    if (e.button !== 0 || !design) return
+    const { starts, bounds } = collectTransformStarts(ids)
+    if (!bounds || starts.size === 0) return
+    const pad = px(4)
+    start(e, (p) => {
+      const mods = getModifiers()
+      const adj = { x: p.x - handle.sx * pad, y: p.y - handle.sy * pad }
+      resizeFurnitureGroup(artboard.id, starts, bounds, handle, adj, {
+        shift: mods.shift,
+        precisionCm: artboard.precisionCm,
+      })
+    })
+  }
+
+  const onMultiRotateDown = (e: ReactPointerEvent<SVGCircleElement>, ids: string[]) => {
+    if (e.button !== 0 || !design) return
+    const { starts, bounds } = collectTransformStarts(ids)
+    if (!bounds || starts.size === 0) return
+    const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+    const p0 = toLocal(e.clientX, e.clientY)
+    const ang0 = Math.atan2(p0.y - center.y, p0.x - center.x) / RAD + 90
+    const badgeY = bounds.minY - px(4) - px(46)
+    start(e, (p) => {
+      const mods = getModifiers()
+      const ang = Math.atan2(p.y - center.y, p.x - center.x) / RAD + 90
+      const step = mods.alt ? 1 : mods.shift ? 45 : 15
+      const delta = snapRotation(ang - ang0, step)
+      rotateFurnitureGroup(artboard.id, starts, center, delta)
+      setRotBadge({ x: center.x, y: badgeY, deg: delta })
     })
   }
 
@@ -346,14 +418,14 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   // One dashed orange rectangle around the union of the bounds of every item of the group.
   const multiBox = (() => {
     if (!multiIds) return null
-    const boxes = artboard.furniture.filter((f) => multiIds.includes(f.id)).map((f) => furnitureAxisBounds(f))
-    if (boxes.length === 0) return null
+    const bounds = groupBounds(artboard.furniture.filter((f) => multiIds.includes(f.id)))
+    if (!bounds) return null
     const pad = px(4)
     return {
-      x: Math.min(...boxes.map((b) => b.minX)) - pad,
-      y: Math.min(...boxes.map((b) => b.minY)) - pad,
-      w: Math.max(...boxes.map((b) => b.maxX)) - Math.min(...boxes.map((b) => b.minX)) + 2 * pad,
-      h: Math.max(...boxes.map((b) => b.maxY)) - Math.min(...boxes.map((b) => b.minY)) + 2 * pad,
+      x: bounds.minX - pad,
+      y: bounds.minY - pad,
+      w: bounds.maxX - bounds.minX + 2 * pad,
+      h: bounds.maxY - bounds.minY + 2 * pad,
     }
   })()
 
@@ -380,6 +452,55 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     return null
   })()
 
+  const renderHandleGroup = (
+    testId: string,
+    transform: string,
+    w: number,
+    d: number,
+    rotationDeg: number,
+    onResize: (e: ReactPointerEvent<SVGRectElement>, handle: ResizeHandle) => void,
+    onRotate: (e: ReactPointerEvent<SVGCircleElement>) => void,
+  ) => (
+    <g data-testid={testId} transform={transform}>
+      {/* Edge handles first, so the corner handles stay on top. Invisible hit strips: the
+          selection outline already shows where the edge is. */}
+      {EDGE_HANDLES.map((edge) => {
+        const strip = px(10)
+        const across = edge.sx !== 0 // left / right edge: the strip runs along the depth
+        return (
+          <rect
+            key={`edge-${edge.sx}:${edge.sy}`}
+            data-edge-handle={`${edge.sx}:${edge.sy}`}
+            x={across ? (edge.sx * w) / 2 - strip / 2 : -w / 2}
+            y={across ? -d / 2 : (edge.sy * d) / 2 - strip / 2}
+            width={across ? strip : w}
+            height={across ? d : strip}
+            fill="transparent"
+            style={{ cursor: EDGE_CURSOR(rotationDeg, edge) }}
+            onPointerDown={(e) => onResize(e, edge)}
+            {...gp}
+          />
+        )
+      })}
+      <line
+        x1={0} y1={-d / 2} x2={0} y2={-d / 2 - px(22)}
+        stroke={ORANGE} strokeWidth={px(1)} pointerEvents="none"
+      />
+      <circle
+        cx={0} cy={-d / 2 - px(22)} r={px(5)} fill="#fff" stroke={ORANGE} strokeWidth={px(1.5)}
+        style={{ cursor: 'grab' }} onPointerDown={onRotate} {...gp}
+      />
+      {CORNER_HANDLES.map((c) => (
+        <rect
+          key={`${c.sx}${c.sy}`}
+          x={(c.sx * w) / 2 - hs / 2} y={(c.sy * d) / 2 - hs / 2}
+          width={hs} height={hs} fill="#fff" stroke={ORANGE} strokeWidth={px(1.5)}
+          style={{ cursor: CORNER_CURSOR(c) }} onPointerDown={(e) => onResize(e, c)} {...gp}
+        />
+      ))}
+    </g>
+  )
+
   return (
     <g
       data-testid={`furniture-layer-${artboard.id}`}
@@ -399,72 +520,44 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
         </g>
       ))}
 
-      {design && multiBox && (
-        <rect
-          data-testid="furniture-multi-outline"
-          x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h}
-          fill="none" stroke={ORANGE} strokeWidth={px(1)}
-          strokeDasharray={`${px(4)} ${px(3)}`} pointerEvents="none"
-        />
+      {design && multiBox && multiIds && (
+        <>
+          <rect
+            data-testid="furniture-multi-outline"
+            x={multiBox.x} y={multiBox.y} width={multiBox.w} height={multiBox.h}
+            fill="none" stroke={ORANGE} strokeWidth={px(1)}
+            strokeDasharray={`${px(4)} ${px(3)}`} pointerEvents="none"
+          />
+          {renderHandleGroup(
+            'furniture-multi-handles',
+            `translate(${multiBox.x + multiBox.w / 2} ${multiBox.y + multiBox.h / 2})`,
+            multiBox.w,
+            multiBox.h,
+            0,
+            (e, h) => onMultiResizeDown(e, multiIds, h),
+            (e) => onMultiRotateDown(e, multiIds),
+          )}
+        </>
       )}
 
-      {design && selected && (
-        <g
-          data-testid="furniture-handles"
-          transform={`translate(${selected.xCm} ${selected.yCm}) rotate(${selected.rotationDeg})`}
-        >
-          {/* Edge handles first, so the corner handles stay on top. Invisible hit strips: the
-              selection outline already shows where the edge is. */}
-          {EDGE_HANDLES.map((edge) => {
-            const strip = px(10)
-            const across = edge.sx !== 0 // left / right edge: the strip runs along the depth
-            return (
-              <rect
-                key={`edge-${edge.sx}:${edge.sy}`}
-                data-edge-handle={`${edge.sx}:${edge.sy}`}
-                x={across ? (edge.sx * selected.widthCm) / 2 - strip / 2 : -selected.widthCm / 2}
-                y={across ? -selected.depthCm / 2 : (edge.sy * selected.depthCm) / 2 - strip / 2}
-                width={across ? strip : selected.widthCm}
-                height={across ? selected.depthCm : strip}
-                fill="transparent"
-                style={{ cursor: EDGE_CURSOR(selected.rotationDeg, edge) }}
-                onPointerDown={(e) => onResizeDown(e, selected, edge)}
-                {...gp}
-              />
-            )
-          })}
-          <line
-            x1={0} y1={-selected.depthCm / 2} x2={0} y2={-selected.depthCm / 2 - px(22)}
-            stroke={ORANGE} strokeWidth={px(1)} pointerEvents="none"
-          />
-          <circle
-            cx={0} cy={-selected.depthCm / 2 - px(22)} r={px(5)} fill="#fff" stroke={ORANGE} strokeWidth={px(1.5)}
-            style={{ cursor: 'grab' }} onPointerDown={(e) => onRotateDown(e, selected)} {...gp}
-          />
-          {CORNER_HANDLES.map((c) => (
-            <rect
-              key={`${c.sx}${c.sy}`}
-              x={c.sx * selected.widthCm / 2 - hs / 2} y={c.sy * selected.depthCm / 2 - hs / 2}
-              width={hs} height={hs} fill="#fff" stroke={ORANGE} strokeWidth={px(1.5)}
-              style={{ cursor: CORNER_CURSOR(c) }} onPointerDown={(e) => onCornerDown(e, selected, c)} {...gp}
-            />
-          ))}
+      {design && selected && renderHandleGroup(
+        'furniture-handles',
+        `translate(${selected.xCm} ${selected.yCm}) rotate(${selected.rotationDeg})`,
+        selected.widthCm,
+        selected.depthCm,
+        selected.rotationDeg,
+        (e, h) => onResizeDown(e, selected, h),
+        (e) => onRotateDown(e, selected),
+      )}
+
+      {rotBadge && (
+        <g pointerEvents="none">
+          <rect x={rotBadge.x - px(18)} y={rotBadge.y - px(9)} width={px(36)} height={px(18)} rx={px(9)} fill={BG} stroke={ORANGE} strokeWidth={px(1)} />
+          <text x={rotBadge.x} y={rotBadge.y} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill={ORANGE}>
+            {Math.round(rotBadge.deg)}°
+          </text>
         </g>
       )}
-
-      {rotBadge && (() => {
-        const it = live(rotBadge.id)
-        if (!it) return null
-        const bx = it.xCm, by = it.yCm - Math.max(it.widthCm, it.depthCm) / 2 - px(46)
-        return (
-          <g pointerEvents="none">
-            <rect x={bx - px(18)} y={by - px(9)} width={px(36)} height={px(18)} rx={px(9)} fill={BG} stroke={ORANGE} strokeWidth={px(1)} />
-            <text x={bx} y={by} textAnchor="middle" dominantBaseline="central" fontSize={px(11)} fill={ORANGE}>
-              {Math.round(rotBadge.deg)}°
-            </text>
-          </g>
-        )
-      })()}
 
       {guides.map(renderGuide)}
 

@@ -3,7 +3,11 @@
 import { useDoc } from '../../model/store'
 import { useUi } from '../../shell/uiStore'
 import type { FloorPattern, FurnitureItem, ProjectDoc } from '../../model/types'
+import type { Vec } from '../../model/geometry'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
+import type { ItemBounds, ResizeHandle } from './geometry'
+import { resizeGroupFromHandle, rotateGroupByDelta } from './groupTransform'
+import type { FurnitureTransformStart } from './groupTransform'
 
 type FurniturePatch = Partial<Omit<FurnitureItem, 'id'>>
 
@@ -189,10 +193,16 @@ export function updateFurnitureMany(artboardId: string, furnitureIds: string[], 
 }
 
 /**
- * Copy many items, each shifted by (+offsetCm, +offsetCm), in one undo step. The copies are selected
- * as a group. Returns the new ids, in the order of `furnitureIds`.
+ * Copy many items, each shifted by (+offsetCm, +offsetCm). The copies are placed directly above
+ * their sources and selected as a group. Returns the new ids, in stack order. `silent = false`
+ * (the default) records one undo step; `silent = true` records nothing (for use inside a drag).
  */
-export function duplicateFurnitureGroup(artboardId: string, furnitureIds: string[], offsetCm = 20): string[] {
+export function duplicateFurnitureGroup(
+  artboardId: string,
+  furnitureIds: string[],
+  offsetCm = 20,
+  silent = false,
+): string[] {
   const artboard = findArtboard(artboardId)
   if (!artboard) return []
   const wanted = new Set(furnitureIds)
@@ -205,17 +215,82 @@ export function duplicateFurnitureGroup(artboardId: string, furnitureIds: string
       return copy
     })
   if (copies.length === 0) return []
-  useDoc.getState().update((d) => {
+  const apply = (d: ProjectDoc) => {
     const ab = d.artboards.find((a) => a.id === artboardId)
     if (!ab) return
     ab.furniture = ab.furniture.flatMap((f) => {
       const c = copyOf.get(f.id)
       return c ? [f, { ...c }] : [f]
     })
-  })
+  }
+  if (silent) useDoc.getState().updateSilent(apply)
+  else useDoc.getState().update(apply)
   const ids = copies.map((c) => c.id)
   setFurnitureSelection(artboardId, ids)
   return ids
+}
+
+/**
+ * Resize many items from their start state when a group handle is dragged to `p`. `silent` (the
+ * default) records nothing (for use inside beginDrag/endDrag); false = one undo step.
+ */
+export function resizeFurnitureGroup(
+  artboardId: string,
+  starts: ReadonlyMap<string, FurnitureTransformStart>,
+  startBounds: ItemBounds,
+  handle: ResizeHandle,
+  p: Vec,
+  opts: { shift: boolean; precisionCm?: number },
+  silent = true,
+): void {
+  if (starts.size === 0) return
+  const artboard = findArtboard(artboardId)
+  if (!artboard || !artboard.furniture.some((f) => starts.has(f.id))) return
+  const next = resizeGroupFromHandle(starts, startBounds, handle, p, opts)
+  const apply = (d: ProjectDoc) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    for (const f of ab.furniture) {
+      const r = next.get(f.id)
+      if (!r) continue
+      f.xCm = r.xCm
+      f.yCm = r.yCm
+      f.widthCm = r.widthCm
+      f.depthCm = r.depthCm
+    }
+  }
+  if (silent) useDoc.getState().updateSilent(apply)
+  else useDoc.getState().update(apply)
+}
+
+/**
+ * Rotate many items by `deltaDeg` around `center` from their start state. `silent` (the default)
+ * records nothing (for use inside beginDrag/endDrag); false = one undo step.
+ */
+export function rotateFurnitureGroup(
+  artboardId: string,
+  starts: ReadonlyMap<string, FurnitureTransformStart>,
+  center: Vec,
+  deltaDeg: number,
+  silent = true,
+): void {
+  if (starts.size === 0) return
+  const artboard = findArtboard(artboardId)
+  if (!artboard || !artboard.furniture.some((f) => starts.has(f.id))) return
+  const next = rotateGroupByDelta(starts, center, deltaDeg)
+  const apply = (d: ProjectDoc) => {
+    const ab = d.artboards.find((a) => a.id === artboardId)
+    if (!ab) return
+    for (const f of ab.furniture) {
+      const r = next.get(f.id)
+      if (!r) continue
+      f.xCm = r.xCm
+      f.yCm = r.yCm
+      f.rotationDeg = r.rotationDeg
+    }
+  }
+  if (silent) useDoc.getState().updateSilent(apply)
+  else useDoc.getState().update(apply)
 }
 
 /** Delete many items of one artboard in one undo step, then clear the selection. */

@@ -10,10 +10,13 @@ import {
   deleteFurnitureGroup,
   duplicateFurnitureGroup,
   moveFurnitureGroup,
+  resizeFurnitureGroup,
+  rotateFurnitureGroup,
   setFurnitureSelection,
   updateFurnitureMany,
 } from './actions'
 import { findFurnitureInBox } from './geometry'
+import { groupBounds } from './groupTransform'
 
 // ---------- helpers ----------
 
@@ -223,6 +226,80 @@ describe('duplicateFurnitureGroup', () => {
     expect(duplicateFurnitureGroup('ab1', ['gone'])).toEqual([])
     expect(duplicateFurnitureGroup('nope', ['f1'])).toEqual([])
     expect(past()).toBe(before)
+  })
+
+  it('Option+drag duplicate: silent offset-0 copies above sources + move is one undo step', () => {
+    hydrate([item({ id: 'f1', xCm: 100, yCm: 100 }), item({ id: 'f2', xCm: 400, yCm: 300 }), item({ id: 'f3', xCm: 800, yCm: 500 })])
+    const before = past()
+    s().beginDrag()
+    const copyIds = duplicateFurnitureGroup('ab1', ['f1', 'f2'], 0, true)
+    expect(copyIds).toHaveLength(2)
+    const listAtDup = s().doc.artboards[0].furniture
+    expect(listAtDup.map((f) => f.id)).toEqual(['f1', copyIds[0], 'f2', copyIds[1], 'f3'])
+    const starts = new Map(
+      listAtDup.filter((f) => copyIds.includes(f.id)).map((f) => [f.id, { xCm: f.xCm, yCm: f.yCm }]),
+    )
+    moveFurnitureGroup('ab1', starts, 50, 25)
+    s().endDrag()
+
+    expect(past()).toBe(before + 1)
+    const byId = new Map(s().doc.artboards[0].furniture.map((f) => [f.id, f]))
+    // Originals stay unchanged.
+    expect(byId.get('f1')).toMatchObject({ xCm: 100, yCm: 100 })
+    expect(byId.get('f2')).toMatchObject({ xCm: 400, yCm: 300 })
+    // Copies moved and selected.
+    expect(byId.get(copyIds[0])).toMatchObject({ xCm: 150, yCm: 125 })
+    expect(byId.get(copyIds[1])).toMatchObject({ xCm: 450, yCm: 325 })
+    expect(ui().selection).toEqual({ kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: copyIds })
+
+    // One undo removes the copies and restores the original list.
+    s().undo()
+    expect(s().doc.artboards[0].furniture.map((f) => f.id)).toEqual(['f1', 'f2', 'f3'])
+  })
+})
+
+describe('resizeFurnitureGroup and rotateFurnitureGroup', () => {
+  beforeEach(() =>
+    hydrate([
+      item({ id: 'f1', xCm: 100, yCm: 100, widthCm: 100, depthCm: 100, rotationDeg: 0 }),
+      item({ id: 'f2', xCm: 300, yCm: 100, widthCm: 100, depthCm: 100, rotationDeg: 0 }),
+    ]),
+  )
+
+  it('resizes a group in one undo step', () => {
+    const list = s().doc.artboards[0].furniture
+    const bounds = groupBounds(list)!
+    const starts = new Map(
+      list.map((f) => [f.id, { xCm: f.xCm, yCm: f.yCm, widthCm: f.widthCm, depthCm: f.depthCm, rotationDeg: f.rotationDeg }]),
+    )
+    const before = past()
+    s().beginDrag()
+    resizeFurnitureGroup('ab1', starts, bounds, { sx: 1, sy: 1 }, { x: 650, y: 250 }, { shift: false, precisionCm: 1 })
+    s().endDrag()
+    expect(past()).toBe(before + 1)
+    expect(s().doc.artboards[0].furniture[0].widthCm).toBe(200)
+    expect(s().doc.artboards[0].furniture[1].widthCm).toBe(200)
+    s().undo()
+    expect(s().doc.artboards[0].furniture[0].widthCm).toBe(100)
+    expect(s().doc.artboards[0].furniture[1].widthCm).toBe(100)
+  })
+
+  it('rotates a group in one undo step', () => {
+    const list = s().doc.artboards[0].furniture
+    const bounds = groupBounds(list)!
+    const center = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+    const starts = new Map(
+      list.map((f) => [f.id, { xCm: f.xCm, yCm: f.yCm, widthCm: f.widthCm, depthCm: f.depthCm, rotationDeg: f.rotationDeg }]),
+    )
+    const before = past()
+    s().beginDrag()
+    rotateFurnitureGroup('ab1', starts, center, 90)
+    s().endDrag()
+    expect(past()).toBe(before + 1)
+    expect(s().doc.artboards[0].furniture[0]).toMatchObject({ xCm: 200, yCm: 0, rotationDeg: 90 })
+    expect(s().doc.artboards[0].furniture[1]).toMatchObject({ xCm: 200, yCm: 200, rotationDeg: 90 })
+    s().undo()
+    expect(s().doc.artboards[0].furniture[0]).toMatchObject({ xCm: 100, yCm: 100, rotationDeg: 0 })
   })
 })
 
