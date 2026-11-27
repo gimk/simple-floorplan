@@ -12,6 +12,7 @@ import { loadRefImageFile } from './features/background/upload'
 import { copyArtboardPng, isCopyPngShortcut } from './features/export/download'
 import { deleteFurniture, duplicateFurniture, reorderFurniture } from './features/furniture/actions'
 import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
+import { MeasurementCheatsheet } from './features/furniture/MeasurementCheatsheet'
 import { DesignRoomsInspect } from './features/furniture/DesignRoomsInspect'
 import { FurnitureInspect } from './features/furniture/FurnitureInspect'
 import { FurnitureLayer } from './features/furniture/FurnitureLayer'
@@ -848,17 +849,22 @@ export default function App() {
         >
           {inspectSheet && sheetHeader('Inspect')}
           {mode === 'design' ? (
-            // Design mode edits no geometry: furniture and room floors only.
-            selection.kind === 'furniture' && selectionExists ? (
-              <FurnitureInspect artboardId={selection.artboardId} furnitureId={selection.furnitureId} />
-            ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 1 ? (
-              // Several rooms: one floor card that styles all of them (one undo step per click).
-              <DesignRoomsInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
-            ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 0 ? (
-              <DesignRoomInspect artboardId={selection.artboardId} roomId={selection.roomIds[0]} />
-            ) : (
-              <ArtboardInspect artboardId={selection.kind === 'artboard' ? selection.artboardId : activeArtboardId} readOnly />
-            )
+            <>
+              {/* Design mode edits no geometry: furniture and room floors only. */}
+              {selection.kind === 'furniture' && selectionExists ? (
+                <FurnitureInspect artboardId={selection.artboardId} furnitureId={selection.furnitureId} />
+              ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 1 ? (
+                // Several rooms: one floor card that styles all of them (one undo step per click).
+                <DesignRoomsInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
+              ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 0 ? (
+                <DesignRoomInspect artboardId={selection.artboardId} roomId={selection.roomIds[0]} />
+              ) : (
+                <ArtboardInspect artboardId={selection.kind === 'artboard' ? selection.artboardId : activeArtboardId} readOnly />
+              )}
+              {/* Read-only reference, always last. The panel is a `space-y-3` block that scrolls,
+                  so it simply follows the card above it. */}
+              <MeasurementCheatsheet />
+            </>
           ) : selection.kind === 'room' && selectionExists ? (
             <RoomInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
           ) : selection.kind === 'vertex' && selectionExists ? (
