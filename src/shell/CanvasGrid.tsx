@@ -31,6 +31,7 @@ export function CanvasGrid() {
   const followRef = useRef<SVGRectElement>(null)
   const sizeRef = useRef({ w: 0, h: 0 })
   const activeArtboardId = useUi((s) => s.activeArtboardId)
+  const mode = useUi((s) => s.mode)
   const artboards = useDoc((s) => s.doc.artboards)
 
   const step = gridStep(zoom)
@@ -70,6 +71,9 @@ export function CanvasGrid() {
     const off = subscribeLive(place)
     return () => { ro?.disconnect(); off() }
   }, [svg, subscribeLive])
+
+  // Design mode shows a clean canvas: no grid (hooks above must still run).
+  if (mode === 'design') return null
 
   return (
     <g pointerEvents="none" aria-hidden="true">

@@ -42,7 +42,7 @@ import { useUi, type Mode } from './shell/uiStore'
 import { shortcutsBlocked, useDialogFocus } from './shell/useDialogFocus'
 import { useMediaQuery } from './shell/useDesktop'
 import { ZoomControls } from './shell/ZoomControls'
-import { fitAll, zoomIn, zoomOut, zoomReset } from './shell/zoom'
+import { canvasCenterWorld, fitAll, zoomIn, zoomOut, zoomReset } from './shell/zoom'
 import { CloudMenu } from './sync/CloudMenu'
 import { exportProjectJson, importProjectJson, parseProjectJson, serializeProject } from './sync/jsonFile'
 
@@ -215,15 +215,6 @@ function PasteJsonModal({ onClose, onImported }: { onClose: () => void; onImport
 }
 
 const key0 = (e: KeyboardEvent) => e.key.toLowerCase()
-
-/** World point (cm) at the centre of the visible canvas. */
-const canvasCenterWorld = () => {
-  const svg = document.querySelector<SVGSVGElement>('svg[data-testid="floorplan-canvas"]')
-  const v = useUi.getState().view
-  const w = svg?.clientWidth || 800
-  const h = svg?.clientHeight || 600
-  return { x: v.x + w / 2 / v.zoom, y: v.y + h / 2 / v.zoom }
-}
 
 export default function App() {
   const mode = useUi((s) => s.mode)

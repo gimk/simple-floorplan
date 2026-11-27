@@ -3,7 +3,7 @@
 // quick quarter turns), optional height for the future 3D view, colour, Duplicate and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm and degrees.
 import { useId } from 'react'
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, ArrowDown, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, ArrowDown, BookmarkPlus, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import {
@@ -25,6 +25,7 @@ import { toast } from '../toast'
 import { alignFurnitureInRoom, findFurnitureRoom, type FurnitureAlignment } from './align'
 import { deleteFurniture, duplicateFurniture, reorderFurniture, updateFurniture, type StackOp } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, normalizeAngle } from './geometry'
+import { useCustomPresets } from './customPresets'
 import { FURNITURE_COLORS } from './presets'
 
 export type FurnitureInspectProps = {
@@ -171,6 +172,19 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
       actionLabel: 'Undo',
       onAction: () => useDoc.getState().undo(),
     })
+  }
+
+  const saveAsPreset = () => {
+    const saved = useCustomPresets.getState().addPreset({
+      name: item.name,
+      shape: item.shape,
+      widthCm: item.widthCm,
+      depthCm: item.depthCm,
+      color: item.color,
+      heightCm: item.heightCm ?? 75,
+      showDirection: !!item.showDirection,
+    })
+    toast(`Saved preset "${saved.name}"`, { kind: 'info' })
   }
 
   // Every inspector label of this card: 12 px medium slate-300 (L2/L3 of the design audit).
@@ -380,6 +394,10 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
         >
           <Copy size={14} aria-hidden="true" />
           Duplicate
+        </button>
+        <button type="button" className={BTN} onClick={saveAsPreset} title="Save this item as a custom preset">
+          <BookmarkPlus size={14} aria-hidden="true" />
+          Save as preset
         </button>
         <DangerButton onClick={remove} shortcut="Del">
           Delete

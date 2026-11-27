@@ -62,3 +62,34 @@ describe('canvas labels in Design mode', () => {
     expect(html).toContain('aria-label="Living (12 m²)"')
   })
 })
+
+describe('opaque floors in Design mode', () => {
+  const withFill = (extra: object): Artboard => ({
+    ...board, rooms: [{ ...board.rooms[0], ...extra }],
+  })
+
+  it('renders a floor fill opaque in Design and at 0.28 in Plan', () => {
+    const b = withFill({ fill: '#b5976b' })
+    ui.mode = 'design'
+    expect(renderToStaticMarkup(<RoomsLayer artboard={b} />)).toContain('fill-opacity="1"')
+    ui.mode = 'plan'
+    const plan = renderToStaticMarkup(<RoomsLayer artboard={b} />)
+    expect(plan).toContain('fill-opacity="0.28"')
+    expect(plan).not.toContain('fill-opacity="1"')
+  })
+
+  it('renders a floor pattern base opaque in Design and at 0.28 in Plan', () => {
+    const b = withFill({ fill: '#8a6b4a', floorPattern: 'wood' })
+    ui.mode = 'design'
+    expect(renderToStaticMarkup(<RoomsLayer artboard={b} />)).toContain('fill-opacity="1"')
+    ui.mode = 'plan'
+    expect(renderToStaticMarkup(<RoomsLayer artboard={b} />)).toContain('fill-opacity="0.28"')
+  })
+
+  it('keeps the subtle default fill with no fill and no pattern', () => {
+    ui.mode = 'design'
+    const html = renderToStaticMarkup(<RoomsLayer artboard={board} />)
+    expect(html).toContain('rgba(255,255,255,0.04)')
+    expect(html).not.toContain('fill-opacity="1"')
+  })
+})

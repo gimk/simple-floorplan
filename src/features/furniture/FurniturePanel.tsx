@@ -1,14 +1,15 @@
 // Left-panel content of Design mode (docs/simple-floorplan-2.md §6, Phase 4):
 //   - "Custom shape": name, Rect / Circle, width cm, depth cm, colour swatch and Add shape.
 //   - "Presets": the starter furniture list, one click to add an item.
-// A new item lands at the centre of the active artboard: the centre of the rooms bounding box
-// when the artboard has rooms, else the centre of its frame. Units: cm.
+//   - Custom presets saved by the user (localStorage) are listed first and can be deleted.
+// A new item lands at the centre of the visible screen. Units: cm.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel.
 import { useId, useRef, useState } from 'react'
-import { LayoutGrid, Plus, Search, Shapes } from 'lucide-react'
+import { BookmarkPlus, LayoutGrid, Plus, Search, Shapes, Trash2 } from 'lucide-react'
 import { useDoc } from '../../model/store'
-import type { Artboard, FurnitureItem } from '../../model/types'
+import type { FurnitureItem } from '../../model/types'
 import {
+  BTN,
   ColorRow,
   EmptyHint,
   FieldRow,
@@ -21,9 +22,12 @@ import {
   TextField,
 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
-import { artboardFrame } from '../artboards/frame'
+import { roundToPrecision } from '../rooms/ops'
+import { canvasCenterWorld } from '../../shell/zoom'
+import { toast } from '../toast'
 import { addFurniture } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
+import { useCustomPresets } from './customPresets'
 import { FURNITURE_COLORS, FURNITURE_PRESETS, type FurniturePreset } from './presets'
 
 /** Shape of a new item. */
@@ -56,27 +60,6 @@ const ADD_BTN =
 
 const clampCm = (v: number): number => Math.min(MAX_FURNITURE_CM, Math.max(MIN_FURNITURE_CM, v))
 
-/**
- * Artboard-local centre for a new item: the centre of the bounding box of every room vertex,
- * else the centre of the artboard frame (converted from world to artboard-local cm).
- */
-function centerOfArtboard(artboard: Artboard): { xCm: number; yCm: number } {
-  const pts = artboard.rooms.flatMap((r) => r.vertices)
-  if (pts.length > 0) {
-    const xs = pts.map((p) => p.x)
-    const ys = pts.map((p) => p.y)
-    return {
-      xCm: (Math.min(...xs) + Math.max(...xs)) / 2,
-      yCm: (Math.min(...ys) + Math.max(...ys)) / 2,
-    }
-  }
-  const frame = artboardFrame(artboard)
-  return {
-    xCm: frame.x + frame.width / 2 - artboard.xCm,
-    yCm: frame.y + frame.height / 2 - artboard.yCm,
-  }
-}
-
 /** Category of each preset id. presets.ts has no category field, so the list is derived here. */
 const CATEGORY_BY_ID: Record<string, string> = {
   bed: 'Beds',
@@ -93,10 +76,13 @@ const CATEGORY_BY_ID: Record<string, string> = {
   rug: 'Rugs',
 }
 
-const categoryOf = (preset: FurniturePreset): string => CATEGORY_BY_ID[preset.id] ?? 'Other'
+const CUSTOM_CATEGORY = 'Custom'
+
+const categoryOf = (preset: FurniturePreset): string =>
+  preset.id.startsWith('custom-') ? CUSTOM_CATEGORY : (CATEGORY_BY_ID[preset.id] ?? 'Other')
 
 /** Category chips, in the order of the preset list (unique). */
-const CATEGORIES: readonly string[] = [...new Set(FURNITURE_PRESETS.map(categoryOf))]
+const BUILT_IN_CATEGORIES: readonly string[] = [...new Set(FURNITURE_PRESETS.map(categoryOf))]
 
 /** Distance between two items added one after the other, and how many steps before the cycle restarts. */
 const CASCADE_STEP_CM = 20
@@ -128,16 +114,26 @@ function PresetThumb({ item }: { item: FurniturePreset }) {
 }
 
 /** One preset button: top-down thumbnail, the name over the size, and an always visible plus. */
-function PresetButton({ item, onAdd, disabled }: { item: FurniturePreset; onAdd: () => void; disabled: boolean }) {
+function PresetButton({
+  item,
+  onAdd,
+  onDelete,
+  disabled,
+}: {
+  item: FurniturePreset
+  onAdd: () => void
+  onDelete?: () => void
+  disabled: boolean
+}) {
   return (
-    <li>
+    <li className="flex items-center gap-1">
       <button
         type="button"
         aria-label={`Add ${item.name}`}
         title={disabled ? 'Add an artboard first' : `Add ${item.name} (${item.widthCm} × ${item.depthCm} cm)`}
         disabled={disabled}
         onClick={onAdd}
-        className="group flex min-h-11 w-full items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10"
+        className="group flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/10"
       >
         <PresetThumb item={item} />
         <span className="flex min-w-0 flex-1 flex-col">
@@ -150,6 +146,17 @@ function PresetButton({ item, onAdd, disabled }: { item: FurniturePreset; onAdd:
         </span>
         <Plus size={16} aria-hidden="true" className="shrink-0 text-slate-500 dark:text-slate-400" />
       </button>
+      {onDelete && (
+        <button
+          type="button"
+          aria-label={`Delete preset ${item.name}`}
+          title="Delete preset"
+          onClick={onDelete}
+          className="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-red-500/10 hover:text-red-400 pointer-coarse:min-h-11 pointer-coarse:min-w-11 dark:text-slate-400"
+        >
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      )}
     </li>
   )
 }
@@ -171,21 +178,35 @@ export function FurniturePanel() {
   // Number of items added by this panel: each new item is shifted a little, so repeated adds do not stack.
   const addCount = useRef(0)
   const searchId = useId()
+  const customPresets = useCustomPresets((s) => s.presets)
+  const addPreset = useCustomPresets((s) => s.addPreset)
+  const removePreset = useCustomPresets((s) => s.removePreset)
+  // Screen centre of the previous spawn: the cascade restarts when it changes (pan or zoom).
+  const lastCenter = useRef<string | null>(null)
 
   const artboard = artboards.find((a) => a.id === activeArtboardId) ?? artboards[0]
 
   /**
-   * Add one item at the centre of the active artboard and select it (addFurniture does both).
+   * Add one item at the centre of the visible screen and select it (addFurniture does both).
    * `position` 'bottom' puts a rug under the items that are already there.
    */
   const place = (item: NewItem, position?: 'top' | 'bottom') => {
     if (!artboard) return
-    const center = centerOfArtboard(artboard)
+    const world = canvasCenterWorld()
+    const key = `${Math.round(world.x)},${Math.round(world.y)}`
+    if (key !== lastCenter.current) addCount.current = 0
+    lastCenter.current = key
     const shift = (addCount.current % CASCADE_STEPS) * CASCADE_STEP_CM
     addCount.current += 1
+    const p = artboard.precisionCm
     addFurniture(
       artboard.id,
-      { ...item, xCm: center.xCm + shift, yCm: center.yCm + shift, rotationDeg: 0 },
+      {
+        ...item,
+        xCm: roundToPrecision(world.x - artboard.xCm, p) + shift,
+        yCm: roundToPrecision(world.y - artboard.yCm, p) + shift,
+        rotationDeg: 0,
+      },
       { position },
     )
   }
@@ -202,8 +223,23 @@ export function FurniturePanel() {
     })
   }
 
+  const saveCustom = () => {
+    const saved = addPreset({
+      name: name.trim() === '' ? DEFAULT_NAME : name.trim(),
+      shape,
+      widthCm: clampCm(widthCm),
+      depthCm: clampCm(depthCm),
+      color,
+      heightCm: 75,
+      showDirection,
+    })
+    toast(`Saved preset "${saved.name}"`, { kind: 'info' })
+  }
+
+  const allPresets = [...customPresets, ...FURNITURE_PRESETS]
+  const categories = customPresets.length > 0 ? [CUSTOM_CATEGORY, ...BUILT_IN_CATEGORIES] : BUILT_IN_CATEGORIES
   const needle = query.trim().toLowerCase()
-  const shown = FURNITURE_PRESETS.filter(
+  const shown = allPresets.filter(
     (p) => (category === null || categoryOf(p) === category) && (needle === '' || p.name.toLowerCase().includes(needle)),
   )
 
@@ -227,7 +263,7 @@ export function FurniturePanel() {
           />
         </div>
         <div role="group" aria-label="Preset categories" className="flex flex-wrap gap-1">
-          {[null, ...CATEGORIES].map((c) => {
+          {[null, ...categories].map((c) => {
             const active = category === c
             return (
               <button
@@ -255,6 +291,7 @@ export function FurniturePanel() {
                 key={preset.id}
                 item={preset}
                 disabled={!artboard}
+                onDelete={preset.id.startsWith('custom-') ? () => removePreset(preset.id) : undefined}
                 onAdd={() =>
                   place(
                     {
@@ -274,7 +311,7 @@ export function FurniturePanel() {
           </ul>
         )}
         <EmptyHint>
-          {artboard ? 'New items land at the centre of the active artboard.' : 'Add an artboard in Plan mode to place furniture.'}
+          {artboard ? 'New items land at the centre of the screen.' : 'Add an artboard in Plan mode to place furniture.'}
         </EmptyHint>
       </PanelSection>
 
@@ -342,6 +379,15 @@ export function FurniturePanel() {
         >
           <Plus size={14} aria-hidden="true" />
           Add shape
+        </button>
+        <button
+          type="button"
+          className={`${BTN} w-full`}
+          onClick={saveCustom}
+          title="Save this shape as a custom preset"
+        >
+          <BookmarkPlus size={14} aria-hidden="true" />
+          Save as preset
         </button>
       </PanelSection>
     </>

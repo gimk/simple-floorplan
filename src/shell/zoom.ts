@@ -33,3 +33,12 @@ export const ZOOM_STEP = 1.25
 export const zoomIn = () => zoomBy(ZOOM_STEP)
 export const zoomOut = () => zoomBy(1 / ZOOM_STEP)
 export const zoomReset = () => zoomTo(1)
+
+/** World point (cm) at the centre of the visible canvas. */
+export function canvasCenterWorld(): { x: number; y: number } {
+  const svg = document.querySelector<SVGSVGElement>('svg[data-testid="floorplan-canvas"]')
+  const v = useUi.getState().view
+  const w = svg?.clientWidth || window.innerWidth || 800
+  const h = svg?.clientHeight || window.innerHeight || 600
+  return { x: v.x + w / 2 / v.zoom, y: v.y + h / 2 / v.zoom }
+}

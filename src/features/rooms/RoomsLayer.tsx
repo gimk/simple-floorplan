@@ -386,7 +386,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
             {pattern && def && (
               <defs>
                 <pattern id={pid} width={def.w} height={def.h} patternUnits="userSpaceOnUse">
-                  <rect width={def.w} height={def.h} fill={room.fill ?? DEFAULT_PATTERN_FILL} fillOpacity={0.28} />
+                  <rect width={def.w} height={def.h} fill={room.fill ?? DEFAULT_PATTERN_FILL} fillOpacity={design ? 1 : 0.28} />
                   <g dangerouslySetInnerHTML={{ __html: def.inner(px(1)) }} />
                 </pattern>
               </defs>
@@ -394,7 +394,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
             <polygon
               points={pts}
               fill={pattern ? `url(#${pid})` : (room.fill ?? 'rgba(255,255,255,0.04)')}
-              fillOpacity={!pattern && room.fill ? 0.28 : undefined}
+              fillOpacity={!pattern && room.fill ? (design ? 1 : 0.28) : undefined}
               // Thick walls: the border stroke moves to a masked outline below, so it cannot cross
               // an opening. Thin walls keep the old single polygon.
               stroke={strokeMaskModel ? 'none' : selected ? ORANGE : STROKE}
