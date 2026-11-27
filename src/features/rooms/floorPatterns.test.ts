@@ -39,6 +39,14 @@ describe('PATTERN_DEFS', () => {
     }
   })
 
+  it('uses real product sizes in cm', () => {
+    expect(PATTERN_DEFS.wood).toMatchObject({ w: 280, h: 42 })
+    expect(PATTERN_DEFS.parquet).toMatchObject({ w: 80, h: 80 })
+    expect(PATTERN_DEFS.tile).toMatchObject({ w: 60, h: 60 })
+    expect(PATTERN_DEFS.stone).toMatchObject({ w: 90, h: 60 })
+    expect(PATTERN_DEFS.carpet).toMatchObject({ w: 12, h: 12 })
+  })
+
   it.each(IDS)('%s produces valid, finite SVG markup', (id) => {
     const inner = PATTERN_DEFS[id].inner(1)
     expect(inner.length).toBeGreaterThan(50)
@@ -51,18 +59,32 @@ describe('PATTERN_DEFS', () => {
     expect(balanced(svg)).toBe(true)
   })
 
-  it('parquet herringbone covers its 4 x 4 cell tile exactly once (seamless)', () => {
-    const inner = PATTERN_DEFS.parquet.inner(1)
-    const grid = Array.from({ length: 4 }, () => Array<number>(4).fill(0))
-    for (const m of inner.matchAll(/<rect x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)" fill="none"/g)) {
-      const [x, y, w, h] = m.slice(1).map((v) => Number(v) / 12)
-      for (let cy = 0; cy < 4; cy++) {
-        for (let cx = 0; cx < 4; cx++) {
-          if (cx >= x && cx + 1 <= x + w && cy >= y && cy + 1 <= y + h) grid[cy][cx]++
-        }
+  it('parquet herringbone covers its 80 x 80 tile exactly once (seamless)', () => {
+    const { w: tw, h: th } = PATTERN_DEFS.parquet
+    const blocks = [...PATTERN_DEFS.parquet.inner(1).matchAll(
+      /<rect x="(-?[\d.]+)" y="(-?[\d.]+)" width="([\d.]+)" height="([\d.]+)" fill="none"/g,
+    )].map((m) => {
+      const [x, y, w, h] = m.slice(1).map(Number)
+      return { x, y, w, h }
+    })
+    expect(blocks.length).toBeGreaterThan(0)
+    // Sum of the block areas clipped to the tile = the whole tile, so no gap and no seam.
+    const area = blocks.reduce((sum, b) => {
+      const cw = Math.max(0, Math.min(b.x + b.w, tw) - Math.max(b.x, 0))
+      const ch = Math.max(0, Math.min(b.y + b.h, th) - Math.max(b.y, 0))
+      return sum + cw * ch
+    }, 0)
+    expect(area).toBeCloseTo(tw * th, 6)
+    // No two blocks overlap.
+    for (let i = 0; i < blocks.length; i++) {
+      for (let j = i + 1; j < blocks.length; j++) {
+        const a = blocks[i]
+        const b = blocks[j]
+        const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+        expect(ox > 0 && oy > 0 ? ox * oy : 0).toBe(0)
       }
     }
-    expect(grid.flat().every((n) => n === 1)).toBe(true)
   })
 })
 

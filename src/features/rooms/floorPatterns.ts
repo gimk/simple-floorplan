@@ -41,17 +41,19 @@ const tint = (x: number, y: number, w: number, h: number, t: number) =>
 
 const mod = (a: number, n: number) => ((a % n) + n) % n
 
-// ---------- wood: 240 x 54, 3 rows of 18 cm planks 120 cm long, staggered by 40 cm ----------
-const WOOD_W = 240
-const WOOD_PLANK_H = 18
-const WOOD_PLANK_L = 120
+// ---------- wood: 280 x 42, 3 rows of 14 cm planks 140 cm long, staggered by 47 cm and 93 cm ----------
+// Tile width is two plank lengths, so a plank and its wrapped copy get the same tint and grain (class mod 2).
+const WOOD_W = 280
+const WOOD_PLANK_H = 14
+const WOOD_PLANK_L = 140
+const WOOD_ROW_OFFSETS = [0, 47, 93]
 const WOOD_TINTS = [0.05, -0.06, -0.03, 0.07, -0.08, 0.03] // [row * 2 + plank class]
 
 function woodInner(s: number): string {
   const out: string[] = []
-  for (let row = 0; row < 3; row++) {
+  for (let row = 0; row < WOOD_ROW_OFFSETS.length; row++) {
     const y = row * WOOD_PLANK_H
-    const offset = row * 40
+    const offset = WOOD_ROW_OFFSETS[row]
     // Planks that start from one plank before the tile to one after: the viewport clips the rest.
     for (let k = -1; k < 3; k++) {
       const x = offset + k * WOOD_PLANK_L
@@ -68,7 +70,7 @@ function woodInner(s: number): string {
       out.push(line(x + s, y, x + s, y + WOOD_PLANK_H, s * 0.7, INK, 0.1))
     }
   }
-  for (let row = 0; row <= 3; row++) {
+  for (let row = 0; row <= WOOD_ROW_OFFSETS.length; row++) {
     const y = row * WOOD_PLANK_H
     out.push(line(0, y, WOOD_W, y, s * 1.1, DARK, 0.4))
     out.push(line(0, y + s, WOOD_W, y + s, s * 0.7, INK, 0.1))
@@ -76,26 +78,28 @@ function woodInner(s: number): string {
   return out.join('')
 }
 
-// ---------- parquet: seamless herringbone, 48 x 48 (4 x 4 cells of W = 12 cm, blocks 24 x 12) ----------
-// Cell grid: horizontal block H_n covers cells (n, n) and (n + 1, n); vertical block V_n covers
-// (n + 2, n - 1) and (n + 2, n). The family repeats every 4 cells in x and y, so the 4 x 4 tile wraps.
-const HB_W = 12
-const HB_N = 4
+// ---------- parquet: seamless herringbone, 80 x 80 (10 x 10 cells of W = 8 cm, blocks 40 x 8) ----------
+// Cell grid (cell size W = HB_W, block ratio k = HB_K): horizontal block H_n covers the k cells
+// (n, n) .. (n + k - 1, n); vertical block V_n covers (n + k, n - k + 1) .. (n + k, n).
+// The family repeats every 2k = HB_N cells in x and y, so the 10 x 10 tile wraps seamlessly.
+const HB_W = 8
+const HB_K = 5
+const HB_N = 2 * HB_K
 
 type HerringBlock = { x: number; y: number; w: number; h: number; horizontal: boolean; n: number }
 
 const HERRINGBONE: HerringBlock[] = (() => {
   const blocks: HerringBlock[] = []
-  for (let t = -2; t <= 2; t++) {
-    for (let n = -8; n <= 8; n++) {
+  for (let t = -3; t <= 3; t++) {
+    for (let n = -20; n <= 20; n++) {
       const cx = n + HB_N * t
-      // Horizontal block: cells (cx, n) .. (cx + 1, n). Vertical: (cx + 2, n - 1) .. (cx + 2, n).
+      // Horizontal block: cells (cx, n) .. (cx + k - 1, n). Vertical: (cx + k, n - k + 1) .. (cx + k, n).
       const cands: HerringBlock[] = [
-        { x: cx, y: n, w: 2, h: 1, horizontal: true, n },
-        { x: cx + 2, y: n - 1, w: 1, h: 2, horizontal: false, n },
+        { x: cx, y: n, w: HB_K, h: 1, horizontal: true, n },
+        { x: cx + HB_K, y: n - HB_K + 1, w: 1, h: HB_K, horizontal: false, n },
       ]
       for (const b of cands) {
-        // Keep only blocks that touch the 4 x 4 tile.
+        // Keep only blocks that touch the HB_N x HB_N cell tile (a block and its wrapped copy are both kept).
         if (b.x < HB_N && b.x + b.w > 0 && b.y < HB_N && b.y + b.h > 0) blocks.push(b)
       }
     }
@@ -111,7 +115,8 @@ function parquetInner(s: number): string {
     const w = b.w * HB_W
     const h = b.h * HB_W
     // Tone depends on orientation and the (periodic) position class, so wrapped blocks match.
-    const t = (b.horizontal ? 0.05 : -0.06) + (mod(b.n, 4) - 1.5) * 0.012
+    // The tile repeats every HB_N = 2k cells, so the class must repeat every k cells.
+    const t = (b.horizontal ? 0.05 : -0.06) + (mod(b.n, HB_K) - (HB_K - 1) / 2) * 0.012
     out.push(tint(x, y, w, h, t))
     // Faint grain along the long side of the block.
     if (b.horizontal) out.push(path(`M${f(x + 3)} ${f(y + 6)} l ${w - 6} 0`, 0.35, INK, 0.06))
@@ -126,8 +131,8 @@ function parquetInner(s: number): string {
   return out.join('')
 }
 
-// ---------- tile: 90 x 90 = 2 x 2 tiles of 45 cm ----------
-const TILE = 45
+// ---------- tile: 60 x 60 = 2 x 2 tiles of 30 cm ----------
+const TILE = 30
 const TILE_TINTS = [0.025, -0.035, -0.02, 0.04]
 
 function tileInner(s: number): string {
@@ -144,7 +149,7 @@ function tileInner(s: number): string {
       out.push(line(x + TILE - s * 1.6, y + s * 1.6, x + TILE - s * 1.6, y + TILE - s * 1.6, s * 0.8, DARK, 0.12))
     }
   }
-  // Grout lines (at 0, 45, 90: the 0 and 90 lines meet across the tile edge).
+  // Grout lines (at 0, 30, 60: the 0 and 60 lines meet across the tile edge).
   for (let i = 0; i <= 2; i++) {
     out.push(line(0, i * TILE, 2 * TILE, i * TILE, s * 1.7, DARK, 0.45))
     out.push(line(i * TILE, 0, i * TILE, 2 * TILE, s * 1.7, DARK, 0.45))
@@ -152,7 +157,9 @@ function tileInner(s: number): string {
   return out.join('')
 }
 
-// ---------- stone: 120 x 80, three rows of ashlar slabs of different sizes ----------
+// ---------- stone: 90 x 60, three rows of ashlar slabs of different sizes ----------
+// The layout is designed on a 120 x 80 grid and drawn at STONE_SCALE (0.75), so the tile is 90 x 60 cm.
+const STONE_SCALE = 0.75
 const STONE_ROWS: { y: number; h: number; cuts: number[]; tints: number[] }[] = [
   { y: 0, h: 26, cuts: [0, 40, 90, 120], tints: [0.04, -0.05, 0.02] },
   { y: 26, h: 28, cuts: [0, 25, 70, 120], tints: [-0.04, 0.05, -0.02] },
@@ -166,46 +173,53 @@ const STONE_SPECKS: [number, number, number, number][] = [
 
 function stoneInner(s: number): string {
   const out: string[] = []
+  const sc = (n: number) => n * STONE_SCALE
   for (const row of STONE_ROWS) {
     for (let i = 0; i < row.tints.length; i++) {
-      out.push(tint(row.cuts[i], row.y, row.cuts[i + 1] - row.cuts[i], row.h, row.tints[i]))
+      out.push(tint(sc(row.cuts[i]), sc(row.y), sc(row.cuts[i + 1] - row.cuts[i]), sc(row.h), row.tints[i]))
     }
   }
-  for (const [x, y, r, op] of STONE_SPECKS) out.push(dot(x, y, r, x % 2 < 1 ? INK : DARK, op))
+  for (const [x, y, r, op] of STONE_SPECKS) out.push(dot(sc(x), sc(y), sc(r), x % 2 < 1 ? INK : DARK, op))
   for (const row of STONE_ROWS) {
-    for (const x of row.cuts) out.push(line(x, row.y, x, row.y + row.h, s * 1.5, DARK, 0.42))
-    out.push(line(0, row.y, 120, row.y, s * 1.5, DARK, 0.42))
+    for (const x of row.cuts) out.push(line(sc(x), sc(row.y), sc(x), sc(row.y + row.h), s * 1.5, DARK, 0.42))
+    out.push(line(0, sc(row.y), sc(120), sc(row.y), s * 1.5, DARK, 0.42))
     // Light edge under each mortar joint.
-    out.push(line(0, row.y + s * 1.2, 120, row.y + s * 1.2, s * 0.7, INK, 0.07))
+    out.push(line(0, sc(row.y) + s * 1.2, sc(120), sc(row.y) + s * 1.2, s * 0.7, INK, 0.07))
   }
-  out.push(line(0, 80, 120, 80, s * 1.5, DARK, 0.42))
+  out.push(line(0, sc(80), sc(120), sc(80), s * 1.5, DARK, 0.42))
   return out.join('')
 }
 
-// ---------- carpet: 24 x 24 woven loop pile ----------
+// ---------- carpet: 12 x 12 woven loop pile ----------
+// The weave is designed on a 24 x 24 grid and drawn at CARPET_SCALE (0.5), so the tile is 12 x 12 cm.
+const CARPET_SCALE = 0.5
+
 function carpetInner(): string {
   const out: string[] = []
+  const sc = (n: number) => n * CARPET_SCALE
+  const span = sc(24)
   for (let i = 0; i < 8; i++) {
-    out.push(line(0, i * 3 + 1.5, 24, i * 3 + 1.5, 0.7, i % 2 ? DARK : INK, i % 2 ? 0.07 : 0.05))
-    out.push(line(i * 3 + 1.5, 0, i * 3 + 1.5, 24, 0.7, i % 2 ? INK : DARK, i % 2 ? 0.04 : 0.06))
+    const p = sc(i * 3 + 1.5)
+    out.push(line(0, p, span, p, 0.7, i % 2 ? DARK : INK, i % 2 ? 0.07 : 0.05))
+    out.push(line(p, 0, p, span, 0.7, i % 2 ? INK : DARK, i % 2 ? 0.04 : 0.06))
   }
   // Slub lines: short, thicker fibres.
-  out.push(line(2, 7.5, 9, 7.5, 0.5, INK, 0.1))
-  out.push(line(14, 16.5, 21, 16.5, 0.5, DARK, 0.12))
-  out.push(line(19.5, 2, 19.5, 6.5, 0.5, INK, 0.09))
-  out.push(line(6.5, 17, 6.5, 22, 0.5, DARK, 0.1))
+  out.push(line(sc(2), sc(7.5), sc(9), sc(7.5), 0.5, INK, 0.1))
+  out.push(line(sc(14), sc(16.5), sc(21), sc(16.5), 0.5, DARK, 0.12))
+  out.push(line(sc(19.5), sc(2), sc(19.5), sc(6.5), 0.5, INK, 0.09))
+  out.push(line(sc(6.5), sc(17), sc(6.5), sc(22), 0.5, DARK, 0.1))
   // Micro-stipple.
   const dots: [number, number][] = [[1, 2], [5, 11], [10, 4], [12, 13], [17, 8], [22, 20], [8, 21], [20, 12], [3, 16], [15, 1]]
-  dots.forEach(([x, y], i) => out.push(dot(x, y, 0.3, i % 2 ? DARK : INK, 0.14)))
+  dots.forEach(([x, y], i) => out.push(dot(sc(x), sc(y), sc(0.3), i % 2 ? DARK : INK, 0.14)))
   return out.join('')
 }
 
 export const PATTERN_DEFS: Record<Exclude<FloorPattern, 'solid'>, PatternDef> = {
-  wood: { w: WOOD_W, h: 54, inner: woodInner },
+  wood: { w: WOOD_W, h: 3 * WOOD_PLANK_H, inner: woodInner },
   parquet: { w: HB_W * HB_N, h: HB_W * HB_N, inner: parquetInner },
-  tile: { w: 90, h: 90, inner: tileInner },
-  stone: { w: 120, h: 80, inner: stoneInner },
-  carpet: { w: 24, h: 24, inner: carpetInner },
+  tile: { w: 2 * TILE, h: 2 * TILE, inner: tileInner },
+  stone: { w: 90, h: 60, inner: stoneInner },
+  carpet: { w: 12, h: 12, inner: carpetInner },
 }
 
 export const patternId = (roomId: string, scope = 'fp'): string => `${scope}-${roomId.replace(/[^A-Za-z0-9_-]/g, '_')}`
