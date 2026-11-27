@@ -138,6 +138,22 @@ export function setRoomFloorPattern(artboardId: string, roomId: string, pattern:
   })
 }
 
+/** Set the floor pattern angle (degrees) of one room. Normalised to [0, 360); undefined and 0 store nothing. */
+export function setRoomFloorPatternAngle(artboardId: string, roomId: string, angleDeg: number | undefined): void {
+  if (!findArtboard(artboardId)?.rooms.some((r) => r.id === roomId)) return
+  let a = 0
+  if (angleDeg !== undefined && Number.isFinite(angleDeg)) {
+    a = Math.round((((angleDeg % 360) + 360) % 360) * 10) / 10
+    if (a >= 360) a = 0
+  }
+  useDoc.getState().update((d) => {
+    const r = d.artboards.find((x) => x.id === artboardId)!.rooms.find((x) => x.id === roomId)
+    if (!r) return
+    if (a === 0) delete r.floorPatternAngleDeg
+    else r.floorPatternAngleDeg = a
+  })
+}
+
 /** Paint (or with undefined, clear) one wall of a room. The map is removed when it becomes empty. */
 export function setRoomWallColor(artboardId: string, roomId: string, edgeIndex: number, color: string | undefined): void {
   if (!findArtboard(artboardId)?.rooms.some((r) => r.id === roomId)) return

@@ -4,6 +4,7 @@ import { pointInPolygon, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { DEFAULT_WALL_THICKNESS_CM, MAX_WALL_THICKNESS_CM } from '../../model/types'
 import type { Artboard, Opening, Room } from '../../model/types'
+import { openingEndpoints } from '../openings/geometry'
 import { hostWallIn } from '../openings/sync'
 
 /** Crisp mid-grey wall body for the dark theme (canvas and export). */
@@ -130,6 +131,39 @@ export function openingSymbolShift(op: Opening, wall: OpeningWall): Vec {
     return swingsOutward ? { x: out.x * t, y: out.y * t } : { x: 0, y: 0 }
   }
   return { x: (out.x * t) / 2, y: (out.y * t) / 2 }
+}
+
+/** How far the inner edge of a threshold quad reaches into the room, in cm. */
+export const THRESHOLD_INSET_CM = 0.25
+
+/**
+ * Floor threshold quad per host room id, for every door and open passage of `openings` that crosses
+ * a thick wall. A quad spans the opening width and bridges the wall thickness, from the room border
+ * to the outer wall face, so the floor colour and the floor pattern of the host room continue
+ * through the doorway instead of stopping at the wall line. Thin walls, flush 0 cm shared walls and
+ * windows (they sit above a wall sill) get no quad.
+ */
+export function roomDoorThresholds(rooms: Room[], openings: Opening[], thicknessCm: number): Map<string, Vec[][]> {
+  const byRoom = new Map<string, Vec[][]>()
+  if (!(thicknessCm > 0)) return byRoom
+  for (const op of openings) {
+    if (op.kind !== 'door' && op.kind !== 'opening') continue
+    const host = hostWallIn(rooms, op)
+    const wall = openingWall(rooms, op, thicknessCm)
+    if (!host || !wall || !(wall.thicknessCm > 0)) continue
+    const { start, end } = openingEndpoints(op)
+    const { out } = wall
+    // Inner edge slightly inside the room: no anti-aliasing hairline seam against the room polygon.
+    const startIn = { x: start.x - out.x * THRESHOLD_INSET_CM, y: start.y - out.y * THRESHOLD_INSET_CM }
+    const endIn = { x: end.x - out.x * THRESHOLD_INSET_CM, y: end.y - out.y * THRESHOLD_INSET_CM }
+    const startOut = { x: start.x + out.x * wall.thicknessCm, y: start.y + out.y * wall.thicknessCm }
+    const endOut = { x: end.x + out.x * wall.thicknessCm, y: end.y + out.y * wall.thicknessCm }
+    const quad = [startIn, endIn, endOut, startOut]
+    const list = byRoom.get(host.room.id)
+    if (list) list.push(quad)
+    else byRoom.set(host.room.id, [quad])
+  }
+  return byRoom
 }
 
 /** Jamb segment from the room edge point `p` across the wall thickness. */

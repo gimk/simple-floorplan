@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Opening, Room } from '../../model/types'
 import { openingHitEndpoints } from '../openings/hit'
 import {
-  edgeOutwardNormal, effectiveWallThickness, openingSymbolShift, openingWall, wallMaskModel, wallStrokeMaskModel,
+  edgeOutwardNormal, effectiveWallThickness, openingSymbolShift, openingWall, roomDoorThresholds, wallMaskModel,
+  wallStrokeMaskModel,
   wallThicknessOf,
 } from './walls'
 
@@ -139,5 +140,80 @@ describe('effective wall thickness', () => {
     // The mask box covers the cutout on both sides of the flush wall line.
     expect(m.x).toBeLessThan(398.5)
     expect(m.x + m.width).toBeGreaterThan(411.5)
+  })
+})
+
+// ---------- door thresholds ----------
+// Threshold quads let the floor colour and the floor pattern of a room run through its doorways.
+// A quad spans the opening width and bridges the wall, from just inside the room border (0.25 cm,
+// so no seam shows) to the outer wall face.
+
+describe('roomDoorThresholds', () => {
+  it('is empty when the walls are thin', () => {
+    const m = roomDoorThresholds([rect(true)], [door()], 0)
+    expect(m.size).toBe(0)
+    expect([...m.values()]).toEqual([])
+    expect(roomDoorThresholds([rect(true)], [door()], -5).size).toBe(0)
+    expect(roomDoorThresholds([rect(true)], [door()], Number.NaN).size).toBe(0)
+  })
+
+  it('gives one quad over the wall thickness for an exterior door', () => {
+    const m = roomDoorThresholds([rect(true)], [door()], 10)
+    expect(m.size).toBe(1)
+    const quads = m.get('r')!
+    expect(quads).toHaveLength(1)
+    // Top wall: outward is -y, the door is 90 cm wide, centred at x = 200.
+    expect(quads[0]).toEqual([
+      { x: 155, y: 0.25 }, { x: 245, y: 0.25 },
+      { x: 245, y: -10 }, { x: 155, y: -10 },
+    ])
+  })
+
+  it('gives one quad for an open passage', () => {
+    const m = roomDoorThresholds([rect(true)], [door({ kind: 'opening' })], 10)
+    expect(m.get('r')).toHaveLength(1)
+    expect(m.get('r')![0][3]).toEqual({ x: 155, y: -10 })
+  })
+
+  it('excludes windows, which sit above a wall sill', () => {
+    const m = roomDoorThresholds([rect(true)], [door({ kind: 'window' })], 10)
+    expect(m.size).toBe(0)
+    const mixed = roomDoorThresholds([rect(true)], [door({ kind: 'window' }), door({ id: 'x', xCm: 300 })], 10)
+    expect(mixed.size).toBe(1)
+    expect(mixed.get('r')).toHaveLength(1)
+    expect(mixed.get('r')![0][0]).toEqual({ x: 255, y: 0.25 })
+  })
+
+  it('gives no quad on a flush 0 cm shared wall', () => {
+    // Adjacent rooms already touch edge to edge: there is no wall gap to fill.
+    expect(roomDoorThresholds(pair(0), [sideDoor()], 10).size).toBe(0)
+  })
+
+  it('uses the effective thickness when the gap is smaller than the artboard thickness', () => {
+    const m = roomDoorThresholds(pair(5), [sideDoor()], 10)
+    const quads = m.get('a')!
+    expect(quads).toHaveLength(1)
+    // Outward of room "a" is +x; the wall body is only the 5 cm gap, the left face of room "b".
+    expect(quads[0]).toEqual([
+      { x: 399.75, y: 105 }, { x: 399.75, y: 195 },
+      { x: 405, y: 195 }, { x: 405, y: 105 },
+    ])
+  })
+
+  it('keeps the full thickness at a wide gap and groups quads by host room', () => {
+    const m = roomDoorThresholds(pair(30), [sideDoor()], 10)
+    expect(m.get('a')![0][2]).toEqual({ x: 410, y: 195 })
+    const many = roomDoorThresholds(
+      [rect(true)],
+      [door(), door({ id: 'd2', xCm: 300 }), door({ id: 'd3', yCm: 300, angleDeg: 0 })],
+      10,
+    )
+    expect(many.size).toBe(1)
+    expect(many.get('r')).toHaveLength(3)
+  })
+
+  it('skips an opening that has no host wall', () => {
+    expect(roomDoorThresholds([rect(true)], [door({ yCm: 150 })], 10).size).toBe(0)
+    expect(roomDoorThresholds([], [door()], 10).size).toBe(0)
   })
 })

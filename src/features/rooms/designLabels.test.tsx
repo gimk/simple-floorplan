@@ -67,29 +67,69 @@ describe('opaque floors in Design mode', () => {
   const withFill = (extra: object): Artboard => ({
     ...board, rooms: [{ ...board.rooms[0], ...extra }],
   })
+  const BASE = 'fill="#161b21"'
 
-  it('renders a floor fill opaque in Design and at 0.28 in Plan', () => {
+  it('renders a solid floor on an opaque base with a faded tint in Design, 0.28 in Plan', () => {
     const b = withFill({ fill: '#b5976b' })
     ui.mode = 'design'
-    expect(renderToStaticMarkup(<RoomsLayer artboard={b} />)).toContain('fill-opacity="1"')
+    const design = renderToStaticMarkup(<RoomsLayer artboard={b} />)
+    expect(design).toContain(BASE)
+    expect(design).toContain('fill-opacity="0.42"')
     ui.mode = 'plan'
     const plan = renderToStaticMarkup(<RoomsLayer artboard={b} />)
     expect(plan).toContain('fill-opacity="0.28"')
-    expect(plan).not.toContain('fill-opacity="1"')
+    expect(plan).not.toContain(BASE)
   })
 
-  it('renders a floor pattern base opaque in Design and at 0.28 in Plan', () => {
+  it('renders a pattern with an opaque base and a faded tint in Design, 0.28 in Plan', () => {
     const b = withFill({ fill: '#8a6b4a', floorPattern: 'wood' })
     ui.mode = 'design'
-    expect(renderToStaticMarkup(<RoomsLayer artboard={b} />)).toContain('fill-opacity="1"')
+    const design = renderToStaticMarkup(<RoomsLayer artboard={b} />)
+    expect(design).toContain(BASE)
+    expect(design).toContain('fill-opacity="0.42"')
     ui.mode = 'plan'
-    expect(renderToStaticMarkup(<RoomsLayer artboard={b} />)).toContain('fill-opacity="0.28"')
+    const plan = renderToStaticMarkup(<RoomsLayer artboard={b} />)
+    expect(plan).toContain('fill-opacity="0.28"')
+    expect(plan).not.toContain(BASE)
   })
 
   it('keeps the subtle default fill with no fill and no pattern', () => {
     ui.mode = 'design'
     const html = renderToStaticMarkup(<RoomsLayer artboard={board} />)
     expect(html).toContain('rgba(255,255,255,0.04)')
-    expect(html).not.toContain('fill-opacity="1"')
+    expect(html).not.toContain(BASE)
+  })
+
+  it('rotates the pattern by floorPatternAngleDeg', () => {
+    ui.mode = 'design'
+    const rotated = renderToStaticMarkup(<RoomsLayer artboard={withFill({ floorPattern: 'wood', floorPatternAngleDeg: 45 })} />)
+    expect(rotated).toContain('patternTransform="rotate(45)"')
+    const plain = renderToStaticMarkup(<RoomsLayer artboard={withFill({ floorPattern: 'wood' })} />)
+    expect(plain).not.toContain('patternTransform')
+  })
+})
+
+describe('door thresholds', () => {
+  // A door on the top wall (y = 0) of the room; a window at the same place for the negative case.
+  const hosted = (kind: 'door' | 'window'): Artboard => ({
+    ...board,
+    rooms: [{ ...board.rooms[0], fill: '#8a6b4a', floorPattern: 'wood' }],
+    openings: [{
+      id: 'o1', kind, xCm: 200, yCm: 0, angleDeg: 0, widthCm: 90, roomId: 'r1',
+    } as Artboard['openings'][number]],
+  })
+
+  it('fills a door threshold with the floor pattern of its room', () => {
+    ui.mode = 'design'
+    const html = renderToStaticMarkup(<RoomsLayer artboard={hosted('door')} />)
+    expect(html).toContain('data-door-threshold="r1"')
+    const m = html.match(/<polygon data-door-threshold="r1"[^>]*>/)
+    expect(m?.[0]).toContain('fill="url(#fp-r1)"')
+    expect(m?.[0]).toContain('stroke="none"')
+  })
+
+  it('draws no threshold for a window', () => {
+    ui.mode = 'design'
+    expect(renderToStaticMarkup(<RoomsLayer artboard={hosted('window')} />)).not.toContain('data-door-threshold')
   })
 })

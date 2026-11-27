@@ -18,12 +18,15 @@ import {
   constrainAxis, constrainWallPerpendicular, deleteVertex, insertVertexOnEdge, moveEdge, moveRoom, moveVertex,
   roomWalls, roundToPrecision, scaleRoomFromVertex, wallResizeCursor,
 } from './ops'
-import { DEFAULT_PATTERN_FILL, PATTERN_DEFS, isPatterned, patternId } from './floorPatterns'
+import {
+  DEFAULT_PATTERN_FILL, DESIGN_FLOOR_BASE, DESIGN_FLOOR_TINT_OPACITY, PATTERN_DEFS, PLAN_FLOOR_OPACITY,
+  isPatterned, patternId, patternTransformOf,
+} from './floorPatterns'
 import { snapPoint, snapRoomDelta } from './snap'
 import type { SnapGuide } from './snap'
 import { computeTextLod } from './textLod'
 import type { TextLod } from './textLod'
-import { WALL_COLOR, wallMaskModel, wallStrokeMaskModel, wallThicknessOf } from './walls'
+import { WALL_COLOR, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf } from './walls'
 import { CANVAS_BG, CANVAS_HALO, CANVAS_SELECT } from '../../shell/canvasTokens'
 
 export type EditWallRequest = {
@@ -78,6 +81,9 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const strokeMaskModel = useMemo(() => wallStrokeMaskModel(artboard, thickness, strokeBandPx), [artboard.rooms, artboard.openings, thickness, strokeBandPx])
   const strokeMaskId = `wall-stroke-mask-${artboard.id}`
+  // Floor quads that fill each door / open passage across a thick wall, with the floor of their room.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const doorThresholds = useMemo(() => roomDoorThresholds(artboard.rooms, artboard.openings, thickness), [artboard.rooms, artboard.openings, thickness])
 
   // Per-room polygon data: only changes when the rooms change, not on zoom.
   const roomGeo = useMemo(() => artboard.rooms.map((room) => ({
@@ -381,20 +387,34 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
         const pattern = isPatterned(room.floorPattern) ? room.floorPattern : null
         const pid = patternId(room.id)
         const def = pattern ? PATTERN_DEFS[pattern] : null
+        const floorFill = pattern ? `url(#${pid})` : (room.fill ?? 'rgba(255,255,255,0.04)')
+        const floorOpacity = !pattern && room.fill ? (design ? DESIGN_FLOOR_TINT_OPACITY : PLAN_FLOOR_OPACITY) : undefined
+        // Solid colour floors in Design mode sit on an opaque base, so they are opaque but muted.
+        const opaqueBase = design && !pattern && !!room.fill
+        const quads = doorThresholds.get(room.id) ?? []
+        const quadPts = (q: Vec[]) => q.map((v) => `${v.x},${v.y}`).join(' ')
         return (
           <g key={room.id} data-room-id={room.id} data-entity="room" data-id={room.id} aria-label={`${room.name} (${areaText} m²)`}>
             {pattern && def && (
               <defs>
-                <pattern id={pid} width={def.w} height={def.h} patternUnits="userSpaceOnUse">
-                  <rect width={def.w} height={def.h} fill={room.fill ?? DEFAULT_PATTERN_FILL} fillOpacity={design ? 1 : 0.28} />
+                <pattern id={pid} width={def.w} height={def.h} patternUnits="userSpaceOnUse" patternTransform={patternTransformOf(room.floorPatternAngleDeg)}>
+                  {design ? (
+                    <>
+                      <rect width={def.w} height={def.h} fill={DESIGN_FLOOR_BASE} />
+                      <rect width={def.w} height={def.h} fill={room.fill ?? DEFAULT_PATTERN_FILL} fillOpacity={DESIGN_FLOOR_TINT_OPACITY} />
+                    </>
+                  ) : (
+                    <rect width={def.w} height={def.h} fill={room.fill ?? DEFAULT_PATTERN_FILL} fillOpacity={PLAN_FLOOR_OPACITY} />
+                  )}
                   <g dangerouslySetInnerHTML={{ __html: def.inner(px(1)) }} />
                 </pattern>
               </defs>
             )}
+            {opaqueBase && <polygon points={pts} fill={DESIGN_FLOOR_BASE} pointerEvents="none" />}
             <polygon
               points={pts}
-              fill={pattern ? `url(#${pid})` : (room.fill ?? 'rgba(255,255,255,0.04)')}
-              fillOpacity={!pattern && room.fill ? (design ? 1 : 0.28) : undefined}
+              fill={floorFill}
+              fillOpacity={floorOpacity}
               // Thick walls: the border stroke moves to a masked outline below, so it cannot cross
               // an opening. Thin walls keep the old single polygon.
               stroke={strokeMaskModel ? 'none' : selected ? ORANGE : STROKE}
@@ -406,6 +426,15 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
               onClick={(e) => onRoomClick(e, room)}
               {...gestureProps}
             />
+            {quads.map((q, i) => (
+              <g key={`thr-${i}`}>
+                {opaqueBase && <polygon points={quadPts(q)} fill={DESIGN_FLOOR_BASE} pointerEvents="none" />}
+                <polygon
+                  data-door-threshold={room.id} points={quadPts(q)}
+                  fill={floorFill} fillOpacity={floorOpacity} stroke="none" pointerEvents="none"
+                />
+              </g>
+            ))}
             {(() => {
               // Design mode shows no room name and no area on the canvas (the aria-label stays).
               if (design) return null

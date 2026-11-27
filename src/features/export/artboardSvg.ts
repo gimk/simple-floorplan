@@ -9,7 +9,7 @@ import { DEFAULT_PATTERN_FILL, isPatterned, patternId, patternSvg } from '../roo
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
 import { directionArrowGeometry, furnitureCornerRadiusCm } from '../furniture/geometry'
 import {
-  WALL_COLOR, jambSegment, openingSymbolShift, openingWall, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
+  WALL_COLOR, jambSegment, openingSymbolShift, openingWall, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
 } from '../rooms/walls'
 import type { OpeningWall } from '../rooms/walls'
 import { doorArcGeometry, openingEndpoints, openingSymbol, openingVariant } from '../openings/geometry'
@@ -155,7 +155,7 @@ type Ctx = {
 }
 
 /** Rooms: filled polygon, 1.5px outline, name + area in the middle, wall lengths on the outside. */
-function roomSvg(room: Room, ctx: Ctx): string[] {
+function roomSvg(room: Room, ctx: Ctx, thresholds: Vec[][] = []): string[] {
   const v = room.vertices
   if (v.length < 3) return []
   const out: string[] = []
@@ -163,7 +163,7 @@ function roomSvg(room: Room, ctx: Ctx): string[] {
   const pattern = isPatterned(room.floorPattern) ? room.floorPattern : null
   const pid = patternId(room.id, 'floor')
   if (pattern) {
-    out.push(`    <defs>${patternSvg(pid, pattern, esc(room.fill ?? DEFAULT_PATTERN_FILL), ctx.u(1))}</defs>`)
+    out.push(`    <defs>${patternSvg(pid, pattern, esc(room.fill ?? DEFAULT_PATTERN_FILL), ctx.u(1), room.floorPatternAngleDeg)}</defs>`)
   }
   const fillOpacity = room.fill && !pattern ? ' fill-opacity="0.28"' : ''
   const fillValue = pattern ? `url(#${pid})` : esc(room.fill ?? 'rgba(255,255,255,0.04)')
@@ -194,6 +194,13 @@ function roomSvg(room: Room, ctx: Ctx): string[] {
       `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${fillValue}"${fillOpacity} ` +
         `stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" stroke-linejoin="round" />`,
       ...paintLines.map((l) => l.slice(2)),
+    )
+  }
+  // Door and passage thresholds across a thick wall: same floor as the room, no stroke.
+  for (const q of thresholds) {
+    out.push(
+      `    <polygon data-door-threshold="${esc(room.id)}" points="${q.map((p) => `${num(p.x)},${num(p.y)}`).join(' ')}" ` +
+        `fill="${fillValue}"${fillOpacity} stroke="none" />`,
     )
   }
   const c = labelPoint([v])
@@ -456,7 +463,8 @@ export function renderArtboardSvg(artboard: Artboard, opts: ExportOptions = {}):
   body.push(...wallLayerSvg(artboard, ctx))
   // Declared here so both masks come before the shapes that reference them.
   body.push(...strokeMaskSvg(artboard, ctx))
-  for (const room of artboard.rooms) body.push(...roomSvg(room, ctx))
+  const doorThresholds = roomDoorThresholds(artboard.rooms, artboard.openings, ctx.wallThicknessCm)
+  for (const room of artboard.rooms) body.push(...roomSvg(room, ctx, doorThresholds.get(room.id)))
   if (includeFurniture) for (const f of artboard.furniture) body.push(...furnitureSvg(f, ctx))
   for (const op of artboard.openings) body.push(...openingSvg(op, ctx, openingWall(artboard.rooms, op, ctx.wallThicknessCm)))
 

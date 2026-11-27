@@ -12,6 +12,8 @@ export type RoomShape = {
   vertices: Vec[]
   fill?: string
   floorPattern?: FloorPattern
+  /** Rotation of the floor pattern in degrees. Omitted when 0. */
+  floorPatternAngleDeg?: number
   /** Accent paint per wall: keys are edge indices ('0', '1', ...), values are hex colours. */
   wallColors?: Record<string, string>
 }

@@ -8,13 +8,14 @@ import { Armchair, ChevronDown, ChevronUp, PaintBucket, Paintbrush, Plus, Square
 import { pointInPolygon } from '../../model/geometry'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem, Room } from '../../model/types'
-import { BTN, BackLink, EmptyHint, FieldRow, IconButton, MUTED, PanelSection, TextField, formatM2 } from '../../shell/panel'
+import { BTN, BackLink, EmptyHint, FieldRow, IconButton, MUTED, NumberField, PanelSection, TextField, formatM2 } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
+import { isPatterned } from '../rooms/floorPatterns'
 import { roomAreaM2 } from '../artboards/frame'
 import { selectArtboard } from '../artboards/selection'
 import { renameRoom } from '../rooms/actions'
 import { roomWalls, formatLengthCm } from '../rooms/ops'
-import { addFurniture, reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomWallColor } from './actions'
+import { addFurniture, reorderFurniture, setRoomFill, setRoomFloorPattern, setRoomFloorPatternAngle, setRoomWallColor } from './actions'
 import { FLOOR_PATTERNS, FLOOR_SWATCHES, FURNITURE_COLORS, WALL_ACCENT_COLORS } from './presets'
 
 export type DesignRoomInspectProps = {
@@ -200,6 +201,40 @@ export function DesignRoomInspect({ artboardId, roomId }: DesignRoomInspectProps
             )
           })}
         </div>
+        {isPatterned(room.floorPattern) && (
+          <>
+            <FieldRow label="Pattern angle" hint="degrees">
+              <NumberField
+                ariaLabel="Floor pattern angle"
+                unit="°"
+                min={0}
+                max={359}
+                value={room.floorPatternAngleDeg ?? 0}
+                onCommit={(v) => setRoomFloorPatternAngle(artboard.id, room.id, v ?? 0)}
+              />
+            </FieldRow>
+            <div className="grid grid-cols-4 gap-1" role="group" aria-label="Quick pattern angle">
+              {[0, 45, 90, 135].map((a) => {
+                const active = (room.floorPatternAngleDeg ?? 0) === a
+                return (
+                  <button
+                    key={a}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setRoomFloorPatternAngle(artboard.id, room.id, a)}
+                    className={`min-h-7 rounded-full border px-1 text-xs font-medium pointer-coarse:min-h-10 ${
+                      active
+                        ? 'border-orange-500 bg-orange-500/15 text-orange-600 dark:text-orange-300'
+                        : 'border-black/15 text-slate-700 hover:bg-black/5 dark:border-white/20 dark:text-slate-200 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    {`${a}°`}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
       </PanelSection>
 
       <PanelSection title="Wall paint" icon={<Paintbrush size={14} aria-hidden="true" />}>
