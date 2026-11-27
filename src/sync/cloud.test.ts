@@ -104,6 +104,39 @@ describe('cloud sync', () => {
     await expect(loadProjectFromCloud('p1', fx)).rejects.toThrow(/500/)
   })
 
+  it('includes only error-severity issue messages in the failure message', async () => {
+    const body = {
+      error: 'invalid_document',
+      issues: [
+        { severity: 'warning', message: 'Room has no door' },
+        { severity: 'error', message: 'Wall thickness must be positive' },
+        { severity: 'error', message: 'Room area is zero' },
+      ],
+    }
+    const f = vi.fn(async () => new Response(JSON.stringify(body), { status: 400 }))
+    const doc: ProjectDoc = { ...createDefaultProject(), id: 'p1', title: 'Flat' }
+    const err = await saveProjectToCloud(doc, f as unknown as typeof fetch).catch((e: unknown) => e as Error)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe(
+      'Cloud request failed: PUT /api/projects/p1 (400): Wall thickness must be positive; Room area is zero',
+    )
+    expect((err as Error).message).not.toContain('Room has no door')
+  })
+
+  it('includes a plain error string from the response body', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 }))
+    const err = await loadProjectFromCloud('p1', f as unknown as typeof fetch).catch((e: unknown) => e as Error)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe('Cloud request failed: GET /api/projects/p1 (400): Invalid JSON')
+  })
+
+  it('omits the detail when the error body is empty', async () => {
+    const f = vi.fn(async () => new Response('', { status: 500 }))
+    const err = await deleteCloudProject('p1', f as unknown as typeof fetch).catch((e: unknown) => e as Error)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toBe('Cloud request failed: DELETE /api/projects/p1 (500)')
+  })
+
   it('sends x-api-token when set', async () => {
     vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'sfp-cloud-token' ? 'secret' : null) })
     const f = vi.fn(async (_url: string, _init?: RequestInit) => ok({ projects: [] }))

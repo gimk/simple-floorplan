@@ -48,17 +48,26 @@ export function segmentsIntersect(a: Vec, b: Vec, c: Vec, d: Vec): boolean {
   return false
 }
 
-/** True when two non-adjacent edges of the polygon meet. Zero-length edges are ignored. */
+/**
+ * True when two non-adjacent edges of the polygon meet. Zero-length edges are ignored: consecutive
+ * near-duplicate vertices are collapsed first, so the edges next to a zero-length wall are not
+ * compared with each other.
+ */
 export function isSelfIntersecting(vertices: Vec[]): boolean {
-  const n = vertices.length
+  // Collapse consecutive near-duplicate vertices (including the wrap-around last -> first pair).
+  const pts: Vec[] = []
+  for (const v of vertices) {
+    if (pts.length === 0 || dist(pts[pts.length - 1], v) >= ZERO_WALL_CM) pts.push(v)
+  }
+  while (pts.length > 1 && dist(pts[pts.length - 1], pts[0]) < ZERO_WALL_CM) pts.pop()
+
+  const n = pts.length
   if (n < 4) return false
   for (let i = 0; i < n; i++) {
-    const a = vertices[i], b = vertices[(i + 1) % n]
-    if (dist(a, b) < ZERO_WALL_CM) continue
+    const a = pts[i], b = pts[(i + 1) % n]
     for (let j = i + 1; j < n; j++) {
       if (j === i + 1 || (i === 0 && j === n - 1)) continue // neighbours share a vertex
-      const c = vertices[j], d = vertices[(j + 1) % n]
-      if (dist(c, d) < ZERO_WALL_CM) continue
+      const c = pts[j], d = pts[(j + 1) % n]
       if (segmentsIntersect(a, b, c, d)) return true
     }
   }

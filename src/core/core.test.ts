@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createDefaultProject } from '../model/schema'
 import type { ProjectDoc } from '../model/types'
-import { applyCommand, applyCommands, computeOpeningOnWall, summarizeProject, validateProject } from './index'
+import { applyCommand, applyCommands, computeOpeningOnWall, isSelfIntersecting, summarizeProject, validateProject } from './index'
 import type { AgentCommand } from './index'
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T
@@ -77,6 +77,20 @@ describe('validateProject', () => {
     expect(r.issues.some((i) => i.code === 'room.self_intersecting')).toBe(true)
   })
 
+  it('warns (but does not error) on a rectangle with a duplicate vertex mid-ring', () => {
+    const doc = createDefaultProject()
+    doc.artboards[0].rooms.push({
+      id: 'r',
+      name: 'Dup',
+      vertices: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+    })
+    const r = validateProject(doc)
+    expect(r.ok).toBe(true)
+    expect(r.issues.some((i) => i.code === 'room.zero_length_wall')).toBe(true)
+    expect(r.issues.find((i) => i.code === 'room.zero_length_wall')?.severity).toBe('warning')
+    expect(r.issues.some((i) => i.code === 'room.self_intersecting')).toBe(false)
+  })
+
   it('does not flag a simple L-shaped room', () => {
     const doc = createDefaultProject()
     doc.artboards[0].rooms.push({ id: 'r', name: 'L', vertices: [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 100 }, { x: 100, y: 100 }, { x: 100, y: 200 }, { x: 0, y: 200 }] })
@@ -111,6 +125,37 @@ describe('validateProject', () => {
     const { doc } = withRoom()
     doc.artboards[0].openings.push({ id: 'o', kind: 'door', xCm: 200, yCm: 20, angleDeg: 0, widthCm: 85 })
     expect(validateProject(doc).issues).toEqual([])
+  })
+})
+
+describe('isSelfIntersecting', () => {
+  it('is false for a simple rectangle', () => {
+    expect(isSelfIntersecting([{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }])).toBe(false)
+  })
+
+  it('is false when a duplicate vertex sits mid-ring', () => {
+    // Edge 1 is zero-length; edges 0 and 2 touch only at one shared vertex.
+    expect(isSelfIntersecting([{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }])).toBe(false)
+  })
+
+  it('is false when the last vertex duplicates the first vertex', () => {
+    // Wrap-around edge (last -> first) is zero-length.
+    expect(isSelfIntersecting([{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }, { x: 0, y: 0 }])).toBe(false)
+  })
+
+  it('is false for a collapsed triangle whose wrap-around pair is near-duplicate', () => {
+    expect(isSelfIntersecting([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 0, y: 100 }, { x: 0, y: 0.01 }])).toBe(false)
+  })
+
+  it('is true for a bow-tie, also when it has a duplicate vertex', () => {
+    expect(isSelfIntersecting([{ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 100, y: 0 }, { x: 0, y: 100 }])).toBe(true)
+    expect(isSelfIntersecting([{ x: 0, y: 0 }, { x: 100, y: 100 }, { x: 100, y: 100 }, { x: 100, y: 0 }, { x: 0, y: 100 }])).toBe(true)
+  })
+
+  it('is false below four vertices', () => {
+    expect(isSelfIntersecting([])).toBe(false)
+    expect(isSelfIntersecting([{ x: 0, y: 0 }])).toBe(false)
+    expect(isSelfIntersecting([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 0, y: 10 }])).toBe(false)
   })
 })
 

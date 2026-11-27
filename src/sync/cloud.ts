@@ -50,13 +50,57 @@ function authHeaders(): Record<string, string> {
   return t ? { 'x-api-token': t } : {}
 }
 
+/**
+ * Reads a failed response body and turns it into a short human-readable detail.
+ * Understands the API's `{ error, issues: [{ severity, message }] }` shape, a plain
+ * `{ error }` / `{ message }` object, and falls back to the raw text. Never throws.
+ */
+async function errorDetail(res: Response): Promise<string> {
+  const text = await res.text().catch(() => '')
+  let parsed: unknown = null
+  if (text.trim().length > 0) {
+    try {
+      parsed = JSON.parse(text) as unknown
+    } catch {
+      parsed = null
+    }
+  }
+  if (parsed !== null && typeof parsed === 'object') {
+    const body = parsed as { issues?: unknown; message?: unknown; error?: unknown }
+    if (Array.isArray(body.issues)) {
+      const items = body.issues.filter(
+        (i): i is { severity?: unknown; message?: unknown } => typeof i === 'object' && i !== null,
+      )
+      const errors = items.filter((i) => i.severity === 'error')
+      const picked = errors.length > 0 ? errors : items
+      const messages = picked
+        .map((i) => (typeof i.message === 'string' ? i.message.trim() : ''))
+        .filter((m) => m.length > 0)
+        .slice(0, 3)
+      if (messages.length > 0) return messages.join('; ')
+    }
+    if (typeof body.message === 'string' && body.message.trim().length > 0) return body.message.trim()
+    if (typeof body.error === 'string' && body.error.trim().length > 0) return body.error.trim()
+  }
+  const trimmed = text.trim()
+  return trimmed.length > 0 ? trimmed.slice(0, 200) : ''
+}
+
 async function call(fetchFn: FetchFn, url: string, init: RequestInit = {}): Promise<Response> {
   const res = await fetchFn(url, {
     ...init,
     headers: { ...authHeaders(), ...(init.headers as Record<string, string> | undefined) },
   })
   if (res.status === 401) throw new CloudUnauthorizedError('Passcode required')
-  if (!res.ok) throw new Error(`Cloud request failed: ${init.method ?? 'GET'} ${url} (${res.status})`)
+  if (!res.ok) {
+    const detail = await errorDetail(res)
+    const method = init.method ?? 'GET'
+    throw new Error(
+      detail
+        ? `Cloud request failed: ${method} ${url} (${res.status}): ${detail}`
+        : `Cloud request failed: ${method} ${url} (${res.status})`,
+    )
+  }
   return res
 }
 
