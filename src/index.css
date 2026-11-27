@@ -36,7 +36,7 @@
   }
 }
 * { -webkit-tap-highlight-color: transparent; }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 
 /* No visible scroll bars anywhere: the panels still scroll with the wheel, the trackpad and touch. */
 * { scrollbar-width: none; }

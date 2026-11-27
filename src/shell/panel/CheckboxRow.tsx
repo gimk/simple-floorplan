@@ -21,7 +21,7 @@ export function CheckboxRow({ label, checked, onChange, id, name, disabled, desc
   const inputId = id ?? auto
   return (
     <div className={className}>
-      <label htmlFor={inputId} className="flex min-h-9 cursor-pointer items-center gap-2 text-sm pointer-coarse:min-h-11">
+      <label htmlFor={inputId} className="relative flex min-h-9 cursor-pointer items-center gap-2 text-sm pointer-coarse:min-h-11">
         <input
           id={inputId}
           name={name}
@@ -46,7 +46,7 @@ export function SwitchRow({ label, checked, onChange, id, name, disabled, descri
   const inputId = id ?? auto
   return (
     <div className={className}>
-      <label htmlFor={inputId} className="flex min-h-9 cursor-pointer items-center gap-2 text-sm pointer-coarse:min-h-11">
+      <label htmlFor={inputId} className="relative flex min-h-9 cursor-pointer items-center gap-2 text-sm pointer-coarse:min-h-11">
         <input
           id={inputId}
           name={name}
