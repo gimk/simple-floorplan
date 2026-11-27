@@ -37,12 +37,11 @@ export function downloadArtboardSvg(artboard: Artboard, opts?: ExportOptions): v
 }
 
 /**
- * Download the artboard as a PNG: the SVG is drawn on a 2x canvas filled with the page background,
- * then written with `canvas.toBlob`. Resolves when the download has started.
+ * Rasterize the artboard to a PNG blob: the SVG is drawn on a 2x canvas filled with the page
+ * background, then written with `canvas.toBlob`. Used by the PNG download and the PNG copy.
  */
-export async function downloadArtboardPng(artboard: Artboard, opts?: ExportOptions): Promise<void> {
+export async function renderArtboardPngBlob(artboard: Artboard, opts?: ExportOptions): Promise<Blob> {
   const { svg, widthPx, heightPx } = renderArtboardSvg(artboard, opts)
-  const filename = slugFilename(artboard.name || opts?.projectTitle || '', 'png')
   const url = URL.createObjectURL(svgBlob(svg))
   try {
     const img = new Image()
@@ -62,8 +61,46 @@ export async function downloadArtboardPng(artboard: Artboard, opts?: ExportOptio
     g.drawImage(img, 0, 0, canvas.width, canvas.height)
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
     if (!blob) throw new Error('The PNG could not be built')
-    saveBlob(blob, filename)
+    return blob
   } finally {
     URL.revokeObjectURL(url)
   }
+}
+
+/** Download the artboard as a PNG named after it. Resolves when the download has started. */
+export async function downloadArtboardPng(artboard: Artboard, opts?: ExportOptions): Promise<void> {
+  const blob = await renderArtboardPngBlob(artboard, opts)
+  saveBlob(blob, slugFilename(artboard.name || opts?.projectTitle || '', 'png'))
+}
+
+/**
+ * Copy the artboard to the clipboard as a PNG picture. The ClipboardItem gets the rasterization
+ * promise itself, so the clipboard write stays inside the user gesture while the canvas works.
+ */
+export async function copyArtboardPng(artboard: Artboard, opts?: ExportOptions): Promise<void> {
+  const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard
+  if (typeof ClipboardItem === 'undefined' || !clipboard?.write) {
+    throw new Error('Image clipboard is not supported in this browser')
+  }
+  await clipboard.write([new ClipboardItem({ 'image/png': renderArtboardPngBlob(artboard, opts) })])
+}
+
+/**
+ * True for Option+Cmd+C (Mac) and Ctrl+Alt+C (other platforms): copy the artboard as a PNG.
+ * On macOS Option+C sets `e.key` to 'ç', so the `e.code === 'KeyC'` check is required there.
+ */
+export function isCopyPngShortcut(e: {
+  key: string
+  code?: string
+  metaKey: boolean
+  ctrlKey: boolean
+  shiftKey: boolean
+  altKey: boolean
+}): boolean {
+  return (
+    (e.metaKey || e.ctrlKey) &&
+    e.altKey &&
+    !e.shiftKey &&
+    (e.key.toLowerCase() === 'c' || e.code === 'KeyC')
+  )
 }

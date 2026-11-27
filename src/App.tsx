@@ -9,6 +9,7 @@ import { CalibrateOverlay } from './features/background/CalibrateOverlay'
 import { RefImageInspect } from './features/background/RefImageInspect'
 import { RefImagesLayer } from './features/background/RefImagesLayer'
 import { loadRefImageFile } from './features/background/upload'
+import { copyArtboardPng, isCopyPngShortcut } from './features/export/download'
 import { deleteFurniture, duplicateFurniture, reorderFurniture } from './features/furniture/actions'
 import { DesignRoomInspect } from './features/furniture/DesignRoomInspect'
 import { FurnitureInspect } from './features/furniture/FurnitureInspect'
@@ -105,6 +106,7 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
     rows: [
       ['Delete selection', 'Del'],
       ['Duplicate', isMac ? '⌘D' : 'Ctrl+D'],
+      ['Copy as PNG', isMac ? '⌥⌘C' : 'Ctrl+Alt+C'],
       ['Furniture back / front', '[ / ]'],
     ],
   },
@@ -334,6 +336,24 @@ export default function App() {
             })
           }
         }
+        return
+      }
+      // Option+Cmd+C (Mac) / Ctrl+Alt+C copies the selected (or active) artboard to the clipboard as a PNG picture.
+      if (isCopyPngShortcut(e)) {
+        const ui = useUi.getState()
+        const doc = useDoc.getState().doc
+        const targetId = ui.selection.kind === 'artboard' ? ui.selection.artboardId : ui.activeArtboardId
+        const ab = doc.artboards.find((a) => a.id === targetId) ?? doc.artboards[0]
+        if (!ab) return
+        e.preventDefault()
+        void copyArtboardPng(ab, {
+          projectTitle: doc.title,
+          includeFurniture: ui.mode === 'design' || ab.furniture.length > 0,
+          includeWallLabels: true,
+        }).then(
+          () => toast('PNG copied'),
+          (err) => toast(`Copy failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' }),
+        )
         return
       }
       // Cmd/Ctrl+[ / ] send the selected furniture to the back / front; [ and ] step it once.
