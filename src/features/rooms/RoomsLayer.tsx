@@ -28,6 +28,7 @@ import { computeTextLod } from './textLod'
 import type { TextLod } from './textLod'
 import { WALL_COLOR, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf } from './walls'
 import { CANVAS_BG, CANVAS_HALO, CANVAS_SELECT } from '../../shell/canvasTokens'
+import { startDesignMarquee } from './CanvasSelectLayer'
 
 export type EditWallRequest = {
   artboardId: string
@@ -68,7 +69,13 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   const selection = useUi((s) => s.selection)
   const [guides, setGuides] = useState<SnapGuide[]>([])
   const gesture = useRef<Gesture | null>(null)
-  useEffect(() => () => { gesture.current?.unsub?.() }, [])
+  const suppressRoomClick = useRef(false)
+  const designMarqueeCancel = useRef<(() => void) | null>(null)
+  useEffect(() => () => {
+    gesture.current?.unsub?.()
+    designMarqueeCancel.current?.()
+    designMarqueeCancel.current = null
+  }, [])
 
   const thickness = wallThicknessOf(artboard)
   // Wall geometry depends on rooms, openings and thickness only: pan/zoom never recomputes it.
@@ -100,6 +107,12 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   // click can pick the room whose floor colour the Inspect panel edits.
   const design = mode === 'design'
   const selectable = interactive || design
+  useEffect(() => {
+    if (!design || tool !== 'select') {
+      designMarqueeCancel.current?.()
+      designMarqueeCancel.current = null
+    }
+  }, [design, tool])
   const inArtboard = (s: Selection) => 'artboardId' in s && s.artboardId === artboard.id
   const selectedIds = selection.kind === 'room' && inArtboard(selection) ? selection.roomIds : NO_IDS
   const selectedWall = selection.kind === 'wall' && inArtboard(selection) ? selection : null
@@ -174,6 +187,10 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   const onRoomClick = (e: React.MouseEvent, room: Room) => {
     if (!design) return
     e.stopPropagation()
+    if (suppressRoomClick.current) {
+      suppressRoomClick.current = false
+      return
+    }
     // Shift-click adds or removes the room, so one floor card can paint several rooms at once.
     const sel = useUi.getState().selection
     let roomIds = [room.id]
@@ -193,9 +210,23 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   const onRoomDown = (e: ReactPointerEvent<SVGPolygonElement>, room: Room) => {
     if (e.button !== 0) return
     // Always swallow the pointer. In Design mode this keeps the canvas background hit rect
-    // (CanvasSelectLayer) from receiving the press and clearing the selection; `onRoomClick` then
-    // picks this room for the Inspect panel.
+    // (CanvasSelectLayer) from receiving the press and clearing the selection; dragging starts a
+    // furniture marquee on this artboard, while a plain click still selects the room.
     e.stopPropagation()
+    suppressRoomClick.current = false
+    if (design) {
+      if (tool !== 'select') return
+      designMarqueeCancel.current?.()
+      designMarqueeCancel.current = startDesignMarquee(e, {
+        toWorld,
+        artboardId: artboard.id,
+        onDone: (marqueeRan) => {
+          designMarqueeCancel.current = null
+          if (marqueeRan) suppressRoomClick.current = true
+        },
+      })
+      return
+    }
     if (!interactive) return
     let ids = selectedIds
     if (e.shiftKey) {
