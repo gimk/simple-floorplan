@@ -6,7 +6,7 @@ import { installAgentBridge } from './agent/bridge'
 import { useDoc } from './model/store'
 import { loadInitialDoc, startAutosave } from './sync/idb'
 import { loadProjectFromCloud } from './sync/cloud'
-import { markCloudSynced, startCloudAutosave } from './sync/cloudAutosave'
+import { markCloudSynced, restoreCloudSync, startCloudAutosave } from './sync/cloudAutosave'
 import { toast } from './features/toast'
 import { applyInitialUiParams, parseUrlParams, unregisterServiceWorkersIfRequested } from './shell/urlParams'
 
@@ -20,6 +20,7 @@ async function boot() {
   applyInitialUiParams(params)
   startAutosave(useDoc)
   startCloudAutosave(useDoc)
+  if (!params.project) void restoreCloudSync(useDoc.getState().doc)
   installAgentBridge()
   createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
   if (params.project) {

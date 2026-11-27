@@ -5,10 +5,15 @@ import { useUi } from '../shell/uiStore'
 import { toast } from '../features/toast'
 import {
   __resetCloudAutosaveForTests,
+  CLOUD_AUTOSAVE_DELAY_MS,
   CLOUD_POLL_INTERVAL_MS,
+  CLOUD_SYNCED_KEY,
   getSyncedVersion,
+  hasUnsyncedChanges,
+  hashDoc,
   markCloudSynced,
   pullCloudProject,
+  restoreCloudSync,
   startCloudAutosave,
   useCloudAutosave,
 } from './cloudAutosave'
@@ -272,5 +277,217 @@ describe('cloud live sync (poll, pull, conflict)', () => {
     // Test pullCloudProject directly
     await pullCloudProject('proj-1', fetchMock as unknown as typeof fetch)
     expect(getSyncedVersion('proj-1')).toBe(2)
+  })
+})
+
+describe('restoreCloudSync across page reloads', () => {
+  const makeRefDoc = (base: ReturnType<typeof createDefaultProject>, src: string) => ({
+    ...base,
+    id: 'proj-1',
+    title: 'Plan',
+    refImages: [
+      {
+        id: 'img-1',
+        name: 'scan.png',
+        src,
+        naturalWidth: 100,
+        naturalHeight: 100,
+        xCm: 0,
+        yCm: 0,
+        cmPerPx: 1,
+        rotationDeg: 0,
+        opacity: 0.5,
+        visible: true,
+        locked: false,
+      },
+    ],
+  })
+
+  it('case 1 (clean): restores synced version when record hash matches (ignoring refImages[].src) and resumes polling', async () => {
+    const base = createDefaultProject()
+    const cloudForm = makeRefDoc(base, '/api/images/proj-1/img-1')
+    const localForm = makeRefDoc(base, 'data:image/png;base64,AAAA')
+    vi.stubGlobal(
+      'localStorage',
+      memoryStorage({
+        'sfp-cloud-token': 'secret',
+        [CLOUD_SYNCED_KEY]: JSON.stringify({ projectId: 'proj-1', version: 5, docHash: hashDoc(cloudForm) }),
+      }),
+    )
+
+    useDoc.getState().hydrate(localForm)
+    await restoreCloudSync(useDoc.getState().doc)
+
+    expect(getSyncedVersion('proj-1')).toBe(5)
+    expect(hasUnsyncedChanges()).toBe(false)
+    expect(useCloudAutosave.getState().status).toBe('saved')
+
+    const env = createMockDocEnv()
+    vi.stubGlobal('document', env.docTarget)
+    vi.stubGlobal('window', env.winTarget)
+
+    const remoteDoc = { ...cloudForm, title: 'Updated Remotely' }
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/projects') {
+        return ok({ projects: [{ id: 'proj-1', title: 'Updated Remotely', version: 6, updatedAt: 't6' }] })
+      }
+      return ok({ id: 'proj-1', title: 'Updated Remotely', doc: remoteDoc, version: 6, updatedAt: 't6' })
+    })
+
+    unsubscribe = startCloudAutosave(useDoc, { fetchFn: fetchMock as unknown as typeof fetch })
+    await vi.advanceTimersByTimeAsync(CLOUD_POLL_INTERVAL_MS)
+
+    expect(useDoc.getState().doc.title).toBe('Updated Remotely')
+    expect(getSyncedVersion('proj-1')).toBe(6)
+  })
+
+  it('case 2 (dirty): keeps syncedVersion and marks dirty when record hash differs; poll conflicts and autosave sends baseVersion', async () => {
+    const synced = { ...createDefaultProject(), id: 'proj-1', title: 'Synced' }
+    const localDirty = { ...synced, title: 'Local Unsaved' }
+    vi.stubGlobal(
+      'localStorage',
+      memoryStorage({
+        'sfp-cloud-token': 'secret',
+        [CLOUD_SYNCED_KEY]: JSON.stringify({ projectId: 'proj-1', version: 5, docHash: hashDoc(synced) }),
+      }),
+    )
+
+    useDoc.getState().hydrate(localDirty)
+    useDoc.temporal.getState().clear()
+    await restoreCloudSync(useDoc.getState().doc)
+
+    expect(getSyncedVersion('proj-1')).toBe(5)
+    expect(hasUnsyncedChanges()).toBe(true)
+    expect(useCloudAutosave.getState().status).toBe('idle')
+
+    const env = createMockDocEnv()
+    vi.stubGlobal('document', env.docTarget)
+    vi.stubGlobal('window', env.winTarget)
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/projects') {
+        return ok({ projects: [{ id: 'proj-1', title: 'Remote v6', version: 6, updatedAt: 't6' }] })
+      }
+      if (init?.method === 'PUT') {
+        return ok({ error: 'version_conflict', currentVersion: 6 }, 409)
+      }
+      throw new Error(`Unexpected call: ${url}`)
+    })
+
+    unsubscribe = startCloudAutosave(useDoc, { fetchFn: fetchMock as unknown as typeof fetch })
+
+    // Next poll sees remote v6 > 5 while local is dirty -> enters conflict without overwriting
+    await vi.advanceTimersByTimeAsync(CLOUD_POLL_INTERVAL_MS)
+    expect(useCloudAutosave.getState().status).toBe('conflict')
+    expect(useCloudAutosave.getState().conflictVersion).toBe(6)
+    expect(useDoc.getState().doc.title).toBe('Local Unsaved')
+
+    // Also verify autosave from a fresh dirty restore sends baseVersion: 5
+    __resetCloudAutosaveForTests()
+    useDoc.getState().hydrate(localDirty)
+    useDoc.temporal.getState().clear()
+    await restoreCloudSync(useDoc.getState().doc)
+    unsubscribe()
+    unsubscribe = startCloudAutosave(useDoc, { fetchFn: fetchMock as unknown as typeof fetch })
+    useDoc.getState().setTitle('Local Unsaved 2')
+    await vi.advanceTimersByTimeAsync(CLOUD_AUTOSAVE_DELAY_MS)
+
+    const putCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+    expect(putCall).toBeDefined()
+    const sent = JSON.parse(String((putCall![1] as RequestInit).body)) as { baseVersion?: number }
+    expect(sent.baseVersion).toBe(5)
+    expect(useCloudAutosave.getState().status).toBe('conflict')
+  })
+
+  it('case 3 (no record + in cloud equal): marks synced with remote version and persists record', async () => {
+    const base = createDefaultProject()
+    const localForm = makeRefDoc(base, 'data:image/png;base64,BBBB')
+    const remoteForm = makeRefDoc(base, '/api/images/proj-1/img-1')
+    useDoc.getState().hydrate(localForm)
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/projects') {
+        return ok({ projects: [{ id: 'proj-1', title: 'Plan', version: 7, updatedAt: 't7' }] })
+      }
+      if (url === '/api/projects/proj-1') {
+        return ok({ id: 'proj-1', title: 'Plan', doc: remoteForm, version: 7, updatedAt: 't7' })
+      }
+      if (url === '/api/images/proj-1/img-1') {
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'Content-Type': 'image/png' } })
+      }
+      throw new Error(`Unexpected URL: ${url}`)
+    })
+
+    await restoreCloudSync(useDoc.getState().doc, { fetchFn: fetchMock as unknown as typeof fetch })
+
+    expect(getSyncedVersion('proj-1')).toBe(7)
+    expect(useCloudAutosave.getState().status).toBe('saved')
+    const stored = JSON.parse(localStorage.getItem(CLOUD_SYNCED_KEY)!) as { projectId: string; version: number }
+    expect(stored.projectId).toBe('proj-1')
+    expect(stored.version).toBe(7)
+  })
+
+  it('case 4 (no record + in cloud different): sets remote version and enters conflict', async () => {
+    const localDoc = { ...createDefaultProject(), id: 'proj-1', title: 'Local Version' }
+    const remoteDoc = { ...createDefaultProject(), id: 'proj-1', title: 'Cloud Version' }
+    useDoc.getState().hydrate(localDoc)
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/projects') {
+        return ok({ projects: [{ id: 'proj-1', title: 'Cloud Version', version: 9, updatedAt: 't9' }] })
+      }
+      if (url === '/api/projects/proj-1') {
+        return ok({ id: 'proj-1', title: 'Cloud Version', doc: remoteDoc, version: 9, updatedAt: 't9' })
+      }
+      throw new Error(`Unexpected URL: ${url}`)
+    })
+
+    await restoreCloudSync(useDoc.getState().doc, { fetchFn: fetchMock as unknown as typeof fetch })
+
+    expect(getSyncedVersion('proj-1')).toBe(9)
+    expect(useCloudAutosave.getState().status).toBe('conflict')
+    expect(useCloudAutosave.getState().conflictVersion).toBe(9)
+    expect(useDoc.getState().doc.title).toBe('Local Version')
+  })
+
+  it('does not upload without baseVersion while restoreCloudSync is still running', async () => {
+    const localDoc = { ...createDefaultProject(), id: 'proj-1', title: 'Initial' }
+    const remoteDoc = { ...createDefaultProject(), id: 'proj-1', title: 'Initial' }
+    useDoc.getState().hydrate(localDoc)
+
+    let resolveList!: (res: Response) => void
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/projects') {
+        return new Promise<Response>((resolve) => {
+          resolveList = resolve
+        })
+      }
+      if (url === '/api/projects/proj-1' && (!init?.method || init.method === 'GET')) {
+        return Promise.resolve(ok({ id: 'proj-1', title: 'Initial', doc: remoteDoc, version: 4, updatedAt: 't4' }))
+      }
+      if (init?.method === 'PUT') {
+        return Promise.resolve(ok({ updatedAt: 't5', version: 5 }))
+      }
+      throw new Error(`Unexpected call: ${url}`)
+    })
+
+    unsubscribe = startCloudAutosave(useDoc, { fetchFn: fetchMock as unknown as typeof fetch })
+    const restorePromise = restoreCloudSync(useDoc.getState().doc, { fetchFn: fetchMock as unknown as typeof fetch })
+
+    // User edits while restoreCloudSync is still awaiting listCloudProjects
+    useDoc.getState().setTitle('Edited During Restore')
+    await vi.advanceTimersByTimeAsync(CLOUD_AUTOSAVE_DELAY_MS + 1000)
+
+    // No PUT must have been sent without baseVersion while restore is running
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')).toBe(false)
+
+    // Finish restore: current doc differs from remoteDoc v4 -> enters conflict, still no blind PUT
+    resolveList(ok({ projects: [{ id: 'proj-1', title: 'Initial', version: 4, updatedAt: 't4' }] }))
+    await restorePromise
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(useCloudAutosave.getState().status).toBe('conflict')
+    expect(useCloudAutosave.getState().conflictVersion).toBe(4)
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')).toBe(false)
   })
 })

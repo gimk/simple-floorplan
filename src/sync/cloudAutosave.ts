@@ -20,6 +20,8 @@ export type CloudAutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'err
 
 /** localStorage key: '0' = off, anything else (or missing) = on. */
 export const CLOUD_AUTOSAVE_KEY = 'sfp-cloud-autosave'
+/** localStorage key storing `{ projectId, version, docHash }` of the last known cloud sync. */
+export const CLOUD_SYNCED_KEY = 'sfp-cloud-synced'
 export const CLOUD_AUTOSAVE_DELAY_MS = 3000
 export const CLOUD_POLL_INTERVAL_MS = 5000
 /** A failed upload is tried again after this delay (the status stays 'error' meanwhile). */
@@ -62,8 +64,61 @@ let inFlight: Promise<unknown> | null = null
 let dirtyAgain = false
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollInFlight = false
+/** True when `restoreCloudSync` found local edits that differ from the last cloud sync. */
+let restoredDirty = false
+/** Set while `restoreCloudSync` is checking the cloud, so autosave waits for a baseVersion. */
+let restoreInFlight: Promise<void> | null = null
 let activeStore: DocStore = useDoc
 let activeFetchFn: typeof fetch | undefined
+
+type SyncedRecord = {
+  projectId: string
+  version: number
+  docHash: string
+}
+
+/** Fast deterministic hash of `doc` excluding `refImages[].src` (which differs between local data URLs and cloud URLs). */
+export function hashDoc(doc: ProjectDoc): string {
+  const refImages = Array.isArray(doc.refImages)
+    ? doc.refImages.map(({ src: _src, ...rest }) => rest)
+    : doc.refImages
+  const str = JSON.stringify({ ...doc, refImages })
+  let h = 0x811c9cd5
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(36)
+}
+
+function readSyncedRecord(): SyncedRecord | null {
+  try {
+    const raw = localStorage.getItem(CLOUD_SYNCED_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as SyncedRecord).projectId === 'string' &&
+      typeof (parsed as SyncedRecord).version === 'number' &&
+      typeof (parsed as SyncedRecord).docHash === 'string'
+    ) {
+      return parsed as SyncedRecord
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeSyncedRecord(doc: ProjectDoc, version: number): void {
+  try {
+    const record: SyncedRecord = { projectId: doc.id, version, docHash: hashDoc(doc) }
+    localStorage.setItem(CLOUD_SYNCED_KEY, JSON.stringify(record))
+  } catch {
+    // Storage unavailable: in-memory sync state still works.
+  }
+}
 
 function getCurrentDoc(): ProjectDoc {
   return activeStore.getState ? activeStore.getState().doc : useDoc.getState().doc
@@ -139,9 +194,11 @@ export function markCloudSynced(doc: ProjectDoc, version?: number): void {
   syncedProjectId = doc.id
   if (typeof version === 'number') syncedVersion = version
   else if (!sameProject) syncedVersion = null
+  restoredDirty = false
   clearTimer()
   paused = false
   dirtyAgain = false
+  if (syncedVersion !== null) writeSyncedRecord(doc, syncedVersion)
   useCloudAutosave.setState({ status: 'saved', lastSavedAt: Date.now(), lastError: null, conflictVersion: null })
 }
 
@@ -156,7 +213,7 @@ export function markCloudConflict(currentVersion: number): void {
 export function hasUnsyncedChanges(): boolean {
   const doc = getCurrentDoc()
   if (syncedDoc) return doc !== syncedDoc
-  return hasPastStates()
+  return restoredDirty || hasPastStates()
 }
 
 /** Upload the current doc after a quiet period. Later calls restart the countdown. */
@@ -181,6 +238,14 @@ export async function flushCloudSave(): Promise<void> {
     dirtyAgain = true
     return
   }
+  if (restoreInFlight) {
+    await restoreInFlight
+    if (!isCloudAutosaveEnabled() || paused || isConflict() || !hasUnsyncedChanges()) return
+    if (inFlight) {
+      dirtyAgain = true
+      return
+    }
+  }
   const doc = getCurrentDoc()
   const baseVersion = doc.id === syncedProjectId ? syncedVersion : null
   // Status before this attempt: a retry that fails again must not toast again.
@@ -193,6 +258,8 @@ export async function flushCloudSave(): Promise<void> {
     syncedDoc = doc
     syncedProjectId = doc.id
     if (typeof res?.version === 'number') syncedVersion = res.version
+    restoredDirty = false
+    if (syncedVersion !== null) writeSyncedRecord(doc, syncedVersion)
     useCloudAutosave.setState({ status: 'saved', lastSavedAt: Date.now(), lastError: null, conflictVersion: null })
   } catch (err) {
     if (err instanceof CloudUnauthorizedError) {
@@ -329,6 +396,51 @@ export function startCloudAutosave(store: DocStore = useDoc, options?: CloudAuto
   }
 }
 
+/** Restore cloud sync version after a page reload so polling and baseVersion checks resume. */
+export function restoreCloudSync(doc: ProjectDoc, options?: CloudAutosaveOptions): Promise<void> {
+  const record = readSyncedRecord()
+  if (record && record.projectId === doc.id) {
+    if (record.docHash === hashDoc(doc)) {
+      markCloudSynced(doc, record.version)
+    } else {
+      syncedDoc = null
+      syncedProjectId = record.projectId
+      syncedVersion = record.version
+      restoredDirty = true
+    }
+    return Promise.resolve()
+  }
+
+  if (getCloudToken() === null) return Promise.resolve()
+
+  const fetchFn = options?.fetchFn ?? activeFetchFn
+  let run!: Promise<void>
+  run = (async () => {
+    try {
+      const projects = await listCloudProjects(fetchFn)
+      if (!projects.some((p) => p.id === doc.id)) return
+      const loaded = await loadProjectFromCloud(doc.id, fetchFn)
+      const current = getCurrentDoc()
+      if (current.id !== doc.id) return
+      if (hashDoc(current) === hashDoc(loaded.doc)) {
+        markCloudSynced(current, loaded.version)
+      } else {
+        syncedDoc = null
+        syncedProjectId = current.id
+        syncedVersion = loaded.version
+        restoredDirty = true
+        markCloudConflict(loaded.version)
+      }
+    } catch {
+      // Transient network/auth errors during boot restore are ignored silently.
+    } finally {
+      if (restoreInFlight === run) restoreInFlight = null
+    }
+  })()
+  restoreInFlight = run
+  return run
+}
+
 /** The user unlocked the cloud again: leave 'paused' and upload what is still unsynced. */
 export function resumeCloudAutosave(): void {
   paused = false
@@ -347,6 +459,8 @@ export function __resetCloudAutosaveForTests(): void {
   inFlight = null
   dirtyAgain = false
   pollInFlight = false
+  restoredDirty = false
+  restoreInFlight = null
   activeStore = useDoc
   activeFetchFn = undefined
   useCloudAutosave.setState({ status: 'idle', lastSavedAt: null, lastError: null, conflictVersion: null })
