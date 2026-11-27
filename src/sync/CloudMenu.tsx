@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Cloud, CloudAlert, CloudOff, CloudUpload, Loader2, Lock, Trash2 } from 'lucide-react'
 import { toast } from '../features/toast'
 import { useDoc } from '../model/store'
-import type { ProjectDoc } from '../model/types'
 import { BTN, BTN_DANGER, BTN_PRIMARY, IconButton, INPUT } from '../shell/panel'
 import { useUi } from '../shell/uiStore'
 import { useDialogFocus } from '../shell/useDialogFocus'
@@ -20,6 +19,14 @@ import {
   type CloudProjectSummary,
 } from './cloud'
 import { relativeTime } from './relativeTime'
+import {
+  hasUnsyncedChanges,
+  isCloudAutosaveEnabled,
+  markCloudSynced,
+  resumeCloudAutosave,
+  setCloudAutosaveEnabled,
+  useCloudAutosave,
+} from './cloudAutosave'
 
 const ROW_BTN = 'min-w-0 flex-1 rounded-md px-2 py-1.5 text-left hover:bg-white/10 disabled:opacity-50 pointer-coarse:min-h-11'
 const DEL_BTN =
@@ -31,16 +38,6 @@ const HEAD = 'text-[11px] font-semibold uppercase tracking-wide text-slate-400'
 /** Shown when /api/* is missing, e.g. plain `vite dev` without the Worker runtime. */
 const UNAVAILABLE =
   'Cloud API unavailable. It needs the Cloudflare Worker deployment (or `wrangler dev`); a static-only deployment or plain `vite dev` has no /api.'
-
-/** The document that was last saved to or loaded from the cloud (identity compare = "unsaved changes"). */
-let syncedDoc: ProjectDoc | null = null
-
-/** True when the open plan differs from the last cloud sync (or was edited and never synced). */
-function hasUnsavedChanges(): boolean {
-  const doc = useDoc.getState().doc
-  if (syncedDoc) return doc !== syncedDoc
-  return useDoc.temporal.getState().pastStates.length > 0
-}
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : 'unknown error')
 
@@ -58,6 +55,8 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
   const [failed, setFailed] = useState(false)
   const [synced, setSynced] = useState(false)
   const [pending, setPending] = useState<Pending | null>(null)
+  const [autoOn, setAutoOn] = useState(isCloudAutosaveEnabled)
+  const auto = useCloudAutosave()
   const rootRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const saveRef = useRef<HTMLButtonElement>(null)
@@ -160,6 +159,7 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
       setRejected(false)
       setSynced(true)
       setPasscode('')
+      resumeCloudAutosave()
     } catch (err) {
       clearCloudToken()
       setProjects(null)
@@ -194,7 +194,7 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
     const doc = useDoc.getState().doc
     try {
       await saveProjectToCloud(doc)
-      syncedDoc = doc
+      markCloudSynced(doc)
       setFailed(false)
       toast(`Saved "${doc.title || 'Untitled plan'}" to cloud`, { kind: 'success' })
       await refresh()
@@ -216,7 +216,7 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
     try {
       const doc = await loadProjectFromCloud(id)
       useDoc.getState().hydrate(doc)
-      syncedDoc = useDoc.getState().doc
+      markCloudSynced(useDoc.getState().doc)
       useUi.getState().set({ activeArtboardId: null, selection: { kind: 'none' } })
       setFailed(false)
       close()
@@ -234,7 +234,7 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
 
   /** Loading replaces the open plan: ask first when it has unsaved changes. */
   const onLoad = (id: string) => {
-    if (hasUnsavedChanges()) setPending({ kind: 'load', id })
+    if (hasUnsyncedChanges()) setPending({ kind: 'load', id })
     else void doLoad(id)
   }
 
@@ -269,7 +269,9 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
             ? 'connected'
             : ''
   const StatusIcon = locked || unavailable ? CloudOff : failed ? CloudAlert : Cloud
-  const dot = busy ? 'animate-pulse bg-amber-400' : synced && !failed && !locked && !unavailable ? 'bg-emerald-400' : ''
+  const autoBusy = autoOn && auto.status === 'saving'
+  const dot =
+    busy || autoBusy ? 'animate-pulse bg-amber-400' : synced && !failed && !locked && !unavailable ? 'bg-emerald-400' : ''
   const triggerIcon = (
     <span className="relative flex">
       <StatusIcon size={18} aria-hidden="true" />
@@ -279,6 +281,23 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
   )
 
   const saveName = title.trim() || 'Untitled plan'
+
+  /** Short autosave state, or nothing while the feature is off. */
+  const autoLabel = !autoOn
+    ? ''
+    : auto.status === 'pending'
+      ? 'Unsaved…'
+      : auto.status === 'saving'
+        ? 'Saving…'
+        : auto.status === 'saved'
+          ? auto.lastSavedAt
+            ? `Saved ${relativeTime(new Date(auto.lastSavedAt).toISOString())}`
+            : 'Saved'
+          : auto.status === 'error'
+            ? 'Failed'
+            : auto.status === 'paused'
+              ? 'Locked'
+              : ''
 
   return (
     <div ref={rootRef} className="relative">
@@ -367,6 +386,11 @@ export function CloudMenu({ showLabel = false }: { /** Render the trigger as a f
                 {saving ? <Loader2 size={16} className="shrink-0 animate-spin" aria-hidden="true" /> : <CloudUpload size={16} className="shrink-0" aria-hidden="true" />}
                 <span className="truncate">{saving ? 'Saving…' : `Save "${saveName}"`}</span>
               </button>
+              <label className="mt-2 flex items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" checked={autoOn} onChange={(e) => { setAutoOn(e.target.checked); setCloudAutosaveEnabled(e.target.checked) }} />
+                <span>Auto-save to cloud</span>
+                <span className="ml-auto text-slate-400" aria-live="polite">{autoLabel}</span>
+              </label>
               <div className="my-3 border-t border-white/10" />
               <h2 className={`${HEAD} pb-1`}>Cloud projects</h2>
               <div className="max-h-64 overflow-y-auto">

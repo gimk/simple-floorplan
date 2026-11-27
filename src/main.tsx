@@ -6,6 +6,7 @@ import { installAgentBridge } from './agent/bridge'
 import { useDoc } from './model/store'
 import { loadInitialDoc, startAutosave } from './sync/idb'
 import { loadProjectFromCloud } from './sync/cloud'
+import { markCloudSynced, startCloudAutosave } from './sync/cloudAutosave'
 import { toast } from './features/toast'
 import { applyInitialUiParams, parseUrlParams, unregisterServiceWorkersIfRequested } from './shell/urlParams'
 
@@ -18,11 +19,13 @@ async function boot() {
   } catch { /* start with the default project */ }
   applyInitialUiParams(params)
   startAutosave(useDoc)
+  startCloudAutosave(useDoc)
   installAgentBridge()
   createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
   if (params.project) {
     try {
       useDoc.getState().hydrate(await loadProjectFromCloud(params.project))
+      markCloudSynced(useDoc.getState().doc)
       applyInitialUiParams(params)
     } catch (err) {
       toast(`Could not load project "${params.project}": ${err instanceof Error ? err.message : 'unknown error'}`)
