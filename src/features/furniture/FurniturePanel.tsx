@@ -1,6 +1,6 @@
 // Left-panel content of Design mode (docs/simple-floorplan-2.md §6, Phase 4):
 //   - "Custom shape": name, Rect / Circle, width cm, depth cm, colour swatch and Add shape.
-//   - "Presets": the starter furniture list, one click to add an item.
+//   - "Presets": the starter furniture list, grouped by category, one click to add an item.
 //   - Custom presets saved by the user (localStorage) are listed first and can be deleted.
 // A new item lands at the centre of the visible screen. Units: cm.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel.
@@ -28,7 +28,7 @@ import { toast } from '../toast'
 import { addFurniture } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
 import { useCustomPresets } from './customPresets'
-import { FURNITURE_COLORS, FURNITURE_PRESETS, type FurniturePreset } from './presets'
+import { FURNITURE_CATEGORY_BY_ID, FURNITURE_COLORS, FURNITURE_PRESETS, type FurniturePreset } from './presets'
 
 /** Shape of a new item. */
 type Shape = FurnitureItem['shape']
@@ -60,26 +60,10 @@ const ADD_BTN =
 
 const clampCm = (v: number): number => Math.min(MAX_FURNITURE_CM, Math.max(MIN_FURNITURE_CM, v))
 
-/** Category of each preset id. presets.ts has no category field, so the list is derived here. */
-const CATEGORY_BY_ID: Record<string, string> = {
-  bed: 'Beds',
-  'single-bed': 'Beds',
-  sofa: 'Seating',
-  armchair: 'Seating',
-  'dining-table': 'Tables',
-  'round-table': 'Tables',
-  'coffee-table': 'Tables',
-  desk: 'Tables',
-  wardrobe: 'Storage',
-  bookshelf: 'Storage',
-  'kitchen-counter': 'Storage',
-  rug: 'Rugs',
-}
-
 const CUSTOM_CATEGORY = 'Custom'
 
 const categoryOf = (preset: FurniturePreset): string =>
-  preset.id.startsWith('custom-') ? CUSTOM_CATEGORY : (CATEGORY_BY_ID[preset.id] ?? 'Other')
+  preset.id.startsWith('custom-') ? CUSTOM_CATEGORY : (FURNITURE_CATEGORY_BY_ID[preset.id] ?? 'Other')
 
 /** Category chips, in the order of the preset list (unique). */
 const BUILT_IN_CATEGORIES: readonly string[] = [...new Set(FURNITURE_PRESETS.map(categoryOf))]
@@ -245,76 +229,6 @@ export function FurniturePanel() {
 
   return (
     <>
-      <PanelSection title="Presets" icon={<LayoutGrid size={14} aria-hidden="true" />}>
-        <div className="relative">
-          <Search
-            size={14}
-            aria-hidden="true"
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
-          />
-          <input
-            id={searchId}
-            type="search"
-            aria-label="Search furniture presets"
-            placeholder="Search furniture"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className={`${INPUT} pl-8`}
-          />
-        </div>
-        <div role="group" aria-label="Preset categories" className="flex flex-wrap gap-1">
-          {[null, ...categories].map((c) => {
-            const active = category === c
-            return (
-              <button
-                key={c ?? 'all'}
-                type="button"
-                aria-pressed={active}
-                onClick={() => setCategory(c)}
-                className={`min-h-7 rounded-full border px-2.5 text-xs font-medium pointer-coarse:min-h-10 ${
-                  active
-                    ? 'border-orange-500 bg-orange-500/15 text-orange-700 dark:text-orange-300'
-                    : 'border-black/15 text-slate-700 hover:bg-black/5 dark:border-white/20 dark:text-slate-200 dark:hover:bg-white/10'
-                }`}
-              >
-                {c ?? 'All'}
-              </button>
-            )
-          })}
-        </div>
-        {shown.length === 0 ? (
-          <EmptyHint>No preset matches your search.</EmptyHint>
-        ) : (
-          <ul className="flex flex-col gap-1" aria-label="Furniture presets">
-            {shown.map((preset) => (
-              <PresetButton
-                key={preset.id}
-                item={preset}
-                disabled={!artboard}
-                onDelete={preset.id.startsWith('custom-') ? () => removePreset(preset.id) : undefined}
-                onAdd={() =>
-                  place(
-                    {
-                      name: preset.name,
-                      shape: preset.shape,
-                      widthCm: preset.widthCm,
-                      depthCm: preset.depthCm,
-                      color: preset.color,
-                      heightCm: preset.heightCm,
-                      showDirection: preset.showDirection,
-                    },
-                    preset.layer,
-                  )
-                }
-              />
-            ))}
-          </ul>
-        )}
-        <EmptyHint>
-          {artboard ? 'New items land at the centre of the screen.' : 'Add an artboard in Plan mode to place furniture.'}
-        </EmptyHint>
-      </PanelSection>
-
       <PanelSection title="Custom shape" icon={<Shapes size={14} aria-hidden="true" />} collapsible defaultOpen={false}>
         <FieldRow label="Name" htmlFor={nameId}>
           <TextField
@@ -389,6 +303,76 @@ export function FurniturePanel() {
           <BookmarkPlus size={14} aria-hidden="true" />
           Save as preset
         </button>
+      </PanelSection>
+
+      <PanelSection title="Presets" icon={<LayoutGrid size={14} aria-hidden="true" />}>
+        <div className="relative">
+          <Search
+            size={14}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
+          />
+          <input
+            id={searchId}
+            type="search"
+            aria-label="Search furniture presets"
+            placeholder="Search furniture"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className={`${INPUT} pl-8`}
+          />
+        </div>
+        <div role="group" aria-label="Preset categories" className="flex flex-wrap gap-1">
+          {[null, ...categories].map((c) => {
+            const active = category === c
+            return (
+              <button
+                key={c ?? 'all'}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setCategory(c)}
+                className={`min-h-7 rounded-full border px-2.5 text-xs font-medium pointer-coarse:min-h-10 ${
+                  active
+                    ? 'border-orange-500 bg-orange-500/15 text-orange-700 dark:text-orange-300'
+                    : 'border-black/15 text-slate-700 hover:bg-black/5 dark:border-white/20 dark:text-slate-200 dark:hover:bg-white/10'
+                }`}
+              >
+                {c ?? 'All'}
+              </button>
+            )
+          })}
+        </div>
+        {shown.length === 0 ? (
+          <EmptyHint>No preset matches your search.</EmptyHint>
+        ) : (
+          <ul className="flex flex-col gap-1" aria-label="Furniture presets">
+            {shown.map((preset) => (
+              <PresetButton
+                key={preset.id}
+                item={preset}
+                disabled={!artboard}
+                onDelete={preset.id.startsWith('custom-') ? () => removePreset(preset.id) : undefined}
+                onAdd={() =>
+                  place(
+                    {
+                      name: preset.name,
+                      shape: preset.shape,
+                      widthCm: preset.widthCm,
+                      depthCm: preset.depthCm,
+                      color: preset.color,
+                      heightCm: preset.heightCm,
+                      showDirection: preset.showDirection,
+                    },
+                    preset.layer,
+                  )
+                }
+              />
+            ))}
+          </ul>
+        )}
+        <EmptyHint>
+          {artboard ? 'New items land at the centre of the screen.' : 'Add an artboard in Plan mode to place furniture.'}
+        </EmptyHint>
       </PanelSection>
     </>
   )

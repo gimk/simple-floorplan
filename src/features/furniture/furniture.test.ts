@@ -11,7 +11,7 @@ import {
   computeDistanceGuides, DEFAULT_MAX_GUIDE_DIST_CM, MAX_FURNITURE_CM, MIN_FURNITURE_CM, directionArrowGeometry,
   furnitureAxisBounds, furnitureCornerRadiusCm, furnitureWorldCorners, normalizeAngle, snapFurnitureMove, snapRotation,
 } from './geometry'
-import { FLOOR_SWATCHES, FURNITURE_COLORS, FURNITURE_PRESETS } from './presets'
+import { FLOOR_SWATCHES, FURNITURE_CATEGORY_BY_ID, FURNITURE_COLORS, FURNITURE_PRESETS } from './presets'
 
 // ---------- helpers ----------
 
@@ -62,9 +62,9 @@ describe('presets and swatches', () => {
     expect(FURNITURE_COLORS.map((c) => c.label)).toContain('Terracotta')
   })
 
-  it('12 furniture presets: unique ids, valid shapes and usable sizes', () => {
-    expect(FURNITURE_PRESETS).toHaveLength(12)
-    expect(new Set(FURNITURE_PRESETS.map((p) => p.id)).size).toBe(12)
+  it('42 furniture presets: unique ids, valid shapes and usable sizes', () => {
+    expect(FURNITURE_PRESETS).toHaveLength(42)
+    expect(new Set(FURNITURE_PRESETS.map((p) => p.id)).size).toBe(42)
     const colors = new Set(FURNITURE_COLORS.map((c) => c.color))
     for (const p of FURNITURE_PRESETS) {
       expect(p.name.length).toBeGreaterThan(0)
@@ -91,18 +91,43 @@ describe('presets and swatches', () => {
     expect(byId.get('rug')).toMatchObject({ widthCm: 200, depthCm: 300 })
   })
 
-  it('layers the Rug preset at the bottom of the stack and leaves the others on top', () => {
+  it('layers the three rug presets at the bottom of the stack and leaves the others on top', () => {
     const byId = new Map(FURNITURE_PRESETS.map((p) => [p.id, p]))
-    expect(byId.get('rug')?.layer).toBe('bottom')
-    for (const p of FURNITURE_PRESETS.filter((x) => x.id !== 'rug')) expect(p.layer).toBeUndefined()
+    const rugIds = ['rug', 'rug-160', 'round-rug']
+    for (const id of rugIds) expect(byId.get(id)?.layer).toBe('bottom')
+    for (const p of FURNITURE_PRESETS.filter((x) => !rugIds.includes(x.id))) expect(p.layer).toBeUndefined()
   })
 
   it('marks only the directional presets with showDirection', () => {
     const directional = FURNITURE_PRESETS.filter((p) => p.showDirection === true).map((p) => p.id)
-    expect(directional).toEqual(['bed', 'single-bed', 'sofa', 'armchair', 'desk', 'wardrobe', 'bookshelf', 'kitchen-counter'])
-    for (const id of ['dining-table', 'round-table', 'coffee-table', 'rug']) {
+    expect(directional).toEqual([
+      'bed', 'single-bed', 'bed-140', 'bed-180', 'bedside-table',
+      'sofa', 'armchair', 'sofa-2', 'corner-sofa', 'dining-chair',
+      'desk',
+      'wardrobe', 'bookshelf', 'chest-of-drawers', 'sideboard', 'tv-unit', 'shoe-cabinet',
+      'kitchen-counter', 'base-cabinet-60', 'sink-unit', 'cooker', 'dishwasher', 'fridge', 'american-fridge',
+      'toilet', 'washbasin', 'double-washbasin', 'washing-machine', 'dryer',
+    ])
+    const plain = [
+      'baby-cot', 'office-chair', 'dining-table', 'round-table', 'coffee-table', 'dining-table-4', 'side-table',
+      'kitchen-island', 'bathtub', 'shower-tray', 'rug', 'rug-160', 'round-rug',
+    ]
+    for (const id of plain) {
       expect(FURNITURE_PRESETS.find((p) => p.id === id)?.showDirection).toBeFalsy()
     }
+  })
+
+  it('gives every built-in preset a category other than Other, in the chip order', () => {
+    for (const p of FURNITURE_PRESETS) {
+      expect(FURNITURE_CATEGORY_BY_ID[p.id]).toBeTruthy()
+      expect(FURNITURE_CATEGORY_BY_ID[p.id]).not.toBe('Other')
+    }
+    expect(new Set(FURNITURE_PRESETS.map((p) => FURNITURE_CATEGORY_BY_ID[p.id]))).toEqual(
+      new Set(['Beds', 'Seating', 'Tables', 'Storage', 'Kitchen', 'Bathroom', 'Rugs']),
+    )
+    expect([...new Set(FURNITURE_PRESETS.map((p) => FURNITURE_CATEGORY_BY_ID[p.id]))]).toEqual(
+      ['Beds', 'Seating', 'Tables', 'Storage', 'Kitchen', 'Bathroom', 'Rugs'],
+    )
   })
 })
 
