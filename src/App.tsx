@@ -1277,5 +1277,6 @@ function selectionAttr(sel: Selection): string {
     case 'furniture': return `furniture:${sel.furnitureId}`
     case 'furnitureMulti': return `furnitureMulti:${sel.furnitureIds.join(',')}`
     case 'refImage': return `refImage:${sel.imageId}`
+    case 'multi': return `multi:${sel.items.map((t) => t.kind === 'wall' ? `wall:${t.roomId}:${t.edgeIndex}` : t.kind === 'room' ? `room:${t.roomId}` : t.kind === 'opening' ? `opening:${t.openingId}` : `furniture:${t.furnitureId}`).join(',')}`
   }
 }

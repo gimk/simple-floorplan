@@ -177,6 +177,17 @@ export type ProjectDoc = {
   artboards: Artboard[]
 }
 
+/**
+ * One object that a mixed multi-selection can hold. Ids are artboard-local: a target belongs to the
+ * artboard of the selection that carries it. Walls are edges of a room, so a wall target needs both
+ * the room id and the edge index.
+ */
+export type MultiTarget =
+  | { kind: 'room'; roomId: string }
+  | { kind: 'wall'; roomId: string; edgeIndex: number }
+  | { kind: 'opening'; openingId: string }
+  | { kind: 'furniture'; furnitureId: string }
+
 export type Selection =
   | { kind: 'none' }
   | { kind: 'artboard'; artboardId: string }
@@ -190,4 +201,9 @@ export type Selection =
    * kind; shift-click and the Design-mode marquee build this one.
    */
   | { kind: 'furnitureMulti'; artboardId: string; furnitureIds: string[] }
+  /**
+   * Two or more objects of one artboard, of mixed kinds or several walls/openings. Only built when
+   * no older kind fits: see normalizeSelection.
+   */
+  | { kind: 'multi'; artboardId: string; items: MultiTarget[] }
   | { kind: 'refImage'; imageId: string }

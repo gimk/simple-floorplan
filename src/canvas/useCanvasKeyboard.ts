@@ -147,6 +147,7 @@ export function describeSelection(doc: ProjectDoc, sel: Selection): string {
     if (count === 0) return ''
     return `${count} furniture item${count === 1 ? '' : 's'} selected`
   }
+  if (sel.kind === 'multi') return '' // Mixed selection: no spoken text yet.
   const f = ab.furniture.find((x) => x.id === sel.furnitureId)
   return f ? `${f.name}, ${formatLengthCm(f.widthCm, precision)} by ${formatLengthCm(f.depthCm, precision)} centimeters` : ''
 }

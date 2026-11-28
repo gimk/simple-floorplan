@@ -1,14 +1,25 @@
-// Copy / paste properties (Alt+Cmd+C / Alt+Cmd+V): only the visual-only fields travel, one undo step
-// per paste. Units: cm.
+// properties.ts is now a thin compatibility file: App.tsx imports copyStyle / pasteStyle from it, and
+// they are the style clipboard of src/features/style/styleClipboard.ts. The style is VISUAL ONLY:
+// the colour of furniture, openings and walls and the floor colour and material of rooms.
+// These tests only pin the re-export and the furniture case (colour only, groups included); the full
+// matrix lives in src/features/style/styleClipboard.test.ts. Units: cm.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createArtboard, createDefaultProject } from '../../model/schema'
 import { useDoc } from '../../model/store'
 import type { Artboard, FurnitureItem } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
-import { copyStyle, getCopiedStyle, itemsMissingStyle, pasteStyle, sameStyle, setCopiedStyle, STYLE_FIELDS, styleOf } from './properties'
+import { copyStyle, getCopiedStyle, pasteStyle, setCopiedStyle } from './properties'
 
 const item = (p: Partial<FurnitureItem> = {}): FurnitureItem => ({
-  id: 'f1', name: 'Sofa', shape: 'rect', xCm: 100, yCm: 200, widthCm: 100, depthCm: 50, rotationDeg: 0, color: '#4b5563',
+  id: 'f1',
+  name: 'Sofa',
+  shape: 'rect',
+  xCm: 100,
+  yCm: 200,
+  widthCm: 100,
+  depthCm: 50,
+  rotationDeg: 0,
+  color: '#4b5563',
   ...p,
 })
 
@@ -27,52 +38,20 @@ beforeEach(() => {
   setCopiedStyle(null)
 })
 
-describe('styleOf', () => {
-  it('keeps the colour, the direction arrow and the corner radii only', () => {
-    const style = styleOf(item({ color: '#ff0000', showDirection: true, cornerRadiusCm: 8 }))
-    expect(style).toEqual({ color: '#ff0000', showDirection: true, cornerRadiusCm: 8 })
-    expect(STYLE_FIELDS).toEqual(['color', 'showDirection', 'cornerRadiusCm', 'cornerRadiiCm'])
-    expect(Object.keys(styleOf(item({ showDirection: undefined, cornerRadiusCm: undefined })))).toEqual(['color'])
-    // Per-corner radii travel too, as their own copy.
-    const perCorner = styleOf(item({ cornerRadiiCm: [1, 2, 3, 4] }))
-    expect(perCorner.cornerRadiiCm).toEqual([1, 2, 3, 4])
-    expect(perCorner.cornerRadiiCm).not.toBe(item({ cornerRadiiCm: [1, 2, 3, 4] }).cornerRadiiCm)
-  })
-
-  it('compares styles with the defaults of the optional fields', () => {
-    expect(sameStyle({ color: '#fff' }, { color: '#fff', showDirection: false, cornerRadiusCm: 4 })).toBe(true)
-    expect(sameStyle({ color: '#fff' }, { color: '#000' })).toBe(false)
-    // 4 equal per-corner radii are the same style as the single radius 4.
-    expect(sameStyle({ color: '#fff', cornerRadiiCm: [4, 4, 4, 4] }, { color: '#fff', cornerRadiusCm: 4 })).toBe(true)
-    expect(sameStyle({ color: '#fff', cornerRadiiCm: [8, 4, 4, 4] }, { color: '#fff' })).toBe(false)
-    expect(sameStyle({ color: '#fff', cornerRadiiCm: [8, 4, 4, 4] }, { color: '#fff', cornerRadiiCm: [8, 4, 4, 4] })).toBe(true)
-  })
-})
-
-describe('copyStyle', () => {
-  it('copies the style of the single selected item', () => {
-    hydrate(item({ id: 'a', color: '#111111', showDirection: true }))
-    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'a' } })
+describe('properties.ts (compatibility surface)', () => {
+  it('re-exports the clipboard of colour only', () => {
+    hydrate(item({ id: 'src', color: '#ff0000', showDirection: true, cornerRadiusCm: 8 }))
+    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'src' } })
     expect(copyStyle()).toBe(true)
-    expect(getCopiedStyle()).toEqual({ color: '#111111', showDirection: true })
+    // The direction arrow and the corner radii are not style any more.
+    expect(getCopiedStyle()).toEqual({ kind: 'furniture', color: '#ff0000' })
   })
 
-  it('does not copy from a multi-selection or an empty selection', () => {
-    hydrate(item({ id: 'a' }), item({ id: 'b' }))
-    ui().set({ selection: { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['a', 'b'] } })
-    expect(copyStyle()).toBe(false)
-    ui().set({ selection: { kind: 'none' } })
-    expect(copyStyle()).toBe(false)
-    expect(getCopiedStyle()).toBeNull()
-  })
-})
-
-describe('pasteStyle', () => {
-  it('writes the style to every selected item in one undo step, and nothing else', () => {
+  it('pastes the colour onto every member of a group in one undo step', () => {
     hydrate(
-      item({ id: 'src', color: '#abcdef', showDirection: true, cornerRadiusCm: 6 }),
-      item({ id: 'a', name: 'Chair', xCm: 400, widthCm: 40, depthCm: 40, rotationDeg: 45, groupId: 'g1' }),
-      item({ id: 'b', shape: 'circle', color: '#000000' }),
+      item({ id: 'src', color: '#abcdef' }),
+      item({ id: 'a', color: '#000000', groupId: 'g1', cornerRadiusCm: 9 }),
+      item({ id: 'b', color: '#111111', groupId: 'g1' }),
     )
     ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'src' } })
     copyStyle()
@@ -80,60 +59,8 @@ describe('pasteStyle', () => {
     const before = past()
     expect(pasteStyle()).toBe(true)
     expect(past()).toBe(before + 1)
-
-    expect(find('a')).toMatchObject({ color: '#abcdef', showDirection: true, cornerRadiusCm: 6 })
-    // Position, size, rotation, name, shape and group are untouched.
-    expect(find('a')).toMatchObject({ name: 'Chair', xCm: 400, widthCm: 40, depthCm: 40, rotationDeg: 45, groupId: 'g1', shape: 'rect' })
-    expect(find('b')).toMatchObject({ color: '#abcdef', shape: 'circle' })
-
-    s().undo()
-    expect(find('a').color).toBe('#4b5563')
-    expect(find('b').color).toBe('#000000')
-  })
-
-  it('clears the optional fields the copied style does not have', () => {
-    hydrate(item({ id: 'src' }), item({ id: 'a', showDirection: true, cornerRadiusCm: 9 }))
-    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'src' } })
-    copyStyle()
-    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'a' } })
-    expect(pasteStyle()).toBe(true)
-    expect(find('a').showDirection).toBeUndefined()
-    expect(find('a').cornerRadiusCm).toBeUndefined()
-  })
-
-  it('does nothing without a copied style or when every item already has it', () => {
-    hydrate(item({ id: 'a' }))
-    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'a' } })
-    expect(pasteStyle()).toBe(false)
-    copyStyle()
-    expect(pasteStyle()).toBe(false)
-  })
-
-  it('copies and pastes the 4 per-corner radii', () => {
-    hydrate(
-      item({ id: 'src', cornerRadiiCm: [2, 6, 10, 14] }),
-      item({ id: 'a', cornerRadiusCm: 4 }),
-    )
-    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'src' } })
-    expect(copyStyle()).toBe(true)
-    expect(getCopiedStyle()?.cornerRadiiCm).toEqual([2, 6, 10, 14])
-    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'a' } })
-    expect(pasteStyle()).toBe(true)
-    expect(find('a').cornerRadiiCm).toEqual([2, 6, 10, 14])
-    // The copied style has no single radius, so the target's one goes (the 4 radii win anyway).
-    expect(find('a').cornerRadiusCm).toBeUndefined()
-
-    // And the other way round: a single radius clears the per-corner field of the target.
-    ui().set({ selection: { kind: 'none' } })
-    setCopiedStyle({ color: '#4b5563', cornerRadiusCm: 7 })
-    ui().set({ selection: { kind: 'furniture', artboardId: 'ab1', furnitureId: 'a' } })
-    expect(pasteStyle()).toBe(true)
-    expect(find('a').cornerRadiusCm).toBe(7)
-    expect(find('a').cornerRadiiCm).toBeUndefined()
-  })
-
-  it('lists only the items whose style differs', () => {
-    const ab = board([item({ id: 'a' }), item({ id: 'b', color: '#ff0000' })])
-    expect(itemsMissingStyle(ab, { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['a', 'b'] }, { color: '#4b5563' })).toEqual(['b'])
+    expect(find('a').color).toBe('#abcdef')
+    expect(find('b').color).toBe('#abcdef')
+    expect(find('a').cornerRadiusCm).toBe(9)
   })
 })

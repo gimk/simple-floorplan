@@ -39,6 +39,7 @@ export function selectionWorldBounds(doc: ProjectDoc, sel: Selection): ItemBound
     const o = artboard.openings.find((x) => x.id === sel.openingId)
     return o ? { minX: o.xCm + ox, minY: o.yCm + oy, maxX: o.xCm + ox, maxY: o.yCm + oy } : null
   }
+  if (sel.kind === 'multi') return null // Mixed selection: no single bounding box yet.
   const roomId = sel.kind === 'room' ? null : sel.roomId
   const roomIds = sel.kind === 'room' ? sel.roomIds : roomId ? [roomId] : []
   const rooms = artboard.rooms.filter((r) => roomIds.includes(r.id))

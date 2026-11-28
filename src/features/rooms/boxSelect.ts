@@ -1,6 +1,6 @@
 // Pure marquee (box) selection helpers. No React, so the unit tests run in node.
 import { pointInPolygon, type Vec } from '../../model/geometry'
-import type { Artboard, Room } from '../../model/types'
+import type { Artboard, MultiTarget, Room } from '../../model/types'
 import { artboardFrame } from '../artboards/frame'
 
 /** Axis-aligned box in cm. */
@@ -80,6 +80,35 @@ export function findRoomsInBox(
     .filter((m) => m.roomIds.length > 0)
   if (matches.length === 0) return null
   return matches.find((m) => m.artboardId === preferredArtboardId) ?? matches[0]
+}
+
+/**
+ * Walls (room edges) whose two end vertices are both inside the box. The box is in artboard-local
+ * cm, the space of `Room.vertices`, so one artboard is passed instead of the artboard list.
+ */
+export function findWallsInBox(box: Box, artboard: Artboard): MultiTarget[] {
+  const walls: MultiTarget[] = []
+  for (const room of artboard.rooms) {
+    const n = room.vertices.length
+    for (let i = 0; i < n; i++) {
+      const p = room.vertices[i]
+      const q = room.vertices[(i + 1) % n]
+      if (inBox(p, box) && inBox(q, box)) walls.push({ kind: 'wall', roomId: room.id, edgeIndex: i })
+    }
+  }
+  return walls
+}
+
+/**
+ * Openings whose centre (xCm, yCm) is inside the box. The box is in artboard-local cm, the space of
+ * `Opening.xCm` and `Opening.yCm`, so no artboard offset is applied.
+ */
+export function findOpeningsInBox(box: Box, artboard: Artboard): MultiTarget[] {
+  const openings: MultiTarget[] = []
+  for (const opening of artboard.openings) {
+    if (inBox({ x: opening.xCm, y: opening.yCm }, box)) openings.push({ kind: 'opening', openingId: opening.id })
+  }
+  return openings
 }
 
 /** Artboard whose frame contains the world point. The last drawn (top) one wins. */
