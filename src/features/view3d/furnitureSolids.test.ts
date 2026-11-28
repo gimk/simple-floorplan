@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { FURNITURE_PRESETS } from '../furniture/presets'
 import type { FurnitureItem } from '../../model/types'
 import { RUG_LIFT_CM, RUG_MAX_HEIGHT_CM } from './buildScene'
-import { deriveShades, furnitureArchetype, furnitureParts } from './furnitureSolids'
+import { deriveShades, furnitureArchetype, furnitureParts, partFootprint } from './furnitureSolids'
 import type { FurnitureArchetype } from './furnitureSolids'
 
 const EXPECTED: Record<string, FurnitureArchetype> = {
@@ -45,9 +45,10 @@ describe('furnitureSolids', () => {
         expect(part.color).toMatch(/^#[0-9a-f]{6}$/)
         // A lying cylinder keeps its pre-rotation sizes: swap y and z for its extents.
         const lying = !!part.rotationX
-        const ey = lying ? part.sz : part.sy, ez = lying ? part.sy : part.sz
-        expect(part.cx - part.sx / 2).toBeGreaterThanOrEqual(-p.widthCm / 2 - EPS)
-        expect(part.cx + part.sx / 2).toBeLessThanOrEqual(p.widthCm / 2 + EPS)
+        const ey = lying ? part.sz : part.sy
+        const { x: fx, z: ez } = partFootprint(part)
+        expect(part.cx - fx / 2).toBeGreaterThanOrEqual(-p.widthCm / 2 - EPS)
+        expect(part.cx + fx / 2).toBeLessThanOrEqual(p.widthCm / 2 + EPS)
         expect(part.cy - ey / 2).toBeGreaterThanOrEqual(lift - EPS)
         expect(part.cy + ey / 2).toBeLessThanOrEqual(lift + h + EPS)
         expect(part.cz - ez / 2).toBeGreaterThanOrEqual(-p.depthCm / 2 - EPS)
@@ -163,9 +164,10 @@ describe('furnitureSolids', () => {
           const lift = h <= RUG_MAX_HEIGHT_CM ? RUG_LIFT_CM : 0
           for (const q of parts) {
             for (const v of [q.cx, q.cy, q.cz, q.sx, q.sy, q.sz]) expect(Number.isFinite(v)).toBe(true)
-            const ey = q.rotationX ? q.sz : q.sy, ez = q.rotationX ? q.sy : q.sz
-            expect(q.cx - q.sx / 2).toBeGreaterThanOrEqual(-w / 2 - EPS)
-            expect(q.cx + q.sx / 2).toBeLessThanOrEqual(w / 2 + EPS)
+            const ey = q.rotationX ? q.sz : q.sy
+            const { x: fx, z: ez } = partFootprint(q)
+            expect(q.cx - fx / 2).toBeGreaterThanOrEqual(-w / 2 - EPS)
+            expect(q.cx + fx / 2).toBeLessThanOrEqual(w / 2 + EPS)
             expect(q.cy - ey / 2).toBeGreaterThanOrEqual(lift - EPS)
             expect(q.cy + ey / 2).toBeLessThanOrEqual(lift + h + EPS)
             expect(q.cz - ez / 2).toBeGreaterThanOrEqual(-d / 2 - EPS)
@@ -283,5 +285,31 @@ describe('furnitureArchetype with a chosen model', () => {
   })
   it('an unknown model value falls back to automatic', () => {
     expect(furnitureArchetype({ name: 'Bed', shape: 'rect', model: 'nope' as never }, 50)).toBe('bed')
+  })
+})
+
+describe('office chair', () => {
+  const chair = (p: Partial<FurnitureItem> = {}): FurnitureItem => ({
+    id: 'c', name: 'Office Chair', shape: 'circle', xCm: 0, yCm: 0, widthCm: 65, depthCm: 65, rotationDeg: 0, color: '#4b5563', presetId: 'office-chair', ...p,
+  })
+  const parts = (p?: Partial<FurnitureItem>) => furnitureParts(chair(p), 110, [0, 0, 0, 0])
+
+  it('has a 5-spoke star base on 5 casters, no round base disc', () => {
+    const ps = parts()
+    expect(ps.filter((q) => q.rotationY !== undefined)).toHaveLength(5)
+    expect(ps.filter((q) => q.kind === 'cylinder' && q.sx >= 65 * 0.5)).toHaveLength(0)
+  })
+
+  it('has two armrest pads, one on each side, above the seat', () => {
+    const pads = parts().filter((q) => q.kind === 'box' && q.rotationY === undefined && Math.abs(q.cx) > 20 && q.cy > 55)
+    expect(pads.length).toBeGreaterThanOrEqual(2)
+    expect(pads.some((q) => q.cx < 0)).toBe(true)
+    expect(pads.some((q) => q.cx > 0)).toBe(true)
+  })
+
+  it('a single mirror reverses the spoke turns', () => {
+    const a = parts().filter((q) => q.rotationY !== undefined).map((q) => q.rotationY!)
+    const b = parts({ flipX: true }).filter((q) => q.rotationY !== undefined).map((q) => q.rotationY!)
+    expect(b).toEqual(a.map((r) => -r))
   })
 })

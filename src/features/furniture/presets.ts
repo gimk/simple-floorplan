@@ -89,7 +89,7 @@ export const FURNITURE_PRESETS: FurniturePreset[] = [
   { id: 'sofa-2', name: '2-Seat Sofa', shape: 'rect', widthCm: 160, depthCm: 90, color: DEFAULT_PRESET_COLOR, heightCm: 80, showDirection: true },
   { id: 'corner-sofa', name: 'Corner Sofa', shape: 'rect', widthCm: 250, depthCm: 160, color: DEFAULT_PRESET_COLOR, heightCm: 80, showDirection: true },
   { id: 'dining-chair', name: 'Dining Chair', shape: 'rect', widthCm: 45, depthCm: 50, color: DEFAULT_PRESET_COLOR, heightCm: 90, showDirection: true },
-  { id: 'office-chair', name: 'Office Chair', shape: 'circle', widthCm: 65, depthCm: 65, color: DEFAULT_PRESET_COLOR, heightCm: 110 },
+  { id: 'office-chair', name: 'Office Chair', shape: 'rect', widthCm: 65, depthCm: 65, color: DEFAULT_PRESET_COLOR, heightCm: 110 },
   // Tables
   { id: 'dining-table', name: 'Dining Table', shape: 'rect', widthCm: 180, depthCm: 90, color: DEFAULT_PRESET_COLOR, heightCm: 75 },
   { id: 'round-table', name: 'Round Table', shape: 'circle', widthCm: 110, depthCm: 110, color: DEFAULT_PRESET_COLOR, heightCm: 75 },

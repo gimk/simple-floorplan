@@ -47,6 +47,8 @@ import { applyMixedFurnitureClick, resizeFurnitureGroupWithAlt, setDirectFurnitu
 import { computeDragDistanceGuides, snapBoxMove } from './snapGuides'
 import type { SnapGuideLine } from './snapGuides'
 import { CANVAS_BG, CANVAS_SELECT } from '../../shell/canvasTokens'
+import { cachedPlanSymbolParts } from './planSymbol'
+import type { PlanPart } from './planSymbol'
 
 const ORANGE = CANVAS_SELECT
 const CYAN = '#22d3ee'
@@ -54,6 +56,28 @@ const SNAP_LINE_COLOR = '#f43f5e'
 const BG = CANVAS_BG
 const DRAG_THRESHOLD_PX = 3
 const RAD = Math.PI / 180
+/** Fill opacity of a furniture item (body and plan symbol together). */
+const FURNITURE_OPACITY = 0.78
+/** The plan symbol shows only when the smaller side of the item is at least this size on screen. */
+const SYMBOL_MIN_PX = 16
+
+/** One part of a plan symbol: opaque fill (it covers the lower parts) and a thin light outline. */
+function PlanPartShape({ part }: { part: PlanPart }) {
+  const style = {
+    fill: part.color,
+    fillOpacity: part.translucent ? 0.25 : 1,
+    stroke: '#f4f4f5',
+    strokeOpacity: 0.35,
+    strokeWidth: 1,
+    vectorEffect: 'non-scaling-stroke' as const,
+  }
+  const turn = part.rotationDeg ? ` rotate(${part.rotationDeg})` : ''
+  return part.kind === 'ellipse'
+    ? <ellipse cx={part.x} cy={part.y} rx={part.w / 2} ry={part.h / 2} {...style} />
+    : part.radii
+      ? <path transform={`translate(${part.x} ${part.y})${turn}`} d={roundedRectPath(part.w, part.h, part.radii)} {...style} />
+      : <rect transform={`translate(${part.x} ${part.y})${turn}`} x={-part.w / 2} y={-part.h / 2} width={part.w} height={part.h} {...style} />
+}
 
 type Gesture = {
   pointerId: number
@@ -486,9 +510,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
 
   const renderShape = (item: FurnitureItem, selected: boolean) => {
     const w = item.widthCm, d = item.depthCm
-    const common = {
-      fill: item.color,
-      fillOpacity: 0.78,
+    const outline = {
       stroke: selected ? ORANGE : '#e4e4e7',
       strokeOpacity: selected ? 1 : 0.45,
       strokeWidth: selected ? 2 : 1,
@@ -496,11 +518,28 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     }
     const radii = furnitureCornerRadiiCm(item)
     const arrow = item.showDirection ? directionArrowGeometry(w, d, px) : null
+    const body = (props: Record<string, unknown>) =>
+      item.shape === 'circle'
+        ? <ellipse cx={0} cy={0} rx={w / 2} ry={d / 2} {...props} />
+        : <path d={roundedRectPath(w, d, radii)} {...props} />
+    // Top-down plan symbol of the 3D model (none for the plain 'box' model, none when too small on screen).
+    const parts = Math.min(w, d) * zoom >= SYMBOL_MIN_PX ? cachedPlanSymbolParts(item) : []
     return (
       <>
-        {item.shape === 'circle'
-          ? <ellipse cx={0} cy={0} rx={w / 2} ry={d / 2} {...common} />
-          : <path d={roundedRectPath(w, d, radii)} {...common} />}
+        {parts.length === 0
+          ? body({ fill: item.color, fillOpacity: FURNITURE_OPACITY, ...outline })
+          : (
+            <>
+              {/* The item shape is only the hit area here: the symbol parts are the drawing. */}
+              {body({ fill: 'transparent' })}
+              {/* One opacity for the whole group, so the opaque parts cover each other but not the canvas. */}
+              <g opacity={FURNITURE_OPACITY} data-plan-symbol="" pointerEvents="none">
+                {parts.map((part, i) => <PlanPartShape key={i} part={part} />)}
+              </g>
+              {/* The item outline shows only when the item is selected. */}
+              {selected && body({ fill: 'none', ...outline })}
+            </>
+          )}
         {arrow && (
           // Optional subtle front-direction chevron (local -Y), never bigger than the item.
           <path

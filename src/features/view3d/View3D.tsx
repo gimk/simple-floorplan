@@ -96,12 +96,14 @@ function partGeometry(p: FurniturePartData): THREE.BufferGeometry {
     const geo = new THREE.CylinderGeometry(p.sx / 2, p.sx / 2, p.sy, 24)
     if (p.sx !== p.sz && p.sx > 0) geo.scale(1, 1, p.sz / p.sx)
     if (p.rotationX) geo.rotateX(p.rotationX)
+    if (p.rotationY) geo.rotateY(p.rotationY)
     return geo
   }
-  if (p.kind === 'roundedBox' && p.cornerRadiiCm && p.cornerRadiiCm.some((r) => r > 0)) {
-    return roundedBoxGeometry(p.sx, p.sy, p.sz, p.cornerRadiiCm)
-  }
-  return new THREE.BoxGeometry(p.sx, p.sy, p.sz)
+  const geo = p.kind === 'roundedBox' && p.cornerRadiiCm && p.cornerRadiiCm.some((r) => r > 0)
+    ? roundedBoxGeometry(p.sx, p.sy, p.sz, p.cornerRadiiCm)
+    : new THREE.BoxGeometry(p.sx, p.sy, p.sz)
+  if (p.rotationY) geo.rotateY(p.rotationY)
+  return geo
 }
 
 /**

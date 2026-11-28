@@ -22,11 +22,11 @@ const gap = (p: Partial<Opening> = {}): Opening => ({
 
 const chair = (p: Partial<FurnitureItem> = {}): FurnitureItem => ({
   id: 'f1', name: 'Chair', shape: 'rect', xCm: 60, yCm: 60, widthCm: 60, depthCm: 40,
-  rotationDeg: 0, color: '#c2410c', ...p,
+  rotationDeg: 0, color: '#c2410c', model: 'box', ...p,
 })
 const table = (p: Partial<FurnitureItem> = {}): FurnitureItem => ({
   id: 'f2', name: 'Round table', shape: 'circle', xCm: 250, yCm: 200, widthCm: 80, depthCm: 80,
-  rotationDeg: 15, color: '#0ea5e9', ...p,
+  rotationDeg: 15, color: '#0ea5e9', model: 'box', ...p,
 })
 
 const artboard = (p: Partial<Artboard> = {}): Artboard => ({
@@ -712,5 +712,14 @@ describe('renderArtboardSvg with fence walls', () => {
     expect(svg).not.toContain('stroke="#5b6577"')
     expect(svg).toContain('data-room="r1" points="0,0 400,0 400,300 0,300" fill=');
     expect(svg).toContain('stroke="none" />')
+  })
+})
+
+describe('renderArtboardSvg plan symbols', () => {
+  it('draws a modelled item by its parts only, with no shape fill', () => {
+    const { svg } = renderArtboardSvg(artboard({ furniture: [chair({ model: 'chair' })] }))
+    const own = svg.slice(svg.indexOf('data-furniture="f1"'))
+    expect(own).toContain('<g opacity="0.78">')
+    expect(own.slice(0, own.indexOf('<g opacity="0.78">'))).not.toContain('fill-opacity="0.78"')
   })
 })

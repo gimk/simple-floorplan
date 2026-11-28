@@ -8,6 +8,7 @@ import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
 import { DEFAULT_PATTERN_FILL, isPatterned, patternId, patternSvg } from '../rooms/floorPatterns'
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
 import { directionArrowGeometry, furnitureCornerRadiiCm, roundedRectPath } from '../furniture/geometry'
+import { planSymbolParts } from '../furniture/planSymbol'
 import {
   FENCE_COLOR, FENCE_THICKNESS_CM, WALL_COLOR, edgeOutwardNormal, isFenceWall,
   jambSegment, openingSymbolShift, openingWall, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
@@ -402,11 +403,27 @@ function furnitureSvg(f: FurnitureItem, ctx: Ctx): string[] {
   const out: string[] = [
     `    <g data-furniture="${esc(f.id)}" transform="translate(${num(f.xCm)} ${num(f.yCm)}) rotate(${num(f.rotationDeg)})">`,
   ]
-  if (f.shape === 'circle') {
+  // An item with a plan symbol is drawn by its parts only (no shape fill or outline).
+  const parts = planSymbolParts(f, { mirror: true })
+  if (parts.length === 0 && f.shape === 'circle') {
     out.push(`      <ellipse cx="0" cy="0" rx="${num(w / 2)}" ry="${num(d / 2)}" ${common} />`)
-  } else {
+  } else if (parts.length === 0) {
     // One radius per corner (a path, because SVG rect only carries a single rx/ry pair).
     out.push(`      <path d="${roundedRectPath(w, d, furnitureCornerRadiiCm(f))}" ${common} />`)
+  }
+  // Top-down plan symbol of the 3D model, as on the canvas (the export draws no flip transform, so the parts carry the mirror).
+  if (parts.length > 0) {
+    out.push(`      <g opacity="0.78">`)
+    for (const p of parts) {
+      const style = `fill="${esc(p.color)}" fill-opacity="${p.translucent ? 0.25 : 1}" stroke="#f4f4f5" stroke-opacity="0.35" stroke-width="${num(ctx.u(1))}"`
+      if (p.kind === 'ellipse') out.push(`        <ellipse cx="${num(p.x)}" cy="${num(p.y)}" rx="${num(p.w / 2)}" ry="${num(p.h / 2)}" ${style} />`)
+      else {
+        const t = `translate(${num(p.x)} ${num(p.y)})${p.rotationDeg ? ` rotate(${num(p.rotationDeg)})` : ''}`
+        if (p.radii) out.push(`        <path transform="${t}" d="${roundedRectPath(p.w, p.h, p.radii)}" ${style} />`)
+        else out.push(`        <rect transform="${t}" x="${num(-p.w / 2)}" y="${num(-p.h / 2)}" width="${num(p.w)}" height="${num(p.h)}" ${style} />`)
+      }
+    }
+    out.push(`      </g>`)
   }
   // Optional subtle front-direction chevron on local -Y, as on the canvas.
   const arrow = f.showDirection ? directionArrowGeometry(w, d, ctx.u) : null

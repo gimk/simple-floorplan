@@ -37,9 +37,9 @@ const board = (rotationDeg = 0): Artboard => ({
   id: AB, name: 'Plan A', xCm: 1000, yCm: 500, ceilingHeightCm: 250, precisionCm: 1,
   rooms: [], openings: [],
   furniture: [
-    { id: 'f1', name: 'Sofa', shape: 'rect', xCm: 100, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg, color: '#4b5563' },
-    { id: 'f2', name: 'Chair', shape: 'rect', xCm: 300, yCm: 200, widthCm: 40, depthCm: 40, rotationDeg: 0, color: '#4b5563' },
-    { id: 'f3', name: 'Rug', shape: 'rect', xCm: 500, yCm: 500, widthCm: 200, depthCm: 200, rotationDeg: 0, color: '#4b5563' },
+    { id: 'f1', name: 'Sofa', model: 'box', shape: 'rect', xCm: 100, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg, color: '#4b5563' },
+    { id: 'f2', name: 'Chair', model: 'box', shape: 'rect', xCm: 300, yCm: 200, widthCm: 40, depthCm: 40, rotationDeg: 0, color: '#4b5563' },
+    { id: 'f3', name: 'Rug', model: 'box', shape: 'rect', xCm: 500, yCm: 500, widthCm: 200, depthCm: 200, rotationDeg: 0, color: '#4b5563' },
   ],
 })
 
@@ -47,9 +47,11 @@ const board = (rotationDeg = 0): Artboard => ({
 const itemSelected = (html: string, id: string): boolean => {
   const start = html.indexOf(`data-furniture-id="${id}"`)
   if (start < 0) return false
-  // The first shape after the item marker is the item itself (the group has none).
-  const shape = /<(?:rect|ellipse|path)[^>]*>/.exec(html.slice(start))
-  return !!shape && shape[0].includes('stroke="#fb923c"')
+  // The item outline is one of the item's own shapes (after its plan symbol, if any), which all come
+  // before the first non-interactive element (the arrow or the label group).
+  const next = html.indexOf('pointer-events="none"', start)
+  const own = html.slice(start, next < 0 ? undefined : next)
+  return [...own.matchAll(/<(?:rect|ellipse|path)[^>]*>/g)].some((m) => m[0].includes('stroke="#fb923c"'))
 }
 
 describe('FurnitureLayer with a furniture group', () => {
@@ -244,7 +246,7 @@ describe('FurnitureLayer corner radius handles', () => {
     const perCorner: Artboard = {
       ...board(),
       furniture: [
-        { id: 'f1', name: 'Sofa', shape: 'rect', xCm: 100, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg: 0, color: '#4b5563', cornerRadiiCm: [20, 4, 4, 4] },
+        { id: 'f1', name: 'Sofa', model: 'box', shape: 'rect', xCm: 100, yCm: 100, widthCm: 100, depthCm: 50, rotationDeg: 0, color: '#4b5563', cornerRadiiCm: [20, 4, 4, 4] },
       ],
     }
     const html = renderToStaticMarkup(<FurnitureLayer artboard={perCorner} />)

@@ -1,12 +1,9 @@
-// 3D model choices of a furniture item, for the model dropdowns of the Inspect card and the
-// custom shape form. 'auto' means no stored model: the 3D view picks one from the preset, the
-// name and the size (furnitureArchetype in src/features/view3d/furnitureSolids.ts).
+// Model choices of a furniture item (3D solid and 2D plan symbol), for the model dropdowns of the
+// Inspect card and the custom shape form. An item with no stored model shows the model that
+// furnitureArchetype (src/features/view3d/furnitureSolids.ts) picks from its preset, name and size.
 import type { FurnitureModel } from '../../model/types'
 import type { SelectOption } from '../../shell/panel/SelectField'
 import { isFurnitureModel } from '../view3d/furnitureSolids'
-
-/** Value of the "automatic" choice. */
-export const AUTO_MODEL = 'auto'
 
 /** Human label of each model, in the order of the dropdown (grouped by room). */
 export const FURNITURE_MODEL_LABELS: readonly { value: FurnitureModel; label: string }[] = [
@@ -35,7 +32,7 @@ export const FURNITURE_MODEL_LABELS: readonly { value: FurnitureModel; label: st
   { value: 'toilet', label: 'Toilet' },
   { value: 'basin', label: 'Washbasin' },
   { value: 'rug', label: 'Rug' },
-  { value: 'box', label: 'Plain box' },
+  { value: 'box', label: 'Plain box (rect / circle)' },
 ]
 
 /** Label of one model. */
@@ -43,13 +40,10 @@ export function furnitureModelLabel(model: FurnitureModel): string {
   return FURNITURE_MODEL_LABELS.find((m) => m.value === model)?.label ?? model
 }
 
-/** Dropdown options: "Auto" first (with the model it gives, when known), then every model. */
-export function furnitureModelOptions(autoModel?: FurnitureModel): SelectOption[] {
-  const auto = autoModel ? `Auto (${furnitureModelLabel(autoModel)})` : 'Auto'
-  return [{ value: AUTO_MODEL, label: auto }, ...FURNITURE_MODEL_LABELS]
-}
+/** Dropdown options: every model. */
+export const FURNITURE_MODEL_OPTIONS: readonly SelectOption[] = FURNITURE_MODEL_LABELS
 
-/** Dropdown value to stored model: 'auto' or an unknown value gives undefined. */
+/** Dropdown value to stored model: an unknown value gives undefined. */
 export function modelFromSelect(value: string): FurnitureModel | undefined {
   return isFurnitureModel(value) ? value : undefined
 }

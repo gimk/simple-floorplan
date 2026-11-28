@@ -29,8 +29,7 @@ import { toast } from '../toast'
 import { addFurniture } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
 import { useCustomPresets } from './customPresets'
-import { AUTO_MODEL, furnitureModelOptions, modelFromSelect } from './models'
-import { furnitureArchetype } from '../view3d/furnitureSolids'
+import { FURNITURE_MODEL_OPTIONS, modelFromSelect } from './models'
 import { FURNITURE_CATEGORY_BY_ID, FURNITURE_COLORS, FURNITURE_PRESETS, type FurniturePreset } from './presets'
 
 /** Shape of a new item. */
@@ -163,7 +162,7 @@ export function FurniturePanel() {
   const [depthCm, setDepthCm] = useState(DEFAULT_DEPTH_CM)
   const [color, setColor] = useState(FURNITURE_COLORS[0].color)
   const [showDirection, setShowDirection] = useState(false)
-  const [model, setModel] = useState<FurnitureModel | undefined>(undefined)
+  const [model, setModel] = useState<FurnitureModel>('box')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<string | null>(null)
   // Number of items added by this panel: each new item is shifted a little, so repeated adds do not stack.
@@ -212,12 +211,9 @@ export function FurniturePanel() {
       depthCm: clampCm(depthCm),
       color,
       showDirection,
-      ...(model ? { model } : {}),
+      model,
     })
   }
-
-  // Model the 3D view picks for the form values when "Auto" is chosen (75 cm: the default height).
-  const autoModel = furnitureArchetype({ name: name.trim() === '' ? DEFAULT_NAME : name.trim(), shape }, 75)
 
   const saveCustom = () => {
     const saved = addPreset({
@@ -228,7 +224,7 @@ export function FurniturePanel() {
       color,
       heightCm: 75,
       showDirection,
-      model: model ?? autoModel,
+      model,
     })
     toast(`Saved preset "${saved.name}"`, { kind: 'info' })
   }
@@ -290,13 +286,13 @@ export function FurniturePanel() {
           />
         </FieldRow>
 
-        <FieldRow label="Model" hint="for 3D" htmlFor={modelId}>
+        <FieldRow label="Model" htmlFor={modelId}>
           <SelectField
             id={modelId}
-            ariaLabel="Custom shape 3D model"
-            value={model ?? AUTO_MODEL}
-            options={furnitureModelOptions(autoModel)}
-            onChange={(value) => setModel(modelFromSelect(value))}
+            ariaLabel="Custom shape model"
+            value={model}
+            options={FURNITURE_MODEL_OPTIONS}
+            onChange={(value) => setModel(modelFromSelect(value) ?? 'box')}
           />
         </FieldRow>
 

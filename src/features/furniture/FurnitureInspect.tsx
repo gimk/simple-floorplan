@@ -33,7 +33,7 @@ import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, cornerRadiiPatch, furnitureCornerRa
 import type { CornerRadii } from './geometry'
 import { useCustomPresets } from './customPresets'
 import { FURNITURE_COLORS } from './presets'
-import { AUTO_MODEL, furnitureModelOptions, modelFromSelect } from './models'
+import { FURNITURE_MODEL_OPTIONS, modelFromSelect } from './models'
 import { furnitureArchetype } from '../view3d/furnitureSolids'
 
 export type FurnitureInspectProps = {
@@ -228,7 +228,7 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
     })
   }
 
-  // The model the 3D view picks when no model is stored (shown as "Auto (...)").
+  // The model of an item with no stored model (picked from its preset, name and size).
   const autoModel = furnitureArchetype({ ...item, model: undefined }, furnitureHeightCm(item))
 
   const saveAsPreset = () => {
@@ -277,15 +277,15 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
           />
         </FieldRow>
 
-        <FieldRow label="Model" hint="for 3D" htmlFor={modelId}>
+        <FieldRow label="Model" htmlFor={modelId}>
           <SelectField
             id={modelId}
             ariaLabel="Furniture 3D model"
-            value={item.model ?? AUTO_MODEL}
-            options={furnitureModelOptions(autoModel)}
+            value={item.model ?? autoModel}
+            options={FURNITURE_MODEL_OPTIONS}
             onChange={(value) => {
               const model = modelFromSelect(value)
-              if (model !== item.model) patch({ model })
+              if (model && model !== (item.model ?? autoModel)) patch({ model })
             }}
           />
         </FieldRow>

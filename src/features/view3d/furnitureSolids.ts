@@ -22,6 +22,11 @@ export type FurniturePartData = {
   cornerRadiiCm?: [number, number, number, number]
   /** Turn about the x axis in radians (a cylinder lying down for a washing machine door). */
   rotationX?: number
+  /**
+   * Turn about the vertical axis in radians (three.js rotateY: +x turns towards -z), applied after
+   * rotationX. Used by the spokes of a star base. Not used together with rotationX.
+   */
+  rotationY?: number
   color: string
   /** Glass: drawn see-through. */
   translucent?: boolean
@@ -139,7 +144,7 @@ type Ctx = {
   /** The item's own corner radii (rect tables use them for a rounded top). */
   radii: Radii
 }
-type Extra = { radii?: Radii; rotationX?: number; translucent?: boolean }
+type Extra = { radii?: Radii; rotationX?: number; rotationY?: number; translucent?: boolean }
 
 const MIN_SIZE = 0.2
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
@@ -149,12 +154,22 @@ const pos = (n: number) => (Number.isFinite(n) && n > 0 ? n : 0)
 function add(c: Ctx, kind: FurniturePartKind, cx: number, y0: number, cz: number, sx: number, sy: number, sz: number, color: string, extra: Extra = {}) {
   const lying = !!extra.rotationX && Math.abs(Math.sin(extra.rotationX)) > 0.5
   // Extents along the item axes (a lying cylinder swaps its y and z sizes).
-  const ex = Math.min(c.W, Math.max(MIN_SIZE, sx))
+  let ex = Math.min(c.W, Math.max(MIN_SIZE, sx))
   const ey = Math.min(c.H, Math.max(MIN_SIZE, lying ? sz : sy))
-  const ez = Math.min(c.D, Math.max(MIN_SIZE, lying ? sy : sz))
+  let ez = Math.min(c.D, Math.max(MIN_SIZE, lying ? sy : sz))
+  // A turn about y: one mirror reverses it, and the turned footprint must fit inside the box.
+  const yaw = extra.rotationY ? (c.flipX !== c.flipY ? -extra.rotationY : extra.rotationY) : 0
+  let fx = ex, fz = ez
+  if (yaw) {
+    const cs = Math.abs(Math.cos(yaw)), sn = Math.abs(Math.sin(yaw))
+    fx = cs * ex + sn * ez
+    fz = sn * ex + cs * ez
+    const k = Math.min(1, c.W / fx, c.D / fz)
+    ex *= k; ez *= k; fx *= k; fz *= k
+  }
   const hw = c.W / 2, hd = c.D / 2
-  const px = clamp(c.flipX ? -cx : cx, -hw + ex / 2, hw - ex / 2)
-  const pz = clamp(c.flipY ? -cz : cz, -hd + ez / 2, hd - ez / 2)
+  const px = clamp(c.flipX ? -cx : cx, -hw + fx / 2, hw - fx / 2)
+  const pz = clamp(c.flipY ? -cz : cz, -hd + fz / 2, hd - fz / 2)
   const by = clamp(y0, 0, c.H - ey)
   const part: FurniturePartData = {
     kind, cx: px, cy: c.lift + by + ey / 2, cz: pz,
@@ -165,6 +180,7 @@ function add(c: Ctx, kind: FurniturePartKind, cx: number, y0: number, cz: number
     part.cornerRadiiCm = extra.radii.map((r) => clamp(r, 0, max)) as Radii
   }
   if (extra.rotationX) part.rotationX = extra.rotationX
+  if (yaw) part.rotationY = yaw
   if (extra.translucent) part.translucent = true
   c.parts.push(part)
 }
@@ -248,13 +264,58 @@ function chair(c: Ctx, s: Shades) {
   }
 }
 
+/** Size along x and z of a part seen from above (a turned part covers more). */
+export function partFootprint(p: Pick<FurniturePartData, 'sx' | 'sy' | 'sz' | 'rotationX' | 'rotationY'>): { x: number; z: number } {
+  const lying = !!p.rotationX && Math.abs(Math.sin(p.rotationX)) > 0.5
+  const ez = lying ? p.sy : p.sz
+  if (!p.rotationY) return { x: p.sx, z: ez }
+  const cs = Math.abs(Math.cos(p.rotationY)), sn = Math.abs(Math.sin(p.rotationY))
+  return { x: cs * p.sx + sn * ez, z: sn * p.sx + cs * ez }
+}
+
+/**
+ * Swivel desk chair: 5-spoke star base on casters, gas column, padded seat, curved-look backrest
+ * on a spine, and two armrests (post + pad). The front is -z.
+ */
 function officeChair(c: Ctx, s: Shades) {
   const { W, D, H } = c
-  const sy0 = H * 0.4
-  cyl(c, 0, 0, 0, W * 0.85, 4, D * 0.85, s.dark)
-  cyl(c, 0, 4, 0, Math.min(6, W * 0.1), sy0 - 4, Math.min(6, D * 0.1), s.metal)
-  cyl(c, 0, sy0, 0, W * 0.75, 8, D * 0.75, s.base)
-  box(c, 0, sy0 + 8, D * 0.3, W * 0.6, H - sy0 - 8, 5, s.light)
+  const m = Math.min(W, D)
+  const caster = clamp(m * 0.08, 2, 6) // caster wheel diameter and height
+  const R = m / 2 - caster / 2 - 0.5 // centre of a caster, from the chair axis
+  const spokeW = clamp(m * 0.06, 1.5, 5), spokeH = clamp(H * 0.03, 1.5, 4)
+  const baseY = caster * 0.8
+  const hub = clamp(m * 0.12, 3, 9)
+  // Star base: 5 spokes, one pointing to the back (+z), so no spoke sits under the feet.
+  for (let k = 0; k < 5; k++) {
+    const phi = Math.PI / 2 + (k * 2 * Math.PI) / 5 // angle in the x-z plane (0 = +x, PI/2 = +z)
+    const len = R
+    const dx = Math.cos(phi), dz = Math.sin(phi)
+    box(c, dx * len / 2, baseY, dz * len / 2, len, spokeH, spokeW, s.deep, { rotationY: -phi })
+    cyl(c, dx * R, 0, dz * R, caster, caster, caster, s.deep)
+  }
+  cyl(c, 0, baseY, 0, hub, spokeH + 1, hub, s.deep)
+
+  const seatY = H * 0.42, seatT = clamp(H * 0.07, 3, 9)
+  const seatW = W * 0.72, seatD = D * 0.68, seatZ = -D * 0.03
+  cyl(c, 0, baseY, 0, clamp(m * 0.08, 2, 6), seatY - baseY, clamp(m * 0.08, 2, 6), s.metal)
+  const sr = Math.min(seatW, seatD) * 0.18
+  rbox(c, 0, seatY, seatZ, seatW, seatT, seatD, s.base, [sr, sr, sr, sr])
+
+  // Backrest on a spine at the back of the seat.
+  const backT = clamp(D * 0.08, 3, 7), backZ = seatZ + seatD / 2 + backT / 2 - 1
+  const backY0 = seatY + seatT + clamp(H * 0.1, 4, 14)
+  box(c, 0, seatY, backZ + backT / 2, clamp(W * 0.1, 3, 7), backY0 - seatY + 4, 3, s.metal)
+  const br = W * 0.08
+  rbox(c, 0, backY0, backZ, W * 0.66, H - backY0, backT, s.light, [br, br, br, br])
+
+  // Armrests: a post on each side of the seat and a pad on top.
+  const armY = seatY + seatT + clamp(H * 0.2, 8, 24)
+  const padW = clamp(W * 0.08, 3, 7), padD = seatD * 0.6, padT = clamp(H * 0.025, 2, 4)
+  const armX = Math.min(W / 2 - padW / 2, seatW / 2 + padW / 2)
+  for (const sx of [-1, 1]) {
+    box(c, sx * armX, seatY + seatT / 2, seatZ + seatD * 0.1, padW * 0.6, armY - seatY - seatT / 2, padW * 0.6, s.metal)
+    box(c, sx * armX, armY, seatZ + seatD * 0.05, padW, padT, padD, s.dark)
+  }
 }
 
 function table(c: Ctx, s: Shades) {
