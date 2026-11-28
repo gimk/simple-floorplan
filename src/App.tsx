@@ -509,18 +509,18 @@ export default function App() {
         return
       }
       // Option+Cmd+C / Option+Cmd+V (Ctrl+Alt elsewhere) copy and paste the style of the selected furniture.
+      // preventDefault runs even when there is nothing to copy or paste, because Chrome opens its
+      // DevTools inspect tool on Option+Cmd+C.
       if ((isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && e.altKey && !e.shiftKey) {
         if (e.code === 'KeyC') {
-          if (copyStyle()) {
-            e.preventDefault()
-            return
-          }
+          e.preventDefault()
+          copyStyle()
+          return
         }
         if (e.code === 'KeyV') {
-          if (pasteStyle()) {
-            e.preventDefault()
-            return
-          }
+          e.preventDefault()
+          pasteStyle()
+          return
         }
       }
       // Cmd/Ctrl+C, Cmd/Ctrl+X and Cmd/Ctrl+V copy, cut and paste the selected furniture.
@@ -738,6 +738,39 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Chrome opens its DevTools inspect tool on Option+Cmd+C even while a text field has focus,
+  // where the main keydown handler above returns early. Block only that combo; Option+Cmd+V keeps
+  // its default behavior in text fields.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && e.altKey && !e.shiftKey && e.code === 'KeyC') {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('keydown', onKey, { capture: true })
+    return () => window.removeEventListener('keydown', onKey, { capture: true })
+  }, [])
+
+  // Block the browser page zoom from a trackpad pinch (Chrome sends a 'wheel' event with
+  // ctrlKey) and from Ctrl+scroll. This listener only calls preventDefault and never stops
+  // propagation, so the canvas wheel / pinch zoom in Viewport.tsx keeps working.
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault()
+    }
+    const onGesture = (e: Event) => e.preventDefault()
+    window.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('gesturestart', onGesture, { passive: false })
+    window.addEventListener('gesturechange', onGesture, { passive: false })
+    window.addEventListener('gestureend', onGesture, { passive: false })
+    return () => {
+      window.removeEventListener('wheel', onWheel)
+      window.removeEventListener('gesturestart', onGesture)
+      window.removeEventListener('gesturechange', onGesture)
+      window.removeEventListener('gestureend', onGesture)
+    }
   }, [])
 
   // B7: a "calibrating image" id that outlives its tool would re-open the overlay with the old
