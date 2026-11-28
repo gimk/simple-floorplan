@@ -1238,3 +1238,46 @@ describe('wall joins (non-overlapping 3D footprints)', () => {
     expectNoPairwiseOverlap(s.walls)
   })
 })
+
+describe('cutaway clipping invariants', () => {
+  it('every cornerPost wallId matches a wall in scene.walls', () => {
+    const s = buildScene(board({
+      wallThicknessCm: 10,
+      rooms: [
+        room('A', box(0, 0, 500, 400)),
+        room('B', box(510, 0, 850, 250)),
+        room('C', box(0, 400, 300, 650)),
+      ],
+    }))
+    const ids = new Set(s.walls.map((w) => w.id))
+    expect(s.cornerPosts.length).toBeGreaterThan(0)
+    for (const p of s.cornerPosts) {
+      expect(ids.has(p.wallIds[0])).toBe(true)
+      expect(ids.has(p.wallIds[1])).toBe(true)
+    }
+  })
+
+  it('every openingModels part has consistent y0/y1 and clips cleanly to 30 cm stub', () => {
+    const doorVariants = ['standard', 'pocket', 'bypass', 'bypass-glass', 'french', 'french-glass'] as const
+    const windowVariants = ['standard', 'sliding', 'casement', 'double-casement'] as const
+    const openings = [
+      ...doorVariants.map((variant, i) => door({ id: `d-${variant}`, xCm: 100 + i * 150, yCm: 400, angleDeg: 0, widthCm: 90, variant, roomId: 'A' })),
+      ...windowVariants.map((variant, i) => windowOp({ id: `w-${variant}`, xCm: 100 + i * 180, yCm: 0, angleDeg: 0, widthCm: 120, variant, sillCm: 15, roomId: 'A' })),
+    ]
+    const s = buildScene(board({
+      rooms: [room('A', box(0, 0, 1200, 400))],
+      openings,
+    }))
+    const parts = s.walls.flatMap((w) => w.openingModels.flatMap((m) => m.parts))
+    expect(parts.length).toBeGreaterThan(0)
+    for (const p of parts) {
+      expect(p.y1 - p.y0).toBeCloseTo(p.sy, 5)
+      expect((p.y0 + p.y1) / 2).toBeCloseTo(p.y, 5)
+      const clipped = clipSpanToHeight(p.y0, p.y1, 30)
+      if (clipped) {
+        expect(clipped.y0).toBeGreaterThanOrEqual(0)
+        expect(clipped.y1).toBeLessThanOrEqual(30 + 1e-6)
+      }
+    }
+  })
+})
