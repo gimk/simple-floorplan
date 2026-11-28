@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useDoc } from '../../model/store'
 import type { ViewProjection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
-import { DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights } from './buildScene'
+import { DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, wallSideOffsets } from './buildScene'
 import type { FloorMeshData, FurnitureMeshData, SceneData, WallSegmentData } from './buildScene'
 import { FLOOR_TILE_CM, floorBaseColor, disposeAll, getFloorTexture } from './floorTextures'
 
@@ -174,14 +174,15 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
     group.position.set(w.start.x, 0, w.start.z)
     group.rotation.y = theta
     const s = w.outwardNormal.x * Math.sin(theta) + w.outwardNormal.z * Math.cos(theta) >= 0 ? 1 : -1
-    const o0 = w.thicknessSide === 'outward' ? 0 : -w.thicknessCm
-    const o1 = w.thicknessSide === 'outward' ? w.thicknessCm : 0
+    const [o0, o1] = wallSideOffsets(w)
     const zc = (s * (o0 + o1)) / 2
     // Push wall faces back a little so the edge lines never z-fight with them.
     const pushBack = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }
     const inner = std(w.innerColor, pushBack), outer = std(w.outerColor, pushBack)
+    // Face away from the room: the paint of the room on the other side of a shared wall, else the outer paint.
+    const opposite = w.oppositeColor ? std(w.oppositeColor, pushBack) : outer
     const parts: ClipPart[] = []
-    const mats = [outer, outer, outer, outer, s > 0 ? outer : inner, s > 0 ? inner : outer]
+    const mats = [outer, outer, outer, outer, s > 0 ? opposite : inner, s > 0 ? inner : opposite]
     for (const p of w.pieces) {
       const g = geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, w.thicknessCm))
       const mesh = new THREE.Mesh(g, mats)

@@ -6,15 +6,17 @@
 // turn about +Y, because Y points up while 2D y points down).
 //
 // Walls follow the 2D model: a room keeps its interior polygon and the wall is a box built OUTWARD from
-// the room edge. For every wall:
-//   - `start` / `end` are the room edge corners (the inner face line), in the ORIGINAL vertex order, so
-//     `edgeIndex` and `wallColors` keep working whatever the winding of the room is;
-//   - `thicknessSide` says where the box sits against the edge line start -> end:
-//       'outward' (exterior walls): the box spans 0..thicknessCm along outwardNormal (inner face ON the room edge);
-//       'inward' (halves of a shared wall): the box spans -thicknessCm..0, inside its own room, so each room
-//       sees its own inner face and the two halves meet back to back on the shared line (no overlap, no z-fight,
-//       no protrusion into the neighbour room);
-//   - `center` is the middle of the wall box: edge middle + outwardNormal * (+-thicknessCm / 2);
+// the room edge. Two kinds of wall segment exist:
+//   - exterior walls: `thicknessSide` 'outward', the box spans 0..thicknessCm along outwardNormal (inner face
+//     ON the room edge). A long edge that is only partly shared gives one exterior wall per uncovered span;
+//   - shared (unified) walls: where the edges of two rooms face each other (anti-parallel normals), flush or
+//     across a gap smaller than two wall thicknesses, ONE wall covers the overlapping span. It is built from
+//     the edge of the first room (A): 'outward' with thicknessCm = gap (from A's edge to B's edge, no overlap,
+//     no seam), or 'centered' (thin 6 cm wall straddling the shared line) when flush. `innerColor` paints the
+//     face towards room A, `oppositeColor` the face towards room B. `isInterior` is true.
+//   - `start` / `end` are points on the edge line of room A (or of the room itself for an exterior wall), in the
+//     ORIGINAL vertex order, so `edgeIndex` and `wallColors` keep working whatever the winding of the room is;
+//   - `center` is the middle of the wall box;
 //   - pieces and window panes use `u` = distance in cm from `start` along start -> end (0..lengthCm)
 //     and `y` = height above the floor in cm.
 import { signedArea } from '../../model/geometry'
@@ -23,7 +25,7 @@ import { DEFAULT_CEILING_HEIGHT_CM, furnitureHeightCm, openingHeightCm, openingS
 import type { Artboard, FloorPattern, FurnitureItem, Room, WallViewMode } from '../../model/types'
 import { openingEndpoints } from '../openings/geometry'
 import { hostWallIn } from '../openings/sync'
-import { FLUSH_GAP_CM, edgeOutwardNormal, effectiveWallThickness, roomDoorThresholds, wallThicknessOf } from '../rooms/walls'
+import { edgeOutwardNormal, effectiveWallThickness, roomDoorThresholds, wallThicknessOf } from '../rooms/walls'
 
 /** Default paint of the room side of a wall. */
 export const DEFAULT_WALL_INNER_COLOR = '#d9d6d0'
@@ -31,8 +33,12 @@ export const DEFAULT_WALL_INNER_COLOR = '#d9d6d0'
 export const DEFAULT_WALL_OUTER_COLOR = '#b9b5ad'
 /** Visual wall thickness used when the artboard turns thick walls off (thickness 0), in cm. */
 export const THIN_WALL_FALLBACK_CM = 6
-/** Thickness of each half of a shared (interior) wall, in cm. Two halves make one thin wall. */
+/** Thickness of a flush shared (interior) wall, in cm. */
+export const INTERIOR_WALL_CM = THIN_WALL_FALLBACK_CM
+/** Fallback thickness of an exterior wall span that sits right behind a room of another kind, in cm. */
 export const INTERIOR_HALF_WALL_CM = THIN_WALL_FALLBACK_CM / 2
+/** Rooms whose facing edges are this close (cm) share one flush wall. */
+export const SHARED_FLUSH_CM = 1
 /** Height of a wall in 'off' mode, in cm. */
 export const DEFAULT_CURB_CM = 10
 /** Height of a cut-away wall, in cm. */
@@ -88,19 +94,26 @@ export type WallSegmentData = {
   center: Pt
   lengthCm: number
   thicknessCm: number
-  /** Side of the edge line the box sits on: 'outward' (exterior) or 'inward' (half of a shared wall). */
-  thicknessSide: 'outward' | 'inward'
+  /**
+   * Side of the start -> end line the box sits on: 'outward' (spans 0..thicknessCm along outwardNormal),
+   * 'inward' (-thicknessCm..0) or 'centered' (-thicknessCm/2..+thicknessCm/2).
+   */
+  thicknessSide: 'outward' | 'inward' | 'centered'
   heightCm: number
-  /** Unit normal in the floor plane, pointing away from the room. */
+  /** Unit normal in the floor plane, pointing away from the room (of room A for a shared wall). */
   outwardNormal: Pt
-  /** True when another room has a flush wall on this wall (a shared wall). */
+  /** True for a shared wall: one unified wall between two rooms. */
   isInterior: boolean
-  /** Same value for walls that are paired sides of one shared wall; the wall id when not paired. */
+  /** Cutaway group: always the wall id (a unified wall is one unit). */
   cutawayGroupId: string
-  /** Ids of the flush walls of other rooms (empty when exterior). */
+  /** Ids of the room edges (`roomId:edgeIndex`) merged into this shared wall (empty when exterior). */
   pairedWallIds: string[]
+  /** Paint of the face towards the room (room A on a shared wall). */
   innerColor: string
+  /** Paint of the top, the ends and (exterior) the far face. */
   outerColor: string
+  /** Paint of the face towards room B on a shared wall; absent on an exterior wall (use outerColor). */
+  oppositeColor?: string
   pieces: WallPieceData[]
   windowPanes: WindowPaneData[]
 }
@@ -163,32 +176,55 @@ type WallBuild = {
   dir: Pt
   /** Cut rectangles (wall space) from openings. */
   cuts: WallPieceData[]
-  /** Walls of other rooms that face this wall across a gap (0.5 cm .. 2 x thickness), with that gap in cm. */
-  gapPartners: { build: WallBuild; gapCm: number }[]
+  /** Exterior wall: the u-range of the room edge it covers. Null for a shared wall. */
+  edgeSpan: { u0: number; u1: number; edgeLengthCm: number } | null
 }
 
-/** Overlap in cm of the two collinear edges a and b along the direction of a. */
-function overlapAlong(a: WallBuild, b: WallBuild): number {
-  const start = a.wall.start, dir = a.dir
-  const ub0 = (b.wall.start.x - start.x) * dir.x + (b.wall.start.z - start.z) * dir.z
-  const ub1 = (b.wall.end.x - start.x) * dir.x + (b.wall.end.z - start.z) * dir.z
-  const lo = Math.max(0, Math.min(ub0, ub1))
-  const hi = Math.min(a.wall.lengthCm, Math.max(ub0, ub1))
-  return hi - lo
+type EdgeInfo = {
+  room: Room
+  index: number
+  id: string
+  a: Pt
+  b: Pt
+  lengthCm: number
+  dir: Pt
+  n: Pt
+  /** u-ranges of this edge that a shared wall already covers. */
+  covered: [number, number][]
 }
 
-/** True when walls a and b are the two sides of one shared wall: flush, opposite direction, rooms on opposite sides. */
-function arePaired(a: WallBuild, b: WallBuild): boolean {
-  if (a.wall.roomId === b.wall.roomId) return false
-  if (a.dir.x * b.dir.x + a.dir.z * b.dir.z > -0.999) return false
-  const na = a.wall.outwardNormal, nb = b.wall.outwardNormal
-  if (na.x * nb.x + na.z * nb.z > -0.9) return false
-  // Distance from both ends of b to the line of a must be within the flush gap.
-  for (const p of [b.wall.start, b.wall.end]) {
-    const d = (p.x - a.wall.start.x) * na.x + (p.z - a.wall.start.z) * na.z
-    if (Math.abs(d) > FLUSH_GAP_CM) return false
+/** Offsets (cm) of the two faces of a wall box along its outward normal: [0, t], [-t, 0] or [-t/2, t/2]. */
+export function wallSideOffsets(w: Pick<WallSegmentData, 'thicknessSide' | 'thicknessCm'>): [number, number] {
+  if (w.thicknessSide === 'outward') return [0, w.thicknessCm]
+  if (w.thicknessSide === 'inward') return [-w.thicknessCm, 0]
+  return [-w.thicknessCm / 2, w.thicknessCm / 2]
+}
+
+/** Overlap of two spans in cm. */
+const spanOverlap = (lo: number, hi: number, c: [number, number]) => Math.min(hi, c[1]) - Math.max(lo, c[0])
+
+/**
+ * Shared span of two facing edges: anti-parallel normals, b beyond a along a's normal, flush (gap <= 1 cm)
+ * or across a gap below `maxGapCm`. Returns the gap and the overlap [lo, hi] in the u-space of each edge.
+ */
+function sharedSpan(
+  ea: EdgeInfo, eb: EdgeInfo, maxGapCm: number,
+): { gap: number; a: [number, number]; b: [number, number] } | null {
+  if (ea.room.id === eb.room.id) return null
+  if (ea.n.x * eb.n.x + ea.n.z * eb.n.z > -0.95) return null
+  const ds = [eb.a, eb.b].map((p) => (p.x - ea.a.x) * ea.n.x + (p.z - ea.a.z) * ea.n.z)
+  if (Math.abs(ds[0] - ds[1]) > SHARED_FLUSH_CM) return null
+  const gap = (ds[0] + ds[1]) / 2
+  if (gap < -SHARED_FLUSH_CM || gap >= maxGapCm) return null
+  const ub = [eb.a, eb.b].map((p) => (p.x - ea.a.x) * ea.dir.x + (p.z - ea.a.z) * ea.dir.z)
+  const lo = Math.max(0, Math.min(ub[0], ub[1])), hi = Math.min(ea.lengthCm, Math.max(ub[0], ub[1]))
+  if (hi - lo <= 1) return null
+  const toB = (u: number) => {
+    const px = ea.a.x + ea.dir.x * u, pz = ea.a.z + ea.dir.z * u
+    return (px - eb.a.x) * eb.dir.x + (pz - eb.a.z) * eb.dir.z
   }
-  return overlapAlong(a, b) > 1
+  const b0 = toB(lo), b1 = toB(hi)
+  return { gap, a: [lo, hi], b: [Math.max(0, Math.min(b0, b1)), Math.min(eb.lengthCm, Math.max(b0, b1))] }
 }
 
 /**
@@ -199,21 +235,6 @@ function arePaired(a: WallBuild, b: WallBuild): boolean {
 export function clipSpanToHeight(y0: number, y1: number, heightCm: number): { y0: number; y1: number } | null {
   const hi = Math.min(y1, heightCm)
   return hi - y0 > EPS ? { y0, y1: hi } : null
-}
-
-/**
- * Gap in cm between wall a and wall b when they face each other across a gap: opposite directions,
- * b lies beyond a along a's outward normal, and they overlap along the wall. Null otherwise.
- */
-function facingGap(a: WallBuild, b: WallBuild): number | null {
-  if (a.wall.roomId === b.wall.roomId) return null
-  if (a.dir.x * b.dir.x + a.dir.z * b.dir.z > -0.999) return null
-  const na = a.wall.outwardNormal
-  const ds = [b.wall.start, b.wall.end].map((p) => (p.x - a.wall.start.x) * na.x + (p.z - a.wall.start.z) * na.z)
-  if (Math.abs(ds[0] - ds[1]) > FLUSH_GAP_CM) return null
-  const d = (ds[0] + ds[1]) / 2
-  if (d <= FLUSH_GAP_CM) return null
-  return overlapAlong(a, b) > 1 ? d : null
 }
 
 /** Solid rectangles of a wall of `lengthCm` x `heightCm` around the cut rectangles. No CSG. */
@@ -253,7 +274,7 @@ export function splitWallPieces(lengthCm: number, heightCm: number, cuts: readon
 
 function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBuild[] {
   const thickness = wallThicknessOf(artboard)
-  const builds: WallBuild[] = []
+  const edges: EdgeInfo[] = []
   for (const room of rooms) {
     const v = room.vertices
     for (let i = 0; i < v.length; i++) {
@@ -261,111 +282,117 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
       const out = edgeOutwardNormal(room, i)
       if (!out) continue
       const lengthCm = Math.hypot(b.x - a.x, b.y - a.y)
-      const dir = { x: (b.x - a.x) / lengthCm, z: (b.y - a.y) / lengthCm }
-      const id = wallId(room.id, i)
-      builds.push({
-        dir,
-        cuts: [],
-        gapPartners: [],
+      edges.push({
+        room, index: i, id: wallId(room.id, i), a: toPt(a), b: toPt(b), lengthCm,
+        dir: { x: (b.x - a.x) / lengthCm, z: (b.y - a.y) / lengthCm },
+        n: { x: out.x, z: out.y }, covered: [],
+      })
+    }
+  }
+  const colorOf = (e: EdgeInfo) => e.room.wallColors?.[String(e.index)] ?? DEFAULT_WALL_INNER_COLOR
+  const maxGap = thickness > 0 ? 2 * thickness : SHARED_FLUSH_CM + 1e-9
+
+  // Shared walls: ONE unified wall per overlapping span of two facing edges.
+  const shared: WallBuild[] = []
+  const usedIds = new Set<string>()
+  for (let i = 0; i < edges.length; i++) {
+    for (let j = i + 1; j < edges.length; j++) {
+      const ea = edges[i], eb = edges[j]
+      const sp = sharedSpan(ea, eb, maxGap)
+      if (!sp) continue
+      if (ea.covered.some((c) => spanOverlap(sp.a[0], sp.a[1], c) > 1)) continue
+      if (eb.covered.some((c) => spanOverlap(sp.b[0], sp.b[1], c) > 1)) continue
+      ea.covered.push(sp.a)
+      eb.covered.push(sp.b)
+      const flush = sp.gap <= SHARED_FLUSH_CM
+      const t = flush ? INTERIOR_WALL_CM : sp.gap
+      const [u0, u1] = sp.a
+      const start = { x: ea.a.x + ea.dir.x * u0, z: ea.a.z + ea.dir.z * u0 }
+      const end = { x: ea.a.x + ea.dir.x * u1, z: ea.a.z + ea.dir.z * u1 }
+      const shift = flush ? 0 : t / 2
+      let id = `shared:${ea.id}|${eb.id}`
+      for (let k = 2; usedIds.has(id); k++) id = `shared:${ea.id}|${eb.id}#${k}`
+      usedIds.add(id)
+      shared.push({
+        dir: ea.dir, cuts: [], edgeSpan: null,
         wall: {
-          id, roomId: room.id, edgeIndex: i,
-          start: toPt(a), end: toPt(b), center: toPt(a),
-          lengthCm, thicknessCm: 0, thicknessSide: 'outward', heightCm,
-          outwardNormal: { x: out.x, z: out.y },
-          isInterior: false, cutawayGroupId: id, pairedWallIds: [],
-          innerColor: room.wallColors?.[String(i)] ?? DEFAULT_WALL_INNER_COLOR,
-          outerColor: DEFAULT_WALL_OUTER_COLOR,
+          id, roomId: ea.room.id, edgeIndex: ea.index, start, end,
+          center: { x: (start.x + end.x) / 2 + ea.n.x * shift, z: (start.z + end.z) / 2 + ea.n.z * shift },
+          lengthCm: u1 - u0, thicknessCm: t, thicknessSide: flush ? 'centered' : 'outward', heightCm,
+          outwardNormal: ea.n, isInterior: true, cutawayGroupId: id, pairedWallIds: [ea.id, eb.id],
+          innerColor: colorOf(ea), outerColor: DEFAULT_WALL_OUTER_COLOR, oppositeColor: colorOf(eb),
           pieces: [], windowPanes: [],
         },
       })
     }
   }
 
-  // Pair flush walls of different rooms and group them (union-find on wall ids).
-  const parent = new Map<string, string>(builds.map((b) => [b.wall.id, b.wall.id]))
-  const find = (x: string): string => {
-    let r = x
-    while (parent.get(r) !== r) r = parent.get(r) as string
-    return r
-  }
-  for (let i = 0; i < builds.length; i++) {
-    for (let j = i + 1; j < builds.length; j++) {
-      if (!arePaired(builds[i], builds[j])) continue
-      builds[i].wall.pairedWallIds.push(builds[j].wall.id)
-      builds[j].wall.pairedWallIds.push(builds[i].wall.id)
-      parent.set(find(builds[i].wall.id), find(builds[j].wall.id))
+  // Exterior walls: the part of each edge no shared wall covers.
+  const exterior: WallBuild[] = []
+  for (const e of edges) {
+    const covered = [...e.covered].sort((p, q) => p[0] - q[0])
+    const spans: [number, number][] = []
+    let cur = 0
+    for (const c of covered) {
+      if (c[0] - cur > 1) spans.push([cur, c[0]])
+      cur = Math.max(cur, c[1])
     }
+    if (e.lengthCm - cur > 1) spans.push([cur, e.lengthCm])
+    const whole = covered.length === 0
+    spans.forEach(([u0, u1], k) => {
+      const s0 = whole ? 0 : u0, s1 = whole ? e.lengthCm : u1
+      const start = { x: e.a.x + e.dir.x * s0, z: e.a.z + e.dir.z * s0 }
+      const end = { x: e.a.x + e.dir.x * s1, z: e.a.z + e.dir.z * s1 }
+      const mid = { x: (start.x + end.x) / 2, y: (start.z + end.z) / 2 }
+      let t: number
+      if (thickness > 0) {
+        const eff = effectiveWallThickness(rooms, e.room.id, mid, { x: e.n.x, y: e.n.z }, thickness)
+        t = eff > 0 ? eff : INTERIOR_HALF_WALL_CM
+      } else t = THIN_WALL_FALLBACK_CM
+      const id = whole ? e.id : `${e.id}#${k}`
+      exterior.push({
+        dir: e.dir, cuts: [], edgeSpan: { u0: s0, u1: s1, edgeLengthCm: e.lengthCm },
+        wall: {
+          id, roomId: e.room.id, edgeIndex: e.index, start, end,
+          center: { x: mid.x + e.n.x * t / 2, z: mid.y + e.n.z * t / 2 },
+          lengthCm: s1 - s0, thicknessCm: t, thicknessSide: 'outward', heightCm,
+          outwardNormal: e.n, isInterior: false, cutawayGroupId: id, pairedWallIds: [],
+          innerColor: colorOf(e), outerColor: DEFAULT_WALL_OUTER_COLOR,
+          pieces: [], windowPanes: [],
+        },
+      })
+    })
   }
-  const members = new Map<string, string[]>()
-  for (const b of builds) {
-    const root = find(b.wall.id)
-    members.set(root, [...(members.get(root) ?? []), b.wall.id])
-  }
-  for (const b of builds) {
-    if (b.wall.pairedWallIds.length === 0) continue
-    b.wall.isInterior = true
-    b.wall.cutawayGroupId = `pair:${[...(members.get(find(b.wall.id)) ?? [])].sort()[0]}`
-  }
+  const builds = [...exterior, ...shared]
 
-  // Walls of two rooms that face each other across a gap smaller than two wall thicknesses would fill
-  // the same space (z-fighting, and an opening cut in one wall hidden by the other). They share the gap.
-  if (thickness > 0) {
-    for (const a of builds) {
-      if (a.wall.isInterior) continue
-      for (const b of builds) {
-        if (b.wall.isInterior) continue
-        const d = facingGap(a, b)
-        if (d !== null && d < 2 * thickness) a.gapPartners.push({ build: b, gapCm: d })
-      }
-    }
-  }
-
-  // Thickness and centre.
-  for (const b of builds) {
-    const w = b.wall
-    let t: number
-    if (w.isInterior) t = INTERIOR_HALF_WALL_CM
-    else if (thickness > 0) {
-      const mid = { x: (w.start.x + w.end.x) / 2, y: (w.start.z + w.end.z) / 2 }
-      const eff = effectiveWallThickness(rooms, w.roomId, mid, { x: w.outwardNormal.x, y: w.outwardNormal.z }, thickness)
-      t = eff > 0 ? eff : INTERIOR_HALF_WALL_CM
-    } else t = THIN_WALL_FALLBACK_CM
-    // Each side takes half of a shared gap: back to back, no overlap.
-    for (const g of b.gapPartners) t = Math.min(t, g.gapCm / 2)
-    w.thicknessCm = t
-    w.thicknessSide = w.isInterior ? 'inward' : 'outward'
-    const shift = w.isInterior ? -t / 2 : t / 2
-    w.center = {
-      x: (w.start.x + w.end.x) / 2 + w.outwardNormal.x * shift,
-      z: (w.start.z + w.end.z) / 2 + w.outwardNormal.z * shift,
-    }
-  }
-
-  // Openings: cut the host wall and, on a shared wall, the paired walls too.
-  const byId = new Map(builds.map((b) => [b.wall.id, b]))
+  // Openings: cut every wall built on the host edge, a shared wall included, once per opening.
+  const onEdge = new Map<string, WallBuild[]>()
+  const add = (key: string, b: WallBuild) => onEdge.set(key, [...(onEdge.get(key) ?? []), b])
+  for (const b of exterior) add(wallId(b.wall.roomId, b.wall.edgeIndex), b)
+  for (const b of shared) for (const key of b.wall.pairedWallIds) add(key, b)
   for (const op of artboard.openings) {
     const host = hostWallIn(rooms, op)
     if (!host) continue
-    const hostBuild = byId.get(wallId(host.room.id, host.edgeIndex))
-    if (!hostBuild) continue
+    const targets = onEdge.get(wallId(host.room.id, host.edgeIndex))
+    if (!targets) continue
     const sill = openingSillCm(op, heightCm)
     const h = openingHeightCm(op, heightCm)
     if (!(h > EPS)) continue
     const { start, end } = openingEndpoints(op)
-    const targets = [
-      hostBuild,
-      ...hostBuild.wall.pairedWallIds.map((id) => byId.get(id)).filter((x): x is WallBuild => !!x),
-      ...hostBuild.gapPartners.map((g) => g.build),
-    ]
     for (const t of targets) {
       const s = t.wall.start
       const u0 = (start.x - s.x) * t.dir.x + (start.y - s.z) * t.dir.z
       const u1 = (end.x - s.x) * t.dir.x + (end.y - s.z) * t.dir.z
       const lo = Math.max(0, Math.min(u0, u1)), hi = Math.min(t.wall.lengthCm, Math.max(u0, u1))
       if (hi - lo <= EPS) continue
-      t.cuts.push({ u0: lo, u1: hi, y0: sill, y1: sill + h })
-      if (t === hostBuild && op.kind === 'window') {
-        t.wall.windowPanes.push({ openingId: op.id, u0: lo, u1: hi, y0: sill, y1: Math.min(sill + h, heightCm) })
+      const cut = { u0: lo, u1: hi, y0: sill, y1: sill + h }
+      const dup = (c: WallPieceData) =>
+        Math.abs(c.u0 - cut.u0) < 1 && Math.abs(c.u1 - cut.u1) < 1 && Math.abs(c.y0 - cut.y0) < 1 && Math.abs(c.y1 - cut.y1) < 1
+      if (!t.cuts.some(dup)) t.cuts.push(cut)
+      if (op.kind === 'window') {
+        const pane = { openingId: op.id, u0: lo, u1: hi, y0: sill, y1: Math.min(sill + h, heightCm) }
+        // One pane per window, also when both rooms of a shared wall carry a window at the same place.
+        if (!t.wall.windowPanes.some((q) => q.openingId === op.id || dup(q))) t.wall.windowPanes.push(pane)
       }
     }
   }
@@ -377,17 +404,32 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
 
 /** Posts that fill the gap outside convex corners where two exterior walls meet. */
 function buildCornerPosts(rooms: Room[], builds: WallBuild[], heightCm: number): CornerPostData[] {
-  const byId = new Map(builds.map((b) => [b.wall.id, b]))
+  // Exterior walls by edge id, with the u-range of the edge they cover.
+  const ext = new Map<string, WallBuild[]>()
+  const edgeIds = new Set<string>()
+  for (const b of builds) {
+    const key = wallId(b.wall.roomId, b.wall.edgeIndex)
+    if (b.edgeSpan) ext.set(key, [...(ext.get(key) ?? []), b])
+    if (!b.edgeSpan && b.wall.pairedWallIds.length) b.wall.pairedWallIds.forEach((k) => edgeIds.add(k))
+    edgeIds.add(key)
+  }
   const posts: CornerPostData[] = []
   for (const room of rooms) {
     const n = room.vertices.length
     const s = signedArea(room.vertices) >= 0 ? 1 : -1
     for (let k = 0; k < n; k++) {
-      const next = byId.get(wallId(room.id, k))
-      // Previous wall: walk back over zero-length edges (duplicate vertices) so the corner keeps its post.
-      let prev: WallBuild | undefined
-      for (let j = 1; j < n && !prev; j++) prev = byId.get(wallId(room.id, (k - j + n * 2) % n))
-      if (!prev || !next || prev.wall.isInterior || next.wall.isInterior) continue
+      const nextKey = wallId(room.id, k)
+      // Previous edge: walk back over zero-length edges (duplicate vertices) so the corner keeps its post.
+      let prevKey: string | undefined
+      for (let j = 1; j < n && !prevKey; j++) {
+        const key = wallId(room.id, (k - j + n * 2) % n)
+        if (edgeIds.has(key)) prevKey = key
+      }
+      if (!prevKey || !edgeIds.has(nextKey)) continue
+      // Only the exterior wall that starts the next edge and the one that ends the previous edge make a post.
+      const next = ext.get(nextKey)?.find((b) => (b.edgeSpan?.u0 ?? 1) < EPS)
+      const prev = ext.get(prevKey)?.find((b) => b.edgeSpan !== null && b.edgeSpan.edgeLengthCm - b.edgeSpan.u1 < EPS)
+      if (!prev || !next) continue
       const cross = prev.dir.x * next.dir.z - prev.dir.z * next.dir.x
       // Convex corner: the room turns the same way as its winding. Near-straight corners need no post.
       if (cross * s <= 1e-3) continue
@@ -492,12 +534,13 @@ export function buildScene(artboard: Artboard): SceneData {
   for (const f of floors) points.push(...f.vertices)
   for (const t of thresholds) points.push(...t.vertices)
   for (const w of walls) {
-    const n = w.outwardNormal, t = w.thicknessSide === 'inward' ? -w.thicknessCm : w.thicknessCm
-    points.push(
-      w.start, w.end,
-      { x: w.start.x + n.x * t, z: w.start.z + n.z * t },
-      { x: w.end.x + n.x * t, z: w.end.z + n.z * t },
-    )
+    const n = w.outwardNormal
+    for (const o of wallSideOffsets(w)) {
+      points.push(
+        { x: w.start.x + n.x * o, z: w.start.z + n.z * o },
+        { x: w.end.x + n.x * o, z: w.end.z + n.z * o },
+      )
+    }
   }
   let maxY = ceiling
   artboard.furniture.forEach((f, i) => {
@@ -562,7 +605,11 @@ export function computeWallTargetHeights(
   const blockedGroups = new Set<string>()
   for (const w of walls) {
     if (!w.isInterior) continue
-    const t = segmentCrossing(cam, tgt, w.start, w.end)
+    // Test against the middle line of the wall box, so a thick gap wall blocks like a thin one.
+    const [o0, o1] = wallSideOffsets(w), off = (o0 + o1) / 2
+    const mid0 = { x: w.start.x + w.outwardNormal.x * off, z: w.start.z + w.outwardNormal.z * off }
+    const mid1 = { x: w.end.x + w.outwardNormal.x * off, z: w.end.z + w.outwardNormal.z * off }
+    const t = segmentCrossing(cam, tgt, mid0, mid1)
     if (t === null) continue
     const rayY = cameraPos.y + t * (targetPos.y - cameraPos.y)
     if (rayY < w.heightCm) blockedGroups.add(w.cutawayGroupId)

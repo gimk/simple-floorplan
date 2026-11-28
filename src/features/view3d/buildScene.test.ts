@@ -226,29 +226,41 @@ describe('door thresholds', () => {
   })
 })
 
+const SH = 'shared:A:1|B:3'
+
 describe('touching rooms', () => {
-  it('pairs the flush walls, shares a cutaway group, and keeps them thin and non-overlapping', () => {
-    const s = buildScene(twoRooms())
-    const a = s.walls.find((w) => w.id === 'A:1')!
-    const b = s.walls.find((w) => w.id === 'B:3')!
-    expect(a.isInterior).toBe(true)
-    expect(b.isInterior).toBe(true)
-    expect(a.pairedWallIds).toEqual(['B:3'])
-    expect(b.pairedWallIds).toEqual(['A:1'])
-    expect(a.cutawayGroupId).toBe(b.cutawayGroupId)
-    expect(a.thicknessCm).toBe(3)
-    expect(b.thicknessCm).toBe(3)
-    // Each half sits INSIDE its own room: A's goes west of x = 400, B's goes east. They meet back to back.
-    expect(a.thicknessSide).toBe('inward')
-    expect(b.thicknessSide).toBe('inward')
-    expect(a.center.x).toBeCloseTo(398.5)
-    expect(b.center.x).toBeCloseTo(401.5)
-    expect(a.center.x + a.thicknessCm / 2).toBeCloseTo(400)
-    expect(b.center.x - b.thicknessCm / 2).toBeCloseTo(400)
-    // Other walls are exterior with their own group.
-    const others = s.walls.filter((w) => w !== a && w !== b)
-    expect(others.every((w) => !w.isInterior && w.cutawayGroupId === w.id)).toBe(true)
-    expect(others.every((w) => w.thicknessCm === 10 && w.thicknessSide === 'outward')).toBe(true)
+  it('flush rooms share ONE centered interior wall with both paints and no middle seam', () => {
+    const a = board({
+      rooms: [
+        room('A', box(0, 0, 400, 300), { wallColors: { '1': '#ff0000' } }),
+        room('B', box(400, 0, 800, 300), { wallColors: { '3': '#00ff00' } }),
+      ],
+    })
+    const sc = buildScene(a)
+    const shared = sc.walls.filter((w) => w.isInterior)
+    expect(shared).toHaveLength(1)
+    const w = shared[0]
+    expect(w.id).toBe(SH)
+    expect(sc.walls.some((x) => x.id === 'A:1' || x.id === 'B:3')).toBe(false)
+    expect(sc.walls).toHaveLength(7) // 3 + 3 exterior + 1 shared
+    expect(w.thicknessSide).toBe('centered')
+    expect(w.thicknessCm).toBe(6)
+    expect(w.center.x).toBeCloseTo(400)
+    expect(w.lengthCm).toBeCloseTo(300)
+    expect(w.innerColor).toBe('#ff0000')
+    expect(w.oppositeColor).toBe('#00ff00')
+    expect(w.outerColor).toBe(DEFAULT_WALL_OUTER_COLOR)
+    expect(w.cutawayGroupId).toBe(w.id)
+    expect(w.pairedWallIds).toEqual(['A:1', 'B:3'])
+    // Exterior walls have no opposite colour and sit outward.
+    const others = sc.walls.filter((x) => x !== w)
+    expect(others.every((x) => !x.isInterior && x.oppositeColor === undefined && x.thicknessCm === 10 && x.thicknessSide === 'outward')).toBe(true)
+  })
+
+  it('defaults both faces of the shared wall to the default inner colour', () => {
+    const w = buildScene(twoRooms()).walls.find((x) => x.isInterior)!
+    expect(w.innerColor).toBe(DEFAULT_WALL_INNER_COLOR)
+    expect(w.oppositeColor).toBe(DEFAULT_WALL_INNER_COLOR)
   })
 
   it('keeps the bounds of two flush rooms free of any protrusion', () => {
@@ -256,44 +268,81 @@ describe('touching rooms', () => {
     expect(b).toMatchObject({ minX: -10, maxX: 810, minZ: -10, maxZ: 310 })
   })
 
-  it('does not pair rooms that only share a corner or are apart', () => {
+  it('does not share rooms that only touch at a corner or are apart', () => {
     const apart = buildScene(board({ rooms: [room('A', box(0, 0, 400, 300)), room('B', box(500, 0, 900, 300))] }))
     expect(apart.walls.some((w) => w.isInterior)).toBe(false)
     const corner = buildScene(board({ rooms: [room('A', box(0, 0, 400, 300)), room('B', box(400, 300, 800, 600))] }))
     expect(corner.walls.some((w) => w.isInterior)).toBe(false)
+    expect(corner.walls).toHaveLength(8)
   })
 
-  it('pairs a long wall with two short flush neighbours in one group', () => {
+  it('T-junction: a long wall touching two short rooms gives one shared wall per span and no exterior left', () => {
     const s = buildScene(board({ rooms: [
       room('A', box(0, 0, 400, 300)),
       room('B', box(400, 0, 800, 150)),
       room('C', box(400, 150, 800, 300)),
     ] }))
-    const a = s.walls.find((w) => w.id === 'A:1')!
-    expect(a.pairedWallIds.sort()).toEqual(['B:3', 'C:3'])
-    expect(a.isInterior).toBe(true)
-    const bw = s.walls.find((w) => w.id === 'B:3')!
-    const cw = s.walls.find((w) => w.id === 'C:3')!
-    expect(bw.cutawayGroupId).toBe(a.cutawayGroupId)
-    expect(cw.cutawayGroupId).toBe(a.cutawayGroupId)
+    const shared = s.walls.filter((w) => w.isInterior)
+    // B and C also touch along z = 150: a third shared wall.
+    expect(shared.map((w) => w.id).sort()).toEqual(['shared:A:1|B:3', 'shared:A:1|C:3', 'shared:B:2|C:0'])
+    const ab = shared.find((w) => w.id === 'shared:A:1|B:3')!
+    const ac = shared.find((w) => w.id === 'shared:A:1|C:3')!
+    expect(ab.lengthCm).toBeCloseTo(150)
+    expect(ac.lengthCm).toBeCloseTo(150)
+    expect(ab.cutawayGroupId).not.toBe(ac.cutawayGroupId)
+    expect(s.walls.some((w) => w.id.startsWith('A:1'))).toBe(false)
   })
 
-  it('cuts an opening on a shared wall in both rooms', () => {
+  it('partial overlap: the uncovered part of the long wall stays an exterior wall', () => {
+    // Hallway H right edge x = 400, z 0..600. K covers z 0..250, D covers z 250..600 on the east side.
+    const s = buildScene(board({ rooms: [
+      room('H', box(0, 0, 400, 600)),
+      room('K', box(400, 0, 700, 250)),
+      room('D', box(400, 250, 700, 600)),
+    ] }))
+    const shared = s.walls.filter((w) => w.isInterior)
+    // H|K (250), H|D (350) and K|D (300, along z = 250).
+    expect(shared).toHaveLength(3)
+    expect(shared.map((w) => Math.round(w.lengthCm)).sort((a, b) => a - b)).toEqual([250, 300, 350])
+    expect(s.walls.filter((w) => !w.isInterior && w.roomId === 'H' && w.edgeIndex === 1)).toHaveLength(0)
+    // Shorter neighbour: hallway wall of 600 touching only a 250 cm room leaves 350 cm of exterior wall.
+    const t = buildScene(board({ rooms: [room('H', box(0, 0, 400, 600)), room('K', box(400, 0, 700, 250))] }))
+    const ext = t.walls.filter((w) => !w.isInterior && w.roomId === 'H' && w.edgeIndex === 1)
+    expect(ext).toHaveLength(1)
+    expect(ext[0].isInterior).toBe(false)
+    expect(ext[0].lengthCm).toBeCloseTo(350)
+    expect(ext[0].start.z).toBeCloseTo(250)
+    expect(ext[0].end.z).toBeCloseTo(600)
+    expect(ext[0].thicknessCm).toBe(10)
+    const sh = t.walls.filter((w) => w.isInterior)
+    expect(sh).toHaveLength(1)
+    expect(sh[0].lengthCm).toBeCloseTo(250)
+    // Covered surface: shared + exterior spans add up to the whole 600 cm edge.
+    expect(sh[0].lengthCm + ext[0].lengthCm).toBeCloseTo(600)
+  })
+
+  it('cuts an opening of one room through the single shared wall', () => {
     const s = buildScene(twoRooms({ openings: [door({ xCm: 400, yCm: 150, angleDeg: 90, roomId: 'A' })] }))
-    const a = s.walls.find((w) => w.id === 'A:1')! // (400,0) -> (400,300), u = y
-    const b = s.walls.find((w) => w.id === 'B:3')! // (400,300) -> (400,0), u = 300 - y
-    for (const w of [a, b]) {
-      expect(w.pieces).toHaveLength(3)
-      expect(w.pieces).toContainEqual({ u0: 105, u1: 195, y0: 205, y1: 250 })
-      expect(w.pieces).toContainEqual({ u0: 0, u1: 105, y0: 0, y1: 250 })
-      expect(w.pieces).toContainEqual({ u0: 195, u1: 300, y0: 0, y1: 250 })
-    }
+    const w = s.walls.find((x) => x.id === SH)! // (400,0) -> (400,300), u = y
+    expect(w.pieces).toHaveLength(3)
+    expect(w.pieces).toContainEqual({ u0: 105, u1: 195, y0: 205, y1: 250 })
+    expect(w.pieces).toContainEqual({ u0: 0, u1: 105, y0: 0, y1: 250 })
+    expect(w.pieces).toContainEqual({ u0: 195, u1: 300, y0: 0, y1: 250 })
+  })
+
+  it('cuts the shared wall for an opening hosted by room B and does not double it for two openings', () => {
+    const s = buildScene(twoRooms({ openings: [
+      door({ id: 'd1', xCm: 400, yCm: 150, angleDeg: 90, roomId: 'A' }),
+      door({ id: 'd2', xCm: 400, yCm: 150, angleDeg: 90, roomId: 'B' }),
+    ] }))
+    const w = s.walls.find((x) => x.id === SH)!
+    expect(w.pieces).toHaveLength(3)
   })
 
   it('emits a window pane once for a window on a shared wall', () => {
     const s = buildScene(twoRooms({ openings: [windowOp({ xCm: 400, yCm: 150, angleDeg: 90, roomId: 'A' })] }))
     expect(s.walls.flatMap((w) => w.windowPanes)).toHaveLength(1)
-    expect(s.walls.find((w) => w.id === 'B:3')!.pieces).toHaveLength(4)
+    expect(s.walls.find((w) => w.id === SH)!.pieces).toHaveLength(4)
   })
 
   it('makes no door threshold on a flush shared wall', () => {
@@ -487,11 +536,10 @@ describe('computeWallTargetHeights', () => {
     expect([...m.values()]).toEqual([250, 250, 250, 250])
   })
 
-  it('lowers both sides of an interior wall that blocks the view, and only those', () => {
+  it('lowers the single interior wall that blocks the view, and only that one', () => {
     const walls = buildScene(twoRooms()).walls
     const m = computeWallTargetHeights(walls, cam(-300, 150), { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(m.get('A:1')).toBe(30)
-    expect(m.get('B:3')).toBe(30)
+    expect(m.get(SH)).toBe(30)
     expect(m.get('A:3')).toBe(30) // exterior wall facing the camera
     expect(m.get('B:1')).toBe(250) // back wall
     expect(m.get('A:0')).toBe(250)
@@ -501,8 +549,7 @@ describe('computeWallTargetHeights', () => {
   it('keeps an interior wall full when it is not between the camera and the target', () => {
     const walls = buildScene(twoRooms()).walls
     const m = computeWallTargetHeights(walls, cam(600, -500), { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(m.get('A:1')).toBe(250)
-    expect(m.get('B:3')).toBe(250)
+    expect(m.get(SH)).toBe(250)
     expect(m.get('A:0')).toBe(30)
     expect(m.get('B:0')).toBe(30)
   })
@@ -510,8 +557,7 @@ describe('computeWallTargetHeights', () => {
   it('does not drop an interior wall when the camera looks over it from high above', () => {
     const walls = buildScene(twoRooms()).walls
     const m = computeWallTargetHeights(walls, { x: -50, y: 3000, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(m.get('A:1')).toBe(250)
-    expect(m.get('B:3')).toBe(250)
+    expect(m.get(SH)).toBe(250)
   })
 
   it('keeps every wall of a room full for a camera straight above the target', () => {
@@ -566,30 +612,73 @@ describe('lowered walls keep doorways open', () => {
 describe('rooms separated by a wall-thickness gap', () => {
   const gapped = (gap: number, p: Partial<Artboard> = {}) =>
     board({ rooms: [room('A', box(0, 0, 400, 300)), room('B', box(400 + gap, 0, 800 + gap, 300))], ...p })
-  const spans = (w: WallSegmentData) => {
-    const n = w.outwardNormal, mid = w.thicknessSide === 'inward' ? -w.thicknessCm / 2 : w.thicknessCm / 2
-    return { lo: w.center.x - w.thicknessCm / 2, hi: w.center.x + w.thicknessCm / 2, n, mid }
-  }
 
-  it.each([10, 15, 19])('shares a %s cm gap between the two walls without overlap', (gap) => {
+  it.each([10, 15, 19])('builds ONE shared wall of %s cm that spans exactly from room A to room B', (gap) => {
     const s = buildScene(gapped(gap))
-    const a = spans(s.walls.find((w) => w.id === 'A:1')!), b = spans(s.walls.find((w) => w.id === 'B:3')!)
-    expect(a.hi).toBeLessThanOrEqual(b.lo + 1e-9)
-    expect(a.hi - a.lo).toBeCloseTo(gap / 2)
+    const shared = s.walls.filter((w) => w.isInterior)
+    expect(shared).toHaveLength(1)
+    const w = shared[0]
+    expect(w.id).toBe(SH)
+    expect(w.thicknessCm).toBeCloseTo(gap)
+    expect(w.thicknessSide).toBe('outward')
+    expect(w.center.x).toBeCloseTo(400 + gap / 2)
+    expect(w.center.x - w.thicknessCm / 2).toBeCloseTo(400) // flush with A's edge
+    expect(w.center.x + w.thicknessCm / 2).toBeCloseTo(400 + gap) // flush with B's edge
+    expect(w.cutawayGroupId).toBe(w.id)
+    expect(s.walls.some((x) => x.id === 'A:1' || x.id === 'B:3')).toBe(false)
+    expect(s.walls).toHaveLength(7)
   })
 
-  it('keeps full thickness when the gap is two thicknesses or more', () => {
+  it('keeps both room paints on the gap wall', () => {
+    const s = buildScene(gapped(10, { rooms: [
+      room('A', box(0, 0, 400, 300), { wallColors: { '1': '#111111' } }),
+      room('B', box(410, 0, 810, 300), { wallColors: { '3': '#222222' } }),
+    ] }))
+    const w = s.walls.find((x) => x.isInterior)!
+    expect(w.innerColor).toBe('#111111')
+    expect(w.oppositeColor).toBe('#222222')
+  })
+
+  it('keeps two separate full-thickness walls when the gap is two thicknesses or more', () => {
     const s = buildScene(gapped(20))
+    expect(s.walls.some((w) => w.isInterior)).toBe(false)
     expect(s.walls.find((w) => w.id === 'A:1')!.thicknessCm).toBe(10)
     expect(s.walls.find((w) => w.id === 'B:3')!.thicknessCm).toBe(10)
   })
 
-  it('cuts a door of room A in the wall of room B across the gap too', () => {
+  it('cuts a door of room A cleanly through the single gap wall down to the floor', () => {
     const s = buildScene(gapped(10, { openings: [door({ xCm: 400, yCm: 150, angleDeg: 90, roomId: 'A' })] }))
-    for (const id of ['A:1', 'B:3']) {
-      const w = s.walls.find((x) => x.id === id)!
-      expect(w.pieces.some((p) => p.y0 < 205 && p.u0 < 195 && p.u1 > 105 && p.u0 > 0 && p.u1 < 300)).toBe(false)
-      expect(w.pieces).toContainEqual({ u0: 105, u1: 195, y0: 205, y1: 250 })
-    }
+    const w = s.walls.find((x) => x.isInterior)!
+    expect(w.pieces.some((p) => p.y0 < 205 && p.u0 < 195 && p.u1 > 105)).toBe(false)
+    expect(w.pieces).toContainEqual({ u0: 105, u1: 195, y0: 205, y1: 250 })
+    expect(w.pieces).toHaveLength(3)
+  })
+
+  it('cuts a door hosted by room B through the same wall, and the doorway floor threshold exists', () => {
+    const s = buildScene(gapped(10, { openings: [door({ xCm: 410, yCm: 150, angleDeg: 90, roomId: 'B' })] }))
+    const w = s.walls.find((x) => x.isInterior)!
+    expect(w.pieces).toContainEqual({ u0: 105, u1: 195, y0: 205, y1: 250 })
+    expect(s.thresholds.length).toBeGreaterThan(0)
+  })
+
+  it('emits one window pane for a window on a gap wall', () => {
+    const s = buildScene(gapped(10, { openings: [windowOp({ xCm: 400, yCm: 150, angleDeg: 90, roomId: 'A' })] }))
+    expect(s.walls.flatMap((w) => w.windowPanes)).toHaveLength(1)
+  })
+
+  it('lowers and raises the gap wall as one unit in cutaway', () => {
+    const walls = buildScene(gapped(10)).walls
+    const blocked = computeWallTargetHeights(walls, { x: -300, y: 100, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
+    expect(blocked.get(SH)).toBe(30)
+    const free = computeWallTargetHeights(walls, { x: 600, y: 100, z: -500 }, { x: 600, y: 0, z: 150 }, 'cutaway')
+    expect(free.get(SH)).toBe(250)
+    const above = computeWallTargetHeights(walls, { x: -50, y: 3000, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
+    expect(above.get(SH)).toBe(250)
+    // Only one entry for the shared wall: it cannot be half up and half down.
+    expect(walls.filter((w) => w.isInterior)).toHaveLength(1)
+  })
+
+  it('bounds cover the gap wall without protrusion', () => {
+    expect(buildScene(gapped(10)).bounds).toMatchObject({ minX: -10, maxX: 820, minZ: -10, maxZ: 310 })
   })
 })
