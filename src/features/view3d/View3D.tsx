@@ -25,8 +25,6 @@ const AZIMUTH = 0.55
 const MIN_SCALE = 0.001
 const THRESHOLD_Y = 0.05
 const EDGE_OPACITY = 0.2
-const THUMB_WIDTH = 320
-const THUMB_HEIGHT = 180
 
 const easeOut = (t: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3)
 const range = (ms: number, from: number, to: number) => easeOut((ms - from) / (to - from))
@@ -630,14 +628,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       return blob
     }
 
-    // Thumbnails reuse the PNG path: one synchronous render at thumbnail size, then everything is put back
-    // before the browser paints, so the live canvas never shows the small frame.
-    const captureThumbnail: View3DHandle['captureThumbnail'] = async (snapshot, w = THUMB_WIDTH, h = THUMB_HEIGHT) => {
-      const blob = await capturePngBlob({ width: w, height: h, view: snapshot })
-      return blob ? URL.createObjectURL(blob) : null
-    }
-
-    const handle: View3DHandle = { getSnapshot, flyTo, applyPreset, capturePngBlob, captureThumbnail }
+    const handle: View3DHandle = { getSnapshot, flyTo, applyPreset, capturePngBlob }
     if (handleRef) handleRef.current = handle
 
     const resize = () => {
