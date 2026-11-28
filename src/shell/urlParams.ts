@@ -10,7 +10,7 @@ export type ParsedUrlParams = {
   nosw: boolean
 }
 
-const MODES: readonly Mode[] = ['plan', 'design']
+const MODES: readonly Mode[] = ['plan', 'design', 'views']
 const TOOLS: readonly Tool[] = ['select', 'rect', 'pen', 'cutout', 'artboard', 'tape']
 
 const clean = (v: string | null): string | undefined => {
@@ -39,7 +39,8 @@ export function parseUrlParams(search: string): ParsedUrlParams {
 export function applyInitialUiParams(params: ParsedUrlParams): void {
   const patch: { mode?: Mode; tool?: Tool; activeArtboardId?: string } = {}
   if (params.mode) patch.mode = params.mode
-  if (params.tool) patch.tool = params.tool
+  // Views mode has no 2D tool: ?mode=views&tool=rect must not leave a tool armed.
+  if (params.tool && params.mode !== 'views') patch.tool = params.tool
   const id = params.artboard
   if (id && useDoc.getState().doc.artboards.some((a) => a.id === id)) patch.activeArtboardId = id
   if (Object.keys(patch).length > 0) useUi.getState().set(patch)

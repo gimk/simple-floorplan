@@ -1,7 +1,7 @@
 // v2 shell: top bar (title, mode, undo/redo, JSON export/import, add image), left panel,
 // SVG canvas (grid, reference images, artboard frames), right Inspect panel.
 import { useEffect, useId, useRef, useState } from 'react'
-import { Download, ClipboardCopy, ClipboardPaste, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
+import { Box, Camera, Download, ClipboardCopy, ClipboardPaste, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Viewport } from './canvas/Viewport'
 import { ArtboardContent, ArtboardInspect, ArtboardsLayer } from './features/artboards'
@@ -59,7 +59,7 @@ import { selectRoom } from './features/artboards/selection'
 import { useDoc } from './model/store'
 import type { ProjectDoc, Selection } from './model/types'
 import { CanvasGrid } from './shell/CanvasGrid'
-import { IconButton, Segmented } from './shell/panel'
+import { IconButton, MUTED, PanelSection, Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
 import { useUi, type Mode } from './shell/uiStore'
 import { shortcutsBlocked, useDialogFocus } from './shell/useDialogFocus'
@@ -75,6 +75,7 @@ initTheme()
 const MODES: { value: Mode; label: string; title: string }[] = [
   { value: 'plan', label: 'Plan', title: 'Plan (1)' },
   { value: 'design', label: 'Design', title: 'Design (2)' },
+  { value: 'views', label: 'Views', title: 'Views (3)' },
 ]
 
 /** Text button of the top bar (Add image). 36 px high, 44 px on a coarse pointer. */
@@ -110,7 +111,7 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
     rows: [
       ['Undo', undoShortcut()],
       ['Redo', REDO_KEYS],
-      ['Plan / Design mode', '1 / 2'],
+      ['Plan / Design / Views mode', '1 / 2 / 3'],
       ['Close panel or dialog', 'Esc'],
       ['This cheat sheet', '?'],
     ],
@@ -230,26 +231,39 @@ function ShortcutsModal({ onClose }: { onClose: () => void }) {
 }
 
 /**
- * UI state of a mode switch, shared by the Mode control and the plain '1' / '2' shortcuts.
- * Design mode has none of the Plan-mode placement tools, so their state is dropped; Plan mode drops
+ * UI state of a mode switch, shared by the Mode control and the plain '1' / '2' / '3' shortcuts.
+ * Design mode has none of the Plan-mode placement tools, so their state is dropped. Views mode is a
+ * read-only 3D surface: it keeps no 2D tool, selection or pinned measurement at all. Plan mode drops
  * a Design-mode furniture selection, because nothing in Plan mode can edit a furniture item (the
  * Inspect panel would keep an empty column and Delete would hit furniture from a locked plan).
  */
-const modeUiPatch = (mode: Mode, selection: Selection) =>
-  mode === 'design'
-    ? {
-        mode,
-        tool: 'select' as const,
-        selection: { kind: 'none' } as Selection,
-        placingOpeningKind: null,
-        calibratingImageId: null,
-      }
-    : {
-        mode,
-        ...(selection.kind === 'furniture' || selection.kind === 'furnitureMulti'
-          ? { selection: { kind: 'none' } as Selection }
-          : {}),
-      }
+const modeUiPatch = (mode: Mode, selection: Selection) => {
+  if (mode === 'views') {
+    return {
+      mode,
+      tool: 'select' as const,
+      selection: { kind: 'none' } as Selection,
+      placingOpeningKind: null,
+      calibratingImageId: null,
+      pinnedTape: null,
+    }
+  }
+  if (mode === 'design') {
+    return {
+      mode,
+      tool: 'select' as const,
+      selection: { kind: 'none' } as Selection,
+      placingOpeningKind: null,
+      calibratingImageId: null,
+    }
+  }
+  return {
+    mode,
+    ...(selection.kind === 'furniture' || selection.kind === 'furnitureMulti'
+      ? { selection: { kind: 'none' } as Selection }
+      : {}),
+  }
+}
 
 /** Modal to paste project JSON text (no file picker). Same parsing as the file import, incl. v1 conversion. */
 function PasteJsonModal({ onClose, onImported }: { onClose: () => void; onImported: (doc: ProjectDoc) => void }) {
@@ -296,6 +310,28 @@ function PasteJsonModal({ onClose, onImported }: { onClose: () => void; onImport
   )
 }
 
+/** Left panel of Views mode (Phase 1): a clean placeholder, with no 2D object list. */
+function ViewsPanel() {
+  return (
+    <PanelSection title="Views" icon={<Camera size={14} aria-hidden="true" />} description="Saved camera views">
+      <p className={MUTED}>No saved view yet.</p>
+      <p className={MUTED}>The 3D scene arrives in a later phase.</p>
+    </PanelSection>
+  )
+}
+
+/** Right panel of Views mode (Phase 1): where the Scene settings of the 3D view will live. */
+function SceneSettings() {
+  return (
+    <PanelSection title="Scene" icon={<Box size={14} aria-hidden="true" />} description="3D settings">
+      <p className={MUTED}>Walls, projection, backdrop and shadows will be set here.</p>
+    </PanelSection>
+  )
+}
+
+/** Name of a mode in a sentence, for the hints of the actions that need Plan mode. */
+const modeName = (mode: Mode): string => (mode === 'views' ? 'Views' : mode === 'design' ? 'Design' : 'Plan')
+
 const key0 = (e: KeyboardEvent) => e.key.toLowerCase()
 
 export default function App() {
@@ -338,6 +374,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (isEditable(e.target)) return
       const plain = !e.metaKey && !e.ctrlKey && !e.altKey
+      const key = e.key.toLowerCase()
       // Escape closes the cheat sheet first, then an open panel drawer / bottom sheet.
       if (e.key === 'Escape') {
         const ui = useUi.getState()
@@ -382,13 +419,21 @@ export default function App() {
       }
       // Nothing below may fire behind an open cheat sheet, More menu or dialog.
       if (shortcutsBlocked({ shortcutsOpen: useUi.getState().shortcutsOpen, moreOpen: moreOpenRef.current }, document)) return
+      // Plain '1' / '2' / '3' switch the mode (same state reset as the Mode control). They come
+      // first so that they keep working in Views mode, where every other shortcut is off.
+      // Shift is excluded: on AZERTY, Shift+1 / Shift+2 report key '1' / '2' and are the fit shortcuts.
+      if (plain && !e.shiftKey && (key === '1' || key === '2' || key === '3')) {
+        e.preventDefault()
+        const ui = useUi.getState()
+        ui.set(modeUiPatch(key === '1' ? 'plan' : key === '2' ? 'design' : 'views', ui.selection))
+        return
+      }
       // Zoom: + / = in, - out, 0 = 100%, F or Shift+1 = fit all.
       if (plain && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomIn(); return }
       if (plain && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); return }
       if (plain && e.key === '0') { e.preventDefault(); zoomReset(); return }
       if (plain && (key0(e) === 'f' || (e.shiftKey && e.code === 'Digit1'))) { e.preventDefault(); fitAll(); return }
       // Undo: Cmd/Ctrl+Z. Redo: Cmd/Ctrl+Shift+Z, or Ctrl+Y on Windows/Linux.
-      const key = e.key.toLowerCase()
       if ((e.metaKey || e.ctrlKey) && !e.altKey && (key === 'z' || key === 'y')) {
         e.preventDefault()
         if (key === 'y' || e.shiftKey) useDoc.getState().redo()
@@ -407,6 +452,9 @@ export default function App() {
         ui.set({ uiHidden: !ui.uiHidden })
         return
       }
+      // Views mode is a read-only 3D surface: no 2D tool, edit or selection shortcut runs there.
+      // Undo / redo, the zoom keys and the panel-hiding toggle above stay live.
+      if (useUi.getState().mode === 'views') return
       // Cmd/Ctrl+' shows or hides the canvas grid. Matched on the key character and on the
       // physical code, so a French AZERTY keyboard (where `'` is not Quote) works too.
       if (isGridToggleShortcut(e)) {
@@ -520,13 +568,6 @@ export default function App() {
           e.preventDefault()
           return
         }
-      }
-      // Plain '1' / '2' switch the mode (same state reset as the Mode control).
-      if ((key === '1' || key === '2') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault()
-        const ui = useUi.getState()
-        ui.set(modeUiPatch(key === '1' ? 'plan' : 'design', ui.selection))
-        return
       }
       // Plain 'm' toggles the quick Tape measure in both modes; in Design mode 'v' leaves it.
       if (!e.metaKey && !e.ctrlKey && !e.altKey && (key === 'm' || key === 'v')) {
@@ -745,7 +786,8 @@ export default function App() {
   const addRefImages = async (files: FileList | null) => {
     const list = files ? [...files] : []
     if (list.length === 0) return
-    const center = canvasCenterWorld()
+    // No 2D canvas mounted (Views mode): the image still loads, on the world origin.
+    const center = canvasCenterWorld() ?? { x: 0, y: 0 }
     for (const file of list) {
       try {
         const img = await loadRefImageFile(file, center)
@@ -828,7 +870,7 @@ export default function App() {
   const inspectSheet = !isLg && drawer === 'inspect' && !uiHidden
   const closeDrawer = () => setUi({ drawer: null })
   const hasSelection = selection.kind !== 'none' && selectionExists
-  const leftName = mode === 'plan' ? 'Objects panel' : 'Furniture panel'
+  const leftName = mode === 'plan' ? 'Objects panel' : mode === 'views' ? 'Views panel' : 'Furniture panel'
   const leftShown = isMd ? !leftCollapsed : drawer === 'left'
   const inspectShown = isLg ? !inspectCollapsed : drawer === 'inspect'
   const toggleLeft = () => (isMd ? setUi({ leftCollapsed: !leftCollapsed }) : setUi({ drawer: drawer === 'left' ? null : 'left' }))
@@ -874,14 +916,17 @@ export default function App() {
             // Design mode drops the Plan-mode placement tools; Plan mode drops a furniture selection.
             setUi(modeUiPatch(m as Mode, selection))
           }}
-          className="w-44 shrink-0 max-md:w-32"
+          className="w-56 shrink-0 max-md:w-36"
+          // Below md the 3 labels only fit with the compact padding, and the project title keeps
+          // the width it had before the third mode.
+          size={isMd ? 'md' : 'sm'}
         />
         <div className="flex shrink-0 items-center justify-end gap-1 lg:flex-1 lg:basis-0">
           <button
             type="button"
             className={`${BAR_BTN} max-lg:hidden`}
-            aria-label={mode === 'plan' ? 'Add reference image' : 'Add reference image (unavailable in Design mode)'}
-            title={mode === 'plan' ? 'Add reference image (PNG, JPG, WebP, SVG, PDF)' : 'Unavailable in Design mode. Press 1 to switch to Plan mode.'}
+            aria-label={mode === 'plan' ? 'Add reference image' : `Add reference image (unavailable in ${modeName(mode)} mode)`}
+            title={mode === 'plan' ? 'Add reference image (PNG, JPG, WebP, SVG, PDF)' : `Unavailable in ${modeName(mode)} mode. Press 1 to switch to Plan mode.`}
             aria-disabled={mode !== 'plan'}
             onClick={() => {
               if (mode === 'plan') imageRef.current?.click()
@@ -933,8 +978,8 @@ export default function App() {
                   type="button"
                   className={`${moreItem} aria-disabled:opacity-40 aria-disabled:hover:bg-transparent`}
                   aria-disabled={mode !== 'plan'}
-                  aria-label={mode === 'plan' ? 'Add image' : 'Add image (unavailable in Design mode)'}
-                  title={mode === 'plan' ? undefined : 'Unavailable in Design mode. Press 1 to switch to Plan mode.'}
+                  aria-label={mode === 'plan' ? 'Add image' : `Add image (unavailable in ${modeName(mode)} mode)`}
+                  title={mode === 'plan' ? undefined : `Unavailable in ${modeName(mode)} mode. Press 1 to switch to Plan mode.`}
                   onClick={() => {
                     if (mode !== 'plan') { toast('Reference images need Plan mode. Press 1 to switch.'); return }
                     setMoreOpen(false)
@@ -994,6 +1039,8 @@ export default function App() {
           {leftSheet && sheetHeader(leftName)}
           {mode === 'plan' ? (
             <ObjectsPanel onUploadImage={() => imageRef.current?.click()} />
+          ) : mode === 'views' ? (
+            <ViewsPanel />
           ) : (
             <FurniturePanel />
           )}
@@ -1012,6 +1059,18 @@ export default function App() {
           }}
           onDrop={onDrop}
         >
+          {mode === 'views' ? (
+            // Phase 1: a clean, empty 3D surface. The renderer arrives in a later phase.
+            <div
+              data-testid="views-3d-placeholder"
+              className="absolute inset-0 flex items-center justify-center bg-surface-0 p-4"
+            >
+              <div className="rounded-xl border border-white/10 bg-surface-2/95 px-5 py-4 text-center shadow-xl">
+                <h2 className="text-sm font-semibold text-slate-100">3D view</h2>
+                <p className="mt-1 text-xs text-slate-400">The doll-house scene arrives in a later phase.</p>
+              </div>
+            </div>
+          ) : (
           <Viewport
             overlay={
               <>
@@ -1042,6 +1101,7 @@ export default function App() {
               </ArtboardContent>
             ))}
           </Viewport>
+          )}
           {!uiHidden && (
             <>
             <div className="pointer-events-none absolute left-2 top-2 z-30">
@@ -1071,10 +1131,14 @@ export default function App() {
                 className="pointer-events-auto"
               />
             </div>
-            <div className="pointer-events-none absolute bottom-3 left-3 max-md:bottom-[calc(4.75rem+env(safe-area-inset-bottom))]">
-              <ZoomControls />
-            </div>
-            <PlanToolbar />
+            {mode !== 'views' && (
+              <>
+                <div className="pointer-events-none absolute bottom-3 left-3 max-md:bottom-[calc(4.75rem+env(safe-area-inset-bottom))]">
+                  <ZoomControls />
+                </div>
+                <PlanToolbar />
+              </>
+            )}
             </>
           )}
           {emptyPlan && !uiHidden && (
@@ -1110,7 +1174,9 @@ export default function App() {
           className={`${asideBase} ${inspectInline ? 'w-[var(--panel-w-right)] shrink-0 border-l border-white/10' : inspectSheet ? sheetClass() : 'hidden'}`}
         >
           {inspectSheet && sheetHeader('Inspect')}
-          {mode === 'design' ? (
+          {mode === 'views' ? (
+            <SceneSettings />
+          ) : mode === 'design' ? (
             <>
               {/* Design mode edits no geometry: furniture and room floors only. */}
               {selection.kind === 'furniture' && selectionExists ? (

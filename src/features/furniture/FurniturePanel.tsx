@@ -177,6 +177,7 @@ export function FurniturePanel() {
   const place = (item: NewItem, position?: 'top' | 'bottom') => {
     if (!artboard) return
     const world = canvasCenterWorld()
+    if (!world) return // no 2D canvas on screen (Views mode): nothing to place onto
     const key = `${Math.round(world.x)},${Math.round(world.y)}`
     if (key !== lastCenter.current) addCount.current = 0
     lastCenter.current = key

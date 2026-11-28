@@ -75,7 +75,7 @@ describe('computeDesignMarqueeSelection', () => {
 describe('startDesignMarquee', () => {
   let winTarget: EventTarget
   let savedDoc: ReturnType<typeof useDoc.getState>['doc']
-  let savedUi: { mode: 'plan' | 'design'; tool: ReturnType<typeof useUi.getState>['tool']; activeArtboardId: string | null; selection: ReturnType<typeof useUi.getState>['selection'] }
+  let savedUi: { mode: ReturnType<typeof useUi.getState>['mode']; tool: ReturnType<typeof useUi.getState>['tool']; activeArtboardId: string | null; selection: ReturnType<typeof useUi.getState>['selection'] }
 
   beforeEach(() => {
     winTarget = new EventTarget()

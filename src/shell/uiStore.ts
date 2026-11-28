@@ -1,11 +1,11 @@
 // UI store for the v2 shell: mode, tool, active artboard, selection and viewport.
 import { create } from 'zustand'
 import type { Vec } from '../model/geometry'
-import type { OpeningKind, Selection } from '../model/types'
+import type { OpeningKind, Selection, ViewProjection, WallViewMode } from '../model/types'
 import type { TapeSnap } from '../features/tape/geometry'
 
 export type View = { x: number; y: number; zoom: number }
-export type Mode = 'plan' | 'design'
+export type Mode = 'plan' | 'design' | 'views'
 export type Tool = 'select' | 'rect' | 'pen' | 'cutout' | 'place-opening' | 'calibrate-image' | 'tape' | 'artboard'
 
 type UiData = {
@@ -44,6 +44,14 @@ type UiData = {
    * UI state only: never saved in the document, never in the undo history.
    */
   pinnedTape: { a: TapeSnap; b: TapeSnap } | null
+  /** 3D Views mode: how the walls are drawn ('cutaway' by default, a doll-house look). */
+  wallViewMode: WallViewMode
+  /** 3D Views mode: perspective or orthographic camera. */
+  viewProjection: ViewProjection
+  /** 3D Views mode: backdrop of the 3D scene. */
+  viewBackdrop: 'dark' | 'light'
+  /** 3D Views mode: draw shadows in the 3D scene. */
+  viewShadows: boolean
 }
 
 type UiState = UiData & {
@@ -67,6 +75,10 @@ export const useUi = create<UiState>((set) => ({
   uiHidden: false,
   renameRequestId: null,
   pinnedTape: null,
+  wallViewMode: 'cutaway',
+  viewProjection: 'perspective',
+  viewBackdrop: 'dark',
+  viewShadows: true,
   set: (patch) => set(patch),
 }))
 

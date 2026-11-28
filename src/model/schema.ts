@@ -5,6 +5,8 @@ import type { Artboard, ProjectDoc } from './types'
 
 const num = z.number().finite()
 const vec = z.object({ x: num, y: num })
+/** A 3D point of the 3D view: exactly 3 finite numbers (artboard-local cm). */
+const vec3 = z.tuple([num, num, num])
 
 export const roomSchema = z.object({
   id: z.string().min(1),
@@ -50,6 +52,17 @@ export const furnitureSchema = z.object({
   flipY: z.boolean().optional(),
 })
 
+/** Saved 3D camera view of an artboard (docs/3d-and-finishes.md §3). */
+export const savedViewSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  position: vec3,
+  target: vec3,
+  fov: num.positive().optional(),
+  projection: z.enum(['perspective', 'ortho']).optional(),
+  wallMode: z.enum(['off', 'cutaway', 'on']),
+})
+
 export const artboardSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -63,6 +76,7 @@ export const artboardSchema = z.object({
   rooms: z.array(roomSchema),
   openings: z.array(openingSchema),
   furniture: z.array(furnitureSchema),
+  views: z.array(savedViewSchema).optional(),
 })
 
 export const refImageSchema = z.object({

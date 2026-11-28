@@ -4,6 +4,7 @@
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm and degrees.
 import { useEffect, useId, useState } from 'react'
 import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, Armchair, CornerUpLeft, ArrowDown, BookmarkPlus, ArrowDownToLine, ArrowUp, ArrowUpToLine, Copy, FlipHorizontal2, FlipVertical2, Move, Palette, RotateCcw, RotateCw, Ruler, Layers, Maximize } from 'lucide-react'
+import { furnitureHeightCm } from '../../model/defaults'
 import { useDoc } from '../../model/store'
 import type { FurnitureItem } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
@@ -230,7 +231,8 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
       widthCm: item.widthCm,
       depthCm: item.depthCm,
       color: item.color,
-      heightCm: item.heightCm ?? 75,
+      // The preset keeps the effective height of the item, so a saved preset never gets thinner.
+      heightCm: furnitureHeightCm(item),
       showDirection: !!item.showDirection,
     })
     toast(`Saved preset "${saved.name}"`, { kind: 'info' })

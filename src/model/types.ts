@@ -86,6 +86,27 @@ export type FurnitureItem = {
   flipY?: boolean
 }
 
+/** How the 3D view draws the walls of a room: hidden, cut away above the camera, or full height. */
+export type WallViewMode = 'off' | 'cutaway' | 'on'
+
+/** Camera model of a 3D view. */
+export type ViewProjection = 'perspective' | 'ortho'
+
+/** A saved 3D camera of an artboard (docs/3d-and-finishes.md §3). */
+export type SavedView = {
+  id: string
+  name: string
+  /** Camera position, in artboard-local cm (X right, Y up, Z = plan y). */
+  position: [number, number, number]
+  /** Look-at point, in the same space as `position`. */
+  target: [number, number, number]
+  /** Vertical field of view in degrees (perspective only). Omitted = renderer default. */
+  fov?: number
+  /** Omitted = 'perspective'. */
+  projection?: ViewProjection
+  wallMode: WallViewMode
+}
+
 /** Default wall thickness of an artboard, in cm. 0 turns the thick walls off. */
 export const DEFAULT_WALL_THICKNESS_CM = 10
 export const MIN_WALL_THICKNESS_CM = 0
@@ -110,6 +131,8 @@ export type Artboard = {
   rooms: Room[]
   openings: Opening[]
   furniture: FurnitureItem[]
+  /** Saved 3D camera views. Omitted = none (the 3D view then uses its default camera). */
+  views?: SavedView[]
 }
 
 export type RefImage = {
