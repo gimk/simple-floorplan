@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { signedArea } from '../../model/geometry'
 import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
 import {
-  DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, buildScene, computeWallTargetHeights, splitWallPieces,
+  DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, splitWallPieces,
 } from './buildScene'
 import type { WallSegmentData } from './buildScene'
 
@@ -524,6 +524,72 @@ describe('computeWallTargetHeights', () => {
     const walls: WallSegmentData[] = buildScene(twoRooms()).walls
     for (const mode of ['on', 'off', 'cutaway'] as const) {
       expect(computeWallTargetHeights(walls, cam(0, 0), target, mode).size).toBe(walls.length)
+    }
+  })
+})
+
+describe('lowered walls keep doorways open', () => {
+  it('clips a lintel away when the wall drops to a curb or a cutaway stub', () => {
+    const w = wallOf(one({ openings: [door()] }), 'r:0')
+    const lintel = w.pieces.find((p) => p.u0 === 155 && p.u1 === 245)!
+    expect(lintel.y0).toBe(205)
+    for (const h of [10, 30, 205]) expect(clipSpanToHeight(lintel.y0, lintel.y1, h)).toBeNull()
+    expect(clipSpanToHeight(lintel.y0, lintel.y1, 220)).toEqual({ y0: 205, y1: 220 })
+    expect(clipSpanToHeight(lintel.y0, lintel.y1, 250)).toEqual({ y0: 205, y1: 250 })
+  })
+
+  it('has no solid piece in the doorway below the door height, so the door reaches the floor', () => {
+    const w = wallOf(one({ openings: [door()] }), 'r:0')
+    const inDoor = w.pieces.filter((p) => p.u0 < 245 && p.u1 > 155)
+    expect(inDoor.every((p) => p.y0 >= 205)).toBe(true)
+  })
+
+  it('clips low window pieces and panes to the wall height', () => {
+    const w = wallOf(one({ openings: [windowOp()] }), 'r:0')
+    const sill = w.pieces.find((p) => p.y0 === 0 && p.u0 === 140)!
+    expect(clipSpanToHeight(sill.y0, sill.y1, 30)).toEqual({ y0: 0, y1: 30 })
+    expect(clipSpanToHeight(sill.y0, sill.y1, 10)).toEqual({ y0: 0, y1: 10 })
+    const pane = w.windowPanes[0]
+    expect(clipSpanToHeight(pane.y0, pane.y1, 30)).toBeNull()
+  })
+
+  it('never overlaps pieces of one wall', () => {
+    const w = wallOf(one({ openings: [door({ xCm: 80 }), windowOp({ id: 'w1', xCm: 300 })] }), 'r:0')
+    for (const a of w.pieces) for (const b of w.pieces) {
+      if (a === b) continue
+      const ou = Math.min(a.u1, b.u1) - Math.max(a.u0, b.u0), oy = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0)
+      expect(ou > 1e-6 && oy > 1e-6).toBe(false)
+    }
+  })
+})
+
+describe('rooms separated by a wall-thickness gap', () => {
+  const gapped = (gap: number, p: Partial<Artboard> = {}) =>
+    board({ rooms: [room('A', box(0, 0, 400, 300)), room('B', box(400 + gap, 0, 800 + gap, 300))], ...p })
+  const spans = (w: WallSegmentData) => {
+    const n = w.outwardNormal, mid = w.thicknessSide === 'inward' ? -w.thicknessCm / 2 : w.thicknessCm / 2
+    return { lo: w.center.x - w.thicknessCm / 2, hi: w.center.x + w.thicknessCm / 2, n, mid }
+  }
+
+  it.each([10, 15, 19])('shares a %s cm gap between the two walls without overlap', (gap) => {
+    const s = buildScene(gapped(gap))
+    const a = spans(s.walls.find((w) => w.id === 'A:1')!), b = spans(s.walls.find((w) => w.id === 'B:3')!)
+    expect(a.hi).toBeLessThanOrEqual(b.lo + 1e-9)
+    expect(a.hi - a.lo).toBeCloseTo(gap / 2)
+  })
+
+  it('keeps full thickness when the gap is two thicknesses or more', () => {
+    const s = buildScene(gapped(20))
+    expect(s.walls.find((w) => w.id === 'A:1')!.thicknessCm).toBe(10)
+    expect(s.walls.find((w) => w.id === 'B:3')!.thicknessCm).toBe(10)
+  })
+
+  it('cuts a door of room A in the wall of room B across the gap too', () => {
+    const s = buildScene(gapped(10, { openings: [door({ xCm: 400, yCm: 150, angleDeg: 90, roomId: 'A' })] }))
+    for (const id of ['A:1', 'B:3']) {
+      const w = s.walls.find((x) => x.id === id)!
+      expect(w.pieces.some((p) => p.y0 < 205 && p.u0 < 195 && p.u1 > 105 && p.u0 > 0 && p.u1 < 300)).toBe(false)
+      expect(w.pieces).toContainEqual({ u0: 105, u1: 195, y0: 205, y1: 250 })
     }
   })
 })

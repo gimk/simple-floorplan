@@ -163,6 +163,8 @@ type WallBuild = {
   dir: Pt
   /** Cut rectangles (wall space) from openings. */
   cuts: WallPieceData[]
+  /** Walls of other rooms that face this wall across a gap (0.5 cm .. 2 x thickness), with that gap in cm. */
+  gapPartners: { build: WallBuild; gapCm: number }[]
 }
 
 /** Overlap in cm of the two collinear edges a and b along the direction of a. */
@@ -187,6 +189,31 @@ function arePaired(a: WallBuild, b: WallBuild): boolean {
     if (Math.abs(d) > FLUSH_GAP_CM) return false
   }
   return overlapAlong(a, b) > 1
+}
+
+/**
+ * Vertical span y0..y1 of a wall piece or window pane clipped to a lowered wall of `heightCm`, or null
+ * when nothing of it remains (it starts at or above that height). Pieces are CLIPPED, never squashed:
+ * a lintel above a door must vanish when the wall drops, so the doorway stays open down to the floor.
+ */
+export function clipSpanToHeight(y0: number, y1: number, heightCm: number): { y0: number; y1: number } | null {
+  const hi = Math.min(y1, heightCm)
+  return hi - y0 > EPS ? { y0, y1: hi } : null
+}
+
+/**
+ * Gap in cm between wall a and wall b when they face each other across a gap: opposite directions,
+ * b lies beyond a along a's outward normal, and they overlap along the wall. Null otherwise.
+ */
+function facingGap(a: WallBuild, b: WallBuild): number | null {
+  if (a.wall.roomId === b.wall.roomId) return null
+  if (a.dir.x * b.dir.x + a.dir.z * b.dir.z > -0.999) return null
+  const na = a.wall.outwardNormal
+  const ds = [b.wall.start, b.wall.end].map((p) => (p.x - a.wall.start.x) * na.x + (p.z - a.wall.start.z) * na.z)
+  if (Math.abs(ds[0] - ds[1]) > FLUSH_GAP_CM) return null
+  const d = (ds[0] + ds[1]) / 2
+  if (d <= FLUSH_GAP_CM) return null
+  return overlapAlong(a, b) > 1 ? d : null
 }
 
 /** Solid rectangles of a wall of `lengthCm` x `heightCm` around the cut rectangles. No CSG. */
@@ -239,6 +266,7 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
       builds.push({
         dir,
         cuts: [],
+        gapPartners: [],
         wall: {
           id, roomId: room.id, edgeIndex: i,
           start: toPt(a), end: toPt(b), center: toPt(a),
@@ -279,6 +307,19 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
     b.wall.cutawayGroupId = `pair:${[...(members.get(find(b.wall.id)) ?? [])].sort()[0]}`
   }
 
+  // Walls of two rooms that face each other across a gap smaller than two wall thicknesses would fill
+  // the same space (z-fighting, and an opening cut in one wall hidden by the other). They share the gap.
+  if (thickness > 0) {
+    for (const a of builds) {
+      if (a.wall.isInterior) continue
+      for (const b of builds) {
+        if (b.wall.isInterior) continue
+        const d = facingGap(a, b)
+        if (d !== null && d < 2 * thickness) a.gapPartners.push({ build: b, gapCm: d })
+      }
+    }
+  }
+
   // Thickness and centre.
   for (const b of builds) {
     const w = b.wall
@@ -289,6 +330,8 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
       const eff = effectiveWallThickness(rooms, w.roomId, mid, { x: w.outwardNormal.x, y: w.outwardNormal.z }, thickness)
       t = eff > 0 ? eff : INTERIOR_HALF_WALL_CM
     } else t = THIN_WALL_FALLBACK_CM
+    // Each side takes half of a shared gap: back to back, no overlap.
+    for (const g of b.gapPartners) t = Math.min(t, g.gapCm / 2)
     w.thicknessCm = t
     w.thicknessSide = w.isInterior ? 'inward' : 'outward'
     const shift = w.isInterior ? -t / 2 : t / 2
@@ -309,7 +352,11 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
     const h = openingHeightCm(op, heightCm)
     if (!(h > EPS)) continue
     const { start, end } = openingEndpoints(op)
-    const targets = [hostBuild, ...hostBuild.wall.pairedWallIds.map((id) => byId.get(id)).filter((x): x is WallBuild => !!x)]
+    const targets = [
+      hostBuild,
+      ...hostBuild.wall.pairedWallIds.map((id) => byId.get(id)).filter((x): x is WallBuild => !!x),
+      ...hostBuild.gapPartners.map((g) => g.build),
+    ]
     for (const t of targets) {
       const s = t.wall.start
       const u0 = (start.x - s.x) * t.dir.x + (start.y - s.z) * t.dir.z

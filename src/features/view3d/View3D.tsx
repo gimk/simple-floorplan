@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useDoc } from '../../model/store'
 import type { ViewProjection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
-import { DEFAULT_WALL_OUTER_COLOR, buildScene, computeWallTargetHeights } from './buildScene'
+import { DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights } from './buildScene'
 import type { FloorMeshData, FurnitureMeshData, SceneData, WallSegmentData } from './buildScene'
 import { FLOOR_TILE_CM, floorBaseColor, disposeAll, getFloorTexture } from './floorTextures'
 
@@ -82,7 +82,21 @@ function furnitureGeometry(f: FurnitureMeshData): THREE.BufferGeometry {
   return geo
 }
 
-type WallEntry = { group: THREE.Group; data: WallSegmentData }
+/** A wall solid or glass pane that is clipped (not squashed) to the current wall height. */
+type ClipPart = { meshes: THREE.Object3D[]; y0: number; y1: number }
+type WallEntry = { group: THREE.Group; data: WallSegmentData; parts: ClipPart[]; ratio: number }
+
+/** Show only the part of `part` below `height` cm: scale and move it, or hide it when nothing remains. */
+function applyWallHeight(part: ClipPart, height: number) {
+  const span = clipSpanToHeight(part.y0, part.y1, height)
+  for (const m of part.meshes) {
+    m.visible = !!span
+    if (!span) continue
+    const full = part.y1 - part.y0
+    m.scale.y = (span.y1 - span.y0) / full
+    m.position.y = (span.y0 + span.y1) / 2
+  }
+}
 type PostEntry = { group: THREE.Group; wallIds: [string, string] }
 
 type Built = {
@@ -163,7 +177,10 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
     const o0 = w.thicknessSide === 'outward' ? 0 : -w.thicknessCm
     const o1 = w.thicknessSide === 'outward' ? w.thicknessCm : 0
     const zc = (s * (o0 + o1)) / 2
-    const inner = std(w.innerColor), outer = std(w.outerColor)
+    // Push wall faces back a little so the edge lines never z-fight with them.
+    const pushBack = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }
+    const inner = std(w.innerColor, pushBack), outer = std(w.outerColor, pushBack)
+    const parts: ClipPart[] = []
     const mats = [outer, outer, outer, outer, s > 0 ? outer : inner, s > 0 ? inner : outer]
     for (const p of w.pieces) {
       const g = geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, w.thicknessCm))
@@ -175,16 +192,19 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
       const lines = new THREE.LineSegments(geo(new THREE.EdgesGeometry(g)), edgeMat)
       lines.position.copy(mesh.position)
       group.add(lines)
+      parts.push({ meshes: [mesh, lines], y0: p.y0, y1: p.y1 })
     }
     for (const p of w.windowPanes) {
       const pane = new THREE.Mesh(geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, 0.8)), glassMat)
       pane.position.set((p.u0 + p.u1) / 2, (p.y0 + p.y1) / 2, zc)
       pane.renderOrder = 2
       group.add(pane)
+      parts.push({ meshes: [pane], y0: p.y0, y1: p.y1 })
     }
-    group.scale.y = MIN_SCALE
+    const entry: WallEntry = { group, data: w, parts, ratio: MIN_SCALE }
+    for (const part of parts) applyWallHeight(part, MIN_SCALE * w.heightCm)
     scene.add(group)
-    walls.push({ group, data: w })
+    walls.push(entry)
   }
 
   // Corner posts.
@@ -405,9 +425,10 @@ export default function View3D() {
       const wallScale = new Map<string, number>()
       for (const w of built.walls) {
         const want = Math.max(MIN_SCALE, ((targets.get(w.data.id) ?? w.data.heightCm) / w.data.heightCm) * wallK)
-        const cur = w.group.scale.y
-        w.group.scale.y = k >= 1 ? want : Math.abs(want - cur) < 1e-4 ? want : cur + (want - cur) * k
-        wallScale.set(w.data.id, w.group.scale.y)
+        const cur = w.ratio
+        w.ratio = k >= 1 ? want : Math.abs(want - cur) < 1e-4 ? want : cur + (want - cur) * k
+        for (const part of w.parts) applyWallHeight(part, w.ratio * w.data.heightCm)
+        wallScale.set(w.data.id, w.ratio)
       }
       for (const p of built.posts) {
         const a = wallScale.get(p.wallIds[0]) ?? 1, c = wallScale.get(p.wallIds[1]) ?? 1
