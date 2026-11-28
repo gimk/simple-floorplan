@@ -1,7 +1,7 @@
 // v2 shell: top bar (title, mode, undo/redo, JSON export/import, add image), left panel,
 // SVG canvas (grid, reference images, artboard frames), right Inspect panel.
-import { useEffect, useId, useRef, useState } from 'react'
-import { Box, Camera, Download, ClipboardCopy, ClipboardPaste, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
+import { Suspense, lazy, useEffect, useId, useRef, useState } from 'react'
+import { Camera, Download, ClipboardCopy, ClipboardPaste, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Viewport } from './canvas/Viewport'
 import { ArtboardContent, ArtboardInspect, ArtboardsLayer } from './features/artboards'
@@ -53,6 +53,7 @@ import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
 import { PinnedTape, TapeOverlay } from './features/tape/TapeOverlay'
+import { SceneSettingsInspect } from './features/view3d/SceneSettingsInspect'
 import { toast, undoShortcut } from './features/toast'
 import { ToastHost } from './features/toast/ToastHost'
 import { selectRoom } from './features/artboards/selection'
@@ -105,6 +106,9 @@ const ALIGN_CODES: Record<string, AlignOp> = {
   KeyV: 'center-v',
 }
 
+// 'three' lives in its own chunk: it loads only when Views mode opens.
+const View3D = lazy(() => import('./features/view3d/View3D'))
+
 const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
   {
     group: 'General',
@@ -112,6 +116,7 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Undo', undoShortcut()],
       ['Redo', REDO_KEYS],
       ['Plan / Design / Views mode', '1 / 2 / 3'],
+      ['Walls off / back only / on (Views mode)', 'W'],
       ['Close panel or dialog', 'Esc'],
       ['This cheat sheet', '?'],
     ],
@@ -320,15 +325,6 @@ function ViewsPanel() {
   )
 }
 
-/** Right panel of Views mode (Phase 1): where the Scene settings of the 3D view will live. */
-function SceneSettings() {
-  return (
-    <PanelSection title="Scene" icon={<Box size={14} aria-hidden="true" />} description="3D settings">
-      <p className={MUTED}>Walls, projection, backdrop and shadows will be set here.</p>
-    </PanelSection>
-  )
-}
-
 /** Name of a mode in a sentence, for the hints of the actions that need Plan mode. */
 const modeName = (mode: Mode): string => (mode === 'views' ? 'Views' : mode === 'design' ? 'Design' : 'Plan')
 
@@ -450,6 +446,13 @@ export default function App() {
         e.preventDefault()
         const ui = useUi.getState()
         ui.set({ uiHidden: !ui.uiHidden })
+        return
+      }
+      // W cycles the wall display of the 3D view: off -> back only (cutaway) -> on -> off.
+      if (plain && !e.shiftKey && key === 'w' && useUi.getState().mode === 'views') {
+        e.preventDefault()
+        const ui = useUi.getState()
+        ui.set({ wallViewMode: ui.wallViewMode === 'off' ? 'cutaway' : ui.wallViewMode === 'cutaway' ? 'on' : 'off' })
         return
       }
       // Views mode is a read-only 3D surface: no 2D tool, edit or selection shortcut runs there.
@@ -1060,16 +1063,15 @@ export default function App() {
           onDrop={onDrop}
         >
           {mode === 'views' ? (
-            // Phase 1: a clean, empty 3D surface. The renderer arrives in a later phase.
-            <div
-              data-testid="views-3d-placeholder"
-              className="absolute inset-0 flex items-center justify-center bg-surface-0 p-4"
+            <Suspense
+              fallback={
+                <div data-testid="views-3d-loading" className="absolute inset-0 flex items-center justify-center bg-surface-0 text-xs text-slate-400">
+                  Loading 3D view...
+                </div>
+              }
             >
-              <div className="rounded-xl border border-white/10 bg-surface-2/95 px-5 py-4 text-center shadow-xl">
-                <h2 className="text-sm font-semibold text-slate-100">3D view</h2>
-                <p className="mt-1 text-xs text-slate-400">The doll-house scene arrives in a later phase.</p>
-              </div>
-            </div>
+              <View3D />
+            </Suspense>
           ) : (
           <Viewport
             overlay={
@@ -1175,7 +1177,7 @@ export default function App() {
         >
           {inspectSheet && sheetHeader('Inspect')}
           {mode === 'views' ? (
-            <SceneSettings />
+            <SceneSettingsInspect />
           ) : mode === 'design' ? (
             <>
               {/* Design mode edits no geometry: furniture and room floors only. */}
