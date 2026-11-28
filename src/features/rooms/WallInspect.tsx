@@ -1,13 +1,16 @@
 // Right-panel Inspect card for one selected wall (docs/simple-floorplan-2.md §2.6):
-// back link to the room, "‹ Wall X of N ›" to cycle the walls, the exact length in cm, the openings
-// hosted on the wall (click one to select it), Delete Wall, and a collapsed Geometry section.
+// back link to the room, "‹ Wall X of N ›" to cycle the walls, the exact length in cm, the wall
+// type, the wall colour (room.wallColors, visual only, the same field Design mode paints), the
+// openings hosted on the wall (click one to select it), Delete Wall, and a collapsed Geometry
+// section.
 // Wall N goes from vertex N-1 to vertex N of the room polygon. Dark UI, shared panel primitives.
 import { useId, useState } from 'react'
-import { ChevronLeft, ChevronRight, Compass, Ruler } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Compass, RotateCcw, Ruler } from 'lucide-react'
 import { useDoc } from '../../model/store'
 import type { Artboard, Opening, OpeningKind, Room, WallKind } from '../../model/types'
 import {
   BackLink,
+  ColorRow,
   DangerButton,
   EmptyHint,
   FieldRow,
@@ -31,11 +34,18 @@ import { DEFAULT_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM, MAX_OPENING_WIDTH_CM } 
 import { hostWallIn } from '../openings/sync'
 import { newId } from '../../model/schema'
 import { toast } from '../toast'
+import { setRoomWallColor } from '../furniture/actions'
+import { WALL_ACCENT_COLORS } from '../furniture/presets'
 import { deleteRoomWall, setRoomWallKind, setRoomWallLength } from './actions'
 import { NumInput } from './NumInput'
 import { roomWalls } from './ops'
 import type { Wall } from './ops'
 import { wallKindOf } from './walls'
+
+/** Wall paint swatches: the "Default" entry clears the paint, and the reset button does the same. */
+const WALL_COLOR_VALUES: readonly string[] = WALL_ACCENT_COLORS.flatMap((swatch) =>
+  swatch.color === undefined ? [] : [swatch.color],
+)
 
 /** Choices of the wall Type control. */
 const KIND_OPTIONS = [
@@ -172,6 +182,8 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
   if (!wall) return null
 
   const openings = openingsOnWall(artboard, room, wall)
+  // Wall paint of this wall: visual only, the same room.wallColors key Design mode edits.
+  const wallColor = room.wallColors?.[String(edgeIndex)]
   const roomLabel = room.name.trim() === '' ? 'Untitled room' : room.name
   const count = room.vertices.length
   const prev = (edgeIndex - 1 + count) % count
@@ -227,6 +239,28 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
             ariaLabel="Wall type"
             onChange={(kind) => setRoomWallKind(artboard.id, room.id, edgeIndex, kind as WallKind)}
           />
+        </FieldRow>
+
+        <FieldRow label="Wall colour" stacked>
+          <ColorRow
+            label="Wall colour"
+            colors={WALL_COLOR_VALUES}
+            value={wallColor}
+            onChange={(color) => {
+              if (color.toLowerCase() === wallColor?.toLowerCase()) return
+              setRoomWallColor(artboard.id, room.id, edgeIndex, color)
+            }}
+          />
+          {wallColor !== undefined && (
+            <button
+              type="button"
+              className={BTN}
+              onClick={() => setRoomWallColor(artboard.id, room.id, edgeIndex, undefined)}
+            >
+              <RotateCcw size={14} aria-hidden="true" />
+              Reset to default
+            </button>
+          )}
         </FieldRow>
 
         <div className="flex flex-col gap-1">

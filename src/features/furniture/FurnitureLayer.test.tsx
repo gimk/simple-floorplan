@@ -86,6 +86,25 @@ describe('FurnitureLayer with a furniture group', () => {
     expect(itemSelected(html, 'f2')).toBe(false)
   })
 
+  it('draws the furniture of a mixed multi selection as selected, without furniture handles', () => {
+    selectionRef.current = {
+      kind: 'multi',
+      artboardId: AB,
+      items: [
+        { kind: 'room', roomId: 'r1' },
+        { kind: 'furniture', furnitureId: 'f2' },
+      ],
+    }
+    const html = renderToStaticMarkup(<FurnitureLayer artboard={board()} />)
+
+    expect(itemSelected(html, 'f2')).toBe(true)
+    expect(itemSelected(html, 'f1')).toBe(false)
+    expect(itemSelected(html, 'f3')).toBe(false)
+    // A mixed selection has no furniture-only handles and no group outline.
+    expect(html).not.toContain('data-testid="furniture-handles"')
+    expect(html).not.toContain('furniture-multi-outline')
+  })
+
   it('a group of another artboard leaves every item alone', () => {
     selectionRef.current = { kind: 'furnitureMulti', artboardId: 'other', furnitureIds: ['f1', 'f2'] }
     const html = renderToStaticMarkup(<FurnitureLayer artboard={board()} />)

@@ -10,6 +10,7 @@ import { useDoc } from '../../model/store'
 import type { Artboard, Opening } from '../../model/types'
 import { getModifiers, subscribeModifiers, syncModifiersFromEvent } from '../../shell/modifiers'
 import { useUi } from '../../shell/uiStore'
+import { selectedOpeningIds, toggleMultiTarget } from '../selection/multiSelect'
 import { formatLengthCm, roundToPrecision } from '../rooms/ops'
 import { jambSegment, openingSymbolShift, openingWall, wallThicknessOf } from '../rooms/walls'
 import type { OpeningWall } from '../rooms/walls'
@@ -147,7 +148,10 @@ function OpeningsLayerImpl({ artboard }: { artboard: Artboard }) {
   // Host wall + endpoints per opening: independent of zoom, so pan/zoom does not re-scan the rooms.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const openingGeo = useMemo(() => artboard.openings.map((op) => ({ op, ends: openingEndpoints(op), wall: openingWall(artboard.rooms, op, thickness) })), [artboard.openings, artboard.rooms, thickness])
-  const selectedId = selection.kind === 'opening' && selection.artboardId === artboard.id ? selection.openingId : null
+  // Every selected opening of this artboard is drawn selected, including inside a mixed 'multi'
+  // selection. The resize handles stay for a single opening only.
+  const selectedIds = selectedOpeningIds(selection, artboard.id)
+  const selectedId = selectedIds.size === 1 ? [...selectedIds][0] : null
   const gesture = useRef<Gesture | null>(null)
 
   // Alt / Cmd can change while the pointer is down: replay the last pointer position at once.
@@ -211,6 +215,16 @@ function OpeningsLayerImpl({ artboard }: { artboard: Artboard }) {
 
   const onBodyDown = (e: ReactPointerEvent<SVGLineElement>, op: Opening) => {
     if (e.button !== 0 || !interactive) return
+    // Shift-click toggles the opening in the selection (mixed with rooms and walls) and never starts
+    // a drag. A plain click always replaces the selection with that one opening.
+    if (e.shiftKey) {
+      e.stopPropagation()
+      useUi.getState().set({
+        activeArtboardId: artboard.id,
+        selection: toggleMultiTarget(useUi.getState().selection, artboard.id, { kind: 'opening', openingId: op.id }),
+      })
+      return
+    }
     select(op.id)
     // Alt: the original stays where the drag started and a duplicate follows the pointer.
     const origin = { xCm: op.xCm, yCm: op.yCm, angleDeg: op.angleDeg, widthCm: op.widthCm }
@@ -274,7 +288,7 @@ function OpeningsLayerImpl({ artboard }: { artboard: Artboard }) {
     <g data-testid={`openings-layer-${artboard.id}`} pointerEvents={interactive ? undefined : 'none'}>
       {openingGeo.map(({ op, ends, wall }) => {
         const { start, end } = ends
-        const sel = op.id === selectedId
+        const sel = selectedIds.has(op.id)
         // Thick wall: the hit band sits on the wall centreline, across the whole wall thickness.
         // A null frame (thin artboard, or a flush wall whose body is masked away) keeps it on the line.
         const hit = openingHitEndpoints(start, end, wall)

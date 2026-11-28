@@ -10,17 +10,13 @@
 // A copy lives in a module-level variable, never in the document, so it is not an undo step and is
 // not saved. One paste = one useDoc update = one undo step. Units: cm and degrees.
 import { useDoc } from '../../model/store'
-import type { Artboard, FloorPattern, Selection } from '../../model/types'
+import type { Artboard, FloorPattern, MultiTarget, Selection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import { expandToGroups } from '../furniture/groups'
 import { selectionArtboardId } from '../furniture/selectionActions'
 
-/** One object that a copy or a paste can address. Same shape as `MultiTarget` in model/types.ts. */
-export type StyleTarget =
-  | { kind: 'room'; roomId: string }
-  | { kind: 'wall'; roomId: string; edgeIndex: number }
-  | { kind: 'opening'; openingId: string }
-  | { kind: 'furniture'; furnitureId: string }
+/** One object that a copy or a paste can address: the shared multi-selection target. */
+export type StyleTarget = MultiTarget
 
 /** The whole copied style: one kind and its visual fields only. */
 export type CopiedStyle =
@@ -28,15 +24,6 @@ export type CopiedStyle =
   | { kind: 'opening'; color?: string }
   | { kind: 'wall'; color?: string }
   | { kind: 'room'; fill?: string; floorPattern?: FloorPattern; floorPatternAngleDeg?: number }
-
-/** Artboard id of a selection, including the 'multi' kind. */
-function artboardIdOf(sel: Selection): string | null {
-  const id = selectionArtboardId(sel)
-  if (id) return id
-  // 'multi' kind comes from the parallel selection work.
-  const multi = sel as unknown as { kind: string; artboardId?: string }
-  return multi.kind === 'multi' ? multi.artboardId ?? null : null
-}
 
 /** Furniture targets of `ids`, every member of their group included. */
 function furnitureTargets(
@@ -75,6 +62,11 @@ export function targetsFromSelection(
   artboard: Pick<Artboard, 'furniture'> | undefined,
 ): StyleTarget[] {
   switch (sel.kind) {
+    case 'none':
+    case 'artboard':
+    case 'vertex':
+    case 'refImage':
+      return []
     case 'furniture':
       return furnitureTargets(artboard, [sel.furnitureId])
     case 'furnitureMulti':
@@ -85,14 +77,12 @@ export function targetsFromSelection(
       return [{ kind: 'wall', roomId: sel.roomId, edgeIndex: sel.edgeIndex }]
     case 'room':
       return sel.roomIds.map((roomId) => ({ kind: 'room' as const, roomId }))
-    default: {
-      // 'multi' kind comes from the parallel selection work: a list of StyleTarget-shaped items.
-      const multi = sel as unknown as { kind: string; items?: StyleTarget[] }
-      if (multi.kind !== 'multi' || !multi.items) return []
+    case 'multi': {
+      // Every item is already a target; furniture items bring their whole group along.
       const expanded: StyleTarget[] = []
-      for (const item of multi.items) {
+      for (const item of sel.items) {
         if (item.kind === 'furniture') expanded.push(...furnitureTargets(artboard, [item.furnitureId]))
-        else expanded.push(item)
+        else expanded.push({ ...item })
       }
       return uniqueTargets(expanded)
     }
@@ -254,7 +244,7 @@ export function getCopiedStyle(): CopiedStyle | null {
  */
 export function copyStyle(): boolean {
   const sel = useUi.getState().selection
-  const artboardId = artboardIdOf(sel)
+  const artboardId = selectionArtboardId(sel)
   const artboard = useDoc.getState().doc.artboards.find((a) => a.id === artboardId)
   const targets = targetsFromSelection(sel, artboard)
   if (targets.length === 0) return false
@@ -275,7 +265,7 @@ export function pasteStyle(): boolean {
   const style = copiedStyle
   if (!style) return false
   const sel = useUi.getState().selection
-  const artboardId = artboardIdOf(sel)
+  const artboardId = selectionArtboardId(sel)
   if (!artboardId) return false
   const artboard = useDoc.getState().doc.artboards.find((a) => a.id === artboardId)
   if (!artboard) return false

@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createArtboard, createDefaultProject } from '../../model/schema'
 import { useDoc } from '../../model/store'
-import type { Artboard, FurnitureItem, Opening, Room, Selection } from '../../model/types'
+import type { Artboard, FurnitureItem, MultiTarget, Opening, Room, Selection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import {
   applyStyleToArtboard,
@@ -15,7 +15,6 @@ import {
   setCopiedStyle,
   styleOfTarget,
   targetsFromSelection,
-  type StyleTarget,
 } from './styleClipboard'
 
 const room = (id: string, p: Partial<Room> = {}): Room => ({
@@ -71,8 +70,8 @@ const findItem = (id: string) => ab().furniture.find((f) => f.id === id)!
 const hydrate = (p: Partial<Artboard>) => s().hydrate({ ...createDefaultProject(), artboards: [board(p)] })
 
 const select = (selection: Selection) => ui().set({ selection })
-/** A 'multi' selection: that kind comes from the parallel selection work, hence the cast. */
-const multi = (items: StyleTarget[]): Selection => ({ kind: 'multi', artboardId: 'ab1', items }) as unknown as Selection
+/** A 'multi' selection on ab1: the kind the shell builds for a mix of objects. */
+const multi = (items: MultiTarget[]): Selection => ({ kind: 'multi', artboardId: 'ab1', items })
 
 beforeEach(() => {
   s().resetDoc()

@@ -2,11 +2,29 @@
 // expansion, and group resize supporting Option/Alt from-center). Kept separate from actions.ts.
 import type { Vec } from '../../model/geometry'
 import { useDoc } from '../../model/store'
-import type { ProjectDoc } from '../../model/types'
+import type { Artboard, ProjectDoc, Selection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import type { ItemBounds, ResizeHandle } from './geometry'
 import { resizeGroupFromHandle } from './groupTransform'
 import type { FurnitureTransformStart } from './groupTransform'
+import { toggleFurnitureWithMixed } from './mixedClick'
+
+/**
+ * Set the selection to a whole `Selection` value as-is (used by Shift-click mixing in Design mode,
+ * where the furniture-only selection setter would drop the rooms of the selection).
+ */
+export function setMixedSelection(artboardId: string, selection: Selection): void {
+  useUi.getState().set({ activeArtboardId: artboardId, selection })
+}
+
+/**
+ * Shift-click on a furniture item while the selection is a room or a mixed 'multi' selection:
+ * toggle the item and its whole group as furniture targets and never start a drag.
+ */
+export function applyMixedFurnitureClick(artboard: Pick<Artboard, 'id' | 'furniture'>, clickedItemId: string): void {
+  const selection = toggleFurnitureWithMixed(artboard, useUi.getState().selection, clickedItemId)
+  setMixedSelection(artboard.id, selection)
+}
 
 /**
  * Set furniture selection to the exact `ids` (deduplicated, preserving order) WITHOUT expanding

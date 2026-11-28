@@ -21,6 +21,8 @@ import {
 } from './actions'
 import type { FurnitureStart } from './actions'
 import { expandToGroups, resolveFurnitureClick, resolveFurnitureDoubleClick } from './groups'
+import { mixesFurnitureWithSelection } from './mixedClick'
+import { selectedFurnitureIds } from '../selection/multiSelect'
 import { groupBounds } from './groupTransform'
 import type { FurnitureTransformStart } from './groupTransform'
 import {
@@ -41,7 +43,7 @@ import {
   snapRotation,
 } from './geometry'
 import type { CornerRadii, DistanceGuide, MeasureTarget, ResizeHandle } from './geometry'
-import { resizeFurnitureGroupWithAlt, setDirectFurnitureSelection } from './pointerActions'
+import { applyMixedFurnitureClick, resizeFurnitureGroupWithAlt, setDirectFurnitureSelection } from './pointerActions'
 import { computeDragDistanceGuides, snapBoxMove } from './snapGuides'
 import type { SnapGuideLine } from './snapGuides'
 import { CANVAS_BG, CANVAS_SELECT } from '../../shell/canvasTokens'
@@ -97,6 +99,8 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
   const selectedId = activeIds.length === 1 ? activeIds[0] : null
   const multiIds = activeIds.length > 1 ? activeIds : null
   const hasSelection = activeIds.length > 0
+  // A mixed 'multi' selection (furniture + rooms, Design mode) still draws its furniture as selected.
+  const mixedIds = selection.kind === 'multi' ? selectedFurnitureIds(selection, artboard.id) : null
   const gesture = useRef<Gesture | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [guides, setGuides] = useState<DistanceGuide[]>([])
@@ -294,6 +298,13 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
     if (e.button !== 0 || !design) return
     const curSelection = useUi.getState().selection
     const cmdKey = e.metaKey || e.ctrlKey
+    // Shift-click on a room (or mixed) selection toggles the item and its whole group, keeping the
+    // rooms: the result is a mixed 'multi' selection, and no drag starts.
+    if (e.shiftKey && mixesFurnitureWithSelection(curSelection)) {
+      e.stopPropagation()
+      applyMixedFurnitureClick(liveArtboard(), item.id)
+      return
+    }
     // Shift-click adds/removes the item (or its whole group) in the selection and never starts a drag.
     if (e.shiftKey) {
       e.stopPropagation()
@@ -681,7 +692,7 @@ function FurnitureLayerImpl({ artboard }: { artboard: Artboard }) {
             }}
             {...gp}
           >
-            {renderShape(item, item.id === selectedId || !!multiIds?.includes(item.id))}
+            {renderShape(item, item.id === selectedId || !!multiIds?.includes(item.id) || !!mixedIds?.has(item.id))}
           </g>
           <g transform={`translate(${item.xCm} ${item.yCm})`} pointerEvents="none">{renderLabel(item)}</g>
         </g>

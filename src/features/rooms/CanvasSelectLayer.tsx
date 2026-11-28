@@ -13,6 +13,7 @@ import { findFurnitureInBox } from '../furniture/geometry'
 import { setFurnitureSelection } from '../furniture/actions'
 import { boxFromPoints, findArtboardAtPoint, findRoomsInBox } from './boxSelect'
 import type { Box } from './boxSelect'
+import { designMarqueeMergedSelection, planMarqueeSelection } from './marqueeSelect'
 import { useMarquee } from './marqueeStore'
 import { CANVAS_MARQUEE_FILL, CANVAS_SELECT_STRONG } from '../../shell/canvasTokens'
 
@@ -107,9 +108,17 @@ export function startDesignMarquee(
       const artboardId = opts.artboardId ?? ui.activeArtboardId
       const artboard = useDoc.getState().doc.artboards.find((a) => a.id === artboardId)
       const world = boxFromPoints(startWorld, opts.toWorld(ev.clientX, ev.clientY))
-      const next = computeDesignMarqueeSelection(world, artboard, ui.selection, ev.shiftKey)
-      if (!next) ui.set({ selection: { kind: 'none' } })
-      else setFurnitureSelection(next.artboardId, next.ids)
+      // Shift + a selection that holds rooms mixes them with the furniture hits. Otherwise the
+      // plain furniture marquee runs, exactly as before.
+      const merged = designMarqueeMergedSelection(ui.selection, artboard, world, ev.shiftKey)
+      if (merged) {
+        if ('artboardId' in merged) ui.set({ activeArtboardId: merged.artboardId, selection: merged })
+        else ui.set({ selection: merged })
+      } else {
+        const next = computeDesignMarqueeSelection(world, artboard, ui.selection, ev.shiftKey)
+        if (!next) ui.set({ selection: { kind: 'none' } })
+        else setFurnitureSelection(next.artboardId, next.ids)
+      }
     }
     opts.onDone?.(marquee)
   }
@@ -214,20 +223,20 @@ export function CanvasSelectLayer() {
       return
     }
     const box = boxFromPoints(g.startWorld, toWorld(e.clientX, e.clientY))
-    const match = findRoomsInBox(box, artboards, g.startArtboardId ?? ui.activeArtboardId)
-    if (!match) {
+    const preferred = g.startArtboardId ?? ui.activeArtboardId
+    const match = findRoomsInBox(box, artboards, preferred)
+    // Rooms win the artboard pick (today's rule); with no room hit the walls and the openings of the
+    // artboard under the press, else of the active artboard, are selected.
+    const artboard =
+      (match ? artboards.find((a) => a.id === match.artboardId) : undefined) ??
+      artboards.find((a) => a.id === preferred) ??
+      artboards.find((a) => a.id === ui.activeArtboardId)
+    const next = planMarqueeSelection(ui.selection, artboard, box, e.shiftKey)
+    if (!('artboardId' in next)) {
       ui.set({ selection: { kind: 'none' } })
       return
     }
-    const planSel = ui.selection
-    const roomIds =
-      e.shiftKey && planSel.kind === 'room' && planSel.artboardId === match.artboardId
-        ? [...new Set([...planSel.roomIds, ...match.roomIds])]
-        : match.roomIds
-    ui.set({
-      activeArtboardId: match.artboardId,
-      selection: { kind: 'room', artboardId: match.artboardId, roomIds },
-    })
+    ui.set({ activeArtboardId: next.artboardId, selection: next })
   }
 
   return (

@@ -31,6 +31,8 @@ import {
   roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
 } from './walls'
 import { CANVAS_BG, CANVAS_HALO, CANVAS_SELECT } from '../../shell/canvasTokens'
+import { selectedRoomIds, selectedWallKeys } from '../selection/multiSelect'
+import { roomClickSelection, roomDownSelection, wallClickSelection } from './roomsSelectClick'
 import { startDesignMarquee } from './CanvasSelectLayer'
 
 export type EditWallRequest = {
@@ -50,7 +52,6 @@ export type RoomsLayerProps = {
 const ORANGE = CANVAS_SELECT
 const STROKE = 'rgba(226,232,240,0.85)'
 const DRAG_THRESHOLD_PX = 3
-const NO_IDS: string[] = []
 
 /** Inclusive cyclic range of edge indices holding one contiguous run of solid ('wall') edges. */
 type EdgeRun = { from: number; to: number }
@@ -160,7 +161,17 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
     }
   }, [design, tool])
   const inArtboard = (s: Selection) => 'artboardId' in s && s.artboardId === artboard.id
-  const selectedIds = selection.kind === 'room' && inArtboard(selection) ? selection.roomIds : NO_IDS
+  // Multi selections highlight every wall and room they hold: the helper sets cover the single
+  // 'wall' / 'room' kinds too, so one lookup serves both the single and the mixed case.
+  const wallKeys = useMemo(() => selectedWallKeys(selection, artboard.id), [selection, artboard.id])
+  const selectedIds = useMemo(() => [...selectedRoomIds(selection, artboard.id)], [selection, artboard.id])
+  // Rooms that hold a selected wall (their border paints the selected look, as for a single wall).
+  const wallRoomIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const key of wallKeys) ids.add(key.slice(0, key.lastIndexOf(':')))
+    return ids
+  }, [wallKeys])
+  const isWallSelected = (roomId: string, edgeIndex: number) => wallKeys.has(`${roomId}:${edgeIndex}`)
   const selectedWall = selection.kind === 'wall' && inArtboard(selection) ? selection : null
   const selectedVertex = selection.kind === 'vertex' && inArtboard(selection) ? selection : null
 
@@ -238,17 +249,9 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
       return
     }
     // Shift-click adds or removes the room, so one floor card can paint several rooms at once.
-    const sel = useUi.getState().selection
-    let roomIds = [room.id]
-    if (e.shiftKey && sel.kind === 'room' && sel.artboardId === artboard.id) {
-      roomIds = sel.roomIds.includes(room.id) ? sel.roomIds.filter((id) => id !== room.id) : [...sel.roomIds, room.id]
-    }
-    if (roomIds.length === 0) {
-      useUi.getState().set({ selection: { kind: 'none' } })
-      return
-    }
+    // The toggle goes through the mixed selection, so rooms can mix with furniture here.
     useUi.getState().set({
-      selection: { kind: 'room', artboardId: artboard.id, roomIds },
+      selection: roomClickSelection(useUi.getState().selection, artboard.id, room.id, e.shiftKey),
       activeArtboardId: artboard.id,
     })
   }
@@ -274,15 +277,13 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
       return
     }
     if (!interactive) return
-    let ids = selectedIds
-    if (e.shiftKey) {
-      ids = ids.includes(room.id) ? ids.filter((i) => i !== room.id) : [...ids, room.id]
-      setSelection(ids.length ? { kind: 'room', artboardId: artboard.id, roomIds: ids } : { kind: 'none' })
-      if (!ids.includes(room.id)) return
-    } else if (!ids.includes(room.id)) {
-      ids = [room.id]
-      setSelection({ kind: 'room', artboardId: artboard.id, roomIds: ids })
-    }
+    // Shift toggles the room of the mixed selection (rooms, walls, openings) and drags the rooms
+    // that stay selected. A plain press keeps today's behavior: it selects one room, unless a
+    // 'room' selection already holds that room (then the whole selection moves).
+    const pressed = roomDownSelection(useUi.getState().selection, artboard.id, room.id, e.shiftKey)
+    const ids = pressed.ids
+    if (pressed.selection) setSelection(pressed.selection)
+    if (!pressed.startDrag) return
     const origs = new Map(artboard.rooms.filter((r) => ids.includes(r.id)).map((r) => [r.id, r] as const))
     const primary = origs.get(room.id)!
     const others = artboard.rooms.filter((r) => !origs.has(r.id))
@@ -344,7 +345,12 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
   const onWallDown = (e: ReactPointerEvent<SVGLineElement>, room: Room, edgeIndex: number) => {
     if (e.button !== 0 || !interactive) return
     e.stopPropagation()
-    setSelection({ kind: 'wall', artboardId: artboard.id, roomId: room.id, edgeIndex })
+    // Shift toggles the wall in the mixed selection and must not start a wall drag.
+    if (e.shiftKey) {
+      setSelection(wallClickSelection(useUi.getState().selection, artboard.id, room.id, edgeIndex, true))
+      return
+    }
+    setSelection(wallClickSelection(useUi.getState().selection, artboard.id, room.id, edgeIndex, false))
     const others = artboard.rooms.filter((r) => r.id !== room.id)
     const a = room.vertices[edgeIndex]
     const b = room.vertices[(edgeIndex + 1) % room.vertices.length]
@@ -418,7 +424,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
     })
   }
 
-  const handleRooms = artboard.rooms.filter((r) => selectedIds.includes(r.id) || r.id === selectedWall?.roomId || r.id === selectedVertex?.roomId)
+  const handleRooms = artboard.rooms.filter((r) => selectedIds.includes(r.id) || wallRoomIds.has(r.id) || r.id === selectedVertex?.roomId)
 
   /** Black butt-capped cutout bands of a wall (or wall stroke) mask. */
   const cutoutLines = (cutouts: { x1: number; y1: number; x2: number; y2: number; width: number }[]) =>
@@ -562,7 +568,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
         </defs>
       )}
       {roomGeo.map(({ room, pts, label, areaText }) => {
-        const selected = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
+        const selected = selectedIds.includes(room.id) || wallRoomIds.has(room.id) || selectedVertex?.roomId === room.id
         const pattern = isPatterned(room.floorPattern) ? room.floorPattern : null
         const pid = patternId(room.id)
         const def = pattern ? PATTERN_DEFS[pattern] : null
@@ -648,7 +654,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
         // not one per room), hidden inside every opening of a thick wall. Selected rooms draw last.
         <g mask={`url(#${strokeMaskId})`} pointerEvents="none" data-testid={`room-strokes-${artboard.id}`}>
           {[false, true].map((pass) => roomGeo.map(({ room, pts }) => {
-            const sel = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
+            const sel = selectedIds.includes(room.id) || wallRoomIds.has(room.id) || selectedVertex?.roomId === room.id
             if (sel !== pass) return null
             return roomStrokes(room, pts, sel, `${room.id}-${pass}`)
           }))}
@@ -661,7 +667,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
         <g pointerEvents="none" data-testid={`room-strokes-${artboard.id}`}>
           {roomGeo.map(({ room, pts }) => {
             if (!roomHasFence(room)) return null
-            const sel = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
+            const sel = selectedIds.includes(room.id) || wallRoomIds.has(room.id) || selectedVertex?.roomId === room.id
             return roomStrokes(room, pts, sel, room.id)
           })}
         </g>
@@ -669,7 +675,7 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
 
       {roomGeo.map(({ room, walls }) => {
         return walls.map((w) => {
-          const isSel = selectedWall?.roomId === room.id && selectedWall.edgeIndex === w.index
+          const isSel = isWallSelected(room.id, w.index)
           // Design mode shows no wall length on the canvas (the aria-label stays).
           const wl = design ? undefined : textLod.walls.get(`${room.id}:${w.index}`)
           return (
@@ -696,7 +702,12 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
                   onClick={(e) => {
                     if (!interactive) return
                     e.stopPropagation()
-                    setSelection({ kind: 'wall', artboardId: artboard.id, roomId: room.id, edgeIndex: w.index })
+                    // Shift toggles the wall in the mixed selection and opens no length editor.
+                    if (e.shiftKey) {
+                      setSelection(wallClickSelection(useUi.getState().selection, artboard.id, room.id, w.index, true))
+                      return
+                    }
+                    setSelection(wallClickSelection(useUi.getState().selection, artboard.id, room.id, w.index, false))
                     onEditWall?.({ artboardId: artboard.id, roomId: room.id, edgeIndex: w.index, clientX: e.clientX, clientY: e.clientY, currentCm: w.lengthCm })
                   }}
                 >
