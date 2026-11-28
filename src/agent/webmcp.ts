@@ -94,7 +94,7 @@ export function createWebMcpTools(bridge: SfpAgentBridge): WebMcpTool[] {
       name: 'sfp_set_ui',
       description: 'Set UI state: mode, tool, active artboard, selection and view. All fields are optional. "fit" fits the view to an artboard (or all when true).',
       inputSchema: obj({
-        mode: { type: 'string', enum: ['plan', 'design'] },
+        mode: { type: 'string', enum: ['plan', 'design', 'views'] },
         tool: { type: 'string', enum: ['select', 'rect', 'pen', 'cutout', 'place-opening', 'calibrate-image', 'tape', 'artboard'] },
         activeArtboardId: { type: 'string' },
         selection: SELECTION_SCHEMA,
@@ -102,8 +102,9 @@ export function createWebMcpTools(bridge: SfpAgentBridge): WebMcpTool[] {
         fit: { oneOf: [{ type: 'boolean' }, { type: 'string' }], description: 'true = fit all; a string = fit that artboard id.' },
       }),
       execute: (input) => {
-        if (input.mode === 'plan' || input.mode === 'design') bridge.setMode(input.mode)
-        if (typeof input.tool === 'string') bridge.setTool(input.tool as Parameters<SfpAgentBridge['setTool']>[0])
+        if (input.mode === 'plan' || input.mode === 'design' || input.mode === 'views') bridge.setMode(input.mode)
+        // Views mode has no 2D tool: a tool sent with mode 'views' must not stay armed.
+        if (typeof input.tool === 'string' && input.mode !== 'views') bridge.setTool(input.tool as Parameters<SfpAgentBridge['setTool']>[0])
         if (typeof input.activeArtboardId === 'string' && !bridge.setActiveArtboard(input.activeArtboardId)) {
           return json({ ok: false, error: `Artboard "${input.activeArtboardId}" not found.` }, true)
         }

@@ -1,9 +1,11 @@
 // Right-panel Inspect card for one selected opening (docs/simple-floorplan-2.md §2.6):
 // breadcrumb back to the artboard, the kind (door / window / opening), the style variant, the width
-// in cm, the hinge and swing flips (only where the style has them) and Delete.
+// in cm, the height and sill in cm (used by the 3D view), the hinge and swing flips (only where the
+// style has them) and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm.
 import { Copy, DoorOpen, Frame, RectangleHorizontal } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { openingHeightCm, openingSillCm } from '../../model/defaults'
 import { useDoc } from '../../model/store'
 import type { Artboard, Opening, OpeningKind, OpeningVariant } from '../../model/types'
 import {
@@ -38,6 +40,9 @@ export type OpeningInspectProps = {
 }
 
 const KIND_LABEL: Record<OpeningKind, string> = { door: 'Door', window: 'Window', opening: 'Opening' }
+
+/** Smallest height the height field accepts, in cm: under this the piece is not a hole any more. */
+const MIN_OPENING_HEIGHT_CM = 10
 
 const KIND_ICON: Record<OpeningKind, ReactNode> = {
   door: <DoorOpen size={14} aria-hidden="true" />,
@@ -154,6 +159,31 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
     updateOpening(artboard.id, opening.id, { widthCm: value })
   }
 
+  // Vertical dimensions, read through the shared defaults so a fresh opening shows its kind's
+  // height and sill. The ceiling of the artboard caps both, so a piece never pokes out of the room.
+  const ceilingHeightCm = artboard.ceilingHeightCm
+  const sillCm = openingSillCm(opening, ceilingHeightCm)
+  const heightCm = openingHeightCm(opening, ceilingHeightCm)
+  const maxHeightCm = Math.max(MIN_OPENING_HEIGHT_CM, ceilingHeightCm - sillCm)
+  const maxSillCm = Math.max(0, ceilingHeightCm - MIN_OPENING_HEIGHT_CM)
+
+  const setHeight = (value: number | null): boolean | void => {
+    if (value == null) return false
+    const next = Math.min(maxHeightCm, Math.max(MIN_OPENING_HEIGHT_CM, value))
+    if (next === opening.heightCm) return
+    updateOpening(artboard.id, opening.id, { heightCm: next })
+  }
+
+  /** Raises or lowers the sill, lowering the height too when the piece would pass the ceiling. */
+  const setSill = (value: number | null): boolean | void => {
+    if (value == null) return false
+    const next = Math.min(maxSillCm, Math.max(0, value))
+    const patch: { sillCm: number; heightCm?: number } = { sillCm: next }
+    if (next + heightCm > ceilingHeightCm) patch.heightCm = Math.max(MIN_OPENING_HEIGHT_CM, ceilingHeightCm - next)
+    if (patch.heightCm === undefined && next === opening.sillCm) return
+    updateOpening(artboard.id, opening.id, patch)
+  }
+
   const hinge: Hinge = opening.hinge ?? 'left'
   const swing: Swing = opening.swing ?? 'in'
   const host = hostWallOf(artboard, opening)
@@ -228,6 +258,16 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
           onCommit={setWidth}
         />
       </FieldRow>
+
+      <FieldRow label="Height" hint="for 3D">
+        <NumberField ariaLabel="Opening height" unit="cm" value={heightCm} onCommit={setHeight} />
+      </FieldRow>
+
+      {isWindow && (
+        <FieldRow label="Sill" hint="floor to window">
+          <NumberField ariaLabel="Window sill" unit="cm" value={sillCm} onCommit={setSill} />
+        </FieldRow>
+      )}
 
       <FieldRow label="Position" hint="along the wall" stacked>
         {host ? (

@@ -132,7 +132,13 @@ export function createAgentBridge(): SfpAgentBridge {
     dryRun: (cmdOrCmds) => exec(cmdOrCmds, { dryRun: true }),
     undo: () => stateChanged(() => useDoc.getState().undo()),
     redo: () => stateChanged(() => useDoc.getState().redo()),
-    setMode: (mode) => useUi.getState().set({ mode }),
+    setMode: (mode) => {
+      // Views mode is a read-only 3D surface (same reset as the Mode control in App.tsx): no 2D tool,
+      // selection, placing, calibration or pinned measurement survives the switch.
+      if (mode === 'views') {
+        useUi.getState().set({ mode, tool: 'select', selection: { kind: 'none' }, placingOpeningKind: null, calibratingImageId: null, pinnedTape: null })
+      } else useUi.getState().set({ mode })
+    },
     setTool: (tool) => useUi.getState().set({ tool }),
     select: (selection) => useUi.getState().set({ selection }),
     setActiveArtboard: (artboardId) => {
