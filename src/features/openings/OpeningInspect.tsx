@@ -74,6 +74,7 @@ const KIND_OPTIONS = [
 const DOOR_VARIANT_OPTIONS = [
   { value: 'standard', label: 'Standard' },
   { value: 'french', label: 'French (double)' },
+  { value: 'french-glass', label: 'French double (glass)' },
   { value: 'pocket', label: 'Pocket sliding' },
   { value: 'bypass', label: 'Bypass sliding' },
   { value: 'bypass-glass', label: 'Bypass sliding (glass)' },
@@ -153,7 +154,7 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
   // window hinges on one side, a double casement is symmetric like a french door.
   const showHinge = (isDoor && (variant === 'standard' || variant === 'pocket')) || (isWindow && variant === 'casement')
   const showSwing =
-    (isDoor && (variant === 'standard' || variant === 'french')) ||
+    (isDoor && (variant === 'standard' || variant === 'french' || variant === 'french-glass')) ||
     (isWindow && (variant === 'casement' || variant === 'double-casement'))
 
   const setKind = (value: string) => {

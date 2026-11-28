@@ -210,7 +210,7 @@ export function openingSymbol(op: Opening, u: (px: number) => number): OpeningSy
   const variant = openingVariant(op)
 
   if (op.kind === 'door') {
-    if (variant === 'french') {
+    if (variant === 'french' || variant === 'french-glass') {
       const leaves = frenchDoorGeometry(op)
       return {
         wallLine: false,

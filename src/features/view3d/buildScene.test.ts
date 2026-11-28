@@ -6,7 +6,7 @@ import { doorArcGeometry } from '../openings/geometry'
 import { shade } from './furnitureSolids'
 import { FENCE_COLOR, FENCE_THICKNESS_CM } from '../rooms/walls'
 import {
-  DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, splitWallPieces,
+  DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, DOOR_AJAR_DEG, buildScene, clipSpanToHeight, computeWallTargetHeights, splitWallPieces,
 } from './buildScene'
 import type { WallSegmentData } from './buildScene'
 
@@ -941,6 +941,55 @@ describe('opening 3D models', () => {
     const aRight = Math.max(...panels.filter((p) => p.d === a.d).map((p) => p.u + p.su / 2))
     const bLeft = Math.min(...panels.filter((p) => p.d === b.d).map((p) => p.u - p.su / 2))
     expect(aRight - bLeft).toBeCloseTo(4)
+  })
+
+  it('builds a french-glass door with two ajar framed glass leaves', () => {
+    const c = '#336699'
+    const m = modelOf(one({ openings: [door({ variant: 'french-glass', widthCm: 160 })] }), 'r:0', 'd')
+    expect(m.kind).toBe('door')
+    expect(count(m, 'frame')).toBe(3)
+    expect(count(m, 'leaf')).toBe(0)
+    expect(count(m, 'glass')).toBe(2)
+    expect(count(m, 'panel')).toBe(8)
+    expect(count(m, 'handle')).toBe(4)
+    const beta = (DOOR_AJAR_DEG * Math.PI) / 180
+    const glass = m.parts.filter((p) => p.kind === 'glass')
+    for (const g of glass) {
+      expect(g.solid).toBe(false)
+      expect(Math.abs(Math.sin(g.rotation))).toBeCloseTo(Math.sin(beta), 5)
+      // Thinner than every frame bar, so it never shares a face with them.
+      for (const p of m.parts.filter((q) => q.kind === 'panel')) expect(g.sd).toBeLessThan(p.sd)
+    }
+    // The two panes hinge from opposite jambs and are mirrored in u.
+    const [a, b] = [...glass].sort((p, q) => p.u - q.u)
+    const jambs = m.parts.filter((q) => q.kind === 'frame' && q.sy > 100).sort((p, q) => p.u - q.u)
+    expect(a.u + b.u).toBeCloseTo(jambs[0].u + jambs[jambs.length - 1].u, 5)
+    expect(a.d).toBeCloseTo(b.d)
+    // Every part of a leaf is on its rotated axis: the stile centres and the pane centre are collinear.
+    const axisOf = (rot: number) => ({ x: Math.cos(rot), y: Math.sin(rot) })
+    for (const g of glass) {
+      const ax = axisOf(g.rotation)
+      const stiles = m.parts.filter((p) => p.kind === 'panel' && Math.abs(p.rotation - g.rotation) < 1e-9 && p.sy > 50)
+      expect(stiles).toHaveLength(2)
+      for (const s of stiles) {
+        const du = s.u - g.u, dd = s.d - g.d
+        expect(Math.abs(du * ax.y - dd * ax.x)).toBeLessThan(1e-6)
+      }
+    }
+    // Cutaway spans are the real vertical extents.
+    for (const p of m.parts) {
+      expect(p.y0).toBeLessThan(p.y1)
+      expect(p.y0).toBeCloseTo(p.y - p.sy / 2)
+      expect(p.y1).toBeCloseTo(p.y + p.sy / 2)
+    }
+    // Custom colour: frame and stiles/rails take it, glass and handles stay.
+    const colored = modelOf(one({ openings: [door({ variant: 'french-glass', widthCm: 160, color: c })] }), 'r:0', 'd')
+    const colors = (mm: typeof m, kind: string) => [...new Set(mm.parts.filter((p) => p.kind === kind).map((p) => p.color))]
+    expect(colors(colored, 'frame')).toEqual([c])
+    expect(colors(colored, 'panel')).toEqual([c])
+    expect(colors(colored, 'glass')).toEqual(colors(m, 'glass'))
+    expect(colors(colored, 'handle')).toEqual(colors(m, 'handle'))
+    expect(colors(m, 'frame')).toEqual(['#6a5444'])
   })
 
   it('swings the leaf to the same world side and hinge as the 2D symbol, on shared and exterior walls', () => {

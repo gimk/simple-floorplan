@@ -37,7 +37,7 @@ export type PrecisionCm = 0.1 | 0.5 | 1
 export type OpeningKind = 'door' | 'window' | 'opening'
 
 /** Door styles. 'standard' is the single leaf with a quarter-circle swing arc. */
-export type DoorVariant = 'standard' | 'pocket' | 'bypass' | 'bypass-glass' | 'french'
+export type DoorVariant = 'standard' | 'pocket' | 'bypass' | 'bypass-glass' | 'french' | 'french-glass'
 /**
  * Window styles. 'standard' is the triple-line frame, 'sliding' is two staggered sashes, and the two
  * casement styles add swinging leaves (with their quarter-circle arcs) on top of the frame.

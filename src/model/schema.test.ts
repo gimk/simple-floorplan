@@ -113,7 +113,7 @@ describe('schema', () => {
       const o = { id: 'o', kind: 'door', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, ...(variant ? { variant } : {}) }
       return parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [o] }] })
     }
-    for (const variant of ['standard', 'pocket', 'bypass', 'bypass-glass', 'french', 'sliding', 'casement', 'double-casement']) {
+    for (const variant of ['standard', 'pocket', 'bypass', 'bypass-glass', 'french', 'french-glass', 'sliding', 'casement', 'double-casement']) {
       const r = withVariant(variant)
       expect(r.ok && r.doc.artboards[0].openings[0].variant).toBe(variant)
     }

@@ -324,6 +324,10 @@ describe('openingSymbol', () => {
     expect(slide.pts[1].x).toBeGreaterThan(slide.pts[0].x)
   })
 
+  it('french-glass door: same 2D symbol as french', () => {
+    expect(openingSymbol({ ...door, variant: 'french-glass' }, u)).toEqual(openingSymbol({ ...door, variant: 'french' }, u))
+  })
+
   it('bypass-glass door: same 2D symbol as bypass', () => {
     expect(openingSymbol({ ...door, variant: 'bypass-glass' }, u)).toEqual(openingSymbol({ ...door, variant: 'bypass' }, u))
   })

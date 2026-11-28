@@ -330,6 +330,9 @@ export const MULLION_MIN_WINDOW_CM = 100
 /** Door leaf thickness and ajar angle. */
 export const DOOR_LEAF_CM = 4
 export const DOOR_AJAR_DEG = 28
+export const GLASS_LEAF_STILE_CM = 5
+export const GLASS_LEAF_BOTTOM_RAIL_CM = 13
+export const GLASS_LEAF_TOP_RAIL_CM = 6
 /** Sliding door: bottom rail height, panel stile width, panel thickness, overlap of the two panels (cm). */
 export const SLIDER_RAIL_CM = 2
 export const SLIDER_STILE_CM = 4
@@ -442,9 +445,11 @@ function buildOpeningParts(
   }
 
   // Hinged door: frame (jambs + head) and one ajar leaf, or two for a french door.
-  box('frame', doorFrameColor, cut.u0, inU0, cut.y0, cut.y1, midD, thick)
-  box('frame', doorFrameColor, inU1, cut.u1, cut.y0, cut.y1, midD, thick)
-  box('frame', doorFrameColor, inU0, inU1, head0, cut.y1, midD, thick)
+  // A glass french door keeps the opening colour itself on its frame, as the glass bypass does.
+  const hingedFrameColor = op.variant === 'french-glass' ? frameColor : doorFrameColor
+  box('frame', hingedFrameColor, cut.u0, inU0, cut.y0, cut.y1, midD, thick)
+  box('frame', hingedFrameColor, inU1, cut.u1, cut.y0, cut.y1, midD, thick)
+  box('frame', hingedFrameColor, inU0, inU1, head0, cut.y1, midD, thick)
   const leafH = head0 - cut.y0
   const beta = (DOOR_AJAR_DEG * Math.PI) / 180
   const leaf = (pivotU: number, e: 1 | -1, length: number) => {
@@ -470,7 +475,46 @@ function buildOpeningParts(
       })
     }
   }
-  if (op.variant === 'french') {
+  // Glass leaf: framed pane. Local axes: s along the leaf from the hinge (0) to the latch (length),
+  // o across it. World (u, d) = pivot + a * s + p * o, with a = (cos, sin) of the leaf angle, p = (-sin, cos).
+  const glassLeaf = (pivotU: number, e: 1 | -1, length: number) => {
+    if (length <= EPS || leafH <= EPS) return
+    const dirU = e * Math.cos(beta), dirD = side * Math.sin(beta)
+    const alpha = Math.atan2(dirD, dirU)
+    const ax = Math.cos(alpha), ay = Math.sin(alpha), px = -ay, py = ax
+    const place = (k: OpeningPartKind, color: string, s0: number, s1: number, ya: number, yb: number, o: number, sd: number, solid: boolean) => {
+      if (s1 - s0 <= EPS || yb - ya <= EPS) return
+      const sm = (s0 + s1) / 2
+      parts.push({
+        kind: k, color, u: pivotU + ax * sm + px * o, y: (ya + yb) / 2, d: midD + ay * sm + py * o,
+        su: s1 - s0, sy: yb - ya, sd, rotation: alpha, y0: ya, y1: yb, solid,
+      })
+    }
+    const st = Math.min(GLASS_LEAF_STILE_CM, length / 4)
+    const bot = Math.min(GLASS_LEAF_BOTTOM_RAIL_CM, leafH / 4), top = Math.min(GLASS_LEAF_TOP_RAIL_CM, leafH / 4)
+    const ly0 = cut.y0, ly1 = cut.y0 + leafH
+    place('panel', frameColor, 0, st, ly0, ly1, 0, DOOR_LEAF_CM, true)
+    place('panel', frameColor, length - st, length, ly0, ly1, 0, DOOR_LEAF_CM, true)
+    place('panel', frameColor, st, length - st, ly0, ly0 + bot, 0, DOOR_LEAF_CM, true)
+    place('panel', frameColor, st, length - st, ly1 - top, ly1, 0, DOOR_LEAF_CM, true)
+    // The pane is thinner than the frame bars and sits inside their opening: no shared faces, no z-fighting.
+    place('glass', '#9fd3ff', st, length - st, ly0 + bot, ly1 - top, 0, 0.6, false)
+    // A knob on both faces of the latch stile, about 100 cm above the floor.
+    const hy = Math.max(ly0 + 3, Math.min(100, ly1 - 3))
+    const hs = length - st / 2
+    for (const f of [-1, 1]) {
+      const o = f * (DOOR_LEAF_CM / 2 + 1.5)
+      parts.push({
+        kind: 'handle', color: HANDLE_COLOR, u: pivotU + ax * hs + px * o, y: hy, d: midD + ay * hs + py * o,
+        su: Math.min(8, length / 2), sy: 3, sd: 3, rotation: alpha, y0: hy - 1.5, y1: hy + 1.5, solid: true,
+      })
+    }
+  }
+  if (op.variant === 'french-glass') {
+    const half = (inU1 - inU0) / 2
+    glassLeaf(inU0, 1, half)
+    glassLeaf(inU1, -1, half)
+  } else if (op.variant === 'french') {
     const half = (inU1 - inU0) / 2
     leaf(inU0, 1, half)
     leaf(inU1, -1, half)

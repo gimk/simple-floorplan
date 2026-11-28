@@ -33,7 +33,7 @@ export const openingSchema = z.object({
   swing: z.enum(['in', 'out']).optional(),
   heightCm: num.positive().optional(),
   sillCm: num.min(0).optional(),
-  variant: z.enum(['standard', 'pocket', 'bypass', 'bypass-glass', 'french', 'sliding', 'casement', 'double-casement']).optional(),
+  variant: z.enum(['standard', 'pocket', 'bypass', 'bypass-glass', 'french', 'french-glass', 'sliding', 'casement', 'double-casement']).optional(),
   color: z.string().optional(),
 })
 

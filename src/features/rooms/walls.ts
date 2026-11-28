@@ -139,7 +139,7 @@ export function openingWall(rooms: Room[], op: Opening, thicknessCm: number): Op
 export function openingSymbolShift(op: Opening, wall: OpeningWall): Vec {
   const { out, thicknessCm: t } = wall
   const variant = op.variant ?? 'standard'
-  if (op.kind === 'door' && (variant === 'standard' || variant === 'french')) {
+  if (op.kind === 'door' && (variant === 'standard' || variant === 'french' || variant === 'french-glass')) {
     const rad = (op.angleDeg * Math.PI) / 180
     const n = { x: -Math.sin(rad), y: Math.cos(rad) }
     const swingSign = (op.swing ?? 'in') === 'in' ? 1 : -1
