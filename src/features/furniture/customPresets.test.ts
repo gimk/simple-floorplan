@@ -64,3 +64,16 @@ describe('customPresets', () => {
     expect(() => useCustomPresets.getState().addPreset(base)).not.toThrow()
   })
 })
+
+describe('customPresets model', () => {
+  it('keeps the 3D model of a preset after a reload', () => {
+    const p = useCustomPresets.getState().addPreset({ ...base, model: 'officeChair' })
+    expect(loadCustomPresets()).toEqual([p])
+    expect(loadCustomPresets()[0].model).toBe('officeChair')
+  })
+
+  it('drops a stored preset with an unknown model', () => {
+    saveCustomPresets([{ ...base, id: 'custom-x', model: 'spaceship' as never }])
+    expect(loadCustomPresets()).toEqual([])
+  })
+})

@@ -7,7 +7,7 @@
 import { useId, useRef, useState } from 'react'
 import { BookmarkPlus, LayoutGrid, Plus, Search, Shapes, Trash2 } from 'lucide-react'
 import { useDoc } from '../../model/store'
-import type { FurnitureItem } from '../../model/types'
+import type { FurnitureItem, FurnitureModel } from '../../model/types'
 import {
   BTN,
   ColorRow,
@@ -18,6 +18,7 @@ import {
   NumberField,
   PanelSection,
   Segmented,
+  SelectField,
   SwitchRow,
   TextField,
 } from '../../shell/panel'
@@ -28,6 +29,8 @@ import { toast } from '../toast'
 import { addFurniture } from './actions'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
 import { useCustomPresets } from './customPresets'
+import { AUTO_MODEL, furnitureModelOptions, modelFromSelect } from './models'
+import { furnitureArchetype } from '../view3d/furnitureSolids'
 import { FURNITURE_CATEGORY_BY_ID, FURNITURE_COLORS, FURNITURE_PRESETS, type FurniturePreset } from './presets'
 
 /** Shape of a new item. */
@@ -43,6 +46,7 @@ type NewItem = {
   heightCm?: number
   showDirection?: boolean
   presetId?: string
+  model?: FurnitureModel
 }
 
 /** Defaults of the custom shape form. */
@@ -151,6 +155,7 @@ export function FurniturePanel() {
   const artboards = useDoc((s) => s.doc.artboards)
   const activeArtboardId = useUi((s) => s.activeArtboardId)
   const nameId = useId()
+  const modelId = useId()
 
   const [name, setName] = useState(DEFAULT_NAME)
   const [shape, setShape] = useState<Shape>('rect')
@@ -158,6 +163,7 @@ export function FurniturePanel() {
   const [depthCm, setDepthCm] = useState(DEFAULT_DEPTH_CM)
   const [color, setColor] = useState(FURNITURE_COLORS[0].color)
   const [showDirection, setShowDirection] = useState(false)
+  const [model, setModel] = useState<FurnitureModel | undefined>(undefined)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<string | null>(null)
   // Number of items added by this panel: each new item is shifted a little, so repeated adds do not stack.
@@ -206,8 +212,12 @@ export function FurniturePanel() {
       depthCm: clampCm(depthCm),
       color,
       showDirection,
+      ...(model ? { model } : {}),
     })
   }
+
+  // Model the 3D view picks for the form values when "Auto" is chosen (75 cm: the default height).
+  const autoModel = furnitureArchetype({ name: name.trim() === '' ? DEFAULT_NAME : name.trim(), shape }, 75)
 
   const saveCustom = () => {
     const saved = addPreset({
@@ -218,6 +228,7 @@ export function FurniturePanel() {
       color,
       heightCm: 75,
       showDirection,
+      model: model ?? autoModel,
     })
     toast(`Saved preset "${saved.name}"`, { kind: 'info' })
   }
@@ -276,6 +287,16 @@ export function FurniturePanel() {
               if (v == null) return false
               setDepthCm(clampCm(v))
             }}
+          />
+        </FieldRow>
+
+        <FieldRow label="Model" hint="for 3D" htmlFor={modelId}>
+          <SelectField
+            id={modelId}
+            ariaLabel="Custom shape 3D model"
+            value={model ?? AUTO_MODEL}
+            options={furnitureModelOptions(autoModel)}
+            onChange={(value) => setModel(modelFromSelect(value))}
           />
         </FieldRow>
 
@@ -365,6 +386,7 @@ export function FurniturePanel() {
                       color: preset.color,
                       heightCm: preset.heightCm,
                       showDirection: preset.showDirection,
+                      ...(preset.model ? { model: preset.model } : {}),
                     },
                     preset.layer,
                   )

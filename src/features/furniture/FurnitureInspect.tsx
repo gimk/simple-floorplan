@@ -20,6 +20,7 @@ import {
   NumberField,
   PanelSection,
   Segmented,
+  SelectField,
   SwitchRow,
   TextField,
 } from '../../shell/panel'
@@ -32,6 +33,8 @@ import { MAX_FURNITURE_CM, MIN_FURNITURE_CM, cornerRadiiPatch, furnitureCornerRa
 import type { CornerRadii } from './geometry'
 import { useCustomPresets } from './customPresets'
 import { FURNITURE_COLORS } from './presets'
+import { AUTO_MODEL, furnitureModelOptions, modelFromSelect } from './models'
+import { furnitureArchetype } from '../view3d/furnitureSolids'
 
 export type FurnitureInspectProps = {
   /** Artboard that holds the item. */
@@ -98,6 +101,7 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
   const renameRequestId = useUi((s) => s.renameRequestId)
   const nameId = useId()
   const heightId = useId()
+  const modelId = useId()
   // The 4 corner fields are open by default when the radii already differ; the toggle forces a view.
   const [cornersOpen, setCornersOpen] = useState<boolean | null>(null)
 
@@ -224,6 +228,9 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
     })
   }
 
+  // The model the 3D view picks when no model is stored (shown as "Auto (...)").
+  const autoModel = furnitureArchetype({ ...item, model: undefined }, furnitureHeightCm(item))
+
   const saveAsPreset = () => {
     const saved = useCustomPresets.getState().addPreset({
       name: item.name,
@@ -234,6 +241,8 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
       // The preset keeps the effective height of the item, so a saved preset never gets thinner.
       heightCm: furnitureHeightCm(item),
       showDirection: !!item.showDirection,
+      // The effective model: a custom preset has no presetId, so a stored model keeps the 3D look.
+      model: item.model ?? autoModel,
     })
     toast(`Saved preset "${saved.name}"`, { kind: 'info' })
   }
@@ -264,6 +273,19 @@ export function FurnitureInspect({ artboardId, furnitureId }: FurnitureInspectPr
             onChange={(value) => {
               const shape = value === 'circle' ? 'circle' : 'rect'
               if (shape !== item.shape) patch({ shape })
+            }}
+          />
+        </FieldRow>
+
+        <FieldRow label="Model" hint="for 3D" htmlFor={modelId}>
+          <SelectField
+            id={modelId}
+            ariaLabel="Furniture 3D model"
+            value={item.model ?? AUTO_MODEL}
+            options={furnitureModelOptions(autoModel)}
+            onChange={(value) => {
+              const model = modelFromSelect(value)
+              if (model !== item.model) patch({ model })
             }}
           />
         </FieldRow>

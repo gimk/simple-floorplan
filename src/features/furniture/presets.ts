@@ -1,7 +1,7 @@
 // Starter furniture presets, floor fill swatches and furniture colours (no React, no store).
 // Colours are muted so they read well on the dark canvas (#12161b) at low opacity.
 
-import type { FloorPattern } from '../../model/types'
+import type { FloorPattern, FurnitureModel } from '../../model/types'
 
 /** A floor finish choice. `color` undefined means no fill (the default canvas look). */
 export type Swatch = { id: string; label: string; color: string | undefined }
@@ -68,6 +68,8 @@ export type FurniturePreset = {
   showDirection?: boolean
   /** Stack place of a new item: 'bottom' = under the existing items (a rug), default 'top'. */
   layer?: 'top' | 'bottom'
+  /** 3D model. Omitted = automatic (built-in presets get theirs from their id). */
+  model?: FurnitureModel
 }
 
 const DEFAULT_PRESET_COLOR = '#4b5563'

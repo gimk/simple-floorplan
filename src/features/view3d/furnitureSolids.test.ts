@@ -275,3 +275,13 @@ describe('furnitureArchetype with presetId', () => {
     expect(furnitureArchetype({ name: 'Bed', shape: 'rect', presetId: 'toString' }, 50)).toBe('bed')
   })
 })
+
+describe('furnitureArchetype with a chosen model', () => {
+  it('a stored model wins over the preset id and the name', () => {
+    expect(furnitureArchetype({ name: 'Sofa', shape: 'rect', presetId: 'bed', model: 'desk' }, 75)).toBe('desk')
+    expect(furnitureArchetype({ name: 'Thing', shape: 'circle', model: 'table' }, 75)).toBe('table')
+  })
+  it('an unknown model value falls back to automatic', () => {
+    expect(furnitureArchetype({ name: 'Bed', shape: 'rect', model: 'nope' as never }, 50)).toBe('bed')
+  })
+})

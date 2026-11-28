@@ -1,6 +1,6 @@
 // Zod 4 validation for the v2 ProjectDoc, plus the default (empty) project.
 import { z } from 'zod'
-import { DEFAULT_WALL_THICKNESS_CM } from './types'
+import { DEFAULT_WALL_THICKNESS_CM, FURNITURE_MODELS } from './types'
 import type { Artboard, ProjectDoc } from './types'
 
 const num = z.number().finite()
@@ -55,6 +55,7 @@ export const furnitureSchema = z.object({
   flipX: z.boolean().optional(),
   flipY: z.boolean().optional(),
   presetId: z.string().min(1).optional(),
+  model: z.enum(FURNITURE_MODELS).optional(),
 })
 
 /** Saved 3D camera view of an artboard (docs/3d-and-finishes.md §3). */

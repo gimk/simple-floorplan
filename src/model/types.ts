@@ -70,6 +70,14 @@ export type Opening = {
   color?: string
 }
 
+/** 3D model kinds of a furniture item (see src/features/view3d/furnitureSolids.ts). */
+export const FURNITURE_MODELS = [
+  'bed', 'cot', 'sofa', 'cornerSofa', 'chair', 'officeChair', 'table', 'desk', 'roundTable',
+  'pedestal', 'tallStorage', 'bookshelf', 'lowStorage', 'tvUnit', 'counter', 'sink', 'cooker', 'appliance',
+  'drumAppliance', 'americanFridge', 'bathtub', 'shower', 'toilet', 'basin', 'rug', 'box',
+] as const
+export type FurnitureModel = (typeof FURNITURE_MODELS)[number]
+
 export type FurnitureItem = {
   id: string
   name: string
@@ -100,6 +108,8 @@ export type FurnitureItem = {
   flipY?: boolean
   /** Id of the built-in preset this item was placed from. Keeps its 3D model after a rename. Omitted for custom or older items. */
   presetId?: string
+  /** 3D model chosen by the user. Omitted = automatic (from presetId, then name, then size). */
+  model?: FurnitureModel
 }
 
 /** How the 3D view draws the walls of a room: hidden, cut away above the camera, or full height. */

@@ -4,7 +4,7 @@
 // Every part is clamped inside the item bounding box, so the bounds of the item never grow.
 // Colours are derived only from item.color (plus a fixed pale blue for shower glass).
 
-import type { FurnitureItem } from '../../model/types'
+import { FURNITURE_MODELS, type FurnitureItem, type FurnitureModel } from '../../model/types'
 
 export type FurniturePartKind = 'box' | 'roundedBox' | 'cylinder'
 
@@ -27,10 +27,8 @@ export type FurniturePartData = {
   translucent?: boolean
 }
 
-export type FurnitureArchetype =
-  | 'bed' | 'cot' | 'sofa' | 'cornerSofa' | 'chair' | 'officeChair' | 'table' | 'desk' | 'roundTable'
-  | 'pedestal' | 'tallStorage' | 'bookshelf' | 'lowStorage' | 'tvUnit' | 'counter' | 'sink' | 'cooker' | 'appliance'
-  | 'drumAppliance' | 'americanFridge' | 'bathtub' | 'shower' | 'toilet' | 'basin' | 'rug' | 'box'
+/** The 3D model kinds. Same list as FURNITURE_MODELS of the data model. */
+export type FurnitureArchetype = FurnitureModel
 
 /** Same values as RUG_MAX_HEIGHT_CM / RUG_LIFT_CM in buildScene.ts (not imported: buildScene imports this file). */
 const RUG_MAX_HEIGHT = 2
@@ -86,11 +84,20 @@ export const PRESET_ARCHETYPE: Readonly<Record<string, FurnitureArchetype>> = {
   rug: 'rug', 'rug-160': 'rug', 'round-rug': 'rug',
 }
 
+/** True when v is one of the 3D model kinds. */
+export function isFurnitureModel(v: unknown): v is FurnitureModel {
+  return typeof v === 'string' && (FURNITURE_MODELS as readonly string[]).includes(v)
+}
+
 /**
- * Classify by preset id first (a built-in preset keeps its model after a rename), then by name
+ * Classify by the model the user chose first, then by preset id (a built-in preset keeps its model after a rename), then by name
  * (order matters), then by simple geometry. Unknown items give 'box'.
  */
-export function furnitureArchetype(f: Pick<FurnitureItem, 'name'> & { shape?: FurnitureItem['shape']; presetId?: string }, heightCm: number): FurnitureArchetype {
+export function furnitureArchetype(
+  f: Pick<FurnitureItem, 'name'> & { shape?: FurnitureItem['shape']; presetId?: string; model?: FurnitureItem['model'] },
+  heightCm: number,
+): FurnitureArchetype {
+  if (isFurnitureModel(f.model)) return f.model
   const fromPreset = f.presetId !== undefined && Object.prototype.hasOwnProperty.call(PRESET_ARCHETYPE, f.presetId) ? PRESET_ARCHETYPE[f.presetId] : undefined
   if (fromPreset) return fromPreset === 'table' && f.shape === 'circle' ? 'roundTable' : fromPreset
   const n = (f.name ?? '').toLowerCase()

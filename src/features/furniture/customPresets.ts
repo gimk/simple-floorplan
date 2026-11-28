@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import { MAX_FURNITURE_CM, MIN_FURNITURE_CM } from './geometry'
 import type { FurniturePreset } from './presets'
+import { isFurnitureModel } from '../view3d/furnitureSolids'
 
 export const CUSTOM_PRESETS_KEY = 'simple-floorplan2:furniture-presets'
 
@@ -19,7 +20,8 @@ function isPreset(v: unknown): v is FurniturePreset {
     typeof p.color === 'string' &&
     isNum(p.heightCm) &&
     (p.showDirection === undefined || typeof p.showDirection === 'boolean') &&
-    (p.layer === undefined || p.layer === 'top' || p.layer === 'bottom')
+    (p.layer === undefined || p.layer === 'top' || p.layer === 'bottom') &&
+    (p.model === undefined || isFurnitureModel(p.model))
   )
 }
 
