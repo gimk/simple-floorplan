@@ -540,7 +540,7 @@ describe('computeWallTargetHeights', () => {
     expect([...m.values()]).toEqual([250, 250, 250, 250])
   })
 
-  it('lowers the single interior wall that blocks the view, and only that one', () => {
+  it('lowers every interior wall and keeps only the back exterior walls full', () => {
     const walls = buildScene(twoRooms()).walls
     const m = computeWallTargetHeights(walls, cam(-300, 150), { x: 600, y: 0, z: 150 }, 'cutaway')
     expect(m.get(SH)).toBe(30)
@@ -550,24 +550,18 @@ describe('computeWallTargetHeights', () => {
     expect(m.get('B:2')).toBe(250)
   })
 
-  it('keeps an interior wall full when it is not between the camera and the target', () => {
+  it('lowers an interior wall for any camera position, also high above or behind the target', () => {
     const walls = buildScene(twoRooms()).walls
-    const m = computeWallTargetHeights(walls, cam(600, -500), { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(m.get(SH)).toBe(250)
-    expect(m.get('A:0')).toBe(30)
-    expect(m.get('B:0')).toBe(30)
+    const t = { x: 600, y: 0, z: 150 }
+    for (const c of [cam(1300, 150), cam(600, -500), { x: -50, y: 3000, z: 150 }, { x: 600, y: 2000, z: 150 }]) {
+      expect(computeWallTargetHeights(walls, c, t, 'cutaway').get(SH)).toBe(30)
+    }
   })
 
-  it('does not drop an interior wall when the camera looks over it from high above', () => {
+  it('keeps every exterior wall full for a camera straight above the house center', () => {
     const walls = buildScene(twoRooms()).walls
-    const m = computeWallTargetHeights(walls, { x: -50, y: 3000, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(m.get(SH)).toBe(250)
-  })
-
-  it('keeps every wall of a room full for a camera straight above the target', () => {
-    const walls = buildScene(twoRooms()).walls
-    const m = computeWallTargetHeights(walls, { x: 600, y: 2000, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect([...m.values()]).toEqual(walls.map(() => 250))
+    const m = computeWallTargetHeights(walls, { x: 400, y: 2000, z: 150 }, { x: 400, y: 0, z: 150 }, 'cutaway')
+    for (const w of walls) expect(m.get(w.id)).toBe(w.isInterior ? 30 : 250)
   })
 
   it('covers all walls with one entry each', () => {
@@ -670,14 +664,10 @@ describe('rooms separated by a wall-thickness gap', () => {
     expect(s.walls.flatMap((w) => w.windowPanes)).toHaveLength(1)
   })
 
-  it('lowers and raises the gap wall as one unit in cutaway', () => {
+  it('lowers the gap wall as one unit in cutaway', () => {
     const walls = buildScene(gapped(10)).walls
-    const blocked = computeWallTargetHeights(walls, { x: -300, y: 100, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(blocked.get(SH)).toBe(30)
-    const free = computeWallTargetHeights(walls, { x: 600, y: 100, z: -500 }, { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(free.get(SH)).toBe(250)
-    const above = computeWallTargetHeights(walls, { x: -50, y: 3000, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
-    expect(above.get(SH)).toBe(250)
+    const m = computeWallTargetHeights(walls, { x: -300, y: 100, z: 150 }, { x: 600, y: 0, z: 150 }, 'cutaway')
+    expect(m.get(SH)).toBe(30)
     // Only one entry for the shared wall: it cannot be half up and half down.
     expect(walls.filter((w) => w.isInterior)).toHaveLength(1)
   })

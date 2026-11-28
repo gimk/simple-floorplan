@@ -1174,32 +1174,17 @@ export function buildScene(artboard: Artboard): SceneData {
 export type Pos3 = { x: number; y: number; z: number }
 
 /**
- * Parameter t (0 = p, 1 = q) where segment p-q meets segment a-b (touching counts), or null.
- * Floor plane coordinates. Parallel and collinear segments give null.
- */
-function segmentCrossing(p: Pt, q: Pt, a: Pt, b: Pt): number | null {
-  const rx = q.x - p.x, rz = q.z - p.z, sx = b.x - a.x, sz = b.z - a.z
-  const den = rx * sz - rz * sx
-  if (Math.abs(den) < 1e-12) return null
-  const t = ((a.x - p.x) * sz - (a.z - p.z) * sx) / den
-  const u = ((a.x - p.x) * rz - (a.z - p.z) * rx) / den
-  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null
-}
-
-/**
  * Target height of every wall (by wall id) for a camera, in cm.
  * - 'on': full height. 'off': a curb (`curbCm`, default 10).
- * - 'cutaway': an exterior wall that faces the camera drops to `cutawayStubCm` (default 30); an
- *   interior wall that the line of sight camera -> target crosses drops, with its paired side, to the
- *   stub (only when the sight line is still below the wall top where it crosses the wall, so a camera
- *   high above looks over it); every other wall keeps its full height. A camera straight above the
- *   target (same floor position) has no sight line in plan: only the facing rule applies.
+ * - 'cutaway' (Sims-like "back only"): every interior wall and every exterior wall that faces the
+ *   camera drops to `cutawayStubCm` (default 30); only the exterior walls at the back (facing away
+ *   from the camera) keep their full height.
  * A result never exceeds the wall height.
  */
 export function computeWallTargetHeights(
   walls: WallSegmentData[],
   cameraPos: Pos3,
-  targetPos: Pos3,
+  _targetPos: Pos3,
   wallMode: WallViewMode,
   opts: { curbCm?: number; cutawayStubCm?: number } = {},
 ): Map<string, number> {
@@ -1214,24 +1199,9 @@ export function computeWallTargetHeights(
     for (const w of walls) out.set(w.id, Math.min(curb, w.heightCm))
     return out
   }
-  const cam: Pt = { x: cameraPos.x, z: cameraPos.z }
-  const tgt: Pt = { x: targetPos.x, z: targetPos.z }
-  const blockedGroups = new Set<string>()
   for (const w of walls) {
-    if (!w.isInterior) continue
-    // Test against the middle line of the wall box, so a thick gap wall blocks like a thin one.
-    const [o0, o1] = wallSideOffsets(w), off = (o0 + o1) / 2
-    const mid0 = { x: w.start.x + w.outwardNormal.x * off, z: w.start.z + w.outwardNormal.z * off }
-    const mid1 = { x: w.end.x + w.outwardNormal.x * off, z: w.end.z + w.outwardNormal.z * off }
-    const t = segmentCrossing(cam, tgt, mid0, mid1)
-    if (t === null) continue
-    const rayY = cameraPos.y + t * (targetPos.y - cameraPos.y)
-    if (rayY < w.heightCm) blockedGroups.add(w.cutawayGroupId)
-  }
-  for (const w of walls) {
-    let drop: boolean
-    if (w.isInterior) drop = blockedGroups.has(w.cutawayGroupId)
-    else drop = (cam.x - w.center.x) * w.outwardNormal.x + (cam.z - w.center.z) * w.outwardNormal.z > EPS
+    const drop = w.isInterior ||
+      (cameraPos.x - w.center.x) * w.outwardNormal.x + (cameraPos.z - w.center.z) * w.outwardNormal.z > EPS
     out.set(w.id, drop ? Math.min(stub, w.heightCm) : w.heightCm)
   }
   return out
