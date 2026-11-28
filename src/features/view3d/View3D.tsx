@@ -8,8 +8,8 @@ import { useDoc } from '../../model/store'
 import type { ViewProjection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import type { ViewBackdrop } from '../../shell/uiStore'
-import { DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, wallSideOffsets } from './buildScene'
-import type { FloorMeshData, SceneData, WallSegmentData } from './buildScene'
+import { DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, wallPieceFootprint, wallSideOffsets } from './buildScene'
+import type { FloorMeshData, Pt, SceneData, WallPieceData, WallSegmentData } from './buildScene'
 import type { FurniturePartData } from './furnitureSolids'
 import { PRESET_FOV, computePresetPose } from './cameraPresets'
 import type { CameraSnapshot, View3DHandle } from './cameraPresets'
@@ -102,6 +102,87 @@ function partGeometry(p: FurniturePartData): THREE.BufferGeometry {
     return roundedBoxGeometry(p.sx, p.sy, p.sz, p.cornerRadiiCm)
   }
   return new THREE.BoxGeometry(p.sx, p.sy, p.sz)
+}
+
+/**
+ * Build a prism BufferGeometry for one wall piece from its 2D joined footprint polygon, centred at
+ * y = 0 in the wall's local (x, z) space. Material groups: 0 = outer (caps & ends), 1 = inner, 2 = opposite.
+ */
+function wallPieceGeometry(
+  w: WallSegmentData,
+  p: WallPieceData,
+  theta: number,
+  s: 1 | -1,
+  o0: number,
+  o1: number,
+): THREE.BufferGeometry | null {
+  const worldPoly = wallPieceFootprint(w, p)
+  if (worldPoly.length < 3) return null
+  const cos = Math.cos(theta), sin = Math.sin(theta)
+  const local: { x: number; z: number }[] = worldPoly.map((pt: Pt) => {
+    const rx = pt.x - w.start.x, rz = pt.z - w.start.z
+    return { x: rx * cos - rz * sin, z: rx * sin + rz * cos }
+  })
+  // Ensure CCW winding around +Y (signedAreaXZ < 0) so outward normals face out and top cap faces +Y.
+  let area2 = 0
+  for (let i = 0; i < local.length; i++) {
+    const a = local[i], b = local[(i + 1) % local.length]
+    area2 += a.x * b.z - b.x * a.z
+  }
+  if (area2 > 0) local.reverse()
+
+  const hy = (p.y1 - p.y0) / 2
+  const n = local.length
+  const zInner = s * o0, zOpposite = s * o1
+  const buckets: [number[], number[], number[]] = [[], [], []] // positions per material group
+  const normBuckets: [number[], number[], number[]] = [[], [], []]
+  const pushTri = (
+    groupIdx: 0 | 1 | 2,
+    ax: number, ay: number, az: number,
+    bx: number, by: number, bz: number,
+    cx: number, cy: number, cz: number,
+    nx: number, ny: number, nz: number,
+  ) => {
+    buckets[groupIdx].push(ax, ay, az, bx, by, bz, cx, cy, cz)
+    normBuckets[groupIdx].push(nx, ny, nz, nx, ny, nz, nx, ny, nz)
+  }
+
+  // Top (+Y) and bottom (-Y) caps -> outer (0).
+  for (let i = 1; i + 1 < n; i++) {
+    const a = local[0], b = local[i], c = local[i + 1]
+    pushTri(0, a.x, hy, a.z, b.x, hy, b.z, c.x, hy, c.z, 0, 1, 0)
+    pushTri(0, a.x, -hy, a.z, c.x, -hy, c.z, b.x, -hy, b.z, 0, -1, 0)
+  }
+  // Side quads.
+  for (let i = 0; i < n; i++) {
+    const a = local[i], b = local[(i + 1) % n]
+    const ex = b.x - a.x, ez = b.z - a.z
+    const len = Math.hypot(ex, ez)
+    if (len < 1e-6) continue
+    const nx = -ez / len, nz = ex / len
+    let gIdx: 0 | 1 | 2 = 0
+    if (Math.abs(a.z - zInner) < 1e-2 && Math.abs(b.z - zInner) < 1e-2) gIdx = 1
+    else if (Math.abs(a.z - zOpposite) < 1e-2 && Math.abs(b.z - zOpposite) < 1e-2) gIdx = 2
+    pushTri(gIdx, a.x, hy, a.z, a.x, -hy, a.z, b.x, -hy, b.z, nx, 0, nz)
+    pushTri(gIdx, a.x, hy, a.z, b.x, -hy, b.z, b.x, hy, b.z, nx, 0, nz)
+  }
+
+  const pos: number[] = []
+  const norm: number[] = []
+  const geo = new THREE.BufferGeometry()
+  let offset = 0
+  for (let gIdx = 0; gIdx < 3; gIdx++) {
+    const count = buckets[gIdx].length / 3
+    if (count > 0) {
+      pos.push(...buckets[gIdx])
+      norm.push(...normBuckets[gIdx])
+      geo.addGroup(offset, count, gIdx)
+      offset += count
+    }
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3))
+  return geo
 }
 
 /** A wall solid or glass pane that is clipped (not squashed) to the current wall height. */
@@ -221,7 +302,7 @@ function buildThreeScene(data: SceneData, shadows: boolean): Built {
     // Face away from the room: the paint of the room on the other side of a shared wall, else the outer paint.
     const opposite = w.oppositeColor ? std(w.oppositeColor, pushBack) : outer
     const parts: ClipPart[] = []
-    const mats = [outer, outer, outer, outer, s > 0 ? opposite : inner, s > 0 ? inner : opposite]
+    const mats = [outer, inner, opposite]
     // A fence bar (rail, post or baluster): a small box centred at (x, y) that clips on its own span.
     const bar = (bw: number, bh: number, bd: number, x: number, y: number, m: THREE.Material) => {
       const mesh = new THREE.Mesh(geo(new THREE.BoxGeometry(bw, bh, bd)), m)
@@ -235,10 +316,20 @@ function buildThreeScene(data: SceneData, shadows: boolean): Built {
       // Balcony railing: a handrail, a bottom rail, end posts and thin balusters, no solid slab.
       const railMat = std(w.innerColor, pushBack)
       const railDepth = Math.min(12, Math.max(3, w.thicknessCm * 1.5))
+      const dirX = w.lengthCm > 1e-6 ? dx / w.lengthCm : 1
+      const dirZ = w.lengthCm > 1e-6 ? dz / w.lengthCm : 0
       for (const p of w.pieces) {
-        const span = p.u1 - p.u0, full = p.y1 - p.y0
-        if (span <= 0 || full <= 0) continue
-        const midU = (p.u0 + p.u1) / 2
+        const poly = wallPieceFootprint(w, p)
+        if (poly.length < 3) continue
+        let u0 = Infinity, u1 = -Infinity
+        for (const pt of poly) {
+          const u = (pt.x - w.start.x) * dirX + (pt.z - w.start.z) * dirZ
+          if (u < u0) u0 = u
+          if (u > u1) u1 = u
+        }
+        const span = u1 - u0, full = p.y1 - p.y0
+        if (span <= 0.1 || full <= 0) continue
+        const midU = (u0 + u1) / 2
         // Top handrail, kept inside the piece when the piece is short.
         const topH = Math.min(FENCE_TOP_RAIL_H, full)
         const topRailBottom = p.y1 - topH
@@ -250,11 +341,11 @@ function buildThreeScene(data: SceneData, shadows: boolean): Built {
         // End posts over the full height of the piece, or one centred post on a very short piece.
         const postY = (p.y0 + p.y1) / 2
         if (span > FENCE_MIN_POST_SPAN) {
-          bar(FENCE_POST_W, full, railDepth, p.u0 + FENCE_POST_W / 2, postY, railMat)
-          bar(FENCE_POST_W, full, railDepth, p.u1 - FENCE_POST_W / 2, postY, railMat)
+          bar(FENCE_POST_W, full, railDepth, u0 + FENCE_POST_W / 2, postY, railMat)
+          bar(FENCE_POST_W, full, railDepth, u1 - FENCE_POST_W / 2, postY, railMat)
         } else bar(FENCE_POST_W, full, railDepth, midU, postY, railMat)
         // Thin balusters between the bottom rail and the handrail, about FENCE_BALUSTER_STEP apart.
-        const from = p.u0 + FENCE_POST_W * 1.5, to = p.u1 - FENCE_POST_W * 1.5
+        const from = u0 + FENCE_POST_W * 1.5, to = u1 - FENCE_POST_W * 1.5
         const n = to - from > FENCE_BALUSTER_W ? Math.floor((to - from) / FENCE_BALUSTER_STEP) : 0
         if (n > 0 && topRailBottom - barBottom > 1) {
           const h = topRailBottom - barBottom
@@ -265,9 +356,11 @@ function buildThreeScene(data: SceneData, shadows: boolean): Built {
       }
     } else {
       for (const p of w.pieces) {
-        const g = geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, w.thicknessCm))
+        const pg = wallPieceGeometry(w, p, theta, s, o0, o1)
+        if (!pg) continue
+        const g = geo(pg)
         const mesh = new THREE.Mesh(g, mats)
-        mesh.position.set((p.u0 + p.u1) / 2, (p.y0 + p.y1) / 2, zc)
+        mesh.position.set(0, (p.y0 + p.y1) / 2, 0)
         mesh.castShadow = true
         mesh.receiveShadow = true
         group.add(mesh)

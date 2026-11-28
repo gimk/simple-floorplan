@@ -155,6 +155,8 @@ export type WallSegmentData = {
   outerColor: string
   /** Paint of the face towards room B on a shared wall; absent on an exterior wall (use outerColor). */
   oppositeColor?: string
+  /** Joined 2D footprint polygon on the floor plane (X, Z), non-overlapping with neighbouring walls. */
+  footprint: Pt[]
   pieces: WallPieceData[]
   windowPanes: WindowPaneData[]
   /** Clean 3D models (frames, glass, leaves, ...) of the windows and doors in this wall, one per opening. */
@@ -579,6 +581,7 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
           innerColor: fence ? (ea.room.wallColors?.[String(ea.index)] ?? FENCE_COLOR) : colorOf(ea),
           outerColor: fence ? FENCE_COLOR : DEFAULT_WALL_OUTER_COLOR,
           oppositeColor: fence ? (eb.room.wallColors?.[String(eb.index)] ?? FENCE_COLOR) : colorOf(eb),
+          footprint: [],
           pieces: [], windowPanes: [], openingModels: [],
         },
       })
@@ -622,6 +625,7 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
           outwardNormal: e.n, isInterior: false, cutawayGroupId: id, pairedWallIds: [],
           innerColor: fence ? fenceColor : colorOf(e),
           outerColor: fence ? fenceColor : DEFAULT_WALL_OUTER_COLOR,
+          footprint: [],
           pieces: [], windowPanes: [], openingModels: [],
         },
       })
@@ -681,7 +685,249 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
     }
   }
   for (const b of builds) b.wall.pieces = splitWallPieces(b.wall.lengthCm, b.wall.heightCm, b.cuts)
+  joinWallFootprints(rooms, builds)
   return builds
+}
+
+// ---------- wall joins (2D footprint polygons) ----------
+
+function signedAreaXZ(poly: readonly Pt[]): number {
+  let a = 0
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length]
+    a += p.x * q.z - q.x * p.z
+  }
+  return a / 2
+}
+
+const polyAreaXZ = (poly: readonly Pt[]) => (poly.length < 3 ? 0 : Math.abs(signedAreaXZ(poly)))
+
+/** Clip a convex polygon to the half-plane `(p - point) . normal >= 0`. */
+function clipConvexPolygon(poly: readonly Pt[], point: Pt, normal: Pt): Pt[] {
+  if (poly.length < 3) return []
+  const out: Pt[] = []
+  const dist = (p: Pt) => (p.x - point.x) * normal.x + (p.z - point.z) * normal.z
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length]
+    const da = dist(a), db = dist(b)
+    const inA = da >= -1e-7, inB = db >= -1e-7
+    if (inA && inB) out.push(b)
+    else if (inA && !inB) {
+      const t = da / (da - db)
+      out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t })
+    } else if (!inA && inB) {
+      const t = da / (da - db)
+      out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t })
+      out.push(b)
+    }
+  }
+  const clean: Pt[] = []
+  for (const p of out) {
+    const prev = clean[clean.length - 1]
+    if (!prev || Math.hypot(p.x - prev.x, p.z - prev.z) > 1e-5) clean.push(p)
+  }
+  if (clean.length > 1 && Math.hypot(clean[0].x - clean[clean.length - 1].x, clean[0].z - clean[clean.length - 1].z) <= 1e-5) {
+    clean.pop()
+  }
+  return polyAreaXZ(clean) > 1e-4 ? clean : []
+}
+
+/** Intersection of two convex polygons (both wound with `signedAreaXZ > 0`). */
+function intersectConvexPolygons(a: readonly Pt[], b: readonly Pt[]): Pt[] {
+  if (a.length < 3 || b.length < 3) return []
+  let poly: Pt[] = [...a]
+  for (let i = 0; i < b.length; i++) {
+    const p = b[i], q = b[(i + 1) % b.length]
+    const ex = q.x - p.x, ez = q.z - p.z
+    const len = Math.hypot(ex, ez)
+    if (len < 1e-9) continue
+    // For signedAreaXZ > 0, inward normal of p -> q is (-ez, ex) / len.
+    poly = clipConvexPolygon(poly, p, { x: -ez / len, z: ex / len })
+    if (poly.length < 3) return []
+  }
+  return poly
+}
+
+function polyBounds(poly: readonly Pt[]): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
+  for (const p of poly) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.z < minZ) minZ = p.z
+    if (p.z > maxZ) maxZ = p.z
+  }
+  return { minX, maxX, minZ, maxZ }
+}
+
+/** Unjoined rectangular footprint of a wall, wound with `signedAreaXZ > 0`. */
+function baseWallFootprint(w: WallSegmentData): Pt[] {
+  const [o0, o1] = wallSideOffsets(w)
+  const n = w.outwardNormal
+  const rect: Pt[] = [
+    { x: w.start.x + n.x * o0, z: w.start.z + n.z * o0 },
+    { x: w.end.x + n.x * o0, z: w.end.z + n.z * o0 },
+    { x: w.end.x + n.x * o1, z: w.end.z + n.z * o1 },
+    { x: w.start.x + n.x * o1, z: w.start.z + n.z * o1 },
+  ]
+  return signedAreaXZ(rect) >= 0 ? rect : rect.reverse()
+}
+
+/**
+ * 2D footprint of one piece of a wall (clipped to `p.u0 .. p.u1` along `start -> end`).
+ * Returns `[]` if the piece was completely trimmed away by a corner/junction join.
+ */
+export function wallPieceFootprint(
+  w: Pick<WallSegmentData, 'start' | 'end' | 'footprint'>,
+  p: Pick<WallPieceData, 'u0' | 'u1'>,
+): Pt[] {
+  const dx = w.end.x - w.start.x, dz = w.end.z - w.start.z
+  const len = Math.hypot(dx, dz)
+  if (len < EPS || w.footprint.length < 3) return []
+  const dir = { x: dx / len, z: dz / len }
+  let poly = clipConvexPolygon(w.footprint, { x: w.start.x + dir.x * p.u0, z: w.start.z + dir.z * p.u0 }, dir)
+  if (poly.length < 3) return []
+  poly = clipConvexPolygon(poly, { x: w.start.x + dir.x * p.u1, z: w.start.z + dir.z * p.u1 }, { x: -dir.x, z: -dir.z })
+  return poly
+}
+
+/** Best clipping of `target` against an outward edge of `blocker` (removing the overlap with minimal excess). */
+function bestClipOutside(target: readonly Pt[], blocker: readonly Pt[], overlapArea: number) {
+  const targetArea = polyAreaXZ(target)
+  let bestPoly: Pt[] | null = null
+  let bestExcess = Infinity
+  let bestKept = -1
+  for (let i = 0; i < blocker.length; i++) {
+    const p = blocker[i], q = blocker[(i + 1) % blocker.length]
+    const ex = q.x - p.x, ez = q.z - p.z
+    const len = Math.hypot(ex, ez)
+    if (len < 1e-9) continue
+    // Outward normal of blocker edge p -> q (signedAreaXZ > 0).
+    const out = { x: ez / len, z: -ex / len }
+    const clipped = clipConvexPolygon(target, p, out)
+    const kept = polyAreaXZ(clipped)
+    const excess = Math.max(0, (targetArea - kept) - overlapArea)
+    if (excess < bestExcess - 1e-3 || (Math.abs(excess - bestExcess) <= 1e-3 && kept > bestKept)) {
+      bestExcess = excess
+      bestKept = kept
+      bestPoly = clipped
+    }
+  }
+  const lostFrac = targetArea > EPS ? (targetArea - Math.max(0, bestKept)) / targetArea : 1
+  return { poly: bestPoly ?? [...target], excess: bestExcess, lostFrac }
+}
+
+/**
+ * Trim/miter wall footprints so no two wall solids overlap at corners or T-junctions:
+ * 1. Same-room reflex corners with matching height/kind get a clean miter join along `V -> M`.
+ * 2. All other overlaps (T-junctions, different-height corners, cross-room corners) trim the yielding
+ *    wall cleanly against the other wall's face. Lower walls always yield to higher walls.
+ */
+function joinWallFootprints(rooms: Room[], builds: WallBuild[]): void {
+  for (const b of builds) b.wall.footprint = baseWallFootprint(b.wall)
+
+  // Map exterior walls by edge id for same-room reflex corner detection.
+  const ext = new Map<string, WallBuild[]>()
+  const edgeIds = new Set<string>()
+  for (const b of builds) {
+    const key = wallId(b.wall.roomId, b.wall.edgeIndex)
+    if (b.edgeSpan) ext.set(key, [...(ext.get(key) ?? []), b])
+    if (!b.edgeSpan && b.wall.pairedWallIds.length) b.wall.pairedWallIds.forEach((k) => edgeIds.add(k))
+    edgeIds.add(key)
+  }
+
+  const joined = new Set<string>()
+  const pairKey = (a: number, b: number) => (a < b ? `${a}|${b}` : `${b}|${a}`)
+  const indexOf = new Map(builds.map((b, idx) => [b, idx]))
+
+  // 1. Same-room reflex corners.
+  for (const room of rooms) {
+    const n = room.vertices.length
+    const s = signedArea(room.vertices) >= 0 ? 1 : -1
+    for (let k = 0; k < n; k++) {
+      const nextKey = wallId(room.id, k)
+      let prevKey: string | undefined
+      for (let j = 1; j < n && !prevKey; j++) {
+        const key = wallId(room.id, (k - j + n * 2) % n)
+        if (edgeIds.has(key)) prevKey = key
+      }
+      if (!prevKey || !edgeIds.has(nextKey)) continue
+      const next = ext.get(nextKey)?.find((b) => (b.edgeSpan?.u0 ?? 1) < EPS)
+      const prev = ext.get(prevKey)?.find((b) => b.edgeSpan !== null && b.edgeSpan.edgeLengthCm - b.edgeSpan.u1 < EPS)
+      if (!prev || !next || prev === next) continue
+      const cross = prev.dir.x * next.dir.z - prev.dir.z * next.dir.x
+      if (cross * s >= -1e-3) continue // convex or straight
+
+      const pi = indexOf.get(prev)!, ni = indexOf.get(next)!
+      const v = next.wall.start
+      const tp = prev.wall.thicknessCm, tn = next.wall.thicknessCm
+      const sameHeightAndKind = Math.abs(prev.wall.heightCm - next.wall.heightCm) < EPS && prev.wall.kind === next.wall.kind
+      if (sameHeightAndKind) {
+        const a = { x: v.x + prev.wall.outwardNormal.x * tp, z: v.z + prev.wall.outwardNormal.z * tp }
+        const b = { x: v.x + next.wall.outwardNormal.x * tn, z: v.z + next.wall.outwardNormal.z * tn }
+        const t = ((b.x - a.x) * next.dir.z - (b.z - a.z) * next.dir.x) / cross
+        const m = { x: a.x + prev.dir.x * t, z: a.z + prev.dir.z * t }
+        const mvx = m.x - v.x, mvz = m.z - v.z
+        const reach = Math.hypot(mvx, mvz)
+        if (reach > 1e-4 && reach <= 6 * Math.max(tp, tn)) {
+          // Normal to V -> M pointing towards prev's start for prev, and next's end for next.
+          const n0 = { x: -mvz / reach, z: mvx / reach }
+          const prevToStart = (prev.wall.start.x - v.x) * n0.x + (prev.wall.start.z - v.z) * n0.z
+          const nPrev = prevToStart >= 0 ? n0 : { x: -n0.x, z: -n0.z }
+          const nextToEnd = (next.wall.end.x - v.x) * n0.x + (next.wall.end.z - v.z) * n0.z
+          const nNext = nextToEnd >= 0 ? n0 : { x: -n0.x, z: -n0.z }
+          prev.wall.footprint = clipConvexPolygon(prev.wall.footprint, v, nPrev)
+          next.wall.footprint = clipConvexPolygon(next.wall.footprint, v, nNext)
+          joined.add(pairKey(pi, ni))
+        }
+      } else {
+        // Lower wall (or fence) stops at the higher wall's face so it never pokes through.
+        const prevYields = prev.wall.heightCm < next.wall.heightCm - EPS || (Math.abs(prev.wall.heightCm - next.wall.heightCm) <= EPS && prev.wall.kind === 'fence')
+        if (prevYields) {
+          const face = { x: v.x + next.wall.outwardNormal.x * tn, z: v.z + next.wall.outwardNormal.z * tn }
+          prev.wall.footprint = clipConvexPolygon(prev.wall.footprint, face, next.wall.outwardNormal)
+        } else {
+          const face = { x: v.x + prev.wall.outwardNormal.x * tp, z: v.z + prev.wall.outwardNormal.z * tp }
+          next.wall.footprint = clipConvexPolygon(next.wall.footprint, face, prev.wall.outwardNormal)
+        }
+        joined.add(pairKey(pi, ni))
+      }
+    }
+  }
+
+  // 2. General wall-vs-wall overlaps (T-junctions, cross-room corners, sharp reflex corners).
+  for (let i = 0; i < builds.length; i++) {
+    const wa = builds[i].wall
+    if (wa.footprint.length < 3) continue
+    for (let j = i + 1; j < builds.length; j++) {
+      if (joined.has(pairKey(i, j))) continue
+      const wb = builds[j].wall
+      if (wb.footprint.length < 3) continue
+      const ba = polyBounds(wa.footprint), bb = polyBounds(wb.footprint)
+      if (ba.maxX <= bb.minX + 1e-4 || bb.maxX <= ba.minX + 1e-4 || ba.maxZ <= bb.minZ + 1e-4 || bb.maxZ <= ba.minZ + 1e-4) continue
+      const overlap = intersectConvexPolygons(wa.footprint, wb.footprint)
+      const overlapArea = polyAreaXZ(overlap)
+      if (overlapArea <= 0.01) continue
+
+      const clipA = bestClipOutside(wa.footprint, wb.footprint, overlapArea)
+      const clipB = bestClipOutside(wb.footprint, wa.footprint, overlapArea)
+      let aYields: boolean
+      if (Math.abs(wa.heightCm - wb.heightCm) > EPS) {
+        aYields = wa.heightCm < wb.heightCm
+      } else if (wa.kind !== wb.kind) {
+        aYields = wa.kind === 'fence'
+      } else if (Math.abs(clipA.excess - clipB.excess) > 1e-2) {
+        aYields = clipA.excess < clipB.excess
+      } else {
+        aYields = clipA.lostFrac <= clipB.lostFrac
+      }
+      if (aYields) {
+        wa.footprint = clipA.poly
+        if (wa.footprint.length < 3) break
+      } else {
+        wb.footprint = clipB.poly
+      }
+    }
+  }
 }
 
 // ---------- corner posts ----------
@@ -898,12 +1144,16 @@ export function buildScene(artboard: Artboard): SceneData {
   for (const f of floors) points.push(...f.vertices)
   for (const t of thresholds) points.push(...t.vertices)
   for (const w of walls) {
-    const n = w.outwardNormal
-    for (const o of wallSideOffsets(w)) {
-      points.push(
-        { x: w.start.x + n.x * o, z: w.start.z + n.z * o },
-        { x: w.end.x + n.x * o, z: w.end.z + n.z * o },
-      )
+    if (w.footprint.length >= 3) {
+      points.push(...w.footprint)
+    } else {
+      const n = w.outwardNormal
+      for (const o of wallSideOffsets(w)) {
+        points.push(
+          { x: w.start.x + n.x * o, z: w.start.z + n.z * o },
+          { x: w.end.x + n.x * o, z: w.end.z + n.z * o },
+        )
+      }
     }
   }
   let maxY = ceiling

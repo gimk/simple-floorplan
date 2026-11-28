@@ -6,9 +6,9 @@ import { doorArcGeometry } from '../openings/geometry'
 import { shade } from './furnitureSolids'
 import { FENCE_COLOR, FENCE_THICKNESS_CM } from '../rooms/walls'
 import {
-  DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, DOOR_AJAR_DEG, buildScene, clipSpanToHeight, computeWallTargetHeights, splitWallPieces,
+  DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, DOOR_AJAR_DEG, buildScene, clipSpanToHeight, computeWallTargetHeights, splitWallPieces, wallPieceFootprint,
 } from './buildScene'
-import type { WallSegmentData } from './buildScene'
+import type { Pt, WallSegmentData } from './buildScene'
 
 type P = { x: number; y: number }
 const box = (x0: number, y0: number, x1: number, y1: number): P[] => [
@@ -1102,5 +1102,149 @@ describe('opening 3D models', () => {
     }
     const head = m.parts.find((p) => p.kind === 'frame' && p.y0 > 150)!
     expect(clipSpanToHeight(head.y0, head.y1, 30)).toBeNull()
+  })
+})
+
+describe('wall joins (non-overlapping 3D footprints)', () => {
+  const areaXZ = (poly: readonly Pt[]) => {
+    let a = 0
+    for (let i = 0; i < poly.length; i++) {
+      const p = poly[i], q = poly[(i + 1) % poly.length]
+      a += p.x * q.z - q.x * p.z
+    }
+    return Math.abs(a) / 2
+  }
+  const clipHalfPlane = (poly: readonly Pt[], pt: Pt, n: Pt): Pt[] => {
+    const out: Pt[] = []
+    const d = (p: Pt) => (p.x - pt.x) * n.x + (p.z - pt.z) * n.z
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length]
+      const da = d(a), db = d(b)
+      if (da >= -1e-7 && db >= -1e-7) out.push(b)
+      else if (da >= -1e-7 && db < -1e-7) out.push({ x: a.x + (b.x - a.x) * (da / (da - db)), z: a.z + (b.z - a.z) * (da / (da - db)) })
+      else if (da < -1e-7 && db >= -1e-7) {
+        out.push({ x: a.x + (b.x - a.x) * (da / (da - db)), z: a.z + (b.z - a.z) * (da / (da - db)) })
+        out.push(b)
+      }
+    }
+    return out
+  }
+  const overlapArea = (a: readonly Pt[], b: readonly Pt[]) => {
+    let s = 0
+    for (let i = 0; i < b.length; i++) {
+      const p = b[i], q = b[(i + 1) % b.length]
+      s += p.x * q.z - q.x * p.z
+    }
+    const sign = s >= 0 ? 1 : -1
+    let cur = [...a]
+    for (let i = 0; i < b.length; i++) {
+      const p = b[i], q = b[(i + 1) % b.length]
+      const len = Math.hypot(q.x - p.x, q.z - p.z)
+      if (len < 1e-9) continue
+      cur = clipHalfPlane(cur, p, { x: (-sign * (q.z - p.z)) / len, z: (sign * (q.x - p.x)) / len })
+      if (cur.length < 3) return 0
+    }
+    return areaXZ(cur)
+  }
+  const expectNoPairwiseOverlap = (walls: WallSegmentData[]) => {
+    for (let i = 0; i < walls.length; i++) {
+      for (let j = i + 1; j < walls.length; j++) {
+        expect(overlapArea(walls[i].footprint, walls[j].footprint)).toBeLessThan(0.05)
+      }
+    }
+  }
+
+  it('miters an L-corner (reflex corner) with zero overlap and no gap', () => {
+    const l = [
+      { x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 150 }, { x: 200, y: 150 }, { x: 200, y: 300 }, { x: 0, y: 300 },
+    ]
+    const s = buildScene(board({ rooms: [room('L', l)] }))
+    expectNoPairwiseOverlap(s.walls)
+    const w2 = s.walls.find((w) => w.id === 'L:2')!
+    const w3 = s.walls.find((w) => w.id === 'L:3')!
+    // Exact union area: 200*10 + 150*10 - 10*10 = 3400 cm^2 (no gap, no overlap).
+    expect(areaXZ(w2.footprint) + areaXZ(w3.footprint)).toBeCloseTo(3400, 1)
+  })
+
+  it('trims a T-junction of three rooms with zero overlap and full coverage', () => {
+    const s = buildScene(board({ rooms: [
+      room('A', box(0, 0, 400, 300)),
+      room('B', box(400, 0, 800, 150)),
+      room('C', box(400, 150, 800, 300)),
+    ] }))
+    expectNoPairwiseOverlap(s.walls)
+    const ab = s.walls.find((w) => w.id === 'shared:A:1|B:3')!
+    const ac = s.walls.find((w) => w.id === 'shared:A:1|C:3')!
+    const bc = s.walls.find((w) => w.id === 'shared:B:2|C:0')!
+    // Through-walls span 300 x 6 = 1800; stem stops at x = 403 so its area is 397 x 6 = 2382.
+    expect(areaXZ(ab.footprint) + areaXZ(ac.footprint)).toBeCloseTo(1800, 1)
+    expect(areaXZ(bc.footprint)).toBeCloseTo(397 * 6, 1)
+  })
+
+  it('joins a corner between walls of different thickness without overlap or gap', () => {
+    // 20 cm exterior walls meeting a 6 cm flush shared wall, plus A:1#0 (20 cm) meeting B:2 (20 cm).
+    const s = buildScene(board({
+      wallThicknessCm: 20,
+      rooms: [
+        room('A', box(0, 0, 400, 300)),
+        room('B', box(400, 0, 800, 150)),
+        room('C', box(400, 150, 800, 300)),
+      ],
+    }))
+    expectNoPairwiseOverlap(s.walls)
+    // Shared 6 cm wall between B and C stops at the 6 cm shared wall A|B and A|C, while A:0 is 20 cm thick.
+    const a0 = s.walls.find((w) => w.id === 'A:0')!
+    const ab = s.walls.find((w) => w.id === 'shared:A:1|B:3')!
+    expect(a0.thicknessCm).toBe(20)
+    expect(ab.thicknessCm).toBe(6)
+    expect(areaXZ(a0.footprint)).toBeCloseTo(400 * 20, 1)
+    expect(areaXZ(ab.footprint)).toBeCloseTo(150 * 6, 1)
+    // Also check a 20 cm exterior wall A:1#0 meeting a 20 cm exterior wall B:2 when C is absent.
+    const lTwo = buildScene(board({
+      wallThicknessCm: 20,
+      rooms: [room('A', box(0, 0, 400, 300)), room('B', box(400, 0, 800, 150))],
+    }))
+    expectNoPairwiseOverlap(lTwo.walls)
+    const a1 = lTwo.walls.find((w) => w.id === 'A:1#0')!
+    const b2 = lTwo.walls.find((w) => w.id === 'B:2')!
+    expect(areaXZ(a1.footprint) + areaXZ(b2.footprint)).toBeCloseTo(150 * 20 + 380 * 20, 1)
+  })
+
+  it('stops a lower fence at a higher wall face at a reflex corner so it does not poke through', () => {
+    const l = [
+      { x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 150 }, { x: 200, y: 150 }, { x: 200, y: 300 }, { x: 0, y: 300 },
+    ]
+    const s = buildScene(board({ rooms: [room('L', l, { wallKinds: { '2': 'fence' } })] }))
+    expectNoPairwiseOverlap(s.walls)
+    const fence = s.walls.find((w) => w.id === 'L:2')!
+    const wall = s.walls.find((w) => w.id === 'L:3')!
+    // Wall keeps its full 150 x 10 = 1500; fence stops at x = 210 so its area is 190 x 4 = 760.
+    expect(areaXZ(wall.footprint)).toBeCloseTo(1500, 1)
+    expect(areaXZ(fence.footprint)).toBeCloseTo(190 * 4, 1)
+  })
+
+  it('clips wallPieceFootprint cleanly around openings near a joined corner', () => {
+    const l = [
+      { x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 150 }, { x: 200, y: 150 }, { x: 200, y: 300 }, { x: 0, y: 300 },
+    ]
+    const s = buildScene(board({
+      rooms: [room('L', l)],
+      openings: [door({ xCm: 200, yCm: 225, angleDeg: 90, roomId: 'L' })],
+    }))
+    const w2 = s.walls.find((w) => w.id === 'L:2')!
+    const w3 = s.walls.find((w) => w.id === 'L:3')!
+    for (const p of w3.pieces) {
+      const fp = wallPieceFootprint(w3, p)
+      expect(fp.length).toBeGreaterThanOrEqual(3)
+      expect(overlapArea(fp, w2.footprint)).toBeLessThan(0.05)
+    }
+  })
+
+  it('handles angled walls touching at a point without overlap', () => {
+    const s = buildScene(board({ rooms: [
+      room('A', [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 200 }, { x: 0, y: 200 }]),
+      room('B', [{ x: 200, y: 200 }, { x: 400, y: 300 }, { x: 300, y: 500 }, { x: 100, y: 400 }]),
+    ] }))
+    expectNoPairwiseOverlap(s.walls)
   })
 })
