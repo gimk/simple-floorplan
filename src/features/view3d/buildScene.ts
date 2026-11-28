@@ -26,7 +26,9 @@ import type { Vec } from '../../model/geometry'
 import {
   DEFAULT_CEILING_HEIGHT_CM, DEFAULT_FENCE_HEIGHT_CM, furnitureHeightCm, openingHeightCm, openingSillCm,
 } from '../../model/defaults'
-import type { Artboard, FloorPattern, FurnitureItem, Room, WallKind, WallViewMode } from '../../model/types'
+import { furnitureParts, shade } from './furnitureSolids'
+import type { FurniturePartData } from './furnitureSolids'
+import type { Artboard, FloorPattern, FurnitureItem, Opening, Room, WallKind, WallViewMode } from '../../model/types'
 import { openingEndpoints } from '../openings/geometry'
 import { hostWallIn } from '../openings/sync'
 import {
@@ -90,6 +92,36 @@ export type WallPieceData = { u0: number; u1: number; y0: number; y1: number }
 /** The glass of a window opening, in the same wall space as the pieces. */
 export type WindowPaneData = { openingId: string; u0: number; u1: number; y0: number; y1: number }
 
+/** Kind of a 3D opening model. 'sliding-door' is a door of variant 'pocket', 'bypass' or 'bypass-glass'. */
+export type OpeningModelKind = 'window' | 'door' | 'sliding-door'
+/** What a model part is: frames and sills are solid; glass is translucent; leaf, handle and panel are solid too. */
+export type OpeningPartKind = 'frame' | 'sill' | 'mullion' | 'glass' | 'leaf' | 'handle' | 'panel'
+
+/**
+ * One box of an opening model, in wall space: `u` along the wall from its start, `y` above the floor, `d` along the
+ * wall's outward normal from the start line (so the wall mid-plane is at `(o0 + o1) / 2` of wallSideOffsets).
+ * `su` / `sy` / `sd` are the box sizes along its own axes; `rotation` turns the box about the vertical axis, in the
+ * (u, d) plane (0 = long side along u; positive turns from +u towards +d). `y0` / `y1` are the vertical span
+ * to clip to a lowered wall (clipSpanToHeight). `solid` parts get blueprint edge lines.
+ */
+export type OpeningPartData = {
+  kind: OpeningPartKind
+  color: string
+  u: number; y: number; d: number
+  su: number; sy: number; sd: number
+  rotation: number
+  y0: number; y1: number
+  solid: boolean
+}
+
+export type OpeningModelData = {
+  openingId: string
+  kind: OpeningModelKind
+  /** The cut of the opening in wall space (same as the wall cut). */
+  bounds: WallPieceData
+  parts: OpeningPartData[]
+}
+
 export type WallSegmentData = {
   id: string
   roomId: string
@@ -125,6 +157,8 @@ export type WallSegmentData = {
   oppositeColor?: string
   pieces: WallPieceData[]
   windowPanes: WindowPaneData[]
+  /** Clean 3D models (frames, glass, leaves, ...) of the windows and doors in this wall, one per opening. */
+  openingModels: OpeningModelData[]
 }
 
 export type CornerPostData = {
@@ -153,6 +187,8 @@ export type FurnitureMeshData = {
   color: string
   /** Radii of the corners [top-left, top-right, bottom-right, bottom-left], each within 0..min(w, d) / 2. */
   cornerRadiiCm: [number, number, number, number]
+  /** Basic solids that make the item (item-local cm, see furnitureSolids.ts). Never empty. */
+  parts: FurniturePartData[]
 }
 
 export type SceneData = {
@@ -281,6 +317,168 @@ export function splitWallPieces(lengthCm: number, heightCm: number, cuts: readon
   return pieces
 }
 
+
+// ---------- opening models ----------
+
+/** Frame member thickness (cm). */
+export const OPENING_FRAME_CM = 4
+/** The sill of a window sticks out of each wall face by this much (cm). */
+export const WINDOW_SILL_PROUD_CM = 2
+/** Mullion width of a wide window (cm), and the window width from which it appears. */
+export const MULLION_CM = 3
+export const MULLION_MIN_WINDOW_CM = 100
+/** Door leaf thickness and ajar angle. */
+export const DOOR_LEAF_CM = 4
+export const DOOR_AJAR_DEG = 28
+/** Sliding door: bottom rail height, panel stile width, panel thickness, overlap of the two panels (cm). */
+export const SLIDER_RAIL_CM = 2
+export const SLIDER_STILE_CM = 4
+export const SLIDER_PANEL_CM = 3
+export const SLIDER_OVERLAP_CM = 4
+
+const FRAME_COLORS: Record<OpeningModelKind, string> = { window: '#4b4540', door: '#6a5444', 'sliding-door': '#4a4f55' }
+const LEAF_COLOR = '#b58d5e'
+const HANDLE_COLOR = '#c8c8c8'
+const SILL_COLOR = '#d4cfc6'
+
+type Cut = { u0: number; u1: number; y0: number; y1: number }
+
+/** Model kind of an opening, or null when it has no 3D model (an open passage). */
+function openingModelKind(op: Opening): OpeningModelKind | null {
+  if (op.kind === 'window') return 'window'
+  if (op.kind === 'door') return op.variant === 'pocket' || op.variant === 'bypass' || op.variant === 'bypass-glass' ? 'sliding-door' : 'door'
+  return null
+}
+
+/**
+ * Parts of one window or door model inside `cut` (wall space). `midD` is the depth (along the outward normal)
+ * of the wall mid-plane and `thick` the wall thickness. `hingeLow` / `side` only matter for hinged doors:
+ * hinge at the low-u end, and the side of the swing along the outward normal (+1 outward, -1 inward).
+ * `lowPanelSide` is the side (along the outward normal) of the low-u panel of a bypass door, as in the 2D symbol.
+ * `normalSide` is the side (along the outward normal) of the 2D +normal, where the 2D pocket panel sits.
+ */
+function buildOpeningParts(
+  kind: OpeningModelKind, op: Opening, cut: Cut, midD: number, thick: number, hingeLow: boolean, side: 1 | -1,
+  lowPanelSide: 1 | -1 = 1, normalSide: 1 | -1 = 1,
+): OpeningPartData[] {
+  const parts: OpeningPartData[] = []
+  const width = cut.u1 - cut.u0, h = cut.y1 - cut.y0
+  const ft = Math.max(0.5, Math.min(OPENING_FRAME_CM, width / 4, h / 4))
+  // A custom colour: the frame, door leaves and panels take it, the sill and door frame a darker shade.
+  const custom = op.color
+  const frameColor = custom ?? FRAME_COLORS[kind]
+  const leafColor = custom ?? LEAF_COLOR
+  const sillColor = custom ? shade(custom, 0.8) : SILL_COLOR
+  const doorFrameColor = custom ? shade(custom, 0.8) : frameColor
+  const box = (
+    k: OpeningPartKind, color: string, u0: number, u1: number, y0: number, y1: number, d: number, sd: number,
+    rotation = 0, solid = true,
+  ) => {
+    // A rotated part keeps su as its length along its own axis: u0..u1 is then the length, centred where given.
+    if (u1 - u0 <= EPS || y1 - y0 <= EPS || sd <= EPS) return
+    parts.push({ kind: k, color, u: (u0 + u1) / 2, y: (y0 + y1) / 2, d, su: u1 - u0, sy: y1 - y0, sd, rotation, y0, y1, solid })
+  }
+  const inU0 = cut.u0 + ft, inU1 = cut.u1 - ft
+  const head0 = cut.y1 - ft
+
+  if (kind === 'window') {
+    const sillTop = cut.y0 + ft
+    box('sill', sillColor, cut.u0, cut.u1, cut.y0, sillTop, midD, thick + 2 * WINDOW_SILL_PROUD_CM)
+    box('frame', frameColor, cut.u0, inU0, sillTop, cut.y1, midD, thick)
+    box('frame', frameColor, inU1, cut.u1, sillTop, cut.y1, midD, thick)
+    box('frame', frameColor, inU0, inU1, head0, cut.y1, midD, thick)
+    box('glass', '#9fd3ff', inU0, inU1, sillTop, head0, midD, 0.8, 0, false)
+    if (width >= MULLION_MIN_WINDOW_CM) {
+      const mid = (cut.u0 + cut.u1) / 2
+      box('mullion', frameColor, mid - MULLION_CM / 2, mid + MULLION_CM / 2, sillTop, head0, midD, Math.min(thick, OPENING_FRAME_CM))
+    }
+    return parts
+  }
+
+  if (kind === 'sliding-door') {
+    // Glass bypass: the frame is the custom colour itself. Solid sliders: a darker frame around the coloured panels.
+    const slideFrameColor = op.variant === 'bypass-glass' ? frameColor : doorFrameColor
+    const rail = Math.min(SLIDER_RAIL_CM, h / 4)
+    box('frame', slideFrameColor, cut.u0, inU0, cut.y0, cut.y1, midD, thick)
+    box('frame', slideFrameColor, inU1, cut.u1, cut.y0, cut.y1, midD, thick)
+    box('frame', slideFrameColor, inU0, inU1, head0, cut.y1, midD, thick)
+    box('frame', slideFrameColor, inU0, inU1, cut.y0, cut.y0 + rail, midD, thick)
+    const inner = inU1 - inU0
+    const py0 = cut.y0 + rail, py1 = head0
+    const off = SLIDER_PANEL_CM / 2 + 0.2
+    // Solid panel: one leaf with a small flush pull handle on both faces, `pullU` from the free edge.
+    const solid = (u0: number, u1: number, d: number, pullAtHigh: boolean) => {
+      box('leaf', leafColor, u0, u1, py0, py1, d, SLIDER_PANEL_CM)
+      const hy = Math.max(py0 + 3, Math.min(100, py1 - 3))
+      const hu = pullAtHigh ? u1 - 6 : u0 + 6
+      for (const f of [-1, 1]) box('handle', HANDLE_COLOR, hu - 2, hu + 2, hy - 4, hy + 4, d + f * (SLIDER_PANEL_CM / 2 + 0.3), 0.6)
+    }
+    if (op.variant === 'pocket') {
+      // One solid panel slid part way out of the pocket on the hinge side, on the 2D +normal side.
+      const pw = inner * 0.65
+      const d = midD + normalSide * off
+      if (hingeLow) solid(inU0, inU0 + pw, d, true)
+      else solid(inU1 - pw, inU1, d, false)
+      return parts
+    }
+    const pw = (inner + SLIDER_OVERLAP_CM) / 2
+    if (op.variant === 'bypass-glass') {
+      const st = Math.min(SLIDER_STILE_CM, pw / 4, (py1 - py0) / 4)
+      const panel = (u0: number, u1: number, d: number) => {
+        box('panel', frameColor, u0, u1, py0, py0 + st, d, SLIDER_PANEL_CM)
+        box('panel', frameColor, u0, u1, py1 - st, py1, d, SLIDER_PANEL_CM)
+        box('panel', frameColor, u0, u0 + st, py0 + st, py1 - st, d, SLIDER_PANEL_CM)
+        box('panel', frameColor, u1 - st, u1, py0 + st, py1 - st, d, SLIDER_PANEL_CM)
+        box('glass', '#9fd3ff', u0 + st, u1 - st, py0 + st, py1 - st, d, 0.6, 0, false)
+      }
+      panel(inU0, inU0 + pw, midD + lowPanelSide * off)
+      panel(inU1 - pw, inU1, midD - lowPanelSide * off)
+      return parts
+    }
+    // Bypass: two solid overlapping panels, handles on the overlapping edges.
+    solid(inU0, inU0 + pw, midD + lowPanelSide * off, true)
+    solid(inU1 - pw, inU1, midD - lowPanelSide * off, false)
+    return parts
+  }
+
+  // Hinged door: frame (jambs + head) and one ajar leaf, or two for a french door.
+  box('frame', doorFrameColor, cut.u0, inU0, cut.y0, cut.y1, midD, thick)
+  box('frame', doorFrameColor, inU1, cut.u1, cut.y0, cut.y1, midD, thick)
+  box('frame', doorFrameColor, inU0, inU1, head0, cut.y1, midD, thick)
+  const leafH = head0 - cut.y0
+  const beta = (DOOR_AJAR_DEG * Math.PI) / 180
+  const leaf = (pivotU: number, e: 1 | -1, length: number) => {
+    if (length <= EPS || leafH <= EPS) return
+    // Leaf direction in the (u, d) plane: closed along e, turned ajar towards the swing side.
+    const dirU = e * Math.cos(beta), dirD = side * Math.sin(beta)
+    const alpha = Math.atan2(dirD, dirU)
+    const cu = pivotU + dirU * length / 2, cd = midD + dirD * length / 2
+    parts.push({
+      kind: 'leaf', color: leafColor, u: cu, y: cut.y0 + leafH / 2, d: cd,
+      su: length, sy: leafH, sd: DOOR_LEAF_CM, rotation: alpha, y0: cut.y0, y1: cut.y0 + leafH, solid: true,
+    })
+    // A small knob on both faces of the leaf, near the latch edge, about 100 cm above the floor.
+    const hy = Math.max(cut.y0 + 3, Math.min(100, cut.y0 + leafH - 3))
+    const lx = Math.max(length / 2, length - 7)
+    const px = -Math.sin(alpha), py = Math.cos(alpha)
+    for (const f of [-1, 1]) {
+      const along = lx - length / 2, off = f * (DOOR_LEAF_CM / 2 + 1.5)
+      parts.push({
+        kind: 'handle', color: HANDLE_COLOR, u: cu + Math.cos(alpha) * along + px * off, y: hy,
+        d: cd + Math.sin(alpha) * along + py * off,
+        su: Math.min(8, length / 2), sy: 3, sd: 3, rotation: alpha, y0: hy - 1.5, y1: hy + 1.5, solid: true,
+      })
+    }
+  }
+  if (op.variant === 'french') {
+    const half = (inU1 - inU0) / 2
+    leaf(inU0, 1, half)
+    leaf(inU1, -1, half)
+  } else if (hingeLow) leaf(inU0, 1, inU1 - inU0)
+  else leaf(inU1, -1, inU1 - inU0)
+  return parts
+}
+
 function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBuild[] {
   const thickness = wallThicknessOf(artboard)
   const edges: EdgeInfo[] = []
@@ -337,7 +535,7 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
           innerColor: fence ? (ea.room.wallColors?.[String(ea.index)] ?? FENCE_COLOR) : colorOf(ea),
           outerColor: fence ? FENCE_COLOR : DEFAULT_WALL_OUTER_COLOR,
           oppositeColor: fence ? (eb.room.wallColors?.[String(eb.index)] ?? FENCE_COLOR) : colorOf(eb),
-          pieces: [], windowPanes: [],
+          pieces: [], windowPanes: [], openingModels: [],
         },
       })
     }
@@ -380,7 +578,7 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
           outwardNormal: e.n, isInterior: false, cutawayGroupId: id, pairedWallIds: [],
           innerColor: fence ? fenceColor : colorOf(e),
           outerColor: fence ? fenceColor : DEFAULT_WALL_OUTER_COLOR,
-          pieces: [], windowPanes: [],
+          pieces: [], windowPanes: [], openingModels: [],
         },
       })
     })
@@ -418,6 +616,23 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
         const pane = { openingId: op.id, u0: lo, u1: hi, y0: cut.y0, y1: cut.y1 }
         // One pane per window, also when both rooms of a shared wall carry a window at the same place.
         if (!t.wall.windowPanes.some((q) => q.openingId === op.id || dup(q))) t.wall.windowPanes.push(pane)
+      }
+      const modelKind = openingModelKind(op)
+      // One model per opening, also when both rooms of a shared wall carry an opening at the same place.
+      if (modelKind && !t.wall.openingModels.some((m) => m.openingId === op.id || dup(m.bounds))) {
+        const [o0, o1] = wallSideOffsets(t.wall)
+        const rad = (op.angleDeg * Math.PI) / 180
+        // Swing side across the wall: the 2D opening normal (-sin, cos) against the wall's outward normal.
+        const along = -Math.sin(rad) * t.wall.outwardNormal.x + Math.cos(rad) * t.wall.outwardNormal.z
+        const side = ((op.swing ?? 'in') === 'out' ? -1 : 1) * (along >= 0 ? 1 : -1) as 1 | -1
+        const hingeIsStart = (op.hinge ?? 'left') === 'left'
+        const hingeLow = hingeIsStart === (u0 <= u1)
+        // The 2D bypass symbol puts the panel at the opening start on the +normal side.
+        const lowPanelSide = ((u0 <= u1 ? 1 : -1) * (along >= 0 ? 1 : -1)) as 1 | -1
+        t.wall.openingModels.push({
+          openingId: op.id, kind: modelKind, bounds: cut,
+          parts: buildOpeningParts(modelKind, op, cut, (o0 + o1) / 2, t.wall.thicknessCm, hingeLow, side, lowPanelSide, (along >= 0 ? 1 : -1) as 1 | -1),
+        })
       }
     }
   }
@@ -571,16 +786,18 @@ function resolveCornerRadii(f: FurnitureItem): [number, number, number, number] 
   return [tl, tr, br, bl]
 }
 
-function buildFurniture(f: FurnitureItem): FurnitureMeshData {
+function buildFurniture(f: FurnitureItem, simplified: boolean): FurnitureMeshData {
   const heightCm = furnitureHeightCm(f)
   const lift = heightCm <= RUG_MAX_HEIGHT_CM ? RUG_LIFT_CM : 0
+  const cornerRadiiCm = resolveCornerRadii(f)
   return {
     id: f.id, name: f.name, shape: f.shape,
     x: f.xCm, y: heightCm / 2 + lift, z: f.yCm,
     widthCm: f.widthCm, depthCm: f.depthCm, heightCm,
     rotationY: (-f.rotationDeg * Math.PI) / 180,
     color: f.color,
-    cornerRadiiCm: resolveCornerRadii(f),
+    cornerRadiiCm,
+    parts: furnitureParts(f, heightCm, cornerRadiiCm, { simplified }),
   }
 }
 
@@ -631,7 +848,7 @@ export function buildScene(artboard: Artboard): SceneData {
   const builds = buildWalls(artboard, rooms, ceiling)
   const walls = builds.map((b) => b.wall)
   const cornerPosts = buildCornerPosts(rooms, builds, ceiling)
-  const furniture = artboard.furniture.map(buildFurniture)
+  const furniture = artboard.furniture.map((f) => buildFurniture(f, artboard.furniture.length > 60))
 
   const points: Pt[] = []
   for (const f of floors) points.push(...f.vertices)

@@ -37,7 +37,7 @@ export type PrecisionCm = 0.1 | 0.5 | 1
 export type OpeningKind = 'door' | 'window' | 'opening'
 
 /** Door styles. 'standard' is the single leaf with a quarter-circle swing arc. */
-export type DoorVariant = 'standard' | 'pocket' | 'bypass' | 'french'
+export type DoorVariant = 'standard' | 'pocket' | 'bypass' | 'bypass-glass' | 'french'
 /**
  * Window styles. 'standard' is the triple-line frame, 'sliding' is two staggered sashes, and the two
  * casement styles add swinging leaves (with their quarter-circle arcs) on top of the frame.
@@ -66,6 +66,8 @@ export type Opening = {
   sillCm?: number
   /** Style variant: a DoorVariant for doors, a WindowVariant for windows. Omitted = 'standard'. */
   variant?: OpeningVariant
+  /** Optional colour (hex) of a door or window in 3D. Omitted = the default colours. */
+  color?: string
 }
 
 export type FurnitureItem = {
@@ -96,6 +98,8 @@ export type FurnitureItem = {
   flipX?: boolean
   /** Mirror the item shape about its own horizontal axis. Omitted or false: no mirror. */
   flipY?: boolean
+  /** Id of the built-in preset this item was placed from. Keeps its 3D model after a rename. Omitted for custom or older items. */
+  presetId?: string
 }
 
 /** How the 3D view draws the walls of a room: hidden, cut away above the camera, or full height. */

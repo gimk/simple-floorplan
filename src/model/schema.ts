@@ -33,7 +33,8 @@ export const openingSchema = z.object({
   swing: z.enum(['in', 'out']).optional(),
   heightCm: num.positive().optional(),
   sillCm: num.min(0).optional(),
-  variant: z.enum(['standard', 'pocket', 'bypass', 'french', 'sliding', 'casement', 'double-casement']).optional(),
+  variant: z.enum(['standard', 'pocket', 'bypass', 'bypass-glass', 'french', 'sliding', 'casement', 'double-casement']).optional(),
+  color: z.string().optional(),
 })
 
 export const furnitureSchema = z.object({
@@ -53,6 +54,7 @@ export const furnitureSchema = z.object({
   groupId: z.string().min(1).optional(),
   flipX: z.boolean().optional(),
   flipY: z.boolean().optional(),
+  presetId: z.string().min(1).optional(),
 })
 
 /** Saved 3D camera view of an artboard (docs/3d-and-finishes.md §3). */

@@ -73,6 +73,7 @@ export type AgentCommand =
       swing?: 'in' | 'out'
       heightCm?: number
       sillCm?: number
+      color?: string
     } & OnArtboard)
   | ({ type: 'update_opening'; openingId: string; patch: Partial<Omit<Opening, 'id'>> } & OnArtboard)
   | ({ type: 'delete_opening'; openingId: string } & OnArtboard)
@@ -431,6 +432,7 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       if (cmd.variant !== undefined) op.variant = cmd.variant
       if (cmd.heightCm !== undefined) op.heightCm = cmd.heightCm
       if (cmd.sillCm !== undefined) op.sillCm = cmd.sillCm
+      if (cmd.color !== undefined) op.color = cmd.color
       ab.openings.push(op)
       return { artboardId: ab.id, openingId: op.id, xCm: op.xCm, yCm: op.yCm, angleDeg: op.angleDeg, widthCm, offsetCm }
     }
@@ -440,6 +442,8 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       if (!cmd.patch || typeof cmd.patch !== 'object') return fail('patch is required.')
       const { id: _id, ...rest } = cmd.patch as Partial<Opening>
       Object.assign(o, definedEntries(rest))
+      // An explicit undefined or null colour clears it (back to the default colours).
+      if ('color' in rest && (rest.color === undefined || (rest.color as unknown) === null)) delete o.color
       return { artboardId: ab.id, openingId: o.id }
     }
     case 'delete_opening': {
@@ -469,6 +473,7 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
       if (heightCm !== undefined) item.heightCm = heightCm
       const showDirection = cmd.showDirection ?? preset?.showDirection
       if (showDirection !== undefined) item.showDirection = showDirection
+      if (preset) item.presetId = preset.id
       if (cmd.cornerRadiusCm !== undefined) item.cornerRadiusCm = cmd.cornerRadiusCm
       if (cmd.cornerRadiiCm !== undefined) {
         item.cornerRadiiCm = needRadii(cmd.cornerRadiiCm, 'cornerRadiiCm')

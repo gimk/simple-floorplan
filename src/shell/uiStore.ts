@@ -5,6 +5,8 @@ import type { OpeningKind, Selection, ViewProjection, WallViewMode } from '../mo
 import type { TapeSnap } from '../features/tape/geometry'
 
 export type View = { x: number; y: number; zoom: number }
+/** 3D Views mode backdrop: two studio colours, a procedural daylight sky and a city skyline. */
+export type ViewBackdrop = 'dark' | 'light' | 'daylight' | 'city'
 export type Mode = 'plan' | 'design' | 'views'
 export type Tool = 'select' | 'rect' | 'pen' | 'cutout' | 'place-opening' | 'calibrate-image' | 'tape' | 'artboard'
 
@@ -49,7 +51,7 @@ type UiData = {
   /** 3D Views mode: perspective or orthographic camera. */
   viewProjection: ViewProjection
   /** 3D Views mode: backdrop of the 3D scene. */
-  viewBackdrop: 'dark' | 'light'
+  viewBackdrop: ViewBackdrop
   /** 3D Views mode: draw shadows in the 3D scene. */
   viewShadows: boolean
 }

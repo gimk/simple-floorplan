@@ -19,7 +19,12 @@ export type View3DHandle = {
   getSnapshot: () => CameraSnapshot | null
   flyTo: (view: Pick<SavedView, 'position' | 'target' | 'fov' | 'projection' | 'wallMode'>) => void
   applyPreset: (preset: CameraPreset) => void
-  capturePngBlob: (opts?: { width?: number; height?: number; view?: SavedView }) => Promise<Blob | null>
+  capturePngBlob: (opts?: { width?: number; height?: number; view?: CameraSnapshot | SavedView }) => Promise<Blob | null>
+  /**
+   * Render a small preview of `snapshot` offscreen and return a blob URL (null when the view is not ready).
+   * The live camera and canvas are restored before returning. The caller must revoke the URL.
+   */
+  captureThumbnail: (snapshot: CameraSnapshot, width?: number, height?: number) => Promise<string | null>
 }
 
 /** Vertical field of view of the 3D camera, in degrees. */

@@ -7,13 +7,16 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useDoc } from '../../model/store'
 import type { ViewProjection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
+import type { ViewBackdrop } from '../../shell/uiStore'
 import { DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, wallSideOffsets } from './buildScene'
-import type { FloorMeshData, FurnitureMeshData, SceneData, WallSegmentData } from './buildScene'
+import type { FloorMeshData, SceneData, WallSegmentData } from './buildScene'
+import type { FurniturePartData } from './furnitureSolids'
 import { PRESET_FOV, computePresetPose } from './cameraPresets'
 import type { CameraSnapshot, View3DHandle } from './cameraPresets'
+import { backdropCssColor, createBackdropController } from './backdrops'
+import type { BackdropController } from './backdrops'
 import { FLOOR_TILE_CM, floorBaseColor, disposeAll, getFloorTexture } from './floorTextures'
 
-const BACKDROP = { dark: '#12161b', light: '#f4f5f7' } as const
 const FOV = PRESET_FOV
 const FLY_MS = 450
 const PNG_WIDTH = 1920
@@ -25,6 +28,8 @@ const AZIMUTH = 0.55
 const MIN_SCALE = 0.001
 const THRESHOLD_Y = 0.05
 const EDGE_OPACITY = 0.2
+const THUMB_WIDTH = 320
+const THUMB_HEIGHT = 180
 
 const easeOut = (t: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3)
 const range = (ms: number, from: number, to: number) => easeOut((ms - from) / (to - from))
@@ -32,7 +37,7 @@ const range = (ms: number, from: number, to: number) => easeOut((ms - from) / (t
 /** A running camera flight: eased from one pose to another (ortho also eases the visible half-height). */
 type Flight = { t0: number; fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; fromVis: number; toVis: number }
 
-type Api = { setProjection: (p: ViewProjection) => void; setBackdrop: (b: 'dark' | 'light') => void; setShadows: (on: boolean) => void }
+type Api = { setProjection: (p: ViewProjection) => void; setBackdrop: (b: ViewBackdrop) => void; setShadows: (on: boolean) => void }
 type SavedCamera = { artboardId: string; pos: THREE.Vector3; target: THREE.Vector3; orthoHalfH: number; zoom: number }
 
 /** Floor-plane outline of a floor or threshold as a Shape in (x, -z), so rotateX(-PI/2) lays it on XZ facing +Y. */
@@ -63,15 +68,9 @@ function flatGeometry(
   return geo
 }
 
-function furnitureGeometry(f: FurnitureMeshData): THREE.BufferGeometry {
-  const { widthCm: w, depthCm: d, heightCm: h } = f
-  let geo: THREE.BufferGeometry
-  if (f.shape === 'circle') {
-    geo = new THREE.CylinderGeometry(w / 2, w / 2, h, 48)
-    geo.scale(1, 1, d / w)
-    return geo
-  }
-  const [tl, tr, br, bl] = f.cornerRadiiCm
+/** Rounded-corner slab: `w` by `d` footprint (radii order tl, tr, br, bl), `h` tall, centred on the origin. */
+function roundedBoxGeometry(w: number, h: number, d: number, radii: [number, number, number, number]): THREE.BufferGeometry {
+  const [tl, tr, br, bl] = radii
   if (tl + tr + br + bl <= 0) return new THREE.BoxGeometry(w, h, d)
   const hw = w / 2, hd = d / 2
   // Shape in (x, -z): the top of the 2D plan is -z, so it is +y here.
@@ -85,10 +84,24 @@ function furnitureGeometry(f: FurnitureMeshData): THREE.BufferGeometry {
   if (tl > 0) s.quadraticCurveTo(-hw, hd, -hw, hd - tl)
   s.lineTo(-hw, -hd + bl)
   if (bl > 0) s.quadraticCurveTo(-hw, -hd, -hw + bl, -hd)
-  geo = new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: false, curveSegments: 10 })
+  const geo = new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: false, curveSegments: 10 })
   geo.rotateX(-Math.PI / 2)
   geo.translate(0, -h / 2, 0)
   return geo
+}
+
+/** Geometry of one furniture part, centred on its own origin (the mesh is moved to the part centre). */
+function partGeometry(p: FurniturePartData): THREE.BufferGeometry {
+  if (p.kind === 'cylinder') {
+    const geo = new THREE.CylinderGeometry(p.sx / 2, p.sx / 2, p.sy, 24)
+    if (p.sx !== p.sz && p.sx > 0) geo.scale(1, 1, p.sz / p.sx)
+    if (p.rotationX) geo.rotateX(p.rotationX)
+    return geo
+  }
+  if (p.kind === 'roundedBox' && p.cornerRadiiCm && p.cornerRadiiCm.some((r) => r > 0)) {
+    return roundedBoxGeometry(p.sx, p.sy, p.sz, p.cornerRadiiCm)
+  }
+  return new THREE.BoxGeometry(p.sx, p.sy, p.sz)
 }
 
 /** A wall solid or glass pane that is clipped (not squashed) to the current wall height. */
@@ -121,20 +134,22 @@ type PostEntry = { group: THREE.Group; wallIds: [string, string] }
 type Built = {
   scene: THREE.Scene
   sun: THREE.DirectionalLight
+  hemi: THREE.HemisphereLight
+  fill: THREE.DirectionalLight
   walls: WallEntry[]
   posts: PostEntry[]
   furniture: THREE.Group[]
   dispose: () => void
 }
 
-function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | 'light'): Built {
+function buildThreeScene(data: SceneData, shadows: boolean): Built {
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(BACKDROP[backdrop])
   const b = data.bounds
   const R = Math.max(Math.hypot(b.sizeX, b.sizeZ) / 2, 100)
 
   // Lights.
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x8890a0, 1.0))
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x8890a0, 1.0)
+  scene.add(hemi)
   const sun = new THREE.DirectionalLight(0xffffff, 1.5)
   sun.position.set(b.centerX + R * 0.8, R * 1.8, b.centerZ + R * 0.5)
   sun.target.position.set(b.centerX, 0, b.centerZ)
@@ -262,12 +277,27 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
         parts.push({ meshes: [mesh, lines], y0: p.y0, y1: p.y1 })
       }
     }
-    for (const p of w.windowPanes) {
-      const pane = new THREE.Mesh(geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, 0.8)), glassMat)
-      pane.position.set((p.u0 + p.u1) / 2, (p.y0 + p.y1) / 2, zc)
-      pane.renderOrder = 2
-      group.add(pane)
-      parts.push({ meshes: [pane], y0: p.y0, y1: p.y1 })
+    // Window and door models (frames, glass, leaves, handles, sliding panels). Each part clips to the wall height
+    // like a wall piece, so a lowered wall never leaves a frame or a leaf floating above it. The window panes
+    // of the wall data are drawn by the models (their glass), not a second time.
+    for (const model of w.openingModels) {
+      for (const p of model.parts) {
+        const g = geo(new THREE.BoxGeometry(p.su, p.sy, p.sd))
+        const mesh = new THREE.Mesh(g, p.kind === 'glass' ? glassMat : std(p.color, { roughness: 0.6 }))
+        mesh.position.set(p.u, p.y, s * p.d)
+        mesh.rotation.y = -s * p.rotation
+        const meshes: THREE.Object3D[] = [mesh]
+        if (p.solid) {
+          mesh.castShadow = true
+          mesh.receiveShadow = true
+          const lines = new THREE.LineSegments(geo(new THREE.EdgesGeometry(g)), edgeMat)
+          lines.position.copy(mesh.position)
+          lines.rotation.copy(mesh.rotation)
+          meshes.push(lines)
+        } else mesh.renderOrder = 2
+        group.add(...meshes)
+        parts.push({ meshes, y0: p.y0, y1: p.y1 })
+      }
     }
     const entry: WallEntry = { group, data: w, parts, ratio: MIN_SCALE }
     for (const part of parts) applyWallHeight(part, MIN_SCALE * w.heightCm)
@@ -291,28 +321,31 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
     posts.push({ group, wallIds: p.wallIds })
   }
 
-  // Furniture: a pivot group on the floor; the mesh sits at its centre height.
+  // Furniture: a pivot group on the floor; each part mesh sits at its item-local position.
   const furniture: THREE.Group[] = []
   for (const f of data.furniture) {
     const group = new THREE.Group()
     group.position.set(f.x, 0, f.z)
     group.rotation.y = f.rotationY
-    const g = geo(furnitureGeometry(f))
-    const mesh = new THREE.Mesh(g, std(f.color, { roughness: 0.7 }))
-    mesh.position.y = f.y
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    group.add(mesh)
-    const lines = new THREE.LineSegments(geo(new THREE.EdgesGeometry(g, 30)), edgeMat)
-    lines.position.y = f.y
-    group.add(lines)
+    for (const p of f.parts) {
+      const g = geo(partGeometry(p))
+      const mesh = new THREE.Mesh(g, p.translucent ? glassMat : std(p.color, { roughness: 0.7 }))
+      mesh.position.set(p.cx, p.cy, p.cz)
+      mesh.castShadow = !p.translucent
+      mesh.receiveShadow = true
+      group.add(mesh)
+      // Blueprint look: an edge outline on every part.
+      const lines = new THREE.LineSegments(geo(new THREE.EdgesGeometry(g, 30)), edgeMat)
+      lines.position.copy(mesh.position)
+      group.add(lines)
+    }
     group.scale.y = MIN_SCALE
     scene.add(group)
     furniture.push(group)
   }
 
   return {
-    scene, sun, walls, posts, furniture,
+    scene, sun, hemi, fill, walls, posts, furniture,
     dispose: () => {
       scene.traverse((o) => { if ((o as THREE.Light).isLight) (o as THREE.DirectionalLight).shadow?.dispose() })
       for (const g of geometries) g.dispose()
@@ -364,7 +397,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
     const container = containerRef.current
     if (!container || !scene) return
     setContextLost(false)
-    const built = buildThreeScene(scene, shadowsRef.current, backdropRef.current)
+    const built = buildThreeScene(scene, shadowsRef.current)
     const b = scene.bounds
     const R = Math.max(Math.hypot(b.sizeX, b.sizeZ) / 2, 100)
     const dist = (R / Math.sin((FOV * Math.PI) / 360)) * 0.9
@@ -485,9 +518,9 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       controls.object = camera
       controls.update()
     }
-    const setBackdrop = (bd: 'dark' | 'light') => {
-      built.scene.background = new THREE.Color(BACKDROP[bd])
-    }
+    const backdrops: BackdropController = createBackdropController(renderer, built.scene, { hemi: built.hemi, sun: built.sun, fill: built.fill })
+    const setBackdrop = (bd: ViewBackdrop) => backdrops.apply(bd)
+    setBackdrop(backdropRef.current)
     const setShadows = (on: boolean) => {
       renderer.shadowMap.enabled = on
       built.sun.castShadow = on
@@ -628,7 +661,14 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       return blob
     }
 
-    const handle: View3DHandle = { getSnapshot, flyTo, applyPreset, capturePngBlob }
+    // Thumbnails reuse the PNG path: one synchronous render at thumbnail size, then everything is put back
+    // before the browser paints, so the live canvas never shows the small frame.
+    const captureThumbnail: View3DHandle['captureThumbnail'] = async (snapshot, w = THUMB_WIDTH, h = THUMB_HEIGHT) => {
+      const blob = await capturePngBlob({ width: w, height: h, view: snapshot })
+      return blob ? URL.createObjectURL(blob) : null
+    }
+
+    const handle: View3DHandle = { getSnapshot, flyTo, applyPreset, capturePngBlob, captureThumbnail }
     if (handleRef) handleRef.current = handle
 
     const resize = () => {
@@ -704,6 +744,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
     }
     const onContextRestored = () => {
       lost = false
+      backdrops.restore()
       last = performance.now()
       snap = true
       cancelAnimationFrame(raf)
@@ -724,6 +765,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       controls.removeEventListener('start', stopIntro)
       controls.removeEventListener('start', stopFlight)
       controls.dispose()
+      backdrops.dispose()
       built.dispose()
       renderer.dispose()
       renderer.forceContextLoss()
@@ -736,7 +778,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       ref={containerRef}
       data-testid="views-3d-canvas"
       className="absolute inset-0 overflow-hidden"
-      style={{ background: BACKDROP[viewBackdrop], touchAction: 'none' }}
+      style={{ background: backdropCssColor(viewBackdrop), touchAction: 'none' }}
     >
       {contextLost && !webglFailed && (
         <div data-testid="views-3d-contextlost" role="status" className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-slate-400">

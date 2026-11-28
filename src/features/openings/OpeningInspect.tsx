@@ -3,7 +3,7 @@
 // in cm, the height and sill in cm (used by the 3D view), the hinge and swing flips (only where the
 // style has them) and Delete.
 // Dark UI, built from the shared sidebar primitives in src/shell/panel. Units: cm.
-import { Copy, DoorOpen, Frame, RectangleHorizontal } from 'lucide-react'
+import { Copy, DoorOpen, Frame, RectangleHorizontal, RotateCcw } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { openingHeightCm, openingSillCm } from '../../model/defaults'
 import { useDoc } from '../../model/store'
@@ -11,6 +11,7 @@ import type { Artboard, Opening, OpeningKind, OpeningVariant } from '../../model
 import {
   BTN,
   BackLink,
+  ColorRow,
   DangerButton,
   EmptyHint,
   FieldRow,
@@ -41,6 +42,19 @@ export type OpeningInspectProps = {
 
 const KIND_LABEL: Record<OpeningKind, string> = { door: 'Door', window: 'Window', opening: 'Opening' }
 
+/** Curated door and window colours for the shared ColorRow. */
+const OPENING_COLORS = [
+  { name: 'White', color: '#ffffff' },
+  { name: 'Off-white', color: '#f1ece1' },
+  { name: 'Light Oak', color: '#c9a173' },
+  { name: 'Walnut', color: '#5c4033' },
+  { name: 'Anthracite', color: '#383e42' },
+  { name: 'Black', color: '#1a1a1a' },
+  { name: 'Sage', color: '#9caf88' },
+  { name: 'Slate', color: '#708090' },
+] as const
+const OPENING_COLOR_VALUES: readonly string[] = OPENING_COLORS.map((c) => c.color)
+
 /** Smallest height the height field accepts, in cm: under this the piece is not a hole any more. */
 const MIN_OPENING_HEIGHT_CM = 10
 
@@ -62,6 +76,7 @@ const DOOR_VARIANT_OPTIONS = [
   { value: 'french', label: 'French (double)' },
   { value: 'pocket', label: 'Pocket sliding' },
   { value: 'bypass', label: 'Bypass sliding' },
+  { value: 'bypass-glass', label: 'Bypass sliding (glass)' },
 ] as const
 
 /** Window styles. The two casement styles add swinging leaves to the frame, like a door leaf. */
@@ -245,6 +260,26 @@ export function OpeningInspect({ artboardId, openingId, className }: OpeningInsp
       {isWindow && (
         <FieldRow label="Style">
           <SelectField ariaLabel="Window style" value={variant} options={WINDOW_VARIANT_OPTIONS} onChange={setVariant} />
+        </FieldRow>
+      )}
+
+      {(isDoor || isWindow) && (
+        <FieldRow label="Color" hint="for 3D" stacked>
+          <ColorRow
+            label={`${KIND_LABEL[kind]} color`}
+            colors={OPENING_COLOR_VALUES}
+            value={opening.color}
+            onChange={(color) => {
+              if (color.toLowerCase() === opening.color?.toLowerCase()) return
+              updateOpening(artboard.id, opening.id, { color })
+            }}
+          />
+          {opening.color !== undefined && (
+            <button type="button" className={BTN} onClick={() => updateOpening(artboard.id, opening.id, { color: undefined })}>
+              <RotateCcw size={14} aria-hidden="true" />
+              Reset to default
+            </button>
+          )}
         </FieldRow>
       )}
 

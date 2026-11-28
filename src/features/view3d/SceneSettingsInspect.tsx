@@ -5,6 +5,7 @@ import { DEFAULT_CEILING_HEIGHT_CM } from '../../model/defaults'
 import type { ViewProjection, WallViewMode } from '../../model/types'
 import { PanelSection, Segmented, StatGrid, SwitchRow, formatDecimal } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
+import type { ViewBackdrop } from '../../shell/uiStore'
 import { wallThicknessOf } from '../rooms/walls'
 
 const WALL_OPTIONS = [
@@ -21,7 +22,9 @@ const PROJECTION_OPTIONS = [
 const BACKDROP_OPTIONS = [
   { value: 'dark', label: 'Dark' },
   { value: 'light', label: 'Light' },
-] as const
+  { value: 'daylight', label: 'Daylight' },
+  { value: 'city', label: 'City' },
+] as const satisfies readonly { value: ViewBackdrop; label: string }[]
 
 export function SceneSettingsInspect() {
   const wallViewMode = useUi((s) => s.wallViewMode)
@@ -47,7 +50,25 @@ export function SceneSettingsInspect() {
         </div>
         <div className="flex flex-col gap-1">
           <span className="text-xs text-slate-400">Backdrop</span>
-          <Segmented options={BACKDROP_OPTIONS} value={viewBackdrop} ariaLabel="Backdrop" onChange={(v) => setUi({ viewBackdrop: v as 'dark' | 'light' })} />
+          <div role="radiogroup" aria-label="Backdrop" className="grid grid-cols-2 gap-1">
+            {BACKDROP_OPTIONS.map((o) => {
+              const active = o.value === viewBackdrop
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setUi({ viewBackdrop: o.value })}
+                  className={`min-h-9 rounded-md border border-white/30 px-2 text-sm pointer-coarse:min-h-11 ${
+                    active ? 'bg-orange-700 font-medium text-white' : 'hover:bg-white/10'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              )
+            })}
+          </div>
         </div>
         <SwitchRow label="Shadows" checked={viewShadows} onChange={(c) => setUi({ viewShadows: c })} />
         <StatGrid

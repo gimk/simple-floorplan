@@ -36,6 +36,16 @@ describe('schema', () => {
     expect(parseProjectDoc(d).ok).toBe(true)
   })
 
+  it('keeps presetId on furniture and refuses an empty one', () => {
+    const d = createDefaultProject()
+    d.artboards[0].furniture.push({ id: 'f', name: 'Renamed', shape: 'rect', xCm: 10, yCm: 10, widthCm: 160, depthCm: 200, rotationDeg: 0, color: '#abc', presetId: 'bed' })
+    const r = parseProjectDoc(d)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.doc.artboards[0].furniture[0].presetId).toBe('bed')
+    d.artboards[0].furniture[0].presetId = ''
+    expect(parseProjectDoc(d).ok).toBe(false)
+  })
+
   it('accepts 4 corner radii on furniture and refuses bad ones', () => {
     const d = createDefaultProject()
     d.artboards[0].furniture.push({
@@ -103,7 +113,7 @@ describe('schema', () => {
       const o = { id: 'o', kind: 'door', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, ...(variant ? { variant } : {}) }
       return parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [o] }] })
     }
-    for (const variant of ['standard', 'pocket', 'bypass', 'french', 'sliding', 'casement', 'double-casement']) {
+    for (const variant of ['standard', 'pocket', 'bypass', 'bypass-glass', 'french', 'sliding', 'casement', 'double-casement']) {
       const r = withVariant(variant)
       expect(r.ok && r.doc.artboards[0].openings[0].variant).toBe(variant)
     }
@@ -124,6 +134,17 @@ describe('schema', () => {
       expect(r.ok && r.doc.artboards[0].openings[0]).toMatchObject({ kind: 'window', variant })
     }
     expect(withWindow('casement-swing').ok).toBe(false)
+  })
+
+  it('parses an optional opening colour', () => {
+    const d = createDefaultProject()
+    const parse = (extra: object) =>
+      parseProjectDoc({ ...d, artboards: [{ ...d.artboards[0], openings: [{ id: 'o', kind: 'window', xCm: 0, yCm: 0, angleDeg: 0, widthCm: 90, ...extra }] }] })
+    const withColor = parse({ color: '#336699' })
+    expect(withColor.ok && withColor.doc.artboards[0].openings[0].color).toBe('#336699')
+    const without = parse({})
+    expect(without.ok).toBe(true)
+    expect(without.ok && without.doc.artboards[0].openings[0].color).toBeUndefined()
   })
 
   it('rejects an unknown opening variant', () => {

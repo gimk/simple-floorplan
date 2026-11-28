@@ -1,15 +1,15 @@
 // Left panel of Views mode: camera presets, live PNG export and the saved views of the active artboard.
 // No Three.js import: the 3D work goes through the View3DHandle, so the lazy 3D chunk stays separate.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { Camera, ClipboardCopy, Download, ImageDown, Pencil, RefreshCw, Trash2 } from 'lucide-react'
 import { newId } from '../../model/schema'
 import { useDoc } from '../../model/store'
-import type { SavedView, WallViewMode } from '../../model/types'
+import type { Artboard, SavedView, WallViewMode } from '../../model/types'
 import { BTN, BTN_PRIMARY, EmptyHint, IconButton, INPUT, PanelSection, SelectField } from '../../shell/panel'
 import { useUi } from '../../shell/uiStore'
 import { toast, undoToast } from '../toast'
-import type { CameraPreset, View3DHandle } from './cameraPresets'
+import type { CameraPreset, CameraSnapshot, View3DHandle } from './cameraPresets'
 import { copyView3DPng, downloadView3DPng } from './exportPng'
 
 const PRESETS: { preset: CameraPreset; label: string; title: string }[] = [
@@ -25,6 +25,89 @@ const WALL_BADGE: Record<WallViewMode, string> = { off: 'Off', cutaway: 'Back', 
 
 type Props = { handleRef: RefObject<View3DHandle | null> }
 
+const THUMB_DEBOUNCE_MS = 300
+const THUMB_RETRY_MS = 400
+const THUMB_MAX_RETRIES = 25
+
+/** Everything that changes how a saved view looks from its own data. */
+const cameraKey = (v: SavedView) => JSON.stringify([v.position, v.target, v.fov, v.projection, v.wallMode])
+
+/**
+ * In-memory preview of each saved view (blob URLs, never stored in the document).
+ * Renders one at a time through the 3D handle, debounced when the scene changes, and revokes every URL it replaces.
+ */
+function useViewThumbnails(handleRef: RefObject<View3DHandle | null>, artboard: Artboard | undefined, views: SavedView[]) {
+  const backdrop = useUi((s) => s.viewBackdrop)
+  const shadows = useUi((s) => s.viewShadows)
+  const [urls, setUrls] = useState<Record<string, string>>({})
+  const cache = useRef(new Map<string, { key: string; url: string }>())
+  const [sceneVersion, setSceneVersion] = useState(0)
+  const [retry, setRetry] = useState(0)
+
+  // Scene change = any artboard field other than `views` has a new identity (structural sharing keeps the rest equal).
+  const prevArtboard = useRef<Artboard | undefined>(undefined)
+  useEffect(() => {
+    const prev = prevArtboard.current
+    prevArtboard.current = artboard
+    if (!prev || !artboard) return
+    const keys = new Set([...Object.keys(prev), ...Object.keys(artboard)])
+    for (const k of keys) {
+      if (k === 'views') continue
+      if ((prev as Record<string, unknown>)[k] !== (artboard as Record<string, unknown>)[k]) { setSceneVersion((n) => n + 1); return }
+    }
+  }, [artboard])
+
+  const signature = views.map((v) => `${v.id}:${cameraKey(v)}`).join('|')
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const store = cache.current
+    const sceneKey = `${sceneVersion}|${backdrop}|${shadows}`
+
+    // Drop thumbnails of deleted views.
+    const live = new Set(views.map((v) => v.id))
+    let removed = false
+    for (const [id, entry] of store) {
+      if (!live.has(id)) { URL.revokeObjectURL(entry.url); store.delete(id); removed = true }
+    }
+    if (removed) setUrls(Object.fromEntries([...store].map(([id, e]) => [id, e.url])))
+
+    const pending = views.filter((v) => store.get(v.id)?.key !== `${cameraKey(v)}|${sceneKey}`)
+    if (pending.length === 0) return
+    const run = async () => {
+      const handle = handleRef.current
+      if (!handle) {
+        // The lazy 3D chunk is not mounted yet: try again shortly.
+        if (retry < THUMB_MAX_RETRIES) timer = setTimeout(() => { if (!cancelled) setRetry((n) => n + 1) }, THUMB_RETRY_MS)
+        return
+      }
+      for (const v of pending) {
+        if (cancelled) return
+        const snap: CameraSnapshot = { position: v.position, target: v.target, fov: v.fov ?? 45, projection: v.projection ?? 'perspective', wallMode: v.wallMode }
+        let url: string | null = null
+        try { url = await handle.captureThumbnail(snap) } catch { url = null }
+        if (!url) continue
+        if (cancelled) { URL.revokeObjectURL(url); return }
+        const old = store.get(v.id)
+        if (old) URL.revokeObjectURL(old.url)
+        store.set(v.id, { key: `${cameraKey(v)}|${sceneKey}`, url })
+        setUrls(Object.fromEntries([...store].map(([id, e]) => [id, e.url])))
+      }
+    }
+    timer = setTimeout(() => { void run() }, THUMB_DEBOUNCE_MS)
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+    // `views` is covered by `signature` (and the ids it lists).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature, sceneVersion, backdrop, shadows, retry, handleRef])
+
+  useEffect(() => {
+    const store = cache.current
+    return () => { for (const e of store.values()) URL.revokeObjectURL(e.url); store.clear() }
+  }, [])
+
+  return urls
+}
+
 export function ViewsPanel({ handleRef }: Props) {
   const activeId = useUi((s) => s.activeArtboardId)
   const setUi = useUi((s) => s.set)
@@ -34,6 +117,7 @@ export function ViewsPanel({ handleRef }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const thumbs = useViewThumbnails(handleRef, artboard, views)
   // Set when Enter or Escape ends a rename, so the blur caused by the input unmounting does not run it a second time.
   const renameDoneRef = useRef(false)
 
@@ -180,6 +264,17 @@ export function ViewsPanel({ handleRef }: Props) {
                         onClick={() => { setDraft(v.name); renameDoneRef.current = false; setEditingId(v.id) }}
                       />
                     </>
+                  )}
+                </div>
+                <div
+                  className="mt-1.5 aspect-video w-full overflow-hidden rounded bg-white/5"
+                  data-testid="saved-view-thumb"
+                  aria-hidden="true"
+                >
+                  {thumbs[v.id] ? (
+                    <img src={thumbs[v.id]} alt="" draggable={false} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="h-full w-full animate-pulse bg-white/5" />
                   )}
                 </div>
                 <div className="mt-1 flex items-center justify-end gap-0.5">

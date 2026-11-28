@@ -42,6 +42,7 @@ type NewItem = {
   color: string
   heightCm?: number
   showDirection?: boolean
+  presetId?: string
 }
 
 /** Defaults of the custom shape form. */
@@ -356,6 +357,7 @@ export function FurniturePanel() {
                 onAdd={() =>
                   place(
                     {
+                      ...(preset.id.startsWith('custom-') ? {} : { presetId: preset.id }),
                       name: preset.name,
                       shape: preset.shape,
                       widthCm: preset.widthCm,

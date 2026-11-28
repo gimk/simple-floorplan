@@ -239,7 +239,7 @@ export function openingSymbol(op: Opening, u: (px: number) => number): OpeningSy
         arcs: [],
       }
     }
-    if (variant === 'bypass') {
+    if (variant === 'bypass' || variant === 'bypass-glass') {
       // Two parallel panels that overlap in the middle, each on its own track across the wall line.
       const thickness = u(3)
       const offset = u(1.5)

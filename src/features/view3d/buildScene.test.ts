@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { signedArea } from '../../model/geometry'
 import { DEFAULT_FENCE_HEIGHT_CM } from '../../model/defaults'
 import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
+import { doorArcGeometry } from '../openings/geometry'
+import { shade } from './furnitureSolids'
 import { FENCE_COLOR, FENCE_THICKNESS_CM } from '../rooms/walls'
 import {
   DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, splitWallPieces,
@@ -835,5 +837,221 @@ describe('fence walls (balcony railings)', () => {
     const w = wallOf(fenced({ '0': 'fence' }, { ceilingHeightCm: 60 }), 'r:0')
     expect(w.heightCm).toBe(60)
     expect(w.pieces).toEqual([{ u0: 0, u1: 400, y0: 0, y1: 60 }])
+  })
+})
+
+describe('opening 3D models', () => {
+  const modelOf = (a: Artboard, wallId: string, openingId: string) => {
+    const m = wallOf(a, wallId).openingModels.find((x) => x.openingId === openingId)
+    if (!m) throw new Error(`no model ${openingId}`)
+    return m
+  }
+  const count = (m: { parts: { kind: string }[] }, kind: string) => m.parts.filter((p) => p.kind === kind).length
+
+  it('builds a window with frame, sill, glass and a mullion when wide', () => {
+    const m = modelOf(one({ openings: [windowOp()] }), 'r:0', 'w')
+    expect(m.kind).toBe('window')
+    expect(count(m, 'frame')).toBe(3)
+    expect(count(m, 'sill')).toBe(1)
+    expect(count(m, 'glass')).toBe(1)
+    expect(count(m, 'mullion')).toBe(1)
+    const sill = m.parts.find((p) => p.kind === 'sill')!
+    const w = wallOf(one({ openings: [windowOp()] }), 'r:0')
+    expect(sill.sd).toBeCloseTo(w.thicknessCm + 4)
+    expect(m.parts.find((p) => p.kind === 'glass')!.solid).toBe(false)
+  })
+
+  it('builds a narrow window without a mullion', () => {
+    const m = modelOf(one({ openings: [windowOp({ widthCm: 80 })] }), 'r:0', 'w')
+    expect(count(m, 'mullion')).toBe(0)
+    expect(count(m, 'glass')).toBe(1)
+  })
+
+  it('builds a hinged door with an ajar leaf and a knob on each face', () => {
+    const m = modelOf(one({ openings: [door()] }), 'r:0', 'd')
+    expect(m.kind).toBe('door')
+    expect(count(m, 'frame')).toBe(3)
+    const leaf = m.parts.find((p) => p.kind === 'leaf')!
+    expect(count(m, 'handle')).toBe(2)
+    expect(leaf.su).toBeCloseTo(90 - 8)
+    expect(leaf.sd).toBe(4)
+    // Hinge left at u=155 (low end), swing in: the leaf turns towards the room, i.e. negative depth.
+    expect(Math.abs(leaf.rotation)).toBeCloseTo((28 * Math.PI) / 180)
+    expect(leaf.rotation).toBeLessThan(0)
+    expect(leaf.u).toBeGreaterThan(159)
+    expect(leaf.d).toBeLessThan(0)
+    for (const h of m.parts.filter((p) => p.kind === 'handle')) expect(h.y).toBeCloseTo(100)
+  })
+
+  it('mirrors the leaf for hinge right and swing out', () => {
+    const left = modelOf(one({ openings: [door()] }), 'r:0', 'd').parts.find((p) => p.kind === 'leaf')!
+    const right = modelOf(one({ openings: [door({ hinge: 'right' })] }), 'r:0', 'd').parts.find((p) => p.kind === 'leaf')!
+    expect(right.u).toBeGreaterThan(200)
+    expect(left.u).toBeLessThan(200)
+    expect(right.d).toBeCloseTo(left.d)
+    const out = modelOf(one({ openings: [door({ swing: 'out' })] }), 'r:0', 'd').parts.find((p) => p.kind === 'leaf')!
+    // Mirrored about the wall mid-plane (an exterior wall spans 0..thickness along its outward normal).
+    const mid = wallOf(one(), 'r:0').thicknessCm / 2
+    expect(out.d - mid).toBeCloseTo(-(left.d - mid))
+    expect(out.d).toBeGreaterThan(mid)
+  })
+
+  it('builds a pocket door with one solid panel and no glass', () => {
+    const m = modelOf(one({ openings: [door({ variant: 'pocket' })] }), 'r:0', 'd')
+    expect(m.kind).toBe('sliding-door')
+    expect(count(m, 'frame')).toBe(4)
+    expect(count(m, 'leaf')).toBe(1)
+    expect(count(m, 'handle')).toBe(2)
+    expect(count(m, 'glass')).toBe(0)
+    expect(m.parts.filter((p) => !p.solid)).toHaveLength(0)
+    // Part way open: the panel covers about two thirds of the clear width.
+    const leaf = m.parts.find((p) => p.kind === 'leaf')!
+    const jambs = m.parts.filter((p) => p.kind === 'frame' && p.sy > 100)
+    const clear = Math.min(...jambs.map((j) => Math.abs(j.u - leaf.u)))
+    expect(leaf.su).toBeGreaterThan(0)
+    expect(clear).toBeGreaterThan(0)
+  })
+
+  it('builds a bypass door with two depth-offset solid panels and no glass', () => {
+    const m = modelOf(one({ openings: [door({ variant: 'bypass', widthCm: 160 })] }), 'r:0', 'd')
+    expect(m.kind).toBe('sliding-door')
+    expect(count(m, 'frame')).toBe(4)
+    expect(count(m, 'leaf')).toBe(2)
+    expect(count(m, 'glass')).toBe(0)
+    expect(count(m, 'panel')).toBe(0)
+    expect(m.parts.filter((p) => !p.solid)).toHaveLength(0)
+    const leaves = m.parts.filter((p) => p.kind === 'leaf')
+    expect(leaves[0].d).not.toBeCloseTo(leaves[1].d)
+    // The panels overlap by 4 cm in the middle.
+    const [a, b] = [...leaves].sort((p, q) => p.u - q.u)
+    expect(a.u + a.su / 2 - (b.u - b.su / 2)).toBeCloseTo(4)
+  })
+
+  it('builds a bypass-glass door with two depth-offset framed glass panels', () => {
+    const m = modelOf(one({ openings: [door({ variant: 'bypass-glass', widthCm: 160 })] }), 'r:0', 'd')
+    expect(m.kind).toBe('sliding-door')
+    expect(count(m, 'frame')).toBe(4)
+    expect(count(m, 'glass')).toBe(2)
+    expect(count(m, 'panel')).toBe(8)
+    expect(count(m, 'leaf')).toBe(0)
+    const glass = m.parts.filter((p) => p.kind === 'glass')
+    expect(glass[0].d).not.toBeCloseTo(glass[1].d)
+    const [a, b] = [...glass].sort((p, q) => p.u - q.u)
+    const panels = m.parts.filter((p) => p.kind === 'panel')
+    const aRight = Math.max(...panels.filter((p) => p.d === a.d).map((p) => p.u + p.su / 2))
+    const bLeft = Math.min(...panels.filter((p) => p.d === b.d).map((p) => p.u - p.su / 2))
+    expect(aRight - bLeft).toBeCloseTo(4)
+  })
+
+  it('swings the leaf to the same world side and hinge as the 2D symbol, on shared and exterior walls', () => {
+    // World (x, z) of a wall-space point, then compared with the 2D leaf: hinge point and swing side.
+    const check = (sc: ReturnType<typeof buildScene>, op: Opening) => {
+      const rad = (op.angleDeg * Math.PI) / 180
+      const n2 = { x: -Math.sin(rad), y: Math.cos(rad) }
+      const g = doorArcGeometry(op)
+      for (const w of sc.walls) {
+        const m = w.openingModels.find((x) => x.openingId === op.id)
+        if (!m) continue
+        const dx = w.end.x - w.start.x, dz = w.end.z - w.start.z, len = Math.hypot(dx, dz)
+        const world = (u: number, d: number) => ({
+          x: w.start.x + (dx / len) * u + w.outwardNormal.x * d,
+          y: w.start.z + (dz / len) * u + w.outwardNormal.z * d,
+        })
+        const leaf = m.parts.find((q) => q.kind === 'leaf')!
+        const c = world(leaf.u, leaf.d)
+        // Swing side: the leaf centre is on the 2D swing side of the wall line.
+        const across = (c.x - op.xCm) * n2.x + (c.y - op.yCm) * n2.y
+        expect(Math.sign(across)).toBe((op.swing ?? 'in') === 'in' ? 1 : -1)
+        // Hinge side: the leaf centre is nearer to the 2D hinge point than to the closed tip.
+        const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y)
+        expect(dist(c, g.hingePt)).toBeLessThan(dist(c, g.closedTipPt))
+      }
+    }
+    for (const hinge of ['left', 'right'] as const) for (const swing of ['in', 'out'] as const) {
+      for (const [id, angleDeg] of [['A', 90], ['B', -90]] as const) {
+        const op = door({ id: 'd', xCm: 400, yCm: 80, angleDeg, roomId: id, hinge, swing })
+        check(buildScene(twoRooms({ openings: [op] })), op)
+      }
+      const ext = door({ hinge, swing })
+      check(buildScene(one({ openings: [ext] })), ext)
+    }
+  })
+
+  it('puts the bypass panel at the opening start on the 2D +normal side', () => {
+    // 2D: the start panel sits on +normal. Top wall (angle 0): +normal is +y = inward = negative depth.
+    const m = modelOf(one({ openings: [door({ variant: 'bypass-glass', widthCm: 160 })] }), 'r:0', 'd')
+    const glass = m.parts.filter((p) => p.kind === 'glass').sort((p, q) => p.u - q.u)
+    const mid = wallOf(one(), 'r:0').thicknessCm / 2
+    expect(glass[0].d).toBeLessThan(mid)
+    expect(glass[1].d).toBeGreaterThan(mid)
+  })
+
+  it('applies a custom opening colour to windows, doors and bypass-glass doors', () => {
+    const c = '#336699'
+    const dark = shade(c, 0.8)
+    const colors = (m: ReturnType<typeof modelOf>, kind: string) => [...new Set(m.parts.filter((p) => p.kind === kind).map((p) => p.color))]
+    // Window: frame and mullion take the colour, the sill a darker shade, the glass stays as it is.
+    const def = modelOf(one({ openings: [windowOp()] }), 'r:0', 'w')
+    const win = modelOf(one({ openings: [windowOp({ color: c })] }), 'r:0', 'w')
+    expect(colors(win, 'frame')).toEqual([c])
+    expect(colors(win, 'mullion')).toEqual([c])
+    expect(colors(win, 'sill')).toEqual([dark])
+    expect(colors(win, 'glass')).toEqual(colors(def, 'glass'))
+    // Hinged door: leaf takes the colour, frame a darker shade, handles stay.
+    const defD = modelOf(one({ openings: [door()] }), 'r:0', 'd')
+    const hinged = modelOf(one({ openings: [door({ color: c })] }), 'r:0', 'd')
+    expect(colors(hinged, 'leaf')).toEqual([c])
+    expect(colors(hinged, 'frame')).toEqual([dark])
+    expect(colors(hinged, 'handle')).toEqual(colors(defD, 'handle'))
+    // Solid sliding door.
+    const bypass = modelOf(one({ openings: [door({ variant: 'bypass', widthCm: 160, color: c })] }), 'r:0', 'd')
+    expect(colors(bypass, 'leaf')).toEqual([c])
+    expect(colors(bypass, 'frame')).toEqual([dark])
+    // Bypass glass: frame and panel rails take the colour, glass stays translucent.
+    const defG = modelOf(one({ openings: [door({ variant: 'bypass-glass', widthCm: 160 })] }), 'r:0', 'd')
+    const bg = modelOf(one({ openings: [door({ variant: 'bypass-glass', widthCm: 160, color: c })] }), 'r:0', 'd')
+    expect(colors(bg, 'frame')).toEqual([c])
+    expect(colors(bg, 'panel')).toEqual([c])
+    expect(colors(bg, 'glass')).toEqual(colors(defG, 'glass'))
+  })
+
+  it('keeps the default opening colours when no colour is set', () => {
+    const w = modelOf(one({ openings: [windowOp()] }), 'r:0', 'w')
+    expect(w.parts.find((p) => p.kind === 'frame')!.color).toBe('#4b4540')
+    expect(w.parts.find((p) => p.kind === 'sill')!.color).toBe('#d4cfc6')
+    const d = modelOf(one({ openings: [door()] }), 'r:0', 'd')
+    expect(d.parts.find((p) => p.kind === 'leaf')!.color).toBe('#b58d5e')
+    expect(d.parts.find((p) => p.kind === 'frame')!.color).toBe('#6a5444')
+    const g = modelOf(one({ openings: [door({ variant: 'bypass-glass', widthCm: 160 })] }), 'r:0', 'd')
+    expect(g.parts.find((p) => p.kind === 'frame')!.color).toBe('#4a4f55')
+  })
+
+  it('gives an open passage no model', () => {
+    expect(wallOf(one({ openings: [door({ id: 'o', kind: 'opening' })] }), 'r:0').openingModels).toEqual([])
+  })
+
+  it('emits each model once on a shared wall', () => {
+    const SHARED = 'shared:A:1|B:3'
+    const s = buildScene(twoRooms({ openings: [
+      door({ id: 'd1', xCm: 400, yCm: 80, angleDeg: 90, roomId: 'A' }),
+      door({ id: 'd2', xCm: 400, yCm: 80, angleDeg: 90, roomId: 'B' }),
+      windowOp({ id: 'w1', xCm: 400, yCm: 220, angleDeg: 90, roomId: 'A', widthCm: 80 }),
+    ] }))
+    const models = s.walls.flatMap((w) => w.openingModels)
+    expect(models.map((m) => m.openingId).sort()).toEqual(['d1', 'w1'])
+    expect(s.walls.find((w) => w.id === SHARED)?.openingModels).toHaveLength(2)
+  })
+
+  it('keeps every part inside the vertical span a lowered wall can clip', () => {
+    const m = modelOf(one({ openings: [door()] }), 'r:0', 'd')
+    for (const p of m.parts) {
+      expect(p.y0).toBeLessThan(p.y1)
+      // A part either keeps a clipped span under the 10 cm curb, or vanishes: never floats above it.
+      const span = clipSpanToHeight(p.y0, p.y1, 10)
+      if (span) expect(span.y1).toBeLessThanOrEqual(10)
+      else expect(p.y0).toBeGreaterThanOrEqual(10)
+    }
+    const head = m.parts.find((p) => p.kind === 'frame' && p.y0 > 150)!
+    expect(clipSpanToHeight(head.y0, head.y1, 30)).toBeNull()
   })
 })

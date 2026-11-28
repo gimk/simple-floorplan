@@ -680,6 +680,15 @@ describe('applyCommand: furniture', () => {
     expect(r.doc.artboards[0].furniture[0]).toMatchObject({ name: 'Bed', shape: 'rect', xCm: 100, yCm: 120, widthCm: 160, depthCm: 200, rotationDeg: 0, heightCm: 50, showDirection: true })
   })
 
+  it('add_furniture stores presetId and duplicate_furniture keeps it', () => {
+    const r = ok(createDefaultProject(), { type: 'add_furniture', presetId: 'sofa', name: 'Renamed', xCm: 0, yCm: 0 })
+    const f = r.doc.artboards[0].furniture[0]
+    expect(f).toMatchObject({ name: 'Renamed', presetId: 'sofa' })
+    const dup = ok(r.doc, { type: 'duplicate_furniture', furnitureId: f.id }).doc.artboards[0].furniture[1]
+    expect(dup.presetId).toBe('sofa')
+    expect('presetId' in ok(createDefaultProject(), { type: 'add_furniture', xCm: 0, yCm: 0 }).doc.artboards[0].furniture[0]).toBe(false)
+  })
+
   it('add_furniture overrides preset values and works without a preset', () => {
     const r = ok(createDefaultProject(), { type: 'add_furniture', presetId: 'bed', name: 'Big bed', widthCm: 180, rotationDeg: 90, color: '#123456', xCm: 0, yCm: 0 })
     expect(r.doc.artboards[0].furniture[0]).toMatchObject({ name: 'Big bed', widthCm: 180, depthCm: 200, rotationDeg: 90, color: '#123456' })

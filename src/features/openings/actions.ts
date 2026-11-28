@@ -15,7 +15,10 @@ export function addOpening(artboardId: string, opening: Opening): void {
 
 export function updateOpening(artboardId: string, openingId: string, patch: Partial<Omit<Opening, 'id'>>): void {
   if (!findOpening(artboardId, openingId)) return
-  mutate(artboardId, openingId, (o) => { Object.assign(o, patch) })
+  mutate(artboardId, openingId, (o) => {
+    Object.assign(o, patch)
+    if ('color' in patch && patch.color === undefined) delete o.color
+  })
 }
 
 export function flipOpeningHinge(artboardId: string, openingId: string): void {
