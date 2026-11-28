@@ -26,7 +26,7 @@ import { flipSelection } from './features/furniture/flip'
 import { resolveEscapeGroupSelection } from './features/furniture/groups'
 import { moveSelectionToEnd } from './features/furniture/layerOrder'
 import { nudgeFurnitureSelection } from './features/furniture/nudge'
-import { copyStyle, pasteStyle } from './features/furniture/properties'
+import { copyStyle, pasteStyle } from './features/style/styleClipboard'
 import { clearSelection, enterGroup, exitGroupToSelection, selectAll } from './features/furniture/selectionActions'
 import { zoomToSelection } from './features/furniture/selectionBounds'
 import { selectNextFurniture } from './features/furniture/tabOrder'
@@ -52,6 +52,9 @@ import { ArtboardToolOverlay } from './features/artboards/ArtboardToolOverlay'
 import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
+import { deleteMultiItems } from './features/selection/deleteMulti'
+import { MultiInspect } from './features/selection/MultiInspect'
+import { normalizeSelection } from './features/selection/multiSelect'
 import { PinnedTape, TapeOverlay } from './features/tape/TapeOverlay'
 import type { View3DHandle } from './features/view3d/cameraPresets'
 import { copyView3DPng } from './features/view3d/exportPng'
@@ -61,7 +64,7 @@ import { toast, undoShortcut } from './features/toast'
 import { ToastHost } from './features/toast/ToastHost'
 import { selectRoom } from './features/artboards/selection'
 import { useDoc } from './model/store'
-import type { ProjectDoc, Selection } from './model/types'
+import type { Artboard, MultiTarget, ProjectDoc, Selection } from './model/types'
 import { CanvasGrid } from './shell/CanvasGrid'
 import { IconButton, Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
@@ -97,6 +100,42 @@ const isEditable = (t: EventTarget | null) => {
   return (
     !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
   )
+}
+
+/** True while the object a mixed multi-selection target points at still exists in `artboard`. */
+const multiItemExists = (artboard: Artboard | undefined, item: MultiTarget): boolean => {
+  if (!artboard) return false
+  switch (item.kind) {
+    case 'room':
+      return artboard.rooms.some((r) => r.id === item.roomId)
+    case 'wall':
+      return artboard.rooms.some((r) => r.id === item.roomId && item.edgeIndex < r.vertices.length)
+    case 'opening':
+      return artboard.openings.some((o) => o.id === item.openingId)
+    case 'furniture':
+      return artboard.furniture.some((f) => f.id === item.furnitureId)
+  }
+}
+
+/** Targets of `items` that still exist on `artboard`, in selection order. */
+const existingMultiItems = (artboard: Artboard | undefined, items: readonly MultiTarget[]): MultiTarget[] =>
+  items.filter((t) => multiItemExists(artboard, t))
+
+/**
+ * Delete every object of a 'multi' selection in ONE useDoc update (= one undo step), then clear the
+ * selection. Objects that already vanished are skipped, so a fully stale selection records nothing.
+ */
+function deleteMultiSelection(selection: { artboardId: string; items: MultiTarget[] }): void {
+  const artboard = useDoc.getState().doc.artboards.find((a) => a.id === selection.artboardId)
+  const items = artboard ? existingMultiItems(artboard, selection.items) : []
+  const artboardId = selection.artboardId
+  if (artboard && items.length > 0) {
+    useDoc.getState().update((d) => {
+      const draft = d.artboards.find((a) => a.id === artboardId)
+      if (draft) deleteMultiItems(draft, items)
+    })
+  }
+  useUi.getState().set({ selection: { kind: 'none' } })
 }
 
 /** Alt + this physical key aligns the furniture selection. Option changes e.key on macOS: use e.code. */
@@ -508,7 +547,8 @@ export default function App() {
         distributeSelection(e.code === 'KeyH' ? 'horizontal' : 'vertical')
         return
       }
-      // Option+Cmd+C / Option+Cmd+V (Ctrl+Alt elsewhere) copy and paste the style of the selected furniture.
+      // Option+Cmd+C / Option+Cmd+V (Ctrl+Alt elsewhere) copy and paste the colour/material style of
+      // the selected furniture, doors/windows, walls and rooms (a mixed multi-selection too).
       // preventDefault runs even when there is nothing to copy or paste, because Chrome opens its
       // DevTools inspect tool on Option+Cmd+C.
       if ((isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && e.altKey && !e.shiftKey) {
@@ -679,7 +719,8 @@ export default function App() {
           return
         }
       }
-      // Delete / Backspace removes the selected opening, reference image, furniture or rooms.
+      // Delete / Backspace removes the selected opening, reference image, furniture, rooms, or every
+      // object of a mixed multi-selection (one undo step).
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const ui = useUi.getState()
@@ -692,6 +733,10 @@ export default function App() {
           // One update for the whole group = one undo step; the selection is cleared by the action.
           e.preventDefault()
           deleteFurnitureGroup(ui.selection.artboardId, ui.selection.furnitureIds)
+        } else if (ui.selection.kind === 'multi') {
+          // Mixed furniture and rooms: one update = one undo step, then the selection is cleared.
+          e.preventDefault()
+          deleteMultiSelection(ui.selection)
         }
         return
       }
@@ -725,6 +770,12 @@ export default function App() {
         e.preventDefault()
         deleteRooms(sel.artboardId, sel.roomIds)
         useUi.getState().set({ selection: { kind: 'none' } })
+        return
+      }
+      // A mixed selection deletes every object it holds in one undo step (deleteMulti.ts).
+      if (sel.kind === 'multi') {
+        e.preventDefault()
+        deleteMultiSelection(sel)
         return
       }
       // An artboard delete keeps at least one artboard; the first remaining one becomes active.
@@ -900,7 +951,24 @@ export default function App() {
                   (artboards
                     .find((a) => a.id === selection.artboardId)
                     ?.furniture.filter((f) => selection.furnitureIds.includes(f.id)).length ?? 0) >= 2
-                : true
+                : selection.kind === 'multi'
+                  ? // One live item is enough: the mixed card styles what is left.
+                    existingMultiItems(
+                      artboards.find((a) => a.id === selection.artboardId),
+                      selection.items,
+                    ).length > 0
+                  : true
+
+  // An undo or an edit can remove objects that a 'multi' selection holds: drop the items that are
+  // gone, so the Inspect card and Delete only work on live objects. A lone survivor falls back to
+  // its own single kind through normalizeSelection.
+  useEffect(() => {
+    if (selection.kind !== 'multi') return
+    const board = artboards.find((a) => a.id === selection.artboardId)
+    const live = existingMultiItems(board, selection.items)
+    if (live.length === selection.items.length) return
+    setUi({ selection: normalizeSelection(selection.artboardId, live) })
+  }, [selection, artboards, setUi])
 
   /**
    * The wall-length input only lives while the selection that opened it is still current, and only
@@ -1231,6 +1299,9 @@ export default function App() {
               ) : selection.kind === 'furnitureMulti' && selectionExists ? (
                 // Several items: one colour card for all of them, plus group Duplicate / Delete.
                 <FurnitureMultiInspect artboardId={selection.artboardId} furnitureIds={selection.furnitureIds} />
+              ) : selection.kind === 'multi' && selectionExists ? (
+                // Mixed furniture and rooms: one card styles what the selection holds.
+                <MultiInspect />
               ) : selection.kind === 'room' && selectionExists && selection.roomIds.length > 1 ? (
                 // Several rooms: one floor card that styles all of them (one undo step per click).
                 <DesignRoomsInspect artboardId={selection.artboardId} roomIds={selection.roomIds} />
@@ -1253,6 +1324,9 @@ export default function App() {
             <OpeningInspect artboardId={selection.artboardId} openingId={selection.openingId} />
           ) : selection.kind === 'refImage' && selectionExists ? (
             <RefImageInspect imageId={selection.imageId} />
+          ) : selection.kind === 'multi' && selectionExists ? (
+            // Mixed walls, rooms and openings (Plan mode): one card for all of them.
+            <MultiInspect />
           ) : (
             <ArtboardInspect artboardId={selection.kind === 'artboard' ? selection.artboardId : activeArtboardId} />
           )}

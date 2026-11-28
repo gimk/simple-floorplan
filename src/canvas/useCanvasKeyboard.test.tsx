@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createArtboard, createDefaultProject } from '../model/schema'
 import { useDoc } from '../model/store'
 import { useUi } from '../shell/uiStore'
-import type { Opening, ProjectDoc, FurnitureItem } from '../model/types'
+import type { Opening, ProjectDoc, FurnitureItem, Selection } from '../model/types'
 import { createRectRoom } from '../features/rooms/ops'
 import { Viewport } from './Viewport'
 import {
@@ -77,6 +77,18 @@ describe('arrow nudge', () => {
   it('does nothing without a movable selection', () => {
     expect(nudgeSelection(makeDoc(), { kind: 'none' }, 1, 0)).toBeNull()
     expect(nudgeSelection(makeDoc(), { kind: 'furniture', artboardId: 'ab1', furnitureId: 'zz' }, 1, 0)).toBeNull()
+    // A mixed selection stays still: arrow keys do nothing on it.
+    expect(
+      nudgeSelection(
+        makeDoc(),
+        {
+          kind: 'multi', artboardId: 'ab1',
+          items: [{ kind: 'wall', roomId: 'r1', edgeIndex: 0 }, { kind: 'furniture', furnitureId: 'f1' }],
+        },
+        1,
+        0,
+      ),
+    ).toBeNull()
   })
 })
 
@@ -97,6 +109,74 @@ describe('describeSelection', () => {
       '1 furniture item selected',
     )
     expect(describeSelection(doc, { kind: 'furnitureMulti', artboardId: 'ab1', furnitureIds: ['gone'] })).toBe('')
+  })
+})
+
+describe('describeSelection of a mixed selection', () => {
+  /** makeDoc plus a window and a second door, so every opening kind can be counted. */
+  function mixedDoc(): ProjectDoc {
+    const d = makeDoc()
+    d.artboards[0].openings = [
+      ...d.artboards[0].openings,
+      { id: 'o2', kind: 'window', roomId: 'r1', xCm: 0, yCm: 100, angleDeg: 90, widthCm: 120 },
+      { id: 'o3', kind: 'door', roomId: 'r1', xCm: 400, yCm: 200, angleDeg: 90, widthCm: 80 },
+    ]
+    return d
+  }
+
+  it('names walls first, then rooms, doors, windows, openings and furniture', () => {
+    const sel: Selection = {
+      kind: 'multi', artboardId: 'ab1',
+      items: [
+        { kind: 'furniture', furnitureId: 'f1' },
+        { kind: 'opening', openingId: 'o2' },
+        { kind: 'wall', roomId: 'r1', edgeIndex: 0 },
+        { kind: 'wall', roomId: 'r1', edgeIndex: 1 },
+        { kind: 'opening', openingId: 'o1' },
+        { kind: 'room', roomId: 'r1' },
+      ],
+    }
+    expect(describeSelection(mixedDoc(), sel)).toBe('2 walls, 1 room, 1 door, 1 window, 1 furniture item selected')
+  })
+
+  it('uses the plural form and groups the walls', () => {
+    const sel: Selection = {
+      kind: 'multi', artboardId: 'ab1',
+      items: [
+        { kind: 'wall', roomId: 'r1', edgeIndex: 0 },
+        { kind: 'wall', roomId: 'r1', edgeIndex: 1 },
+        { kind: 'wall', roomId: 'r1', edgeIndex: 2 },
+        { kind: 'opening', openingId: 'o1' },
+        { kind: 'opening', openingId: 'o3' },
+        { kind: 'furniture', furnitureId: 'f1' },
+      ],
+    }
+    expect(describeSelection(mixedDoc(), sel)).toBe('3 walls, 2 doors, 1 furniture item selected')
+  })
+
+  it('counts a plain wall opening and ignores the items that are gone', () => {
+    const d = mixedDoc()
+    d.artboards[0].openings = [
+      ...d.artboards[0].openings,
+      { id: 'o4', kind: 'opening', roomId: 'r1', xCm: 100, yCm: 300, angleDeg: 0, widthCm: 150 },
+    ]
+    const sel: Selection = {
+      kind: 'multi', artboardId: 'ab1',
+      items: [
+        { kind: 'opening', openingId: 'o4' },
+        { kind: 'opening', openingId: 'gone' },
+        { kind: 'furniture', furnitureId: 'gone' },
+        { kind: 'room', roomId: 'gone' },
+      ],
+    }
+    expect(describeSelection(d, sel)).toBe('1 opening selected')
+    // Nothing left: no spoken text.
+    expect(
+      describeSelection(d, {
+        kind: 'multi', artboardId: 'ab1',
+        items: [{ kind: 'opening', openingId: 'gone' }, { kind: 'wall', roomId: 'nope', edgeIndex: 0 }],
+      }),
+    ).toBe('')
   })
 })
 

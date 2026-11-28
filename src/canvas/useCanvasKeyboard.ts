@@ -2,9 +2,10 @@
 //  - Tab / Shift+Tab walk the selection through rooms, openings and furniture of the active artboard
 //    (focus leaves the canvas after the last / before the first item, so nobody gets trapped);
 //  - arrow keys nudge the selected room, opening or furniture by 1 cm (10 cm with Shift), as one undo step;
+//    a mixed multi-selection stays still (no single translation keeps it consistent);
 //  - `announce` returns the text for an aria-live region that describes the selection.
 import { useCallback, type KeyboardEvent } from 'react'
-import type { Artboard, ProjectDoc, Selection } from '../model/types'
+import type { Artboard, MultiTarget, ProjectDoc, Selection } from '../model/types'
 import { area } from '../model/geometry'
 import { useDoc } from '../model/store'
 import { useUi } from '../shell/uiStore'
@@ -74,6 +75,9 @@ export function arrowDelta(key: string, shift: boolean): { dx: number; dy: numbe
 
 /** Move the selected room(s) (with their openings and furniture), opening or furniture item. Returns a doc mutator, or null when nothing can move. */
 export function nudgeSelection(doc: ProjectDoc, sel: Selection, dx: number, dy: number): ((d: ProjectDoc) => void) | null {
+  // A mixed selection does not move with the arrow keys: rooms, walls and their openings need more
+  // than one translation, so the keys stay a no-op and the objects stay consistent.
+  if (sel.kind === 'multi') return null
   if (sel.kind === 'room' || sel.kind === 'wall' || sel.kind === 'vertex') {
     const ids = sel.kind === 'room' ? sel.roomIds : [sel.roomId]
     if (!doc.artboards.find((a) => a.id === sel.artboardId)?.rooms.some((r) => ids.includes(r.id))) return null
@@ -113,6 +117,47 @@ export function nudgeSelection(doc: ProjectDoc, sel: Selection, dx: number, dy: 
   return null
 }
 
+/** Count of the existing openings in `items`, grouped by opening kind. */
+function countOpenings(ab: Artboard, items: MultiTarget[]): { door: number; window: number; opening: number } {
+  const counts = { door: 0, window: 0, opening: 0 }
+  for (const item of items) {
+    if (item.kind !== 'opening') continue
+    const o = ab.openings.find((x) => x.id === item.openingId)
+    if (o) counts[o.kind] += 1
+  }
+  return counts
+}
+
+/** `n` + a singular word, or the plural word when `n` is not 1. */
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+/**
+ * Spoken text for a mixed selection: "3 walls, 2 doors, 1 room selected". Items whose object is
+ * gone are not counted. Order: walls, rooms, doors, windows, openings, furniture items.
+ */
+export function describeMulti(ab: Artboard, items: MultiTarget[]): string {
+  const wallCount = items.filter(
+    (i) => i.kind === 'wall' && ab.rooms.some((r) => r.id === i.roomId && i.edgeIndex < r.vertices.length),
+  ).length
+  const roomCount = items.filter((i) => i.kind === 'room' && ab.rooms.some((r) => r.id === i.roomId)).length
+  const { door, window, opening } = countOpenings(ab, items)
+  const furnitureCount = items.filter(
+    (i) => i.kind === 'furniture' && ab.furniture.some((f) => f.id === i.furnitureId),
+  ).length
+
+  const parts: string[] = []
+  if (wallCount > 0) parts.push(plural(wallCount, 'wall', 'walls'))
+  if (roomCount > 0) parts.push(plural(roomCount, 'room', 'rooms'))
+  if (door > 0) parts.push(plural(door, 'door', 'doors'))
+  if (window > 0) parts.push(plural(window, 'window', 'windows'))
+  if (opening > 0) parts.push(plural(opening, 'opening', 'openings'))
+  if (furnitureCount > 0) parts.push(plural(furnitureCount, 'furniture item', 'furniture items'))
+  if (parts.length === 0) return ''
+  return `${parts.join(', ')} selected`
+}
+
 /** Screen-reader text for the current selection. */
 export function describeSelection(doc: ProjectDoc, sel: Selection): string {
   if (sel.kind === 'none') return ''
@@ -147,7 +192,7 @@ export function describeSelection(doc: ProjectDoc, sel: Selection): string {
     if (count === 0) return ''
     return `${count} furniture item${count === 1 ? '' : 's'} selected`
   }
-  if (sel.kind === 'multi') return '' // Mixed selection: no spoken text yet.
+  if (sel.kind === 'multi') return describeMulti(ab, sel.items)
   const f = ab.furniture.find((x) => x.id === sel.furnitureId)
   return f ? `${f.name}, ${formatLengthCm(f.widthCm, precision)} by ${formatLengthCm(f.depthCm, precision)} centimeters` : ''
 }

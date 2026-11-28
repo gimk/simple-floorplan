@@ -53,6 +53,39 @@ describe('selectionWorldBounds', () => {
     expect(b.maxY).toBeGreaterThan(125)
   })
 
+  it('unions the bounds of every item of a mixed selection', () => {
+    const d = doc(board({ furniture: [item({ id: 'a' }), item({ id: 'b', xCm: 300, yCm: 400 })] }))
+    expect(
+      selectionWorldBounds(d, {
+        kind: 'multi', artboardId: 'ab1',
+        items: [{ kind: 'furniture', furnitureId: 'a' }, { kind: 'furniture', furnitureId: 'b' }],
+      }),
+    ).toEqual({ minX: 1050, minY: 75, maxX: 1350, maxY: 425 })
+  })
+
+  it('unions mixed kinds and skips the items that give no bounds', () => {
+    const d = doc(board({ furniture: [item({ id: 'a' })], rooms: [room('r1')] }))
+    const roomBox = { minX: 1010, minY: 20, maxX: 1210, maxY: 220 }
+    // Room r1 reaches further than furniture 'a'; the missing opening adds nothing.
+    expect(
+      selectionWorldBounds(d, {
+        kind: 'multi', artboardId: 'ab1',
+        items: [
+          { kind: 'furniture', furnitureId: 'a' },
+          { kind: 'opening', openingId: 'gone' },
+          { kind: 'room', roomId: 'r1' },
+        ],
+      }),
+    ).toEqual(roomBox)
+    // Only missing items left: no bounds at all.
+    expect(
+      selectionWorldBounds(d, {
+        kind: 'multi', artboardId: 'ab1',
+        items: [{ kind: 'opening', openingId: 'gone' }, { kind: 'furniture', furnitureId: 'gone' }],
+      }),
+    ).toBeNull()
+  })
+
   it('returns null for selections without geometry or unknown ids', () => {
     const d = doc(board({ furniture: [item({ id: 'a' })] }))
     expect(selectionWorldBounds(d, { kind: 'none' })).toBeNull()
