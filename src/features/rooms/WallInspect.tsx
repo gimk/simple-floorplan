@@ -184,6 +184,12 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
   const openings = openingsOnWall(artboard, room, wall)
   // Wall paint of this wall: visual only, the same room.wallColors key Design mode edits.
   const wallColor = room.wallColors?.[String(edgeIndex)]
+  // Name of the paint, shown under the swatches like the multi-selection wall card does.
+  const wallColorLabel =
+    wallColor === undefined
+      ? 'Default'
+      : (WALL_ACCENT_COLORS.find((swatch) => swatch.color?.toLowerCase() === wallColor.toLowerCase())?.label ??
+        'Custom color')
   const roomLabel = room.name.trim() === '' ? 'Untitled room' : room.name
   const count = room.vertices.length
   const prev = (edgeIndex - 1 + count) % count
@@ -241,9 +247,9 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
           />
         </FieldRow>
 
-        <FieldRow label="Wall colour" stacked>
+        <FieldRow label="Wall color" stacked>
           <ColorRow
-            label="Wall colour"
+            label="Wall color"
             colors={WALL_COLOR_VALUES}
             value={wallColor}
             onChange={(color) => {
@@ -251,16 +257,23 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
               setRoomWallColor(artboard.id, room.id, edgeIndex, color)
             }}
           />
-          {wallColor !== undefined && (
-            <button
-              type="button"
-              className={BTN}
-              onClick={() => setRoomWallColor(artboard.id, room.id, edgeIndex, undefined)}
-            >
-              <RotateCcw size={14} aria-hidden="true" />
-              Reset to default
-            </button>
-          )}
+          <div className="flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              style={wallColor ? { backgroundColor: wallColor } : undefined}
+              className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/25"
+            />
+            <p className={MUTED}>{wallColorLabel}</p>
+          </div>
+          <button
+            type="button"
+            className={BTN}
+            disabled={wallColor === undefined}
+            onClick={() => setRoomWallColor(artboard.id, room.id, edgeIndex, undefined)}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            Reset to default
+          </button>
         </FieldRow>
 
         <div className="flex flex-col gap-1">

@@ -102,7 +102,7 @@ export function MultiInspect() {
       ? 'Mixed'
       : wallColor === undefined
         ? 'Default'
-        : (WALL_ACCENT_COLORS.find((s) => colorKey(s.color) === colorKey(wallColor))?.label ?? 'Custom colour')
+        : (WALL_ACCENT_COLORS.find((s) => colorKey(s.color) === colorKey(wallColor))?.label ?? 'Custom color')
 
   // Opening colour, same rule.
   const openingColor = openings ? (openings.color.mixed ? undefined : openings.color.value) : undefined
@@ -113,7 +113,7 @@ export function MultiInspect() {
     ? ''
     : rooms.fill.mixed
       ? 'Mixed'
-      : (FLOOR_SWATCHES.find((s) => colorKey(s.color) === colorKey(rooms.fill.value))?.label ?? 'Custom colour')
+      : (FLOOR_SWATCHES.find((s) => colorKey(s.color) === colorKey(rooms.fill.value))?.label ?? 'Custom color')
   const pattern = rooms ? (rooms.floorPattern.mixed ? undefined : rooms.floorPattern.value) : undefined
   const anyPatterned = !!rooms && (rooms.floorPattern.mixed || isPatterned(rooms.floorPattern.value))
   const angle = rooms ? (rooms.floorPatternAngleDeg.mixed ? null : (rooms.floorPatternAngleDeg.value ?? 0)) : null
@@ -124,21 +124,30 @@ export function MultiInspect() {
     ? ''
     : furniture.color.mixed
       ? 'Mixed'
-      : (FURNITURE_COLORS.find((c) => colorKey(c.color) === colorKey(furnitureColor))?.label ?? 'Custom colour')
+      : (FURNITURE_COLORS.find((c) => colorKey(c.color) === colorKey(furnitureColor))?.label ?? 'Custom color')
+
+  // Reset of the room floor: one button clears fill, pattern and angle, so it is enabled only while
+  // at least one selected room still holds one of those fields.
+  const selectedRoomIds = items.flatMap((item) => (item.kind === 'room' ? [item.roomId] : []))
+  const noFloorStyle = !artboard.rooms.some(
+    (r) =>
+      selectedRoomIds.includes(r.id) &&
+      (r.fill !== undefined || r.floorPattern !== undefined || r.floorPatternAngleDeg !== undefined),
+  )
 
   return (
     <>
       <PanelSection title="Selection" icon={<Layers size={14} aria-hidden="true" />}>
-        <p className="text-sm font-semibold text-slate-100">{`${total} selected: ${parts.join(', ')}`}</p>
+        <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{`${total} selected: ${parts.join(', ')}`}</p>
         <p className={MUTED}>Shift-click adds or removes one object. A mixed value shows as Mixed, and picking sets them all.</p>
       </PanelSection>
 
       {walls && (
         <PanelSection title="Walls" icon={<Paintbrush size={14} aria-hidden="true" />}>
           <div className="flex flex-col gap-1">
-            <span className={LABEL}>Wall colour</span>
+            <span className={LABEL}>Wall color</span>
             <ColorRow
-              label="Wall colour"
+              label="Wall color"
               colors={WALL_COLOR_VALUES}
               value={wallColor}
               onChange={(color) => {
@@ -163,9 +172,9 @@ export function MultiInspect() {
       {openings && (
         <PanelSection title="Doors and windows" icon={<DoorOpen size={14} aria-hidden="true" />}>
           <div className="flex flex-col gap-1">
-            <span className={LABEL}>Colour</span>
+            <span className={LABEL}>Color</span>
             <ColorRow
-              label="Door and window colour"
+              label="Door and window color"
               colors={OPENING_COLOR_VALUES}
               value={openingColor}
               onChange={(color) => {
@@ -178,8 +187,8 @@ export function MultiInspect() {
             {openings.color.mixed
               ? 'Mixed'
               : openingColor === undefined
-                ? 'Default (the built-in door and window colours)'
-                : 'Custom colour (the colour of the door or window in 3D)'}
+                ? 'Default (the built-in door and window colors)'
+                : 'Custom color (the color of the door or window in 3D)'}
           </p>
           <button
             type="button"
@@ -197,49 +206,55 @@ export function MultiInspect() {
 
       {rooms && (
         <PanelSection title="Rooms" icon={<Square size={14} aria-hidden="true" />}>
-          <div className="grid grid-cols-5 gap-2" role="group" aria-label="Floor colour">
-            {FLOOR_SWATCHES.map((swatch) => {
-              const active = !rooms.fill.mixed && colorKey(swatch.color) === colorKey(rooms.fill.value)
-              return (
-                <FloorSwatch
-                  key={swatch.id}
-                  label={swatch.label}
-                  color={swatch.color}
-                  active={active}
-                  onPick={() => {
-                    if (active) return
-                    commitStyle((draft, targets) => applyStylePatch(draft, targets, 'room', { fill: swatch.color }))
-                  }}
-                />
-              )
-            })}
+          <div className="flex flex-col gap-1">
+            <span className={LABEL}>Floor color</span>
+            <div className="grid grid-cols-5 gap-2" role="group" aria-label="Floor color">
+              {FLOOR_SWATCHES.map((swatch) => {
+                const active = !rooms.fill.mixed && colorKey(swatch.color) === colorKey(rooms.fill.value)
+                return (
+                  <FloorSwatch
+                    key={swatch.id}
+                    label={swatch.label}
+                    color={swatch.color}
+                    active={active}
+                    onPick={() => {
+                      if (active) return
+                      commitStyle((draft, targets) => applyStylePatch(draft, targets, 'room', { fill: swatch.color }))
+                    }}
+                  />
+                )
+              })}
+            </div>
           </div>
           <p className={MUTED}>{fillLabel}</p>
 
-          <div className="grid grid-cols-3 gap-1" role="group" aria-label="Floor pattern">
-            {FLOOR_PATTERNS.map((p) => {
-              const active = !rooms.floorPattern.mixed && pattern === p.id
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => {
-                    if (active) return
-                    commitStyle((draft, targets) =>
-                      applyStylePatch(draft, targets, 'room', { floorPattern: storedPattern(p.id) }),
-                    )
-                  }}
-                  className={`min-h-7 rounded-full border px-2 text-xs font-medium pointer-coarse:min-h-10 ${
-                    active
-                      ? 'border-orange-500 bg-orange-500/15 text-orange-600 dark:text-orange-300'
-                      : 'border-black/15 text-slate-700 hover:bg-black/5 dark:border-white/20 dark:text-slate-200 dark:hover:bg-white/10'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              )
-            })}
+          <div className="flex flex-col gap-1">
+            <span className={LABEL}>Floor material</span>
+            <div className="grid grid-cols-3 gap-1" role="group" aria-label="Floor material">
+              {FLOOR_PATTERNS.map((p) => {
+                const active = !rooms.floorPattern.mixed && pattern === p.id
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => {
+                      if (active) return
+                      commitStyle((draft, targets) =>
+                        applyStylePatch(draft, targets, 'room', { floorPattern: storedPattern(p.id) }),
+                      )
+                    }}
+                    className={`min-h-7 rounded-full border px-2 text-xs font-medium pointer-coarse:min-h-10 ${
+                      active
+                        ? 'border-orange-500 bg-orange-500/15 text-orange-600 dark:text-orange-300'
+                        : 'border-black/15 text-slate-700 hover:bg-black/5 dark:border-white/20 dark:text-slate-200 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
           {rooms.floorPattern.mixed && <p className={MUTED}>Mixed</p>}
 
@@ -290,15 +305,32 @@ export function MultiInspect() {
               </div>
             </>
           )}
+          <button
+            type="button"
+            className={BTN}
+            disabled={noFloorStyle}
+            onClick={() =>
+              commitStyle((draft, targets) =>
+                applyStylePatch(draft, targets, 'room', {
+                  fill: undefined,
+                  floorPattern: undefined,
+                  floorPatternAngleDeg: undefined,
+                }),
+              )
+            }
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            Reset to default
+          </button>
         </PanelSection>
       )}
 
       {furniture && (
         <PanelSection title="Furniture" icon={<Armchair size={14} aria-hidden="true" />}>
           <div className="flex flex-col gap-1">
-            <span className={LABEL}>Colour</span>
+            <span className={LABEL}>Color</span>
             <ColorRow
-              label="Furniture colour"
+              label="Furniture color"
               colors={FURNITURE_COLOR_VALUES}
               value={furnitureColor}
               onChange={(color) => {
