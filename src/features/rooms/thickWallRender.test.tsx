@@ -33,6 +33,22 @@ const shape = (wall: { out: { x: number; y: number }; thicknessCm: number } | nu
 
 const count = (haystack: string, needle: string) => haystack.split(needle).length - 1
 
+/** One 400 x 300 cm room whose wall kinds are given, on an artboard with 10 cm walls. */
+const fencedBoard = (wallKinds: Record<string, 'wall' | 'fence'>): Artboard => ({
+  id: AB, name: 'Balcony plan', xCm: 0, yCm: 0, ceilingHeightCm: 250, precisionCm: 1, wallThicknessCm: 10,
+  rooms: [{
+    id: 'r1', name: 'Living',
+    vertices: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+    wallKinds,
+  }],
+  openings: [],
+  furniture: [],
+})
+
+/** Markup of the thick wall body layer, up to the mask that hides the room border strokes. */
+const wallBodyOf = (html: string) =>
+  html.slice(html.indexOf(`data-testid="wall-layer-${AB}"`), html.indexOf('<mask id="wall-stroke-mask-'))
+
 describe('RoomsLayer with thick walls', () => {
   it('adds a stroke mask and masks the room border of both rooms', () => {
     const html = renderToStaticMarkup(<RoomsLayer artboard={board(10)} />)
@@ -64,6 +80,67 @@ describe('RoomsLayer with thick walls', () => {
     expect(html).not.toContain('data-testid="room-strokes-')
     // Thin walls keep the border stroke on the interactive polygon.
     expect(html).toContain('stroke="rgba(226,232,240,0.85)"')
+  })
+})
+
+describe('RoomsLayer with fence walls', () => {
+  it('keeps the closed wall body polygon when no wall is a fence', () => {
+    const html = renderToStaticMarkup(<RoomsLayer artboard={fencedBoard({})} />)
+    const body = wallBodyOf(html)
+    expect(count(body, '<polyline')).toBe(0)
+    expect(body).toContain('points="0,0 400,0 400,300 0,300" fill="none" stroke="#5b6577" stroke-width="20"')
+    expect(html).not.toContain('data-wall-kind="fence"')
+  })
+
+  it('breaks the wall body into one polyline per solid run and drops the fence edge', () => {
+    const html = renderToStaticMarkup(<RoomsLayer artboard={fencedBoard({ '0': 'fence' })} />)
+    const body = wallBodyOf(html)
+    // The three solid edges form one open run from (400,0) back to (0,0): no wall along the fence.
+    expect(count(body, '<polyline')).toBe(1)
+    expect(body).toContain(
+      'points="400,0 400,300 0,300 0,0" fill="none" stroke="#5b6577" stroke-width="20" ' +
+        'stroke-linejoin="miter" stroke-miterlimit="4" stroke-linecap="butt"',
+    )
+    expect(body).not.toContain('points="0,0 400,0 400,300 0,300" fill="none"')
+  })
+
+  it('emits no wall body at all when every wall is a fence', () => {
+    const html = renderToStaticMarkup(
+      <RoomsLayer artboard={fencedBoard({ '0': 'fence', '1': 'fence', '2': 'fence', '3': 'fence' })} />,
+    )
+    const body = wallBodyOf(html)
+    expect(count(body, '<polyline')).toBe(0)
+    expect(body).not.toContain('fill="none" stroke')
+    // The railing is still drawn, one group per fence edge.
+    expect(count(html, 'data-wall-kind="fence"')).toBe(4)
+  })
+
+  it('draws the railing on the fence edge inside the masked room strokes', () => {
+    const html = renderToStaticMarkup(<RoomsLayer artboard={fencedBoard({ '0': 'fence' })} />)
+    const strokes = html.slice(html.indexOf(`data-testid="room-strokes-${AB}"`))
+    expect(strokes).toContain('data-wall-kind="fence" data-fence="r1:0"')
+    // The solid edges keep the normal room border stroke, as a polyline (no line along the fence).
+    expect(strokes).toContain(
+      'points="400,0 400,300 0,300 0,0" fill="none" stroke="rgba(226,232,240,0.85)" stroke-width="1" ' +
+        'stroke-linejoin="round"',
+    )
+    const from = strokes.indexOf('data-fence="r1:0"')
+    const group = strokes.slice(from, strokes.indexOf('</g>', from))
+    // Inner dashed line on the room border, outer solid line 4 cm outward (top wall: y -4).
+    expect(group).toContain(
+      'x1="0" y1="0" x2="400" y2="0" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"',
+    )
+    expect(group).toContain('x1="0" y1="-4" x2="400" y2="-4" stroke="#94a3b8" stroke-width="1.25"')
+    // Posts: start, end and 6 ticks between them (7 intervals of ~57 cm over 400 cm), plus 2 rails.
+    expect(count(group, '<line')).toBe(10)
+    expect(group).toContain('x1="0" y1="0" x2="0" y2="-4" stroke="#94a3b8" stroke-width="1.5"')
+    expect(group).toContain('x1="400" y1="0" x2="400" y2="-4" stroke="#94a3b8" stroke-width="1.5"')
+  })
+
+  it('keeps the wall interaction attributes of a fence edge', () => {
+    const html = renderToStaticMarkup(<RoomsLayer artboard={fencedBoard({ '0': 'fence' })} />)
+    expect(html).toContain('data-wall="r1:0" data-entity="wall" data-id="r1" data-edge="0"')
+    expect(html).toContain('data-wall="r1:1" data-entity="wall" data-id="r1" data-edge="1"')
   })
 })
 

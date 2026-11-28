@@ -3,7 +3,7 @@
 import { area, signedArea } from '../model/geometry'
 import type { Vec } from '../model/geometry'
 import { createArtboard, newId } from '../model/schema'
-import type { Artboard, FloorPattern, FurnitureItem, Opening, OpeningKind, OpeningVariant, ProjectDoc, Room } from '../model/types'
+import type { Artboard, FloorPattern, FurnitureItem, Opening, OpeningKind, OpeningVariant, ProjectDoc, Room, WallKind } from '../model/types'
 import { artboardFrame } from '../features/artboards/frame'
 import { cornerRadiiPatch, MAX_FURNITURE_CM, MIN_FURNITURE_CM } from '../features/furniture/geometry'
 import {
@@ -52,7 +52,15 @@ export type AgentCommand =
   | ({ type: 'delete_rooms'; roomIds: string[] } & OnArtboard)
   | ({ type: 'cutout_rooms'; cutter: Vec[] } & OnArtboard)
   | ({ type: 'merge_rooms'; roomIds: string[] } & OnArtboard)
-  | ({ type: 'set_room_style'; roomId: string; fill?: string | null; floorPattern?: FloorPattern | null; wallColors?: Record<number, string | null> } & OnArtboard)
+  | ({
+      type: 'set_room_style'
+      roomId: string
+      fill?: string | null
+      floorPattern?: FloorPattern | null
+      wallColors?: Record<number, string | null>
+      /** Kind per wall: null or 'wall' clears the edge, 'fence' makes it a fence. */
+      wallKinds?: Record<number, WallKind | null>
+    } & OnArtboard)
   | ({
       type: 'add_opening_on_wall'
       roomId: string
@@ -113,7 +121,12 @@ export function cloneDocPure(doc: ProjectDoc): ProjectDoc {
 
 const cloneArtboard = (a: Artboard): Artboard => ({
   ...a,
-  rooms: a.rooms.map((r) => ({ ...r, vertices: r.vertices.map((v) => ({ ...v })), ...(r.wallColors ? { wallColors: { ...r.wallColors } } : {}) })),
+  rooms: a.rooms.map((r) => ({
+    ...r,
+    vertices: r.vertices.map((v) => ({ ...v })),
+    ...(r.wallColors ? { wallColors: { ...r.wallColors } } : {}),
+    ...(r.wallKinds ? { wallKinds: { ...r.wallKinds } } : {}),
+  })),
   openings: a.openings.map((o) => ({ ...o })),
   furniture: a.furniture.map((f) => ({ ...f })),
 })
@@ -376,6 +389,18 @@ function run(d: ProjectDoc, cmd: AgentCommand): Result {
         }
         if (Object.keys(colors).length === 0) delete room.wallColors
         else room.wallColors = colors
+      }
+      if (cmd.wallKinds !== undefined) {
+        const kinds = { ...(room.wallKinds ?? {}) }
+        for (const [key, kind] of Object.entries(cmd.wallKinds)) {
+          const idx = Number(key)
+          needIndex(idx, 'wallKinds edge index', room.vertices.length)
+          if (kind === null || kind === 'wall') delete kinds[String(idx)]
+          else if (kind === 'fence') kinds[String(idx)] = 'fence'
+          else fail(`wallKinds[${key}] must be 'wall', 'fence' or null.`)
+        }
+        if (Object.keys(kinds).length === 0) delete room.wallKinds
+        else room.wallKinds = kinds
       }
       return { artboardId: ab.id, roomId: room.id }
     }

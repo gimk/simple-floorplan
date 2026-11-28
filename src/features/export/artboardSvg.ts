@@ -9,7 +9,8 @@ import { DEFAULT_PATTERN_FILL, isPatterned, patternId, patternSvg } from '../roo
 import { ARTBOARD_PAD_CM, artboardFrame, roomAreaM2 } from '../artboards/frame'
 import { directionArrowGeometry, furnitureCornerRadiiCm, roundedRectPath } from '../furniture/geometry'
 import {
-  WALL_COLOR, jambSegment, openingSymbolShift, openingWall, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
+  FENCE_COLOR, FENCE_THICKNESS_CM, WALL_COLOR, edgeOutwardNormal, isFenceWall,
+  jambSegment, openingSymbolShift, openingWall, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
 } from '../rooms/walls'
 import type { OpeningWall } from '../rooms/walls'
 import { doorArcGeometry, openingEndpoints, openingSymbol, openingVariant } from '../openings/geometry'
@@ -154,6 +155,84 @@ type Ctx = {
   wallLabelSeen: Set<string>
 }
 
+/** True when at least one wall of `room` is a fence (low railing) instead of a solid wall. */
+function roomHasFence(room: Room): boolean {
+  return room.vertices.some((_, i) => isFenceWall(room, i))
+}
+
+/** Edge indices of `room` that are fences, in vertex order. */
+function fenceEdges(room: Room): number[] {
+  return room.vertices.map((_, i) => i).filter((i) => isFenceWall(room, i))
+}
+
+/** Inclusive cyclic range of edge indices holding one contiguous run of solid ('wall') edges. */
+type EdgeRun = { from: number; to: number }
+
+/** Runs of contiguous solid ('wall') edges of `room`; a fence edge breaks a run. Empty when all are fences. */
+function solidRuns(room: Room): EdgeRun[] {
+  const n = room.vertices.length
+  const fence = room.vertices.map((_, i) => isFenceWall(room, i))
+  const firstFence = fence.indexOf(true)
+  if (firstFence < 0) return []
+  const runs: EdgeRun[] = []
+  let run: EdgeRun | null = null
+  // Start right after a fence edge, so a run never wraps around the end of the vertex list.
+  for (let k = 0; k < n; k++) {
+    const i = (firstFence + 1 + k) % n
+    if (fence[i]) { run = null; continue }
+    if (run) run.to = i
+    else { run = { from: i, to: i }; runs.push(run) }
+  }
+  return runs
+}
+
+/** Points attribute of the polyline of one edge run: every vertex it walks, end point included. */
+function runPoints(room: Room, run: EdgeRun): string {
+  const n = room.vertices.length
+  const points: string[] = []
+  for (let i = run.from; i <= run.to + 1; i++) {
+    const v = room.vertices[i % n]
+    points.push(`${num(v.x)},${num(v.y)}`)
+  }
+  return points.join(' ')
+}
+
+/**
+ * Railing of every fence edge of `room`: a dashed inner line on the room border, a solid outer line
+ * FENCE_THICKNESS_CM away from it, and perpendicular posts (start, end, every ~60 cm).
+ */
+function fenceSvg(room: Room, ctx: Ctx, indent: string): string[] {
+  const out: string[] = []
+  const n = room.vertices.length
+  for (const i of fenceEdges(room)) {
+    const a = room.vertices[i], b = room.vertices[(i + 1) % n]
+    const normal = edgeOutwardNormal(room, i)
+    out.push(`${indent}<g data-wall-kind="fence" data-fence="${esc(room.id)}:${i}">`)
+    out.push(
+      `${indent}  <line x1="${num(a.x)}" y1="${num(a.y)}" x2="${num(b.x)}" y2="${num(b.y)}" ` +
+        `stroke="${FENCE_COLOR}" stroke-width="${num(ctx.u(1.5))}" stroke-dasharray="${num(ctx.u(6))} ${num(ctx.u(4))}" />`,
+    )
+    if (normal) {
+      const ox = normal.x * FENCE_THICKNESS_CM, oy = normal.y * FENCE_THICKNESS_CM
+      out.push(
+        `${indent}  <line x1="${num(a.x + ox)}" y1="${num(a.y + oy)}" x2="${num(b.x + ox)}" y2="${num(b.y + oy)}" ` +
+          `stroke="${FENCE_COLOR}" stroke-width="${num(ctx.u(1.25))}" />`,
+      )
+      const posts = Math.max(1, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / 60))
+      for (let k = 0; k <= posts; k++) {
+        const t = k / posts
+        const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t
+        out.push(
+          `${indent}  <line x1="${num(x)}" y1="${num(y)}" x2="${num(x + ox)}" y2="${num(y + oy)}" ` +
+            `stroke="${FENCE_COLOR}" stroke-width="${num(ctx.u(1.5))}" />`,
+        )
+      }
+    }
+    out.push(`${indent}</g>`)
+  }
+  return out
+}
+
 /** Rooms: filled polygon, 1.5px outline, name + area in the middle, wall lengths on the outside. */
 function roomSvg(room: Room, ctx: Ctx, thresholds: Vec[][] = []): string[] {
   const v = room.vertices
@@ -177,16 +256,32 @@ function roomSvg(room: Room, ctx: Ctx, thresholds: Vec[][] = []): string[] {
         `stroke="${esc(paint)}" stroke-width="${num(ctx.u(2.5))}" />`,
     )
   }
-  const strokePolygon =
-    `      <polygon points="${pts}" fill="none" stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" stroke-linejoin="round" />`
+  const strokeAttrs = `fill="none" stroke="${LINE}" stroke-width="${num(ctx.u(1.5))}" stroke-linejoin="round"`
+  const strokePolygon = `      <polygon points="${pts}" ${strokeAttrs} />`
+  const fences = fenceEdges(room)
+  // A room with fences strokes one polyline per solid run (no line along a fence) and adds a railing.
+  const borders = fences.length === 0
+    ? [strokePolygon]
+    : solidRuns(room).map((run) => `      <polyline points="${runPoints(room, run)}" ${strokeAttrs} />`)
   if (ctx.strokeMaskId) {
     // Thick walls: the fill keeps no stroke, and the border stroke and the wall paint lines go into
     // one masked group so an opening cuts them away (no 1px line crosses the gap).
     out.push(
       `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${fillValue}"${fillOpacity} stroke="none" />`,
       `    <g data-room-strokes="${esc(room.id)}" mask="url(#${ctx.strokeMaskId})">`,
-      strokePolygon,
+      ...borders,
       ...paintLines,
+      ...fenceSvg(room, ctx, '      '),
+      `    </g>`,
+    )
+  } else if (fences.length > 0) {
+    // Thin walls: no stroke mask, so a fence room draws its borders and railings in its own group.
+    out.push(
+      `    <polygon data-room="${esc(room.id)}" points="${pts}" fill="${fillValue}"${fillOpacity} stroke="none" />`,
+      `    <g data-room-strokes="${esc(room.id)}">`,
+      ...borders,
+      ...paintLines,
+      ...fenceSvg(room, ctx, '      '),
       `    </g>`,
     )
   } else {
@@ -260,10 +355,19 @@ function wallLayerSvg(artboard: Artboard, ctx: Ctx): string[] {
   ]
   for (const room of artboard.rooms) {
     if (room.vertices.length < 3) continue
-    out.push(
-      `      <polygon points="${room.vertices.map((p) => `${num(p.x)},${num(p.y)}`).join(' ')}" fill="none" stroke="${WALL_COLOR}" ` +
-        `stroke-width="${num(ctx.wallThicknessCm * 2)}" stroke-linejoin="miter" stroke-miterlimit="4" />`,
-    )
+    const points = room.vertices.map((p) => `${num(p.x)},${num(p.y)}`).join(' ')
+    const body =
+      `fill="none" stroke="${WALL_COLOR}" stroke-width="${num(ctx.wallThicknessCm * 2)}" ` +
+      `stroke-linejoin="miter" stroke-miterlimit="4"`
+    // No fence: the plain closed wall body, unchanged.
+    if (!roomHasFence(room)) {
+      out.push(`      <polygon points="${points}" ${body} />`)
+      continue
+    }
+    // A fence is no thick wall: only the solid runs get a wall body, as open polylines.
+    for (const run of solidRuns(room)) {
+      out.push(`      <polyline points="${runPoints(room, run)}" ${body} stroke-linecap="butt" />`)
+    }
   }
   out.push('    </g>')
   return out

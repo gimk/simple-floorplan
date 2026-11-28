@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { signedArea } from '../../model/geometry'
+import { DEFAULT_FENCE_HEIGHT_CM } from '../../model/defaults'
 import type { Artboard, FurnitureItem, Opening, Room } from '../../model/types'
+import { FENCE_COLOR, FENCE_THICKNESS_CM } from '../rooms/walls'
 import {
   DEFAULT_WALL_INNER_COLOR, DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, splitWallPieces,
 } from './buildScene'
@@ -680,5 +682,158 @@ describe('rooms separated by a wall-thickness gap', () => {
 
   it('bounds cover the gap wall without protrusion', () => {
     expect(buildScene(gapped(10)).bounds).toMatchObject({ minX: -10, maxX: 820, minZ: -10, maxZ: 310 })
+  })
+})
+
+describe('gap wall outer corner notches', () => {
+  const notches = (a: Artboard) => buildScene(a).cornerPosts.filter((p) => p.id.includes(':notch'))
+  const side = (gap: number, bBox: [number, number, number, number]) =>
+    board({ rooms: [room('A', box(0, 0, 400, 300)), room('B', box(bBox[0] + gap, bBox[1], bBox[2] + gap, bBox[3]))] })
+
+  it('fills both outer corners of two aligned rooms separated by a 10 cm gap', () => {
+    const s = buildScene(side(10, [400, 0, 800, 300]))
+    const n = s.cornerPosts.filter((p) => p.id.includes(':notch'))
+    expect(n).toHaveLength(2)
+    const ids = new Set(s.walls.map((w) => w.id))
+    for (const p of n) {
+      expect(p.wallIds.every((id) => ids.has(id))).toBe(true)
+      expect(p.heightCm).toBe(250)
+      const xs = p.vertices.map((v) => v.x)
+      expect(Math.min(...xs)).toBeCloseTo(400)
+      expect(Math.max(...xs)).toBeCloseTo(410)
+    }
+    const top = n.find((p) => p.vertices.some((v) => v.z < 0))!
+    expect(Math.min(...top.vertices.map((v) => v.z))).toBeCloseTo(-10)
+    expect(top.wallIds).toEqual(['A:0', 'B:0'])
+    const bottom = n.find((p) => p.vertices.some((v) => v.z > 300))!
+    expect(Math.max(...bottom.vertices.map((v) => v.z))).toBeCloseTo(310)
+    expect(bottom.wallIds).toEqual(['A:2', 'B:2'])
+  })
+
+  it('adds no gap filler for flush rooms', () => {
+    expect(notches(side(0, [400, 0, 800, 300]))).toHaveLength(0)
+  })
+
+  it('adds no filler when the outer edges are offset or one room continues past the corner', () => {
+    expect(notches(side(10, [400, 100, 800, 400]))).toHaveLength(0) // offset
+    expect(notches(side(10, [400, 0, 800, 150]))).toHaveLength(1) // only the aligned top end
+    expect(notches(side(10, [400, -100, 800, 400]))).toHaveLength(0) // T: B continues both ways
+  })
+})
+
+describe('fence walls (balcony railings)', () => {
+  const fenced = (kinds: Record<string, 'wall' | 'fence'>, p: Partial<Artboard> = {}) =>
+    board({ rooms: [room('r', box(0, 0, 400, 300), { wallKinds: kinds })], ...p })
+
+  it('turns a fence edge into a low thin wall with the fence colour', () => {
+    const w = wallOf(fenced({ '0': 'fence' }), 'r:0')
+    expect(w.kind).toBe('fence')
+    expect(w.heightCm).toBe(DEFAULT_FENCE_HEIGHT_CM)
+    expect(w.thicknessCm).toBe(FENCE_THICKNESS_CM)
+    expect(w.innerColor).toBe(FENCE_COLOR)
+    expect(w.outerColor).toBe(FENCE_COLOR)
+    expect(w.pieces).toEqual([{ u0: 0, u1: 400, y0: 0, y1: DEFAULT_FENCE_HEIGHT_CM }])
+    // Still a thin wall on the room line, not a thick one.
+    expect(w.center.z).toBeCloseTo(-FENCE_THICKNESS_CM / 2)
+  })
+
+  it('respects the paint of a fence edge', () => {
+    const w = wallOf(fenced({ '0': 'fence' }, { rooms: [room('r', box(0, 0, 400, 300), { wallKinds: { '0': 'fence' }, wallColors: { '0': '#123456' } })] }), 'r:0')
+    expect(w.innerColor).toBe('#123456')
+    expect(w.outerColor).toBe('#123456')
+  })
+
+  it('keeps every other wall solid with kind wall', () => {
+    const s = buildScene(fenced({ '0': 'fence' }))
+    expect(s.walls.filter((w) => w.kind === 'fence').map((w) => w.id)).toEqual(['r:0'])
+    const solid = s.walls.find((w) => w.id === 'r:1')!
+    expect(solid.kind).toBe('wall')
+    expect(solid.heightCm).toBe(250)
+    expect(solid.thicknessCm).toBe(10)
+    expect(solid.innerColor).toBe(DEFAULT_WALL_INNER_COLOR)
+    expect(wallOf(one(), 'r:0').kind).toBe('wall')
+  })
+
+  it('cuts a gate cleanly on a fence wall, with no lintel above the fence height', () => {
+    const w = wallOf(fenced({ '0': 'fence' }, { openings: [door({ id: 'g', widthCm: 90 })] }), 'r:0')
+    expect(w.pieces).toHaveLength(2)
+    expect(w.pieces).toContainEqual({ u0: 0, u1: 155, y0: 0, y1: DEFAULT_FENCE_HEIGHT_CM })
+    expect(w.pieces).toContainEqual({ u0: 245, u1: 400, y0: 0, y1: DEFAULT_FENCE_HEIGHT_CM })
+    // Nothing left above the gate: no piece inside the opening span.
+    expect(w.pieces.some((p) => p.u0 < 245 && p.u1 > 155)).toBe(false)
+    expect(w.pieces.every((p) => p.y1 <= DEFAULT_FENCE_HEIGHT_CM)).toBe(true)
+  })
+
+  it('cuts an open passage and clamps a window pane to the fence height', () => {
+    const passage = wallOf(fenced({ '0': 'fence' }, { openings: [door({ id: 'o', kind: 'opening', widthCm: 100 })] }), 'r:0')
+    expect(passage.pieces).toHaveLength(2)
+    expect(passage.pieces.some((p) => p.u0 < 250 && p.u1 > 150)).toBe(false)
+    const win = wallOf(fenced({ '0': 'fence' }, { openings: [windowOp()] }), 'r:0')
+    expect(win.windowPanes).toEqual([{ openingId: 'w', u0: 140, u1: 260, y0: 90, y1: DEFAULT_FENCE_HEIGHT_CM }])
+    expect(win.pieces.filter((p) => p.u0 === 140).every((p) => p.y1 <= DEFAULT_FENCE_HEIGHT_CM)).toBe(true)
+  })
+
+  it('cannot be cut by an opening that starts at or above the fence height', () => {
+    const w = wallOf(fenced({ '0': 'fence' }, { openings: [windowOp({ sillCm: 120, heightCm: 60 })] }), 'r:0')
+    expect(w.pieces).toEqual([{ u0: 0, u1: 400, y0: 0, y1: DEFAULT_FENCE_HEIGHT_CM }])
+    expect(w.windowPanes).toEqual([])
+  })
+
+  it('emits no full-height corner post on a fence corner', () => {
+    // Edge 0 is the top edge (vertices 0 -> 1): the corners at vertices 0 and 1 meet a fence.
+    const s = buildScene(fenced({ '0': 'fence' }))
+    expect(s.cornerPosts.map((p) => p.vertexIndex).sort()).toEqual([2, 3])
+    const all = buildScene(fenced({ '0': 'fence', '1': 'fence', '2': 'fence', '3': 'fence' }))
+    expect(all.cornerPosts).toEqual([])
+  })
+
+  it('keeps a shared wall solid when only one side is a fence', () => {
+    const s = buildScene(board({ rooms: [
+      room('A', box(0, 0, 400, 300), { wallKinds: { '1': 'fence' } }),
+      room('B', box(400, 0, 800, 300)),
+    ] }))
+    const w = s.walls.find((x) => x.isInterior)!
+    expect(w.id).toBe(SH)
+    expect(w.kind).toBe('wall')
+    expect(w.heightCm).toBe(250)
+    expect(w.thicknessCm).toBe(6)
+    expect(w.innerColor).toBe(DEFAULT_WALL_INNER_COLOR)
+    expect(w.oppositeColor).toBe(DEFAULT_WALL_INNER_COLOR)
+  })
+
+  it('makes a shared wall a fence when both sides are fences', () => {
+    const s = buildScene(board({ rooms: [
+      room('A', box(0, 0, 400, 300), { wallKinds: { '1': 'fence' } }),
+      room('B', box(400, 0, 800, 300), { wallKinds: { '3': 'fence' } }),
+    ] }))
+    const w = s.walls.find((x) => x.isInterior)!
+    expect(w.kind).toBe('fence')
+    expect(w.heightCm).toBe(DEFAULT_FENCE_HEIGHT_CM)
+    expect(w.thicknessCm).toBe(FENCE_THICKNESS_CM)
+    expect(w.innerColor).toBe(FENCE_COLOR)
+    expect(w.oppositeColor).toBe(FENCE_COLOR)
+    expect(w.pieces).toEqual([{ u0: 0, u1: 300, y0: 0, y1: DEFAULT_FENCE_HEIGHT_CM }])
+  })
+
+  it('keeps both paints of a shared fence wall and cuts a gate through it', () => {
+    const s = buildScene(board({
+      rooms: [
+        room('A', box(0, 0, 400, 300), { wallKinds: { '1': 'fence' }, wallColors: { '1': '#111111' } }),
+        room('B', box(400, 0, 800, 300), { wallKinds: { '3': 'fence' }, wallColors: { '3': '#222222' } }),
+      ],
+      openings: [door({ xCm: 400, yCm: 150, angleDeg: 90, roomId: 'A' })],
+    }))
+    const w = s.walls.find((x) => x.isInterior)!
+    expect(w.innerColor).toBe('#111111')
+    expect(w.oppositeColor).toBe('#222222')
+    expect(w.pieces).toContainEqual({ u0: 0, u1: 105, y0: 0, y1: DEFAULT_FENCE_HEIGHT_CM })
+    expect(w.pieces).toContainEqual({ u0: 195, u1: 300, y0: 0, y1: DEFAULT_FENCE_HEIGHT_CM })
+    expect(w.pieces).toHaveLength(2)
+  })
+
+  it('never raises a fence above a lower ceiling', () => {
+    const w = wallOf(fenced({ '0': 'fence' }, { ceilingHeightCm: 60 }), 'r:0')
+    expect(w.heightCm).toBe(60)
+    expect(w.pieces).toEqual([{ u0: 0, u1: 400, y0: 0, y1: 60 }])
   })
 })

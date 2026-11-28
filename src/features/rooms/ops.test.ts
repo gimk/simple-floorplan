@@ -548,3 +548,78 @@ describe('moveVertexOrtho', () => {
     expect(out.vertices[2]).toEqual(tri.vertices[2])
   })
 })
+
+describe('wallKinds remapping', () => {
+  // A 400 x 300 rectangle (walls 0..3) whose per-edge kinds are given by `kinds`.
+  const room = (kinds?: Record<string, 'wall' | 'fence'>): Room => {
+    const r = rect('a', 0, 0, 400, 300)
+    return kinds ? { ...r, wallKinds: kinds } : r
+  }
+
+  it('insertVertexOnEdge: the split wall becomes two walls, later walls shift by 1', () => {
+    const r = room({ '0': 'fence', '2': 'fence' })
+    const on0 = insertVertexOnEdge(r, 0, { x: 200, y: 0 })
+    expect(on0.vertices).toHaveLength(5)
+    // Old wall 0 -> walls 0 and 1; old wall 2 -> wall 3.
+    expect(on0.wallKinds).toEqual({ '0': 'fence', '1': 'fence', '3': 'fence' })
+
+    const on2 = insertVertexOnEdge(r, 2, { x: 400, y: 150 })
+    expect(on2.vertices).toHaveLength(5)
+    // Old wall 2 -> walls 2 and 3; wall 0 is before the split and keeps its index.
+    expect(on2.wallKinds).toEqual({ '0': 'fence', '2': 'fence', '3': 'fence' })
+  })
+
+  it('insertVertexOnEdge: a room without wallKinds stays without wallKinds', () => {
+    expect(insertVertexOnEdge(room(), 1, { x: 400, y: 100 }).wallKinds).toBeUndefined()
+  })
+
+  it('deleteVertex: the wall that ended on the vertex goes away, later walls shift down', () => {
+    // Vertex 0 is gone: wall 0 disappears, walls 1..3 become walls 0..2.
+    const del0 = deleteVertex(room({ '0': 'fence', '2': 'fence' }), 0)!
+    expect(del0.vertices).toHaveLength(3)
+    expect(del0.wallKinds).toEqual({ '1': 'fence' })
+
+    // Vertex 2 is gone: wall 2 disappears, wall 0 keeps its index.
+    const del2 = deleteVertex(room({ '0': 'fence', '2': 'fence' }), 2)!
+    expect(del2.wallKinds).toEqual({ '0': 'fence' })
+  })
+
+  it('deleteVertex: an empty map is dropped and a kind-free room has no map', () => {
+    expect(deleteVertex(room({ '1': 'fence' }), 1)!.wallKinds).toBeUndefined()
+    expect(deleteVertex(room(), 0)!.wallKinds).toBeUndefined()
+  })
+
+  it('deleteWall: the removed wall drops its kind, later walls shift down', () => {
+    // Wall 0 is removed: walls 1..3 become walls 0..2.
+    const out = deleteWall(room({ '1': 'fence', '3': 'fence' }), 0)!
+    expect(out.vertices).toHaveLength(3)
+    expect(out.wallKinds).toEqual({ '0': 'fence', '2': 'fence' })
+
+    // A kind on the removed wall is thrown away, the others stay.
+    expect(deleteWall(room({ '0': 'fence', '2': 'fence' }), 0)!.wallKinds).toEqual({ '1': 'fence' })
+    // Nothing left: the map is dropped.
+    expect(deleteWall(room({ '0': 'fence' }), 0)!.wallKinds).toBeUndefined()
+  })
+
+  it('cutoutRoom: the boolean result renumbers the edges, so wallKinds is dropped', () => {
+    const big: Room = { ...rect('big', 0, 0, 400, 400), wallKinds: { '0': 'fence', '2': 'fence' } }
+    const res = cutoutRoom(big, rect('c', 300, 200, 500, 400).vertices)
+    expect(res.length).toBeGreaterThan(0)
+    for (const r of res) expect(r.wallKinds).toBeUndefined()
+  })
+
+  it('cutoutRoom: a cutter that misses keeps one room and drops the map too', () => {
+    const big: Room = { ...rect('big', 0, 0, 400, 400), wallKinds: { '1': 'fence' } }
+    const res = cutoutRoom(big, rect('c', 1000, 1000, 1100, 1100).vertices)
+    expect(res).toHaveLength(1)
+    expect(res[0].wallKinds).toBeUndefined()
+  })
+
+  it('mergeRooms: the union renumbers the edges, so wallKinds of the first room is dropped', () => {
+    const a: Room = { ...rect('a', 0, 0, 200, 200), wallKinds: { '0': 'fence' } }
+    const b: Room = { ...rect('b', 200, 0, 400, 200), wallKinds: { '1': 'fence' } }
+    expect(mergeRooms([a, b])!.wallKinds).toBeUndefined()
+    // The shared-wall path (wall thickness > 0) drops it as well.
+    expect(mergeRooms([a, { ...b, vertices: [{ x: 210, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 200 }, { x: 210, y: 200 }] }], 10)!.wallKinds).toBeUndefined()
+  })
+})

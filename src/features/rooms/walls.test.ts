@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { Opening, Room } from '../../model/types'
 import { openingHitEndpoints } from '../openings/hit'
 import {
-  edgeOutwardNormal, effectiveWallThickness, openingSymbolShift, openingWall, roomDoorThresholds, wallMaskModel,
+  edgeOutwardNormal, effectiveWallThickness, isFenceWall, openingSymbolShift, openingWall, roomDoorThresholds,
+  wallKindOf, wallMaskModel,
   wallStrokeMaskModel,
   wallThicknessOf,
 } from './walls'
@@ -215,5 +216,32 @@ describe('roomDoorThresholds', () => {
   it('skips an opening that has no host wall', () => {
     expect(roomDoorThresholds([rect(true)], [door({ yCm: 150 })], 10).size).toBe(0)
     expect(roomDoorThresholds([], [door()], 10).size).toBe(0)
+  })
+})
+
+describe('wallKindOf / isFenceWall', () => {
+  const withKinds = (wallKinds?: Room['wallKinds']): Room => ({ ...rect(true), wallKinds })
+
+  it("is 'wall' when the room has no wallKinds map", () => {
+    expect(wallKindOf(withKinds(undefined), 0)).toBe('wall')
+    expect(isFenceWall(withKinds(undefined), 0)).toBe(false)
+  })
+
+  it("is 'wall' for an edge with no entry and 'fence' for an entry", () => {
+    const r = withKinds({ '1': 'fence', '3': 'wall' })
+    expect(wallKindOf(r, 0)).toBe('wall')
+    expect(isFenceWall(r, 0)).toBe(false)
+    expect(wallKindOf(r, 1)).toBe('fence')
+    expect(isFenceWall(r, 1)).toBe(true)
+    // An explicit 'wall' entry is the same as no entry.
+    expect(wallKindOf(r, 3)).toBe('wall')
+    expect(isFenceWall(r, 3)).toBe(false)
+  })
+
+  it('reads the entry by string key, so an out-of-range index falls back to wall', () => {
+    const r = withKinds({ '0': 'fence' })
+    expect(wallKindOf(r, 0)).toBe('fence')
+    expect(wallKindOf(r, 7)).toBe('wall')
+    expect(isFenceWall(r, 7)).toBe(false)
   })
 })

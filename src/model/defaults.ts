@@ -9,6 +9,12 @@ export const DEFAULT_CEILING_HEIGHT_CM = 250
 /** Default vertical size of a furniture item when it sets no `heightCm`, in cm. */
 export const DEFAULT_FURNITURE_HEIGHT_CM = 80
 
+/**
+ * Default height of a fence (a low wall: balcony railing, low garden wall), in cm. A fence wall
+ * (`RoomShape.wallKinds`) is drawn from the floor up to this height instead of the wall height.
+ */
+export const DEFAULT_FENCE_HEIGHT_CM = 100
+
 /** Default height of an opening by kind, in cm. */
 export const DEFAULT_OPENING_HEIGHT_CM: Record<OpeningKind, number> = {
   door: 205,

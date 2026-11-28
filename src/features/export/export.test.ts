@@ -617,3 +617,100 @@ describe('renderArtboardSvg with flush rooms', () => {
     expect(line).toContain('stroke-linecap="butt"')
   })
 })
+
+describe('renderArtboardSvg with fence walls', () => {
+  /** One 400 x 300 cm room with the wall kinds given, next to an unfenced 300 x 300 cm room. */
+  const fenced = (wallKinds: Record<string, 'wall' | 'fence'>, t = 10) => renderArtboardSvg(artboard({
+    wallThicknessCm: t,
+    rooms: [
+      { ...rect('r1', 'Living', 0, 0, 400, 300), wallKinds },
+      rect('r2', 'Kitchen', 400, 0, 700, 300),
+    ],
+  })).svg
+
+  /** Markup of one fence railing group, from its data-fence attribute to its closing tag. */
+  const fenceGroup = (svg: string, ref: string): string => {
+    const from = svg.indexOf(`data-fence="${ref}"`)
+    return svg.slice(from, svg.indexOf('</g>', from))
+  }
+
+  it('keeps the closed wall body polygon when no wall is a fence', () => {
+    const svg = fenced({})
+    expect(count(svg, '<polyline')).toBe(0)
+    expect(svg).toContain(
+      '<polygon points="0,0 400,0 400,300 0,300" fill="none" stroke="#5b6577" stroke-width="20" ' +
+        'stroke-linejoin="miter" stroke-miterlimit="4" />',
+    )
+    expect(svg).toContain(
+      '<polygon points="400,0 700,0 700,300 400,300" fill="none" stroke="#5b6577" stroke-width="20" ' +
+        'stroke-linejoin="miter" stroke-miterlimit="4" />',
+    )
+    expect(svg).not.toContain('data-wall-kind="fence"')
+  })
+
+  it('breaks the wall body into one polyline per solid run and drops the fence edge', () => {
+    const svg = fenced({ '0': 'fence' })
+    // The three solid edges of r1 form one open run from (400,0) back to (0,0).
+    expect(svg).toContain(
+      '<polyline points="400,0 400,300 0,300 0,0" fill="none" stroke="#5b6577" stroke-width="20" ' +
+        'stroke-linejoin="miter" stroke-miterlimit="4" stroke-linecap="butt" />',
+    )
+    // No closed wall body along the fence edge, and the unfenced room keeps its polygon.
+    expect(svg).not.toContain('points="0,0 400,0 400,300 0,300" fill="none"')
+    expect(svg).toContain('<polygon points="400,0 700,0 700,300 400,300" fill="none"')
+  })
+
+  it('emits no wall body at all when every wall is a fence', () => {
+    const svg = renderArtboardSvg(artboard({
+      wallThicknessCm: 10,
+      rooms: [{
+        ...rect('r1', 'Living', 0, 0, 400, 300),
+        wallKinds: { '0': 'fence', '1': 'fence', '2': 'fence', '3': 'fence' },
+      }],
+    })).svg
+    expect(svg).not.toContain('stroke="#5b6577"')
+    expect(count(svg, 'data-wall-kind="fence"')).toBe(4)
+  })
+
+  it('draws a railing on the fence edge: dashed inner line, outer line, posts', () => {
+    const svg = fenced({ '0': 'fence' })
+    expect(svg).toContain('data-wall-kind="fence" data-fence="r1:0"')
+    const group = fenceGroup(svg, 'r1:0')
+    // 2 px/cm: 1.5 px = 0.75 cm, the 6/4 px dashes are 3/2 cm.
+    expect(group).toContain(
+      '<line x1="0" y1="0" x2="400" y2="0" stroke="#94a3b8" stroke-width="0.75" stroke-dasharray="3 2" />',
+    )
+    // The top wall of the room faces up (y -1): the outer rail sits 4 cm above the border.
+    expect(group).toContain('<line x1="0" y1="-4" x2="400" y2="-4" stroke="#94a3b8" stroke-width="0.625" />')
+    // Posts at both ends and every ~60 cm: 7 intervals over 400 cm, so 8 posts plus the 2 rails.
+    expect(count(group, '<line')).toBe(10)
+    expect(group).toContain('<line x1="0" y1="0" x2="0" y2="-4" stroke="#94a3b8" stroke-width="0.75" />')
+    expect(group).toContain('<line x1="400" y1="0" x2="400" y2="-4" stroke="#94a3b8" stroke-width="0.75" />')
+  })
+
+  it('strokes the solid edges of a fenced room as a polyline inside the stroke mask', () => {
+    const svg = fenced({ '0': 'fence' })
+    const from = svg.indexOf('<g data-room-strokes="r1" mask="url(#wall-stroke-mask-ab1)">')
+    expect(from).toBeGreaterThan(-1)
+    const g = svg.slice(from, svg.indexOf('</g>', from))
+    expect(g).toContain(
+      '<polyline points="400,0 400,300 0,300 0,0" fill="none" stroke="#e4e4e7" stroke-width="0.75" ' +
+        'stroke-linejoin="round" />',
+    )
+    expect(g).toContain('data-wall-kind="fence" data-fence="r1:0"')
+    // The fill polygon of r1 lost its border; the unfenced room keeps the closed one.
+    expect(svg).toContain('<polygon data-room="r1" points="0,0 400,0 400,300 0,300" fill="rgba(255,255,255,0.04)" stroke="none" />')
+    expect(svg).toContain('<polygon points="400,0 700,0 700,300 400,300" fill="none" stroke="#e4e4e7" stroke-width="0.75"')
+  })
+
+  it('renders the railing on thin walls too, in an unmasked stroke group', () => {
+    const svg = fenced({ '0': 'fence' }, 0)
+    expect(svg).not.toContain('<mask')
+    expect(svg).toContain('<g data-room-strokes="r1">')
+    expect(svg).toContain('data-wall-kind="fence" data-fence="r1:0"')
+    // No thick wall body at all, and the border moved out of the fill polygon.
+    expect(svg).not.toContain('stroke="#5b6577"')
+    expect(svg).toContain('data-room="r1" points="0,0 400,0 400,300 0,300" fill=');
+    expect(svg).toContain('stroke="none" />')
+  })
+})

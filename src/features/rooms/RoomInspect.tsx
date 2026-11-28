@@ -33,7 +33,7 @@ import { syncOpeningsForRoomChange } from '../openings/sync'
 import { NumInput } from './NumInput'
 import { deleteRooms, mergeArtboardRooms, renameRoom, setRoomWallLength } from './actions'
 import { mergeRooms, roomWalls } from './ops'
-import { wallThicknessOf } from './walls'
+import { wallThicknessOf, isFenceWall } from './walls'
 
 export type RoomInspectProps = {
   /** Artboard that holds the selected rooms. */
@@ -81,6 +81,18 @@ function BackToArtboard({ artboard }: { artboard: Artboard }) {
 /** Toast with an Undo button after a delete. */
 function deletedToast(message: string): void {
   toast(message, { kind: 'info', actionLabel: 'Undo', onAction: () => useDoc.getState().undo() })
+}
+
+/** Subtle tag that marks a wall row as a fence (low railing) instead of a normal wall. */
+function FenceBadge() {
+  return (
+    <span
+      data-testid="wall-fence-badge"
+      className="shrink-0 rounded-full border border-slate-400/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600 dark:border-slate-500/50 dark:text-slate-300"
+    >
+      Fence
+    </span>
+  )
 }
 
 /** One room selected: name, area, perimeter, walls with an exact length field, Delete Room. */
@@ -171,6 +183,7 @@ function SingleRoomCard({ artboard, room, className }: { artboard: Artboard; roo
                     >
                       Wall {wall.index + 1}
                     </button>
+                    {isFenceWall(room, wall.index) && <FenceBadge />}
                     <NumberField
                       ariaLabel={`Length of wall ${wall.index + 1}`}
                       unit="cm"

@@ -8,6 +8,8 @@ const vec = z.object({ x: num, y: num })
 /** A 3D point of the 3D view: exactly 3 finite numbers (artboard-local cm). */
 const vec3 = z.tuple([num, num, num])
 
+export const wallKindSchema = z.enum(['wall', 'fence'])
+
 export const roomSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -16,6 +18,7 @@ export const roomSchema = z.object({
   floorPattern: z.enum(['solid', 'wood', 'parquet', 'tile', 'stone', 'carpet', 'grass']).optional(),
   floorPatternAngleDeg: num.optional(),
   wallColors: z.record(z.string(), z.string()).optional(),
+  wallKinds: z.record(z.string(), wallKindSchema).optional(),
 })
 
 export const openingSchema = z.object({

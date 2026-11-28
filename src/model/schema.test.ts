@@ -155,3 +155,42 @@ describe('wallThicknessCm', () => {
     expect(createDefaultProject().artboards[0].wallThicknessCm).toBe(10)
   })
 })
+
+describe('Room.wallKinds', () => {
+  const withKinds = (wallKinds: unknown) => {
+    const d = createDefaultProject()
+    d.artboards[0].rooms.push({
+      id: 'r', name: 'Room',
+      vertices: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+      wallKinds: wallKinds as Record<string, 'wall'>,
+    })
+    return parseProjectDoc(d)
+  }
+
+  it("accepts 'fence' and 'wall' on any edge", () => {
+    const r = withKinds({ '0': 'fence', '2': 'wall' })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.doc.artboards[0].rooms[0].wallKinds).toEqual({ '0': 'fence', '2': 'wall' })
+  })
+
+  it('is optional, so a room without kinds stays valid', () => {
+    const d = createDefaultProject()
+    d.artboards[0].rooms.push({ id: 'r', name: 'Room', vertices: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }] })
+    const r = parseProjectDoc(d)
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.doc.artboards[0].rooms[0].wallKinds).toBeUndefined()
+  })
+
+  it('rejects an unknown kind', () => {
+    for (const bad of ['parapet', 'FENCE', '', 1, null]) {
+      const r = withKinds({ '0': bad })
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error).toContain('wallKinds')
+    }
+  })
+
+  it('requires a JSON object of edges, not an array or a string', () => {
+    expect(withKinds(['fence']).ok).toBe(false)
+    expect(withKinds('fence').ok).toBe(false)
+  })
+})

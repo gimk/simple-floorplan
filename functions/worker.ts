@@ -474,6 +474,13 @@ const PROJECT_DOC_DEFS = {
         description: 'Accent colour per wall. Keys are edge indices ("0", "1", ...).',
         additionalProperties: { type: 'string' },
       },
+      wallKinds: {
+        type: 'object',
+        description:
+          'Kind per wall. Keys are edge indices ("0", "1", ...); values are "wall" or "fence". ' +
+          'A fence is a low railing (for example a balcony parapet) drawn about 100 cm high. Omitted means "wall".',
+        additionalProperties: { type: 'string', enum: ['wall', 'fence'] },
+      },
     },
   },
   Opening: {

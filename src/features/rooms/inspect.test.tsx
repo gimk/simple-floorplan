@@ -35,7 +35,8 @@ const { AB, fakeDoc } = vi.hoisted(() => {
         ceilingHeightCm: 250,
         precisionCm: 1,
         rooms: [
-          rect('r1', 0, 0, 400, 300),
+          // r1 has its second wall set as a fence, for the Type control and the Fence badge.
+          { ...rect('r1', 0, 0, 400, 300), wallKinds: { '1': 'fence' } },
           rect('r2', 400, 0, 700, 300),
           rect('r3', 0, 1000, 200, 1200),
         ],
@@ -102,6 +103,16 @@ describe('RoomInspect', () => {
     expect(renderToStaticMarkup(<RoomInspect artboardId={AB} roomIds={[]} />)).toBe('')
     expect(renderToStaticMarkup(<RoomInspect artboardId={AB} roomIds={['missing']} />)).toBe('')
   })
+
+  it('tags a fence wall with a Fence badge', () => {
+    const html = renderToStaticMarkup(<RoomInspect artboardId={AB} roomIds={['r1']} />)
+    // r1 marks only wall 2 (index 1) as a fence.
+    expect(html.match(/data-testid="wall-fence-badge"/g)).toHaveLength(1)
+    expect(html).toContain('>Fence<')
+    // r2 has no wallKinds at all: no badge.
+    const plain = renderToStaticMarkup(<RoomInspect artboardId={AB} roomIds={['r2']} />)
+    expect(plain).not.toContain('data-testid="wall-fence-badge"')
+  })
 })
 
 describe('WallInspect', () => {
@@ -131,5 +142,32 @@ describe('WallInspect', () => {
     expect(renderToStaticMarkup(<WallInspect artboardId={AB} roomId="r1" edgeIndex={9} />)).toBe('')
     expect(renderToStaticMarkup(<WallInspect artboardId={AB} roomId="missing" edgeIndex={0} />)).toBe('')
     expect(renderToStaticMarkup(<WallInspect artboardId="missing" roomId="r1" edgeIndex={0} />)).toBe('')
+  })
+
+  it('renders the Type control as a Wall / Fence radio group', () => {
+    const html = renderToStaticMarkup(<WallInspect artboardId={AB} roomId="r1" edgeIndex={0} />)
+    expect(html).toContain('aria-label="Wall type"')
+    expect(html).toContain('role="radiogroup"')
+    expect(html).toContain('>Wall<')
+    expect(html).toContain('>Fence<')
+    // 2 radios: Wall and Fence.
+    expect(html.match(/role="radio"/g)).toHaveLength(2)
+  })
+
+  it('checks Wall on a normal wall and Fence on a fence wall', () => {
+    // Wall 1 (index 0) is a normal wall.
+    const plain = renderToStaticMarkup(<WallInspect artboardId={AB} roomId="r1" edgeIndex={0} />)
+    const plainGroup = plain.slice(plain.indexOf('aria-label="Wall type"'))
+    expect(plainGroup).toMatch(/aria-checked="true"[^>]*title="Wall"/)
+    expect(plainGroup).not.toMatch(/aria-checked="true"[^>]*title="Fence"/)
+    // Wall 2 (index 1) is the fence of r1.
+    const fence = renderToStaticMarkup(<WallInspect artboardId={AB} roomId="r1" edgeIndex={1} />)
+    const fenceGroup = fence.slice(fence.indexOf('aria-label="Wall type"'))
+    expect(fenceGroup).toMatch(/aria-checked="true"[^>]*title="Fence"/)
+    expect(fenceGroup).not.toMatch(/aria-checked="true"[^>]*title="Wall"/)
+    // A room without wallKinds shows Wall everywhere.
+    const other = renderToStaticMarkup(<WallInspect artboardId={AB} roomId="r2" edgeIndex={1} />)
+    const otherGroup = other.slice(other.indexOf('aria-label="Wall type"'))
+    expect(otherGroup).toMatch(/aria-checked="true"[^>]*title="Wall"/)
   })
 })

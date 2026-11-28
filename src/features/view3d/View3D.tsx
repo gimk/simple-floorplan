@@ -25,6 +25,8 @@ const AZIMUTH = 0.55
 const MIN_SCALE = 0.001
 const THRESHOLD_Y = 0.05
 const EDGE_OPACITY = 0.2
+const THUMB_WIDTH = 320
+const THUMB_HEIGHT = 180
 
 const easeOut = (t: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3)
 const range = (ms: number, from: number, to: number) => easeOut((ms - from) / (to - from))
@@ -32,7 +34,7 @@ const range = (ms: number, from: number, to: number) => easeOut((ms - from) / (t
 /** A running camera flight: eased from one pose to another (ortho also eases the visible half-height). */
 type Flight = { t0: number; fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; fromVis: number; toVis: number }
 
-type Api = { setProjection: (p: ViewProjection) => void; setBackdrop: (b: 'dark' | 'light') => void }
+type Api = { setProjection: (p: ViewProjection) => void; setBackdrop: (b: 'dark' | 'light') => void; setShadows: (on: boolean) => void }
 type SavedCamera = { artboardId: string; pos: THREE.Vector3; target: THREE.Vector3; orthoHalfH: number; zoom: number }
 
 /** Floor-plane outline of a floor or threshold as a Shape in (x, -z), so rotateX(-PI/2) lays it on XZ facing +Y. */
@@ -95,6 +97,16 @@ function furnitureGeometry(f: FurnitureMeshData): THREE.BufferGeometry {
 type ClipPart = { meshes: THREE.Object3D[]; y0: number; y1: number }
 type WallEntry = { group: THREE.Group; data: WallSegmentData; parts: ClipPart[]; ratio: number }
 
+// Fence (balcony railing) sizes in cm: a top handrail, a bottom rail, end posts and thin balusters.
+const FENCE_TOP_RAIL_H = 4
+const FENCE_BOTTOM_RAIL_H = 3
+const FENCE_BOTTOM_RAIL_Y = 6
+const FENCE_POST_W = 3.5
+const FENCE_BALUSTER_W = 2
+const FENCE_BALUSTER_STEP = 18
+/** A fence piece shorter than this gets one centred post instead of two end posts. */
+const FENCE_MIN_POST_SPAN = 2 * FENCE_POST_W
+
 /** Show only the part of `part` below `height` cm: scale and move it, or hide it when nothing remains. */
 function applyWallHeight(part: ClipPart, height: number) {
   const span = clipSpanToHeight(part.y0, part.y1, height)
@@ -110,6 +122,7 @@ type PostEntry = { group: THREE.Group; wallIds: [string, string] }
 
 type Built = {
   scene: THREE.Scene
+  sun: THREE.DirectionalLight
   walls: WallEntry[]
   posts: PostEntry[]
   furniture: THREE.Group[]
@@ -158,10 +171,14 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
   const geo = <T extends THREE.BufferGeometry>(g: T): T => { geometries.push(g); return g }
 
   // Floors and door thresholds.
-  const floorMaterial = (pattern: FloorMeshData['floorPattern'], fill: string | undefined) => {
+  // Thresholds sit 0.5 mm above the floor: pull them towards the camera so they never z-fight at far zoom.
+  const THRESHOLD_OFFSET = { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }
+  const floorMaterial = (pattern: FloorMeshData['floorPattern'], fill: string | undefined, threshold = false) => {
+    const extra: THREE.MeshStandardMaterialParameters = threshold ? THRESHOLD_OFFSET : {}
+    const suffix = threshold ? '|threshold' : ''
     const tex = getFloorTexture(pattern, fill)
-    if (tex) return mat(`floor|${pattern}|${fill ?? ''}`, () => new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9, metalness: 0 }))
-    return mat(`floor|solid|${fill ?? ''}`, () => new THREE.MeshStandardMaterial({ color: floorBaseColor(fill), roughness: 0.9, metalness: 0 }))
+    if (tex) return mat(`floor|${pattern}|${fill ?? ''}${suffix}`, () => new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9, metalness: 0, ...extra }))
+    return mat(`floor|solid|${fill ?? ''}${suffix}`, () => new THREE.MeshStandardMaterial({ color: floorBaseColor(fill), roughness: 0.9, metalness: 0, ...extra }))
   }
   for (const f of data.floors) {
     const m = new THREE.Mesh(geo(flatGeometry(f.vertices, f.floorPattern, f.floorPatternAngleDeg, 0)), floorMaterial(f.floorPattern, f.fill))
@@ -169,7 +186,7 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
     scene.add(m)
   }
   for (const t of data.thresholds) {
-    const m = new THREE.Mesh(geo(flatGeometry(t.vertices, t.floorPattern, t.floorPatternAngleDeg, THRESHOLD_Y)), floorMaterial(t.floorPattern, t.fill))
+    const m = new THREE.Mesh(geo(flatGeometry(t.vertices, t.floorPattern, t.floorPatternAngleDeg, THRESHOLD_Y)), floorMaterial(t.floorPattern, t.fill, true))
     m.receiveShadow = true
     scene.add(m)
   }
@@ -192,17 +209,60 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
     const opposite = w.oppositeColor ? std(w.oppositeColor, pushBack) : outer
     const parts: ClipPart[] = []
     const mats = [outer, outer, outer, outer, s > 0 ? opposite : inner, s > 0 ? inner : opposite]
-    for (const p of w.pieces) {
-      const g = geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, w.thicknessCm))
-      const mesh = new THREE.Mesh(g, mats)
-      mesh.position.set((p.u0 + p.u1) / 2, (p.y0 + p.y1) / 2, zc)
+    // A fence bar (rail, post or baluster): a small box centred at (x, y) that clips on its own span.
+    const bar = (bw: number, bh: number, bd: number, x: number, y: number, m: THREE.Material) => {
+      const mesh = new THREE.Mesh(geo(new THREE.BoxGeometry(bw, bh, bd)), m)
+      mesh.position.set(x, y, zc)
       mesh.castShadow = true
       mesh.receiveShadow = true
       group.add(mesh)
-      const lines = new THREE.LineSegments(geo(new THREE.EdgesGeometry(g)), edgeMat)
-      lines.position.copy(mesh.position)
-      group.add(lines)
-      parts.push({ meshes: [mesh, lines], y0: p.y0, y1: p.y1 })
+      parts.push({ meshes: [mesh], y0: y - bh / 2, y1: y + bh / 2 })
+    }
+    if (w.kind === 'fence') {
+      // Balcony railing: a handrail, a bottom rail, end posts and thin balusters, no solid slab.
+      const railMat = std(w.innerColor, pushBack)
+      const railDepth = Math.min(12, Math.max(3, w.thicknessCm * 1.5))
+      for (const p of w.pieces) {
+        const span = p.u1 - p.u0, full = p.y1 - p.y0
+        if (span <= 0 || full <= 0) continue
+        const midU = (p.u0 + p.u1) / 2
+        // Top handrail, kept inside the piece when the piece is short.
+        const topH = Math.min(FENCE_TOP_RAIL_H, full)
+        const topRailBottom = p.y1 - topH
+        bar(span, topH, railDepth, midU, p.y1 - topH / 2, railMat)
+        // Bottom rail, only when the piece is tall enough to show the open gap above it.
+        const hasBottom = full > 12
+        if (hasBottom) bar(span, FENCE_BOTTOM_RAIL_H, railDepth * 0.85, midU, p.y0 + FENCE_BOTTOM_RAIL_Y, railMat)
+        const barBottom = hasBottom ? p.y0 + FENCE_BOTTOM_RAIL_Y + FENCE_BOTTOM_RAIL_H / 2 : p.y0
+        // End posts over the full height of the piece, or one centred post on a very short piece.
+        const postY = (p.y0 + p.y1) / 2
+        if (span > FENCE_MIN_POST_SPAN) {
+          bar(FENCE_POST_W, full, railDepth, p.u0 + FENCE_POST_W / 2, postY, railMat)
+          bar(FENCE_POST_W, full, railDepth, p.u1 - FENCE_POST_W / 2, postY, railMat)
+        } else bar(FENCE_POST_W, full, railDepth, midU, postY, railMat)
+        // Thin balusters between the bottom rail and the handrail, about FENCE_BALUSTER_STEP apart.
+        const from = p.u0 + FENCE_POST_W * 1.5, to = p.u1 - FENCE_POST_W * 1.5
+        const n = to - from > FENCE_BALUSTER_W ? Math.floor((to - from) / FENCE_BALUSTER_STEP) : 0
+        if (n > 0 && topRailBottom - barBottom > 1) {
+          const h = topRailBottom - barBottom
+          for (let i = 1; i <= n; i++) {
+            bar(FENCE_BALUSTER_W, h, FENCE_BALUSTER_W, from + ((to - from) * i) / (n + 1), (barBottom + topRailBottom) / 2, railMat)
+          }
+        }
+      }
+    } else {
+      for (const p of w.pieces) {
+        const g = geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, w.thicknessCm))
+        const mesh = new THREE.Mesh(g, mats)
+        mesh.position.set((p.u0 + p.u1) / 2, (p.y0 + p.y1) / 2, zc)
+        mesh.castShadow = true
+        mesh.receiveShadow = true
+        group.add(mesh)
+        const lines = new THREE.LineSegments(geo(new THREE.EdgesGeometry(g)), edgeMat)
+        lines.position.copy(mesh.position)
+        group.add(lines)
+        parts.push({ meshes: [mesh, lines], y0: p.y0, y1: p.y1 })
+      }
     }
     for (const p of w.windowPanes) {
       const pane = new THREE.Mesh(geo(new THREE.BoxGeometry(p.u1 - p.u0, p.y1 - p.y0, 0.8)), glassMat)
@@ -254,7 +314,7 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
   }
 
   return {
-    scene, walls, posts, furniture,
+    scene, sun, walls, posts, furniture,
     dispose: () => {
       scene.traverse((o) => { if ((o as THREE.Light).isLight) (o as THREE.DirectionalLight).shadow?.dispose() })
       for (const g of geometries) g.dispose()
@@ -274,6 +334,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
   const viewShadows = useUi((s) => s.viewShadows)
 
   const [webglFailed, setWebglFailed] = useState(false)
+  const [contextLost, setContextLost] = useState(false)
   const artboardId = artboard?.id
   const scene = useMemo(() => (artboard ? buildScene(artboard) : null), [artboard])
 
@@ -282,6 +343,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
   const wallModeRef = useRef(wallViewMode)
   const projectionRef = useRef(viewProjection)
   const backdropRef = useRef(viewBackdrop)
+  const shadowsRef = useRef(viewShadows)
   const savedCamera = useRef<SavedCamera | null>(null)
 
   useEffect(() => { wallModeRef.current = wallViewMode }, [wallViewMode])
@@ -294,10 +356,17 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
     apiRef.current?.setBackdrop(viewBackdrop)
   }, [viewBackdrop])
 
+  // Shadows toggle live: no renderer rebuild, only the shadow flags and a material recompile.
+  useEffect(() => {
+    shadowsRef.current = viewShadows
+    apiRef.current?.setShadows(viewShadows)
+  }, [viewShadows])
+
   useEffect(() => {
     const container = containerRef.current
     if (!container || !scene) return
-    const built = buildThreeScene(scene, viewShadows, backdropRef.current)
+    setContextLost(false)
+    const built = buildThreeScene(scene, shadowsRef.current, backdropRef.current)
     const b = scene.bounds
     const R = Math.max(Math.hypot(b.sizeX, b.sizeZ) / 2, 100)
     const dist = (R / Math.sin((FOV * Math.PI) / 360)) * 0.9
@@ -312,7 +381,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       return
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    renderer.shadowMap.enabled = viewShadows
+    renderer.shadowMap.enabled = shadowsRef.current
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
     const canvas = renderer.domElement
     canvas.style.display = 'block'
@@ -333,12 +402,14 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
     updateOrtho()
     let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = projectionRef.current === 'ortho' ? ortho : persp
 
+    const half0 = Math.tan((FOV * Math.PI) / 360)
     const target = new THREE.Vector3(b.centerX, 0, b.centerZ)
-    const place = (elev: number) => {
+    const endTarget = target.clone()
+    const place = (elev: number, d = dist, t = target) => {
       persp.position.set(
-        target.x + dist * Math.cos(elev) * Math.sin(AZIMUTH),
-        target.y + dist * Math.sin(elev),
-        target.z + dist * Math.cos(elev) * Math.cos(AZIMUTH),
+        t.x + d * Math.cos(elev) * Math.sin(AZIMUTH),
+        t.y + d * Math.sin(elev),
+        t.z + d * Math.cos(elev) * Math.cos(AZIMUTH),
       )
       ortho.position.copy(persp.position)
     }
@@ -359,10 +430,31 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
     const saved = savedCamera.current?.artboardId === artboardId ? savedCamera.current : null
     let intro = !saved && !reducedMotion
     let snap = !intro
+    // The intro starts on the 2D pan/zoom: same centre, same visible height (2D screen = (world - view.xy) * zoom).
+    // Falls back to the artboard bounds when the 2D view is unusable or far from the artboard.
+    const endZoom = ortho.zoom
+    const introStart = { target: endTarget.clone(), dist, zoom: ortho.zoom }
+    if (intro) {
+      const v = useUi.getState().view
+      const cx = v.x + width / (2 * v.zoom), cz = v.y + height / (2 * v.zoom)
+      const visH = height / v.zoom
+      const mx = Math.max(b.sizeX * 0.5, 100), mz = Math.max(b.sizeZ * 0.5, 100)
+      const usable = Number.isFinite(cx) && Number.isFinite(cz) && Number.isFinite(visH) && v.zoom > 0 && visH > 1
+        && cx >= b.minX - mx && cx <= b.maxX + mx && cz >= b.minZ - mz && cz <= b.maxZ + mz
+      if (usable) {
+        introStart.target.set(cx, 0, cz)
+        introStart.dist = Math.min(controls.maxDistance, Math.max(controls.minDistance, visH / 2 / half0))
+        introStart.zoom = Math.min(controls.maxZoom, Math.max(controls.minZoom, orthoHalfH / (visH / 2)))
+      }
+    }
     if (saved) {
       persp.position.copy(saved.pos); ortho.position.copy(saved.pos)
       target.copy(saved.target)
-    } else place(intro ? START_ELEV : END_ELEV)
+    } else if (intro) {
+      target.copy(introStart.target)
+      place(START_ELEV, introStart.dist, target)
+      ortho.zoom = introStart.zoom
+    } else place(END_ELEV)
     controls.target.copy(target)
     persp.lookAt(target); ortho.lookAt(target)
     controls.update()
@@ -398,7 +490,17 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
     const setBackdrop = (bd: 'dark' | 'light') => {
       built.scene.background = new THREE.Color(BACKDROP[bd])
     }
-    apiRef.current = { setProjection, setBackdrop }
+    const setShadows = (on: boolean) => {
+      renderer.shadowMap.enabled = on
+      built.sun.castShadow = on
+      // Materials compile with or without the shadow code: ask for a recompile.
+      built.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined
+        if (Array.isArray(m)) m.forEach((x) => { x.needsUpdate = true })
+        else if (m) m.needsUpdate = true
+      })
+    }
+    apiRef.current = { setProjection, setBackdrop, setShadows }
     const half = Math.tan((FOV * Math.PI) / 360)
 
     /** Set the height of every wall (and the corner posts that follow them) from a ratio per wall. */
@@ -474,7 +576,9 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       flyTo({ position: pose.position, target: pose.target, wallMode: wallModeRef.current, projection: camera === ortho ? 'ortho' : 'perspective' })
     }
 
+    let lost = false
     const capturePngBlob: View3DHandle['capturePngBlob'] = async (opts) => {
+      if (lost) return null
       const W = Math.max(1, Math.round(opts?.width ?? PNG_WIDTH))
       const H = Math.max(1, Math.round(opts?.height ?? PNG_HEIGHT))
       const view = opts?.view
@@ -526,7 +630,14 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       return blob
     }
 
-    const handle: View3DHandle = { getSnapshot, flyTo, applyPreset, capturePngBlob }
+    // Thumbnails reuse the PNG path: one synchronous render at thumbnail size, then everything is put back
+    // before the browser paints, so the live canvas never shows the small frame.
+    const captureThumbnail: View3DHandle['captureThumbnail'] = async (snapshot, w = THUMB_WIDTH, h = THUMB_HEIGHT) => {
+      const blob = await capturePngBlob({ width: w, height: h, view: snapshot })
+      return blob ? URL.createObjectURL(blob) : null
+    }
+
+    const handle: View3DHandle = { getSnapshot, flyTo, applyPreset, capturePngBlob, captureThumbnail }
     if (handleRef) handleRef.current = handle
 
     const resize = () => {
@@ -553,9 +664,18 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       if (intro) {
         if (ms >= INTRO_MS) {
           intro = false
+          target.copy(endTarget)
+          controls.target.copy(endTarget)
+          ortho.zoom = endZoom
+          ortho.updateProjectionMatrix()
           place(END_ELEV)
         } else {
-          place(START_ELEV + (END_ELEV - START_ELEV) * easeOut(ms / INTRO_MS))
+          const e = easeOut(ms / INTRO_MS)
+          target.lerpVectors(introStart.target, endTarget, e)
+          controls.target.copy(target)
+          ortho.zoom = introStart.zoom + (endZoom - introStart.zoom) * e
+          ortho.updateProjectionMatrix()
+          place(START_ELEV + (END_ELEV - START_ELEV) * e, introStart.dist + (dist - introStart.dist) * e, target)
           wallK = range(ms, 100, 550)
           furnK = range(ms, 200, 650)
           persp.lookAt(target); ortho.lookAt(target)
@@ -584,7 +704,27 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
     }
     raf = requestAnimationFrame(frame)
 
+    // WebGL context loss (GPU reset, too many contexts): stop drawing and show a message, then resume on restore.
+    const onContextLost = (e: Event) => {
+      e.preventDefault()
+      lost = true
+      cancelAnimationFrame(raf)
+      setContextLost(true)
+    }
+    const onContextRestored = () => {
+      lost = false
+      last = performance.now()
+      snap = true
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(frame)
+      setContextLost(false)
+    }
+    canvas.addEventListener('webglcontextlost', onContextLost)
+    canvas.addEventListener('webglcontextrestored', onContextRestored)
+
     return () => {
+      canvas.removeEventListener('webglcontextlost', onContextLost)
+      canvas.removeEventListener('webglcontextrestored', onContextRestored)
       cancelAnimationFrame(raf)
       ro.disconnect()
       savedCamera.current = { artboardId: artboardId ?? '', pos: camera.position.clone(), target: controls.target.clone(), orthoHalfH, zoom: ortho.zoom }
@@ -598,7 +738,7 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       renderer.forceContextLoss()
       canvas.remove()
     }
-  }, [scene, artboardId, viewShadows, handleRef])
+  }, [scene, artboardId, handleRef])
 
   return (
     <div
@@ -607,6 +747,11 @@ export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHand
       className="absolute inset-0 overflow-hidden"
       style={{ background: BACKDROP[viewBackdrop], touchAction: 'none' }}
     >
+      {contextLost && !webglFailed && (
+        <div data-testid="views-3d-contextlost" role="status" className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-slate-400">
+          The 3D view paused because the graphics context was lost. It resumes on its own.
+        </div>
+      )}
       {webglFailed && (
         <div data-testid="views-3d-nowebgl" className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-slate-400">
           The 3D view needs WebGL, which is not available in this browser.

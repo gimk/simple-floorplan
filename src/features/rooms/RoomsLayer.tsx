@@ -26,7 +26,10 @@ import { snapPoint, snapRoomDelta, snapWallDelta } from './snap'
 import type { SnapGuide } from './snap'
 import { computeTextLod } from './textLod'
 import type { TextLod } from './textLod'
-import { WALL_COLOR, roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf } from './walls'
+import {
+  FENCE_COLOR, FENCE_THICKNESS_CM, WALL_COLOR, edgeOutwardNormal, isFenceWall,
+  roomDoorThresholds, wallMaskModel, wallStrokeMaskModel, wallThicknessOf,
+} from './walls'
 import { CANVAS_BG, CANVAS_HALO, CANVAS_SELECT } from '../../shell/canvasTokens'
 import { startDesignMarquee } from './CanvasSelectLayer'
 
@@ -48,6 +51,49 @@ const ORANGE = CANVAS_SELECT
 const STROKE = 'rgba(226,232,240,0.85)'
 const DRAG_THRESHOLD_PX = 3
 const NO_IDS: string[] = []
+
+/** Inclusive cyclic range of edge indices holding one contiguous run of solid ('wall') edges. */
+type EdgeRun = { from: number; to: number }
+
+/** True when at least one wall of `room` is a fence (low railing) instead of a solid wall. */
+function roomHasFence(room: Room): boolean {
+  return room.vertices.some((_, i) => isFenceWall(room, i))
+}
+
+/**
+ * Contiguous runs of solid ('wall') edges of `room`: a fence edge breaks a run, so no run crosses
+ * one. Empty when every edge is a fence (the room then has no thick wall body at all).
+ */
+function solidWallRuns(room: Room): EdgeRun[] {
+  const n = room.vertices.length
+  const fence = room.vertices.map((_, i) => isFenceWall(room, i))
+  const firstFence = fence.indexOf(true)
+  if (firstFence < 0) return []
+  const runs: EdgeRun[] = []
+  let run: EdgeRun | null = null
+  // Start right after a fence edge, so a run never wraps around the end of the vertex list.
+  for (let k = 0; k < n; k++) {
+    const i = (firstFence + 1 + k) % n
+    if (fence[i]) { run = null; continue }
+    if (run) run.to = i
+    else { run = { from: i, to: i }; runs.push(run) }
+  }
+  return runs
+}
+
+/** Points attribute of the polyline of one edge run: every vertex it walks, end point included. */
+function runPoints(room: Room, run: EdgeRun): string {
+  const n = room.vertices.length
+  const points: string[] = []
+  for (let i = run.from; i <= run.to + 1; i++) {
+    const v = room.vertices[i % n]
+    points.push(`${v.x},${v.y}`)
+  }
+  return points.join(' ')
+}
+
+/** Posts of a fence: start, end and evenly spaced steps of about 60 cm (at least one interval). */
+const fencePostCount = (lengthCm: number) => Math.max(1, Math.round(lengthCm / 60))
 
 type Gesture = {
   pointerId: number
@@ -395,6 +441,69 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
       )
     })
 
+  /**
+   * Architectural railing of one fence edge: a dashed inner line on the room border, a solid outer
+   * line FENCE_THICKNESS_CM away from it, and perpendicular posts (start, end, every ~60 cm).
+   */
+  const fenceRail = (room: Room, edgeIndex: number, a: Vec, b: Vec, lengthCm: number) => {
+    const normal = edgeOutwardNormal(room, edgeIndex)
+    const out = normal ? { x: normal.x * FENCE_THICKNESS_CM, y: normal.y * FENCE_THICKNESS_CM } : null
+    const posts = fencePostCount(lengthCm)
+    return (
+      <g key={`fence-${edgeIndex}`} data-wall-kind="fence" data-fence={`${room.id}:${edgeIndex}`}>
+        <line
+          x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+          stroke={FENCE_COLOR} strokeWidth={px(1.5)} strokeDasharray={`${px(6)} ${px(4)}`}
+        />
+        {out && (
+          <line
+            x1={a.x + out.x} y1={a.y + out.y} x2={b.x + out.x} y2={b.y + out.y}
+            stroke={FENCE_COLOR} strokeWidth={px(1.25)}
+          />
+        )}
+        {out && Array.from({ length: posts + 1 }, (_, k) => {
+          const t = k / posts
+          const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
+          return (
+            <line
+              key={`post-${k}`} x1={p.x} y1={p.y} x2={p.x + out.x} y2={p.y + out.y}
+              stroke={FENCE_COLOR} strokeWidth={px(1.5)}
+            />
+          )
+        })}
+      </g>
+    )
+  }
+
+  /**
+   * Border stroke and wall paint of one room. A room without fence keeps the closed border polygon;
+   * a room with fences strokes one polyline per solid run and draws a railing on every fence edge.
+   */
+  const roomStrokes = (room: Room, pts: string, sel: boolean, key: string) => {
+    const stroke = sel ? ORANGE : STROKE
+    const strokeWidth = px(design && sel ? 1.5 : 1)
+    return (
+      <g key={key} data-room-stroke={room.id}>
+        {roomHasFence(room) ? solidWallRuns(room).map((run) => (
+          <polyline
+            key={`border-${run.from}`} points={runPoints(room, run)} fill="none"
+            stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round"
+          />
+        )) : (
+          <polygon
+            points={pts} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" pointerEvents="none"
+          />
+        )}
+        {paintLines(room)}
+        {room.vertices.map((a, i) => {
+          if (!isFenceWall(room, i)) return null
+          const b = room.vertices[(i + 1) % room.vertices.length]
+          return fenceRail(room, i, a, b, Math.hypot(b.x - a.x, b.y - a.y))
+        })}
+      </g>
+    )
+  }
+
   return (
     <g data-testid={`rooms-layer-${artboard.id}`}>
       {maskModel && (
@@ -413,14 +522,28 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
             </mask>
           </defs>
           <g mask={`url(#${maskId})`}>
-            {roomGeo.filter((g) => g.room.vertices.length >= 3).map(({ room, pts }) => (
-              <polygon
-                key={room.id}
-                points={pts}
-                fill="none" stroke={WALL_COLOR} strokeWidth={thickness * 2}
-                strokeLinejoin="miter" strokeMiterlimit={4}
-              />
-            ))}
+            {roomGeo.filter((g) => g.room.vertices.length >= 3).map(({ room, pts }) => {
+              // No fence: the plain closed wall body, unchanged.
+              if (!roomHasFence(room)) {
+                return (
+                  <polygon
+                    key={room.id}
+                    points={pts}
+                    fill="none" stroke={WALL_COLOR} strokeWidth={thickness * 2}
+                    strokeLinejoin="miter" strokeMiterlimit={4}
+                  />
+                )
+              }
+              // A fence is no thick wall: only the solid runs get a wall body, as open polylines.
+              return solidWallRuns(room).map((run) => (
+                <polyline
+                  key={`${room.id}-run${run.from}`}
+                  points={runPoints(room, run)}
+                  fill="none" stroke={WALL_COLOR} strokeWidth={thickness * 2}
+                  strokeLinejoin="miter" strokeMiterlimit={4} strokeLinecap="butt"
+                />
+              ))
+            })}
           </g>
         </g>
       )}
@@ -472,9 +595,10 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
               fill={floorFill}
               fillOpacity={floorOpacity}
               // Thick walls: the border stroke moves to a masked outline below, so it cannot cross
-              // an opening. Thin walls keep the old single polygon.
-              stroke={strokeMaskModel ? 'none' : selected ? ORANGE : STROKE}
-              strokeWidth={strokeMaskModel ? undefined : px(design && selected ? 1.5 : 1)}
+              // an opening. A room with fences also moves it, so a fence edge can show a railing.
+              // Thin walls without fences keep the old single polygon.
+              stroke={strokeMaskModel || roomHasFence(room) ? 'none' : selected ? ORANGE : STROKE}
+              strokeWidth={strokeMaskModel || roomHasFence(room) ? undefined : px(design && selected ? 1.5 : 1)}
               strokeLinejoin="round"
               pointerEvents={selectable ? 'all' : 'none'}
               style={{ cursor: interactive ? 'move' : design ? 'pointer' : undefined }}
@@ -526,16 +650,20 @@ function RoomsLayerImpl({ artboard, onEditWall }: RoomsLayerProps) {
           {[false, true].map((pass) => roomGeo.map(({ room, pts }) => {
             const sel = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
             if (sel !== pass) return null
-            return (
-              <g key={`${room.id}-${pass}`} data-room-stroke={room.id}>
-                <polygon
-                  points={pts} fill="none" stroke={sel ? ORANGE : STROKE}
-                  strokeWidth={px(design && sel ? 1.5 : 1)} strokeLinejoin="round" pointerEvents="none"
-                />
-                {paintLines(room)}
-              </g>
-            )
+            return roomStrokes(room, pts, sel, `${room.id}-${pass}`)
           }))}
+        </g>
+      )}
+
+      {!strokeMaskModel && roomGeo.some((g) => roomHasFence(g.room)) && (
+        // Thin walls: no stroke mask, so the fence rooms alone draw their border and railings in a
+        // group of their own (an unmasked one: nothing has to be cut away here).
+        <g pointerEvents="none" data-testid={`room-strokes-${artboard.id}`}>
+          {roomGeo.map(({ room, pts }) => {
+            if (!roomHasFence(room)) return null
+            const sel = selectedIds.includes(room.id) || selectedWall?.roomId === room.id || selectedVertex?.roomId === room.id
+            return roomStrokes(room, pts, sel, room.id)
+          })}
         </g>
       )}
 

@@ -5,7 +5,7 @@
 import { useId, useState } from 'react'
 import { ChevronLeft, ChevronRight, Compass, Ruler } from 'lucide-react'
 import { useDoc } from '../../model/store'
-import type { Artboard, Opening, OpeningKind, Room } from '../../model/types'
+import type { Artboard, Opening, OpeningKind, Room, WallKind } from '../../model/types'
 import {
   BackLink,
   DangerButton,
@@ -20,6 +20,7 @@ import {
   PanelSection,
   ROW,
   ROW_OFF,
+  Segmented,
   StatGrid,
   formatDecimal,
 } from '../../shell/panel'
@@ -30,10 +31,17 @@ import { DEFAULT_OPENING_WIDTH_CM, MIN_OPENING_WIDTH_CM, MAX_OPENING_WIDTH_CM } 
 import { hostWallIn } from '../openings/sync'
 import { newId } from '../../model/schema'
 import { toast } from '../toast'
-import { deleteRoomWall, setRoomWallLength } from './actions'
+import { deleteRoomWall, setRoomWallKind, setRoomWallLength } from './actions'
 import { NumInput } from './NumInput'
 import { roomWalls } from './ops'
 import type { Wall } from './ops'
+import { wallKindOf } from './walls'
+
+/** Choices of the wall Type control. */
+const KIND_OPTIONS = [
+  { value: 'wall', label: 'Wall' },
+  { value: 'fence', label: 'Fence' },
+] as const
 
 /**
  * Openings hosted by `wall`. The host is the same one the canvas uses (`hostWallIn`), so when two
@@ -209,6 +217,15 @@ export function WallInspect({ artboardId, roomId, edgeIndex, className }: WallIn
               if (value == null || !(value > 0)) return false
               return setRoomWallLength(artboard.id, room.id, edgeIndex, value) ? undefined : false
             }}
+          />
+        </FieldRow>
+
+        <FieldRow label="Type">
+          <Segmented
+            options={KIND_OPTIONS}
+            value={wallKindOf(room, edgeIndex)}
+            ariaLabel="Wall type"
+            onChange={(kind) => setRoomWallKind(artboard.id, room.id, edgeIndex, kind as WallKind)}
           />
         </FieldRow>
 

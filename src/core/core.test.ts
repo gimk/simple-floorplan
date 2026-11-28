@@ -865,3 +865,48 @@ describe('applyCommands (batch)', () => {
     expect(applyCommands(createDefaultProject(), 'x' as unknown as AgentCommand[]).ok).toBe(false)
   })
 })
+
+describe("set_room_style: wallKinds (fence walls)", () => {
+  it('marks edge as a fence and summarizeProject reports the kind', () => {
+    const { doc, roomId } = withRoom()
+    const d1 = ok(doc, { type: 'set_room_style', roomId, wallKinds: { 1: 'fence', 3: 'fence' } }).doc
+    expect(d1.artboards[0].rooms[0].wallKinds).toEqual({ '1': 'fence', '3': 'fence' })
+    const room = summarizeProject(d1).artboards[0].rooms[0]
+    expect(room.walls.map((w) => w.kind)).toEqual(['wall', 'fence', 'wall', 'fence'])
+    expect(room.walls[1]).toMatchObject({ edgeIndex: 1, kind: 'fence', lengthCm: 300 })
+  })
+
+  it("clears an edge with 'wall' or null and drops the empty map", () => {
+    const { doc, roomId } = withRoom()
+    const d1 = ok(doc, { type: 'set_room_style', roomId, wallKinds: { 0: 'fence', 2: 'fence' } }).doc
+    // 'wall' clears one edge and leaves the other one alone.
+    const d2 = ok(d1, { type: 'set_room_style', roomId, wallKinds: { 0: 'wall' } }).doc
+    expect(d2.artboards[0].rooms[0].wallKinds).toEqual({ '2': 'fence' })
+    // null clears the last edge: the map itself is gone.
+    const d3 = ok(d2, { type: 'set_room_style', roomId, wallKinds: { 2: null } }).doc
+    expect(d3.artboards[0].rooms[0].wallKinds).toBeUndefined()
+    expect('wallKinds' in d3.artboards[0].rooms[0]).toBe(false)
+    expect(summarizeProject(d3).artboards[0].rooms[0].walls.every((w) => w.kind === 'wall')).toBe(true)
+  })
+
+  it('keeps the other style fields untouched', () => {
+    const { doc, roomId } = withRoom()
+    const d1 = ok(doc, { type: 'set_room_style', roomId, fill: '#123456', floorPattern: 'wood' }).doc
+    const d2 = ok(d1, { type: 'set_room_style', roomId, wallKinds: { 0: 'fence' } }).doc
+    expect(d2.artboards[0].rooms[0]).toMatchObject({ fill: '#123456', floorPattern: 'wood', wallKinds: { '0': 'fence' } })
+    // No wallKinds in the command: the map is not created.
+    const d3 = ok(doc, { type: 'set_room_style', roomId, fill: '#123456' }).doc
+    expect(d3.artboards[0].rooms[0].wallKinds).toBeUndefined()
+  })
+
+  it('rejects an out-of-range edge index and an unknown kind', () => {
+    const { doc, roomId } = withRoom()
+    const out = applyCommand(doc, { type: 'set_room_style', roomId, wallKinds: { 9: 'fence' } })
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.error).toContain('wallKinds')
+    expect(applyCommand(doc, { type: 'set_room_style', roomId, wallKinds: { '-1': 'fence' } }).ok).toBe(false)
+    expect(applyCommand(doc, { type: 'set_room_style', roomId, wallKinds: { 0: 'parapet' as unknown as 'fence' } }).ok).toBe(false)
+    // A rejected command leaves the doc alone.
+    expect(doc.artboards[0].rooms[0].wallKinds).toBeUndefined()
+  })
+})

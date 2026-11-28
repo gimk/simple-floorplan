@@ -3,12 +3,28 @@
 import { pointInPolygon, signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { DEFAULT_WALL_THICKNESS_CM, MAX_WALL_THICKNESS_CM } from '../../model/types'
-import type { Artboard, Opening, Room } from '../../model/types'
+import type { Artboard, Opening, Room, WallKind } from '../../model/types'
 import { openingEndpoints } from '../openings/geometry'
 import { hostWallIn } from '../openings/sync'
 
 /** Crisp mid-grey wall body for the dark theme (canvas and export). */
 export const WALL_COLOR = '#5b6577'
+
+/** Fence (balcony railing) colour: a light blue-grey, clearly lighter than a wall. */
+export const FENCE_COLOR = '#94a3b8'
+
+/** Fence (balcony railing) thickness, in cm. A fence is thin whatever the artboard wall thickness. */
+export const FENCE_THICKNESS_CM = 4
+
+/** Kind of wall `edgeIndex` of `room`: 'fence' when the room marks it as a fence, else 'wall'. */
+export function wallKindOf(room: Pick<Room, 'wallKinds'>, edgeIndex: number): WallKind {
+  return room.wallKinds?.[String(edgeIndex)] ?? 'wall'
+}
+
+/** True when wall `edgeIndex` of `room` is a fence (low railing) instead of a normal wall. */
+export function isFenceWall(room: Pick<Room, 'wallKinds'>, edgeIndex: number): boolean {
+  return wallKindOf(room, edgeIndex) === 'fence'
+}
 
 /** Wall thickness of an artboard in cm: unset = default, clamped to 0..50. 0 = thick walls off. */
 export function wallThicknessOf(a: { wallThicknessCm?: number }): number {

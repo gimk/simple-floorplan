@@ -2,7 +2,7 @@
 import { useDoc } from '../../model/store'
 import type { Vec } from '../../model/geometry'
 import { area } from '../../model/geometry'
-import type { Room } from '../../model/types'
+import type { Room, WallKind } from '../../model/types'
 import { syncOpeningsForMerge, syncOpeningsForRoomChange } from '../openings/sync'
 import { wallThicknessOf } from './walls'
 import { cutoutRoom, deleteVertex, deleteWall, mergeRooms, setWallLength } from './ops'
@@ -112,4 +112,24 @@ export function deleteRoomVertex(artboardId: string, roomId: string, vertexIndex
 /** Remove one wall and reconnect its neighbours (one undo step). Returns false when not possible. */
 export function deleteRoomWall(artboardId: string, roomId: string, edgeIndex: number): boolean {
   return applyRoomEdit(artboardId, roomId, (r) => deleteWall(r, edgeIndex))
+}
+
+/**
+ * Set the kind of one wall of a room ('wall' or 'fence'), in one undo step. 'wall' clears the key,
+ * and the `wallKinds` map is removed once it is empty.
+ */
+export function setRoomWallKind(artboardId: string, roomId: string, edgeIndex: number, kind: WallKind): void {
+  if (!findArtboard(artboardId)?.rooms.some((r) => r.id === roomId)) return
+  useDoc.getState().update((d) => {
+    const r = d.artboards.find((a) => a.id === artboardId)!.rooms.find((x) => x.id === roomId)
+    if (!r) return
+    const key = String(edgeIndex)
+    if (kind === 'wall') {
+      const { [key]: _removed, ...rest } = r.wallKinds ?? {}
+      if (Object.keys(rest).length === 0) delete r.wallKinds
+      else r.wallKinds = rest
+    } else {
+      r.wallKinds = { ...(r.wallKinds ?? {}), [key]: 'fence' }
+    }
+  })
 }

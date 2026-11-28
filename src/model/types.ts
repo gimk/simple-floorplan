@@ -3,6 +3,13 @@ import type { Vec } from './geometry'
 
 export type { Vec }
 
+/**
+ * Kind of a room wall. 'wall' (or unset) is a normal wall; 'fence' is a low railing, for example a
+ * balcony parapet, drawn with the default fence height and thickness of src/model/defaults.ts and
+ * src/features/rooms/walls.ts.
+ */
+export type WallKind = 'wall' | 'fence'
+
 /** Floor texture drawn over the room fill. 'solid' (or unset) means no texture. */
 export type FloorPattern = 'solid' | 'wood' | 'parquet' | 'tile' | 'stone' | 'carpet' | 'grass'
 
@@ -16,6 +23,11 @@ export type RoomShape = {
   floorPatternAngleDeg?: number
   /** Accent paint per wall: keys are edge indices ('0', '1', ...), values are hex colours. */
   wallColors?: Record<string, string>
+  /**
+   * Kind of each wall: keys are edge indices ('0', '1', ...), values are a `WallKind`. An omitted
+   * key, or an omitted map, means 'wall'.
+   */
+  wallKinds?: Record<string, WallKind>
 }
 export type Room = RoomShape
 

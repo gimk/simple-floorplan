@@ -8,6 +8,7 @@
 - Optional cloud sync: project documents are stored in Cloudflare D1, images in Cloudflare R2. Both are reached through the Worker API below.
 - A project is one ProjectDoc (schemaVersion 3). It holds `refImages` and one or more `artboards`. An artboard holds `rooms`, `openings` and `furniture`.
 - Room: a polygon of `vertices` (interior). Walls are drawn outward from each edge. Each wall has an edge index.
+- Wall kind: `wallKinds` maps an edge index as a string (`"0"`, `"1"`, ...) to `"wall"` or `"fence"`. A fence is a low railing, for example a balcony parapet, about 100 cm high and 4 cm thick. An edge with no entry is a normal wall.
 - Opening: a door, window or opening (`kind`) placed on a wall, with a centre (`xCm`, `yCm`), an `angleDeg`, a `widthCm` and optional style `variant`.
 - Furniture: a `rect` or `circle` item with a position, size, `rotationDeg` and `color`.
 - Reference image: a PNG, JPG, WebP, SVG or PDF placed on the plan (Plan mode only), with `cmPerPx` scale and `opacity`.
@@ -170,6 +171,7 @@ Notes:
 - `precisionCm` is `0.1`, `0.5` or `1`. Default `1`.
 - `ceilingHeightCm` is greater than 0. Default `250` when omitted by the app schema.
 - `wallThicknessCm` (0 to 50) is optional. Omitted means 10. `0` turns thick walls off.
+- `wallKinds` is optional. It maps edge indices as strings (`"0"`, `"1"`, ...) to `"wall"` or `"fence"`; an edge with no entry is a normal wall. A fence is a low railing (for example a balcony parapet) about 100 cm high.
 - Lengths are in cm. Angles are in degrees.
 
 ## MCP server (`POST /api/mcp`)

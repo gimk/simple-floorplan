@@ -16,16 +16,22 @@
 //     face towards room A, `oppositeColor` the face towards room B. `isInterior` is true.
 //   - `start` / `end` are points on the edge line of room A (or of the room itself for an exterior wall), in the
 //     ORIGINAL vertex order, so `edgeIndex` and `wallColors` keep working whatever the winding of the room is;
+//   - `kind` is 'fence' when the edge is a fence (balcony railing): the box then uses the fence height
+//     and thickness, and no corner post is emitted where a fence meets another wall;
 //   - `center` is the middle of the wall box;
 //   - pieces and window panes use `u` = distance in cm from `start` along start -> end (0..lengthCm)
 //     and `y` = height above the floor in cm.
 import { signedArea } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
-import { DEFAULT_CEILING_HEIGHT_CM, furnitureHeightCm, openingHeightCm, openingSillCm } from '../../model/defaults'
-import type { Artboard, FloorPattern, FurnitureItem, Room, WallViewMode } from '../../model/types'
+import {
+  DEFAULT_CEILING_HEIGHT_CM, DEFAULT_FENCE_HEIGHT_CM, furnitureHeightCm, openingHeightCm, openingSillCm,
+} from '../../model/defaults'
+import type { Artboard, FloorPattern, FurnitureItem, Room, WallKind, WallViewMode } from '../../model/types'
 import { openingEndpoints } from '../openings/geometry'
 import { hostWallIn } from '../openings/sync'
-import { edgeOutwardNormal, effectiveWallThickness, roomDoorThresholds, wallThicknessOf } from '../rooms/walls'
+import {
+  FENCE_COLOR, FENCE_THICKNESS_CM, edgeOutwardNormal, effectiveWallThickness, isFenceWall, roomDoorThresholds, wallThicknessOf,
+} from '../rooms/walls'
 
 /** Default paint of the room side of a wall. */
 export const DEFAULT_WALL_INNER_COLOR = '#d9d6d0'
@@ -99,6 +105,9 @@ export type WallSegmentData = {
    * 'inward' (-thicknessCm..0) or 'centered' (-thicknessCm/2..+thicknessCm/2).
    */
   thicknessSide: 'outward' | 'inward' | 'centered'
+  /** 'wall' for a normal wall, 'fence' for a low railing (balcony parapet, low garden wall). */
+  kind: WallKind
+  /** Full height of the wall in cm: the ceiling height, or the fence height for a fence wall. */
   heightCm: number
   /** Unit normal in the floor plane, pointing away from the room (of room A for a shared wall). */
   outwardNormal: Pt
@@ -305,7 +314,11 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
       ea.covered.push(sp.a)
       eb.covered.push(sp.b)
       const flush = sp.gap <= SHARED_FLUSH_CM
-      const t = flush ? INTERIOR_WALL_CM : sp.gap
+      // A shared wall is a fence only when BOTH rooms mark their edge as a fence: one solid side
+      // still needs a full-height wall.
+      const fence = isFenceWall(ea.room, ea.index) && isFenceWall(eb.room, eb.index)
+      const t = fence ? FENCE_THICKNESS_CM : flush ? INTERIOR_WALL_CM : sp.gap
+      const height = fence ? Math.min(heightCm, DEFAULT_FENCE_HEIGHT_CM) : heightCm
       const [u0, u1] = sp.a
       const start = { x: ea.a.x + ea.dir.x * u0, z: ea.a.z + ea.dir.z * u0 }
       const end = { x: ea.a.x + ea.dir.x * u1, z: ea.a.z + ea.dir.z * u1 }
@@ -318,9 +331,12 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
         wall: {
           id, roomId: ea.room.id, edgeIndex: ea.index, start, end,
           center: { x: (start.x + end.x) / 2 + ea.n.x * shift, z: (start.z + end.z) / 2 + ea.n.z * shift },
-          lengthCm: u1 - u0, thicknessCm: t, thicknessSide: flush ? 'centered' : 'outward', heightCm,
+          lengthCm: u1 - u0, thicknessCm: t, thicknessSide: flush ? 'centered' : 'outward',
+          kind: fence ? 'fence' : 'wall', heightCm: height,
           outwardNormal: ea.n, isInterior: true, cutawayGroupId: id, pairedWallIds: [ea.id, eb.id],
-          innerColor: colorOf(ea), outerColor: DEFAULT_WALL_OUTER_COLOR, oppositeColor: colorOf(eb),
+          innerColor: fence ? (ea.room.wallColors?.[String(ea.index)] ?? FENCE_COLOR) : colorOf(ea),
+          outerColor: fence ? FENCE_COLOR : DEFAULT_WALL_OUTER_COLOR,
+          oppositeColor: fence ? (eb.room.wallColors?.[String(eb.index)] ?? FENCE_COLOR) : colorOf(eb),
           pieces: [], windowPanes: [],
         },
       })
@@ -339,13 +355,17 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
     }
     if (e.lengthCm - cur > 1) spans.push([cur, e.lengthCm])
     const whole = covered.length === 0
+    const fence = isFenceWall(e.room, e.index)
+    const fenceColor = e.room.wallColors?.[String(e.index)] ?? FENCE_COLOR
+    const wallHeight = fence ? Math.min(heightCm, DEFAULT_FENCE_HEIGHT_CM) : heightCm
     spans.forEach(([u0, u1], k) => {
       const s0 = whole ? 0 : u0, s1 = whole ? e.lengthCm : u1
       const start = { x: e.a.x + e.dir.x * s0, z: e.a.z + e.dir.z * s0 }
       const end = { x: e.a.x + e.dir.x * s1, z: e.a.z + e.dir.z * s1 }
       const mid = { x: (start.x + end.x) / 2, y: (start.z + end.z) / 2 }
       let t: number
-      if (thickness > 0) {
+      if (fence) t = FENCE_THICKNESS_CM
+      else if (thickness > 0) {
         const eff = effectiveWallThickness(rooms, e.room.id, mid, { x: e.n.x, y: e.n.z }, thickness)
         t = eff > 0 ? eff : INTERIOR_HALF_WALL_CM
       } else t = THIN_WALL_FALLBACK_CM
@@ -355,9 +375,11 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
         wall: {
           id, roomId: e.room.id, edgeIndex: e.index, start, end,
           center: { x: mid.x + e.n.x * t / 2, z: mid.y + e.n.z * t / 2 },
-          lengthCm: s1 - s0, thicknessCm: t, thicknessSide: 'outward', heightCm,
+          lengthCm: s1 - s0, thicknessCm: t, thicknessSide: 'outward',
+          kind: fence ? 'fence' : 'wall', heightCm: wallHeight,
           outwardNormal: e.n, isInterior: false, cutawayGroupId: id, pairedWallIds: [],
-          innerColor: colorOf(e), outerColor: DEFAULT_WALL_OUTER_COLOR,
+          innerColor: fence ? fenceColor : colorOf(e),
+          outerColor: fence ? fenceColor : DEFAULT_WALL_OUTER_COLOR,
           pieces: [], windowPanes: [],
         },
       })
@@ -385,18 +407,21 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
       const u1 = (end.x - s.x) * t.dir.x + (end.y - s.z) * t.dir.z
       const lo = Math.max(0, Math.min(u0, u1)), hi = Math.min(t.wall.lengthCm, Math.max(u0, u1))
       if (hi - lo <= EPS) continue
-      const cut = { u0: lo, u1: hi, y0: sill, y1: sill + h }
+      // Never cut above the wall itself: a door or gate on a fence leaves no lintel over the railing.
+      const top = Math.min(sill + h, t.wall.heightCm)
+      if (top - sill <= EPS) continue
+      const cut = { u0: lo, u1: hi, y0: Math.min(sill, t.wall.heightCm), y1: top }
       const dup = (c: WallPieceData) =>
         Math.abs(c.u0 - cut.u0) < 1 && Math.abs(c.u1 - cut.u1) < 1 && Math.abs(c.y0 - cut.y0) < 1 && Math.abs(c.y1 - cut.y1) < 1
       if (!t.cuts.some(dup)) t.cuts.push(cut)
       if (op.kind === 'window') {
-        const pane = { openingId: op.id, u0: lo, u1: hi, y0: sill, y1: Math.min(sill + h, heightCm) }
+        const pane = { openingId: op.id, u0: lo, u1: hi, y0: cut.y0, y1: cut.y1 }
         // One pane per window, also when both rooms of a shared wall carry a window at the same place.
         if (!t.wall.windowPanes.some((q) => q.openingId === op.id || dup(q))) t.wall.windowPanes.push(pane)
       }
     }
   }
-  for (const b of builds) b.wall.pieces = splitWallPieces(b.wall.lengthCm, heightCm, b.cuts)
+  for (const b of builds) b.wall.pieces = splitWallPieces(b.wall.lengthCm, b.wall.heightCm, b.cuts)
   return builds
 }
 
@@ -430,6 +455,9 @@ function buildCornerPosts(rooms: Room[], builds: WallBuild[], heightCm: number):
       const next = ext.get(nextKey)?.find((b) => (b.edgeSpan?.u0 ?? 1) < EPS)
       const prev = ext.get(prevKey)?.find((b) => b.edgeSpan !== null && b.edgeSpan.edgeLengthCm - b.edgeSpan.u1 < EPS)
       if (!prev || !next) continue
+      // Only two solid walls make a full-height post: a fence corner stays open, so no pillar
+      // taller than the railing sticks out of a balcony corner.
+      if (prev.wall.kind !== 'wall' || next.wall.kind !== 'wall') continue
       const cross = prev.dir.x * next.dir.z - prev.dir.z * next.dir.x
       // Convex corner: the room turns the same way as its winding. Near-straight corners need no post.
       if (cross * s <= 1e-3) continue
@@ -448,7 +476,82 @@ function buildCornerPosts(rooms: Room[], builds: WallBuild[], heightCm: number):
       })
     }
   }
+  posts.push(...buildGapNotchPosts(rooms, builds, ext, heightCm))
   return posts
+}
+
+/**
+ * Fillers for the small outer notch (gap x thickness) at an exterior corner where two gap-separated rooms
+ * meet. The unified gap wall ends flush with both rooms' vertices there, and their aligned outer walls
+ * leave a hole outside it. A filler needs, at one end of a gap wall: the room A edge and the room B edge both
+ * end exactly there (no room continues past: no T-junction), and each room has an exterior wall leaving that
+ * vertex with the same outward normal, perpendicular to the gap wall, on one common line (aligned).
+ * Flush rooms (gap wall 'centered') never get one. The filler follows the two exterior walls in cutaway.
+ */
+function buildGapNotchPosts(
+  rooms: Room[], builds: WallBuild[], ext: Map<string, WallBuild[]>, heightCm: number,
+): CornerPostData[] {
+  const roomById = new Map(rooms.map((r) => [r.id, r]))
+  const parse = (id: string) => {
+    const c = id.lastIndexOf(':')
+    const room = roomById.get(id.slice(0, c))
+    const index = Number(id.slice(c + 1))
+    if (!room || !Number.isInteger(index)) return null
+    const v = room.vertices, n = v.length
+    return { room, index, a: toPt(v[index]), b: toPt(v[(index + 1) % n]), next: (index + 1) % n }
+  }
+  const near = (p: Pt, q: Pt) => Math.hypot(p.x - q.x, p.z - q.z) < 1.5
+  /** Exterior wall of `room` that ends (arriving) or starts (leaving) at vertex `vi`, skipping zero-length edges. */
+  const adjacent = (room: Room, vi: number, arriving: boolean): WallBuild | undefined => {
+    const n = room.vertices.length
+    for (let j = 0; j < n; j++) {
+      const k = arriving ? (vi - 1 - j + n * 2) % n : (vi + j) % n
+      const hit = ext.get(wallId(room.id, k))?.find((b) =>
+        arriving ? b.edgeSpan !== null && b.edgeSpan.edgeLengthCm - b.edgeSpan.u1 < EPS : (b.edgeSpan?.u0 ?? 1) < EPS)
+      if (hit) return hit
+      const a = room.vertices[k], b = room.vertices[(k + 1) % n]
+      if (Math.hypot(a.x - b.x, a.y - b.y) > EPS) return undefined // a real edge without exterior wall
+    }
+    return undefined
+  }
+  const out: CornerPostData[] = []
+  for (const sb of builds) {
+    const w = sb.wall
+    if (sb.edgeSpan || !w.isInterior || w.thicknessSide !== 'outward' || w.pairedWallIds.length !== 2) continue
+    const ea = parse(w.pairedWallIds[0]), eb = parse(w.pairedWallIds[1])
+    if (!ea || !eb) continue
+    for (const end of [0, 1]) {
+      const P = end === 0 ? w.start : w.end
+      const other = end === 0 ? w.end : w.start
+      // The span must end exactly on a vertex of room A's edge, and on the matching vertex of room B's edge.
+      const aArriving = near(P, ea.a), aLeaving = near(P, ea.b)
+      if (!aArriving && !aLeaving) continue
+      const bArriving = near({ x: P.x + w.outwardNormal.x * w.thicknessCm, z: P.z + w.outwardNormal.z * w.thicknessCm }, eb.a)
+      const bLeaving = near({ x: P.x + w.outwardNormal.x * w.thicknessCm, z: P.z + w.outwardNormal.z * w.thicknessCm }, eb.b)
+      if (!bArriving && !bLeaving) continue
+      const wa = adjacent(ea.room, aArriving ? ea.index : ea.next, aArriving)
+      const wb = adjacent(eb.room, bArriving ? eb.index : eb.next, bArriving)
+      if (!wa || !wb) continue
+      // A fence corner keeps no full-height filler either: the railing must not grow a pillar.
+      if (w.kind !== 'wall' || wa.wall.kind !== 'wall' || wb.wall.kind !== 'wall') continue
+      const n = wa.wall.outwardNormal
+      const nb = wb.wall.outwardNormal
+      if (n.x * nb.x + n.z * nb.z < 0.99) continue
+      // Adjacent walls are perpendicular to the gap wall, and point away from its body (outer corner).
+      if (Math.abs(n.x * w.outwardNormal.x + n.z * w.outwardNormal.z) > 0.05) continue
+      if ((P.x - other.x) * n.x + (P.z - other.z) * n.z <= 0) continue
+      const q = { x: P.x + w.outwardNormal.x * w.thicknessCm, z: P.z + w.outwardNormal.z * w.thicknessCm }
+      // Aligned: both outer walls lie on the same line.
+      if (Math.abs((q.x - P.x) * n.x + (q.z - P.z) * n.z) > SHARED_FLUSH_CM) continue
+      const ta = wa.wall.thicknessCm, tb = wb.wall.thicknessCm
+      out.push({
+        id: `${w.id}:notch${end}`, roomId: ea.room.id, vertexIndex: aArriving ? ea.index : ea.next,
+        vertices: [P, q, { x: q.x + n.x * tb, z: q.z + n.z * tb }, { x: P.x + n.x * ta, z: P.z + n.z * ta }],
+        heightCm, wallIds: [wa.wall.id, wb.wall.id],
+      })
+    }
+  }
+  return out
 }
 
 // ---------- furniture ----------

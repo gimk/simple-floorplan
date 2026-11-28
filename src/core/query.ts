@@ -7,7 +7,7 @@ import { hostWallIn } from '../features/openings/sync'
 import { furnitureCornerRadiiCm } from '../features/furniture/geometry'
 import { roomWalls } from '../features/rooms/ops'
 import { DEFAULT_WALL_THICKNESS_CM } from '../model/types'
-import type { Artboard, FloorPattern, FurnitureItem, Opening, OpeningKind, OpeningVariant, ProjectDoc, Room } from '../model/types'
+import type { Artboard, FloorPattern, FurnitureItem, Opening, OpeningKind, OpeningVariant, ProjectDoc, Room, WallKind } from '../model/types'
 
 export type WallSummary = {
   /** `${roomId}#${edgeIndex}` */
@@ -18,6 +18,8 @@ export type WallSummary = {
   lengthCm: number
   angleDeg: number
   color: string | null
+  /** 'fence' for a low railing wall (for example a balcony parapet), else 'wall'. */
+  kind: WallKind
   openingIds: string[]
 }
 
@@ -109,6 +111,7 @@ function summarizeRoom(room: Room, openings: Opening[], rooms: Room[]): RoomSumm
     lengthCm: w.lengthCm,
     angleDeg: clean(w.angleDeg),
     color: room.wallColors?.[String(w.index)] ?? null,
+    kind: room.wallKinds?.[String(w.index)] ?? 'wall',
     openingIds: byWall.get(w.index) ?? [],
   }))
   return {

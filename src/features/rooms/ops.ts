@@ -5,7 +5,7 @@ import type { Ring } from 'polygon-clipping'
 import { add, area, dist, dot, innerRing, len, lerp, norm, signedArea, sub } from '../../model/geometry'
 import type { Vec } from '../../model/geometry'
 import { newId } from '../../model/schema'
-import type { Room } from '../../model/types'
+import type { Room, WallKind } from '../../model/types'
 import { edgeOutwardNormal } from './walls'
 
 export const MIN_ROOM_SIDE_CM = 10
@@ -15,6 +15,26 @@ export type Wall = { index: number; a: Vec; b: Vec; lengthCm: number; mid: Vec; 
 
 const cp = (v: Vec): Vec => ({ x: v.x, y: v.y })
 const withVertices = (room: Room, vertices: Vec[]): Room => ({ ...room, vertices })
+
+/**
+ * Copy of `room` whose `wallKinds` map is re-keyed: `oldToNew` gives, for one old edge index, the
+ * new edge indices that inherit its kind (an empty list means the edge is gone). Edges with no
+ * entry under a key keep nothing. The map is dropped when it ends up empty; a room without
+ * `wallKinds` is returned unchanged.
+ */
+function remapWallKinds(room: Room, oldToNew: (oldIndex: number) => number[]): Room {
+  if (!room.wallKinds) return room
+  const next: Record<string, WallKind> = {}
+  for (const [key, kind] of Object.entries(room.wallKinds)) {
+    const old = Number(key)
+    if (!Number.isInteger(old)) continue
+    for (const newIndex of oldToNew(old)) next[String(newIndex)] = kind
+  }
+  const out: Room = { ...room }
+  if (Object.keys(next).length === 0) delete out.wallKinds
+  else out.wallKinds = next
+  return out
+}
 
 /** Walls of a room: wall i goes from vertex i to vertex i+1 (the last wall closes the loop). */
 export function roomWalls(room: Room): Wall[] {
@@ -120,14 +140,19 @@ export function insertVertexOnEdge(room: Room, edgeIndex: number, pos: Vec): Roo
   if (edgeIndex < 0 || edgeIndex >= n) return room
   const out = room.vertices.map(cp)
   out.splice(edgeIndex + 1, 0, cp(pos))
-  return withVertices(room, out)
+  // Old edge edgeIndex becomes edges edgeIndex and edgeIndex+1 (the new vertex splits it); later
+  // edges shift by 1.
+  return remapWallKinds(withVertices(room, out), (k) =>
+    k === edgeIndex ? [edgeIndex, edgeIndex + 1] : k > edgeIndex ? [k + 1] : [k])
 }
 
 /** Remove vertex idx. Returns null when the room would have fewer than 3 vertices. */
 export function deleteVertex(room: Room, idx: number): Room | null {
   const n = room.vertices.length
   if (n <= 3 || idx < 0 || idx >= n) return null
-  return withVertices(room, room.vertices.filter((_, i) => i !== idx).map(cp))
+  // Vertex idx is gone: the edge that ended on it disappears and later edges shift down by 1.
+  return remapWallKinds(withVertices(room, room.vertices.filter((_, i) => i !== idx).map(cp)), (k) =>
+    k === idx ? [] : k > idx ? [k - 1] : [k])
 }
 
 const MIN_WALL_DELETE_AREA_CM2 = 10
@@ -146,7 +171,10 @@ export function deleteWall(room: Room, edgeIndex: number): Room | null {
   const a = r[0], b = r[1], prev = r[n - 1], next = r[2]
   const build = (p: Vec): Room | null => {
     const vertices = [cp(p), ...r.slice(2)]
-    return area(vertices) > MIN_WALL_DELETE_AREA_CM2 ? withVertices(room, vertices) : null
+    if (!(area(vertices) > MIN_WALL_DELETE_AREA_CM2)) return null
+    // Edge edgeIndex is gone: later edges shift down by 1.
+    return remapWallKinds(withVertices(room, vertices), (k) =>
+      k === edgeIndex ? [] : k > edgeIndex ? [k - 1] : [k])
   }
   const d1 = sub(a, prev), d2 = sub(next, b)
   const den = d1.x * d2.y - d1.y * d2.x
@@ -217,8 +245,11 @@ export function cutoutRoom(room: Room, cutter: Vec[]): Room[] {
   const rings = result.map((poly) => fromRing(poly[0])).filter((r) => r.length >= 3 && area(r) > EPS)
   if (!rings.length) return []
   rings.sort((p, q) => area(q) - area(p))
+  // The boolean result re-numbers every edge, so per-edge wall kinds of the old polygon are stale.
+  const base: Room = { ...room }
+  delete base.wallKinds
   return rings.map((vertices, i) => ({
-    ...room,
+    ...base,
     id: i === 0 ? room.id : newId(),
     name: i === 0 ? room.name : `${room.name} ${i + 1}`,
     vertices,
@@ -287,13 +318,21 @@ function snapNoise(pts: Vec[], inputs: Vec[]): Vec[] {
  * closing: grow every room by half the thickness, union, shrink back). All rooms must form one
  * connected group, and the result must have no hole.
  */
+/** Merged room: keeps id, name and style of `first`, but never its per-edge `wallKinds`. */
+function mergedRoom(first: Room, vertices: Vec[]): Room {
+  const out: Room = { ...first, vertices }
+  delete out.wallKinds
+  return out
+}
+
 export function mergeRooms(rooms: Room[], wallThicknessCm = 0): Room | null {
   if (rooms.length < 2 || rooms.some((r) => r.vertices.length < 3)) return null
   const [first, ...rest] = rooms.map((r) => [toRing(r.vertices)])
   const result = polygonClipping.union(first, ...rest)
   if (result.length === 1 && result[0].length === 1) {
     const vertices = fromRing(result[0][0])
-    return vertices.length >= 3 ? { ...rooms[0], vertices } : null
+    // The union re-numbers every edge, so per-edge wall kinds of the inputs are stale.
+    return vertices.length >= 3 ? mergedRoom(rooms[0], vertices) : null
   }
   if (!(wallThicknessCm > 0)) return null
   if (!connectedByWalls(rooms, wallThicknessCm + SHARED_WALL_SLACK_CM)) return null
@@ -313,7 +352,7 @@ export function mergeRooms(rooms: Room[], wallThicknessCm = 0): Room | null {
   if (vertices.length < 3 || !(area(vertices) > EPS)) return null
   // The closing never removes area: a smaller result means the shrink folded over itself.
   if (area(vertices) < Math.max(...rooms.map((room) => area(room.vertices))) - 1e-6) return null
-  return { ...rooms[0], vertices }
+  return mergedRoom(rooms[0], vertices)
 }
 
 // ---------- precision, scaling and constraints ----------
