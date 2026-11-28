@@ -1281,3 +1281,62 @@ describe('cutaway clipping invariants', () => {
     }
   })
 })
+
+describe('outer walls (isOuter)', () => {
+  // 20 cm is two thicknesses, so the facing edges stay separate walls instead of one shared wall.
+  const gapRooms = (gap: number) =>
+    board({ rooms: [room('A', box(0, 0, 400, 300)), room('B', box(400 + gap, 0, 800 + gap, 300))] })
+  const cam = (x: number, z: number, y = 500) => ({ x, y, z })
+
+  it('marks every wall of one rectangular room as outer', () => {
+    for (const a of [one(), board({ rooms: [room('A', box(0, 0, 400, 300))] })]) {
+      const s = buildScene(a)
+      expect(s.walls).toHaveLength(4)
+      for (const w of s.walls) expect(w.isOuter).toBe(true)
+    }
+  })
+
+  it('never marks a shared (interior) wall as outer', () => {
+    const s = buildScene(twoRooms())
+    expect(s.walls.filter((w) => w.isInterior)).toHaveLength(1)
+    expect(s.walls.every((w) => w.isOuter !== w.isInterior)).toBe(true)
+  })
+
+  it('marks the facing walls across a 20 cm gap as not outer, and the outside walls as outer', () => {
+    const s = buildScene(gapRooms(20))
+    expect(s.walls.some((w) => w.isInterior)).toBe(false)
+    // Room B lies just behind A:1, room A just behind B:3.
+    expect(s.walls.find((w) => w.id === 'A:1')!.isOuter).toBe(false)
+    expect(s.walls.find((w) => w.id === 'B:3')!.isOuter).toBe(false)
+    for (const id of ['A:0', 'A:2', 'A:3', 'B:0', 'B:1', 'B:2']) {
+      expect(s.walls.find((w) => w.id === id)!.isOuter).toBe(true)
+    }
+  })
+
+  it('drops the facing walls across the gap in cutaway for a camera east of the house', () => {
+    const walls = buildScene(gapRooms(20)).walls
+    const m = computeWallTargetHeights(walls, cam(1400, 150, 400), { x: 410, y: 0, z: 150 }, 'cutaway')
+    expect(m.get('A:1')).toBe(30) // faces the camera
+    expect(m.get('B:3')).toBe(30) // faces away, but room A is behind it
+    expect(m.get('A:3')).toBe(250) // far west outside wall
+    expect(m.get('A:0')).toBe(250)
+    expect(m.get('A:2')).toBe(250)
+    expect(m.get('B:0')).toBe(250)
+    expect(m.get('B:2')).toBe(250)
+    expect(m.get('B:1')).toBe(30) // east outside wall, faces the camera
+  })
+
+  it('drops a very short exterior piece like an interior wall', () => {
+    const s = buildScene(board({ rooms: [room('A', box(0, 0, 400, 8))] }))
+    // A:0 and A:2 are the long sides, A:1 and A:3 are 8 cm pieces, below 2 x 10 cm.
+    expect(s.walls.find((w) => w.id === 'A:1')!.isOuter).toBe(false)
+    expect(s.walls.find((w) => w.id === 'A:3')!.isOuter).toBe(false)
+    expect(s.walls.find((w) => w.id === 'A:0')!.isOuter).toBe(true)
+    expect(s.walls.find((w) => w.id === 'A:2')!.isOuter).toBe(true)
+    const m = computeWallTargetHeights(s.walls, cam(200, -500, 400), { x: 200, y: 0, z: 4 }, 'cutaway')
+    expect(m.get('A:0')).toBe(30) // faces the camera
+    expect(m.get('A:2')).toBe(250) // faces away, real outside wall
+    expect(m.get('A:1')).toBe(30) // short piece, faces away, still drops
+    expect(m.get('A:3')).toBe(30)
+  })
+})

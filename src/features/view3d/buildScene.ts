@@ -51,6 +51,8 @@ export const SHARED_FLUSH_CM = 1
 export const DEFAULT_CURB_CM = 10
 /** Height of a cut-away wall, in cm. */
 export const DEFAULT_CUTAWAY_STUB_CM = 30
+/** How far behind the outer face of an exterior wall we look for another room floor (cm). */
+const OUTER_PROBE_CM = 40
 /** Furniture at or under this height (rugs) is lifted by RUG_LIFT_CM to avoid z-fighting with the floor. */
 export const RUG_MAX_HEIGHT_CM = 2
 export const RUG_LIFT_CM = 0.5
@@ -145,6 +147,8 @@ export type WallSegmentData = {
   outwardNormal: Pt
   /** True for a shared wall: one unified wall between two rooms. */
   isInterior: boolean
+  /** Exterior wall on the outside of the house: no room floor lies just behind it, and it is not a short piece. Always false for a shared (interior) wall. */
+  isOuter: boolean
   /** Cutaway group: always the wall id (a unified wall is one unit). */
   cutawayGroupId: string
   /** Ids of the room edges (`roomId:edgeIndex`) merged into this shared wall (empty when exterior). */
@@ -213,6 +217,17 @@ const wallId = (roomId: string, edgeIndex: number) => `${roomId}:${edgeIndex}`
 function floorOutline(room: Room): Pt[] {
   const pts = signedArea(room.vertices) >= 0 ? room.vertices : [...room.vertices].reverse()
   return pts.map(toPt)
+}
+
+/** True when `p` lies inside `poly` (even-odd ray casting on the floor plane, x/z). */
+function pointInPolygon(p: Pt, poly: readonly Pt[]): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j]
+    if ((a.z > p.z) !== (b.z > p.z)
+      && p.x < ((b.x - a.x) * (p.z - a.z)) / (b.z - a.z) + a.x) inside = !inside
+  }
+  return inside
 }
 
 // ---------- walls ----------
@@ -577,7 +592,7 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
           center: { x: (start.x + end.x) / 2 + ea.n.x * shift, z: (start.z + end.z) / 2 + ea.n.z * shift },
           lengthCm: u1 - u0, thicknessCm: t, thicknessSide: flush ? 'centered' : 'outward',
           kind: fence ? 'fence' : 'wall', heightCm: height,
-          outwardNormal: ea.n, isInterior: true, cutawayGroupId: id, pairedWallIds: [ea.id, eb.id],
+          outwardNormal: ea.n, isInterior: true, isOuter: false, cutawayGroupId: id, pairedWallIds: [ea.id, eb.id],
           innerColor: fence ? (ea.room.wallColors?.[String(ea.index)] ?? FENCE_COLOR) : colorOf(ea),
           outerColor: fence ? FENCE_COLOR : DEFAULT_WALL_OUTER_COLOR,
           oppositeColor: fence ? (eb.room.wallColors?.[String(eb.index)] ?? FENCE_COLOR) : colorOf(eb),
@@ -622,7 +637,7 @@ function buildWalls(artboard: Artboard, rooms: Room[], heightCm: number): WallBu
           center: { x: mid.x + e.n.x * t / 2, z: mid.y + e.n.z * t / 2 },
           lengthCm: s1 - s0, thicknessCm: t, thicknessSide: 'outward',
           kind: fence ? 'fence' : 'wall', heightCm: wallHeight,
-          outwardNormal: e.n, isInterior: false, cutawayGroupId: id, pairedWallIds: [],
+          outwardNormal: e.n, isInterior: false, isOuter: false, cutawayGroupId: id, pairedWallIds: [],
           innerColor: fence ? fenceColor : colorOf(e),
           outerColor: fence ? fenceColor : DEFAULT_WALL_OUTER_COLOR,
           footprint: [],
@@ -1137,6 +1152,23 @@ export function buildScene(artboard: Artboard): SceneData {
 
   const builds = buildWalls(artboard, rooms, ceiling)
   const walls = builds.map((b) => b.wall)
+  // Outer walls: an exterior wall is on the outside of the house unless another room floor lies just behind
+  // it (a wall with a room behind is drawn like an interior wall in cutaway), or it is a short piece.
+  for (const w of walls) {
+    w.isOuter = false
+    if (w.isInterior || w.lengthCm < 2 * w.thicknessCm) continue
+    const n = w.outwardNormal
+    const reach = Math.max(...wallSideOffsets(w)) + OUTER_PROBE_CM
+    let covered = 0
+    for (const t of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+      const p = {
+        x: w.start.x + (w.end.x - w.start.x) * t + n.x * reach,
+        z: w.start.z + (w.end.z - w.start.z) * t + n.z * reach,
+      }
+      if (floors.some((f) => f.roomId !== w.roomId && pointInPolygon(p, f.vertices))) covered++
+    }
+    w.isOuter = covered < 3
+  }
   const cornerPosts = buildCornerPosts(rooms, builds, ceiling)
   const furniture = artboard.furniture.map((f) => buildFurniture(f, artboard.furniture.length > 60))
 
@@ -1177,8 +1209,8 @@ export type Pos3 = { x: number; y: number; z: number }
  * Target height of every wall (by wall id) for a camera, in cm.
  * - 'on': full height. 'off': a curb (`curbCm`, default 10).
  * - 'cutaway' (Sims-like "back only"): every interior wall and every exterior wall that faces the
- *   camera drops to `cutawayStubCm` (default 30); only the exterior walls at the back (facing away
- *   from the camera) keep their full height.
+ *   camera drops to `cutawayStubCm` (default 30); only exterior walls on the outside of the house
+ *   (`isOuter`) that face away from the camera keep their full height.
  * A result never exceeds the wall height.
  */
 export function computeWallTargetHeights(
@@ -1200,7 +1232,7 @@ export function computeWallTargetHeights(
     return out
   }
   for (const w of walls) {
-    const drop = w.isInterior ||
+    const drop = w.isInterior || !w.isOuter ||
       (cameraPos.x - w.center.x) * w.outwardNormal.x + (cameraPos.z - w.center.z) * w.outwardNormal.z > EPS
     out.set(w.id, drop ? Math.min(stub, w.heightCm) : w.heightCm)
   }
