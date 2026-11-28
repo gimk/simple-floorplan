@@ -9,7 +9,7 @@ const EXPECTED: Record<string, FurnitureArchetype> = {
   bed: 'bed', 'single-bed': 'bed', 'bed-140': 'bed', 'bed-180': 'bed', 'baby-cot': 'cot', 'bedside-table': 'pedestal',
   sofa: 'sofa', armchair: 'sofa', 'sofa-2': 'sofa', 'corner-sofa': 'cornerSofa', 'dining-chair': 'chair', 'office-chair': 'officeChair',
   'dining-table': 'table', 'round-table': 'roundTable', 'coffee-table': 'table', desk: 'desk', 'dining-table-4': 'table', 'side-table': 'roundTable',
-  wardrobe: 'tallStorage', bookshelf: 'bookshelf', 'chest-of-drawers': 'lowStorage', sideboard: 'lowStorage', 'tv-unit': 'lowStorage', 'shoe-cabinet': 'tallStorage',
+  wardrobe: 'tallStorage', bookshelf: 'bookshelf', 'chest-of-drawers': 'lowStorage', sideboard: 'lowStorage', 'tv-unit': 'tvUnit', 'shoe-cabinet': 'tallStorage',
   'kitchen-counter': 'counter', 'base-cabinet-60': 'counter', 'sink-unit': 'sink', cooker: 'cooker', dishwasher: 'appliance', fridge: 'appliance',
   'american-fridge': 'americanFridge', 'kitchen-island': 'counter', bathtub: 'bathtub', 'shower-tray': 'shower', toilet: 'toilet',
   washbasin: 'basin', 'double-washbasin': 'basin', 'washing-machine': 'drumAppliance', dryer: 'drumAppliance',
@@ -65,6 +65,18 @@ describe('furnitureSolids', () => {
     }
     expect(pillows('single-bed')).toBe(1)
     expect(pillows('bed-140')).toBe(2)
+  })
+
+  it('tv unit stands a flat-screen TV on a low cabinet', () => {
+    const p = FURNITURE_PRESETS.find((x) => x.id === 'tv-unit')!
+    const f = item(p, { presetId: 'tv-unit', widthCm: 180, depthCm: 40, heightCm: 120 })
+    const parts = furnitureParts(f, 120, radii)
+    // The TV panel reaches above the cabinet, and nothing leaves the item box.
+    expect(parts.some((x) => x.cy + x.sy / 2 > 100)).toBe(true)
+    for (const part of parts) {
+      expect(part.cy - part.sy / 2).toBeGreaterThanOrEqual(-EPS)
+      expect(part.cy + part.sy / 2).toBeLessThanOrEqual(120 + EPS)
+    }
   })
 
   it('corner sofa reads as an L: the front corner opposite the chaise is empty', () => {

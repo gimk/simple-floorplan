@@ -29,7 +29,7 @@ export type FurniturePartData = {
 
 export type FurnitureArchetype =
   | 'bed' | 'cot' | 'sofa' | 'cornerSofa' | 'chair' | 'officeChair' | 'table' | 'desk' | 'roundTable'
-  | 'pedestal' | 'tallStorage' | 'bookshelf' | 'lowStorage' | 'counter' | 'sink' | 'cooker' | 'appliance'
+  | 'pedestal' | 'tallStorage' | 'bookshelf' | 'lowStorage' | 'tvUnit' | 'counter' | 'sink' | 'cooker' | 'appliance'
   | 'drumAppliance' | 'americanFridge' | 'bathtub' | 'shower' | 'toilet' | 'basin' | 'rug' | 'box'
 
 /** Same values as RUG_MAX_HEIGHT_CM / RUG_LIFT_CM in buildScene.ts (not imported: buildScene imports this file). */
@@ -79,7 +79,7 @@ export const PRESET_ARCHETYPE: Readonly<Record<string, FurnitureArchetype>> = {
   bed: 'bed', 'single-bed': 'bed', 'bed-140': 'bed', 'bed-180': 'bed', 'baby-cot': 'cot', 'bedside-table': 'pedestal',
   sofa: 'sofa', armchair: 'sofa', 'sofa-2': 'sofa', 'corner-sofa': 'cornerSofa', 'dining-chair': 'chair', 'office-chair': 'officeChair',
   'dining-table': 'table', 'round-table': 'roundTable', 'coffee-table': 'table', desk: 'desk', 'dining-table-4': 'table', 'side-table': 'roundTable',
-  wardrobe: 'tallStorage', bookshelf: 'bookshelf', 'chest-of-drawers': 'lowStorage', sideboard: 'lowStorage', 'tv-unit': 'lowStorage', 'shoe-cabinet': 'tallStorage',
+  wardrobe: 'tallStorage', bookshelf: 'bookshelf', 'chest-of-drawers': 'lowStorage', sideboard: 'lowStorage', 'tv-unit': 'tvUnit', 'shoe-cabinet': 'tallStorage',
   'kitchen-counter': 'counter', 'base-cabinet-60': 'counter', 'sink-unit': 'sink', cooker: 'cooker', dishwasher: 'appliance', fridge: 'appliance',
   'american-fridge': 'americanFridge', 'kitchen-island': 'counter', bathtub: 'bathtub', 'shower-tray': 'shower', toilet: 'toilet',
   washbasin: 'basin', 'double-washbasin': 'basin', 'washing-machine': 'drumAppliance', dryer: 'drumAppliance',
@@ -108,7 +108,8 @@ export function furnitureArchetype(f: Pick<FurnitureItem, 'name'> & { shape?: Fu
   if (has('table')) return f.shape === 'circle' ? 'roundTable' : 'table'
   if (has('wardrobe', 'shoe cabinet')) return 'tallStorage'
   if (has('bookshelf', 'bookcase')) return 'bookshelf'
-  if (has('chest of drawers', 'sideboard', 'tv unit')) return 'lowStorage'
+  if (has('tv unit', 'tv stand', 'tv cabinet')) return 'tvUnit'
+  if (has('chest of drawers', 'sideboard')) return 'lowStorage'
   if (has('sink unit')) return 'sink'
   if (has('kitchen counter', 'base cabinet', 'kitchen island')) return 'counter'
   if (has('cooker')) return 'cooker'
@@ -317,19 +318,46 @@ function bookshelf(c: Ctx, s: Shades) {
   for (let i = 1; i <= n; i++) box(c, 0, (H * i) / (n + 1) - 1.5, -D / 2 + FR / 2, W - 6, 3, FR, s.light)
 }
 
-function lowStorage(c: Ctx, s: Shades) {
-  const { W, D, H } = c
-  const ph = Math.min(6, H * 0.08)
+/** Low cabinet body of height `hs` (drawer fronts or door fronts). */
+function lowStorageBody(c: Ctx, s: Shades, hs: number) {
+  const { W, D } = c
+  const ph = Math.min(6, hs * 0.08)
   box(c, 0, 0, FR / 2 + 1.5, W - 6, ph, D - FR - 3, s.dark)
-  span(c, -W / 2, W / 2, ph, H, -D / 2 + FR, D / 2, s.base)
-  const bh = H - ph
+  span(c, -W / 2, W / 2, ph, hs, -D / 2 + FR, D / 2, s.base)
+  const bh = hs - ph
   if (W < 100) {
     const n = bh >= 60 ? 4 : 3, h = bh / n
     for (let i = 0; i < n; i++) span(c, -W / 2 + 2, W / 2 - 2, ph + i * h + 1, ph + (i + 1) * h - 1, -D / 2, -D / 2 + FR, s.light)
   } else {
     const n = W >= 150 ? 4 : 3, w = W / n
-    for (let i = 0; i < n; i++) span(c, -W / 2 + i * w + 1.5, -W / 2 + (i + 1) * w - 1.5, ph + 2, H - 2, -D / 2, -D / 2 + FR, s.light)
+    for (let i = 0; i < n; i++) span(c, -W / 2 + i * w + 1.5, -W / 2 + (i + 1) * w - 1.5, ph + 2, hs - 2, -D / 2, -D / 2 + FR, s.light)
   }
+}
+
+function lowStorage(c: Ctx, s: Shades) {
+  lowStorageBody(c, s, c.H)
+}
+
+/** TV unit: a low cabinet with a flat-screen TV standing on top. */
+function tvUnit(c: Ctx, s: Shades) {
+  const { W, D, H } = c
+  // Cabinet height: a real stand is about 50 cm; a short item gives the cabinet a bit less than half.
+  const sh = H >= 80 ? Math.min(50, H * 0.42) : H * 0.45
+  lowStorageBody(c, s, sh)
+  const gap = 8 // foot + neck under the panel
+  const ph = Math.min(H - sh - gap, (W * 0.9) * 9 / 16)
+  if (ph < 10) return
+  const tw = ph * 16 / 9
+  const frame = shade(s.base, 0.18)
+  const screen = shade(s.base, 0.08)
+  const y0 = sh + gap
+  // Foot plate on the cabinet top, and a neck up to the panel.
+  box(c, 0, sh, 0, Math.min(tw * 0.35, 40), 1.5, Math.min(D * 0.5, 22), frame)
+  box(c, 0, sh + 1.5, 0, 6, gap - 1.5 + 2, 3, frame)
+  // Panel (bezel), 4 cm deep, centred in depth.
+  box(c, 0, y0, 0, tw, ph, 4, frame)
+  // Screen face on the front (-z) side of the panel.
+  box(c, 0, y0 + 1, -2.2, tw - 2, ph - 2, 0.4, screen)
 }
 
 /** Kitchen carcass: toe-kick plinth, cabinet, worktop. `hc` is the total height of the counter. */
@@ -445,7 +473,7 @@ function single(c: Ctx, shape: 'rect' | 'circle', radii: Radii, color: string) {
 
 const BUILDERS: Partial<Record<FurnitureArchetype, (c: Ctx, s: Shades) => void>> = {
   bed, cot, sofa, cornerSofa, chair, officeChair, table, desk, roundTable, pedestal, tallStorage, bookshelf,
-  lowStorage, counter, sink, cooker, appliance, drumAppliance, americanFridge, bathtub, shower, toilet, basin,
+  lowStorage, tvUnit, counter, sink, cooker, appliance, drumAppliance, americanFridge, bathtub, shower, toilet, basin,
 }
 
 /**

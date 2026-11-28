@@ -100,7 +100,7 @@ export const FURNITURE_PRESETS: FurniturePreset[] = [
   { id: 'bookshelf', name: 'Bookshelf', shape: 'rect', widthCm: 100, depthCm: 35, color: DEFAULT_PRESET_COLOR, heightCm: 180, showDirection: true },
   { id: 'chest-of-drawers', name: 'Chest of Drawers', shape: 'rect', widthCm: 80, depthCm: 50, color: DEFAULT_PRESET_COLOR, heightCm: 80, showDirection: true },
   { id: 'sideboard', name: 'Sideboard', shape: 'rect', widthCm: 160, depthCm: 45, color: DEFAULT_PRESET_COLOR, heightCm: 80, showDirection: true },
-  { id: 'tv-unit', name: 'TV Unit', shape: 'rect', widthCm: 180, depthCm: 40, color: DEFAULT_PRESET_COLOR, heightCm: 50, showDirection: true },
+  { id: 'tv-unit', name: 'TV Unit', shape: 'rect', widthCm: 180, depthCm: 40, color: DEFAULT_PRESET_COLOR, heightCm: 120, showDirection: true },
   { id: 'shoe-cabinet', name: 'Shoe Cabinet', shape: 'rect', widthCm: 80, depthCm: 30, color: DEFAULT_PRESET_COLOR, heightCm: 100, showDirection: true },
   // Kitchen
   { id: 'kitchen-counter', name: 'Kitchen Counter', shape: 'rect', widthCm: 240, depthCm: 60, color: DEFAULT_PRESET_COLOR, heightCm: 90, showDirection: true },
