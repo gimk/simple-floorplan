@@ -1,7 +1,7 @@
 // v2 shell: top bar (title, mode, undo/redo, JSON export/import, add image), left panel,
 // SVG canvas (grid, reference images, artboard frames), right Inspect panel.
 import { Suspense, lazy, useEffect, useId, useRef, useState } from 'react'
-import { Camera, Download, ClipboardCopy, ClipboardPaste, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
+import { Download, ClipboardCopy, ClipboardPaste, Ellipsis, ImagePlus, Keyboard, PanelLeft, PanelRight, Pencil, PenTool, Redo2, Square, Undo2, Upload, X } from 'lucide-react'
 import { useStore } from 'zustand'
 import { Viewport } from './canvas/Viewport'
 import { ArtboardContent, ArtboardInspect, ArtboardsLayer } from './features/artboards'
@@ -53,14 +53,17 @@ import { RoomToolsOverlay } from './features/rooms/RoomToolsOverlay'
 import { WallInspect } from './features/rooms/WallInspect'
 import { WallLengthEditor } from './features/rooms/WallLengthEditor'
 import { PinnedTape, TapeOverlay } from './features/tape/TapeOverlay'
+import type { View3DHandle } from './features/view3d/cameraPresets'
+import { copyView3DPng } from './features/view3d/exportPng'
 import { SceneSettingsInspect } from './features/view3d/SceneSettingsInspect'
+import { ViewsPanel } from './features/view3d/ViewsPanel'
 import { toast, undoShortcut } from './features/toast'
 import { ToastHost } from './features/toast/ToastHost'
 import { selectRoom } from './features/artboards/selection'
 import { useDoc } from './model/store'
 import type { ProjectDoc, Selection } from './model/types'
 import { CanvasGrid } from './shell/CanvasGrid'
-import { IconButton, MUTED, PanelSection, Segmented } from './shell/panel'
+import { IconButton, Segmented } from './shell/panel'
 import { initTheme } from './shell/theme'
 import { useUi, type Mode } from './shell/uiStore'
 import { shortcutsBlocked, useDialogFocus } from './shell/useDialogFocus'
@@ -117,6 +120,8 @@ const SHORTCUTS: { group: string; rows: [string, string][] }[] = [
       ['Redo', REDO_KEYS],
       ['Plan / Design / Views mode', '1 / 2 / 3'],
       ['Walls off / back only / on (Views mode)', 'W'],
+      ['Fit the 3D camera (Views mode)', 'R'],
+      ['Copy 3D view as PNG (Views mode)', isMac ? '⇧⌘C' : 'Ctrl+Shift+C'],
       ['Close panel or dialog', 'Esc'],
       ['This cheat sheet', '?'],
     ],
@@ -315,16 +320,6 @@ function PasteJsonModal({ onClose, onImported }: { onClose: () => void; onImport
   )
 }
 
-/** Left panel of Views mode (Phase 1): a clean placeholder, with no 2D object list. */
-function ViewsPanel() {
-  return (
-    <PanelSection title="Views" icon={<Camera size={14} aria-hidden="true" />} description="Saved camera views">
-      <p className={MUTED}>No saved view yet.</p>
-      <p className={MUTED}>The 3D scene arrives in a later phase.</p>
-    </PanelSection>
-  )
-}
-
 /** Name of a mode in a sentence, for the hints of the actions that need Plan mode. */
 const modeName = (mode: Mode): string => (mode === 'views' ? 'Views' : mode === 'design' ? 'Design' : 'Plan')
 
@@ -343,6 +338,7 @@ export default function App() {
   const artboards = useDoc((s) => s.doc.artboards)
   const canUndo = useStore(useDoc.temporal, (s) => s.pastStates.length > 0)
   const canRedo = useStore(useDoc.temporal, (s) => s.futureStates.length > 0)
+  const view3dRef = useRef<View3DHandle | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const imageRef = useRef<HTMLInputElement>(null)
   const [dropping, setDropping] = useState(false)
@@ -454,6 +450,22 @@ export default function App() {
         const ui = useUi.getState()
         ui.set({ wallViewMode: ui.wallViewMode === 'off' ? 'cutaway' : ui.wallViewMode === 'cutaway' ? 'on' : 'off' })
         return
+      }
+      // R flies the 3D camera back to the fit view. Shift+Cmd/Ctrl+C copies the current 3D view as a PNG.
+      if (useUi.getState().mode === 'views') {
+        if (plain && !e.shiftKey && key === 'r') {
+          e.preventDefault()
+          view3dRef.current?.applyPreset('fit')
+          return
+        }
+        if (isCopyPngShortcut(e)) {
+          e.preventDefault()
+          void view3dRef.current?.capturePngBlob().then((blob) => {
+            if (blob) return copyView3DPng(blob)
+            toast('The 3D view is not ready', { kind: 'error' })
+          }).catch((err: unknown) => toast(`Copy failed: ${err instanceof Error ? err.message : String(err)}`, { kind: 'error' }))
+          return
+        }
       }
       // Views mode is a read-only 3D surface: no 2D tool, edit or selection shortcut runs there.
       // Undo / redo, the zoom keys and the panel-hiding toggle above stay live.
@@ -1043,7 +1055,7 @@ export default function App() {
           {mode === 'plan' ? (
             <ObjectsPanel onUploadImage={() => imageRef.current?.click()} />
           ) : mode === 'views' ? (
-            <ViewsPanel />
+            <ViewsPanel handleRef={view3dRef} />
           ) : (
             <FurniturePanel />
           )}
@@ -1070,7 +1082,7 @@ export default function App() {
                 </div>
               }
             >
-              <View3D />
+              <View3D handleRef={view3dRef} />
             </Suspense>
           ) : (
           <Viewport

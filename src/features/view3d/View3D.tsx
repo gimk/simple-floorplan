@@ -1,6 +1,7 @@
 // 3D Views mode renderer (docs/3d-and-finishes.md). Draws the SceneData of buildScene with Three.js.
 // Loaded lazily from App.tsx so that 'three' stays out of the 2D entry bundle.
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useDoc } from '../../model/store'
@@ -8,10 +9,15 @@ import type { ViewProjection } from '../../model/types'
 import { useUi } from '../../shell/uiStore'
 import { DEFAULT_WALL_OUTER_COLOR, buildScene, clipSpanToHeight, computeWallTargetHeights, wallSideOffsets } from './buildScene'
 import type { FloorMeshData, FurnitureMeshData, SceneData, WallSegmentData } from './buildScene'
+import { PRESET_FOV, computePresetPose } from './cameraPresets'
+import type { CameraSnapshot, View3DHandle } from './cameraPresets'
 import { FLOOR_TILE_CM, floorBaseColor, disposeAll, getFloorTexture } from './floorTextures'
 
 const BACKDROP = { dark: '#12161b', light: '#f4f5f7' } as const
-const FOV = 45
+const FOV = PRESET_FOV
+const FLY_MS = 450
+const PNG_WIDTH = 1920
+const PNG_HEIGHT = 1080
 const INTRO_MS = 650
 const END_ELEV = (48 * Math.PI) / 180
 const START_ELEV = (88 * Math.PI) / 180
@@ -22,6 +28,9 @@ const EDGE_OPACITY = 0.2
 
 const easeOut = (t: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3)
 const range = (ms: number, from: number, to: number) => easeOut((ms - from) / (to - from))
+
+/** A running camera flight: eased from one pose to another (ortho also eases the visible half-height). */
+type Flight = { t0: number; fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; fromVis: number; toVis: number }
 
 type Api = { setProjection: (p: ViewProjection) => void; setBackdrop: (b: 'dark' | 'light') => void }
 type SavedCamera = { artboardId: string; pos: THREE.Vector3; target: THREE.Vector3; orthoHalfH: number; zoom: number }
@@ -255,7 +264,7 @@ function buildThreeScene(data: SceneData, shadows: boolean, backdrop: 'dark' | '
   }
 }
 
-export default function View3D() {
+export default function View3D({ handleRef }: { handleRef?: RefObject<View3DHandle | null> } = {}) {
   const activeId = useUi((s) => s.activeArtboardId)
   const artboards = useDoc((s) => s.doc.artboards)
   const artboard = artboards.find((a) => a.id === activeId) ?? artboards[0]
@@ -358,8 +367,12 @@ export default function View3D() {
     persp.lookAt(target); ortho.lookAt(target)
     controls.update()
 
+    let flight: Flight | null = null
     const stopIntro = () => { intro = false }
+    // Any user drag, pinch or wheel takes the camera back at once.
+    const stopFlight = () => { flight = null }
     controls.addEventListener('start', stopIntro)
+    controls.addEventListener('start', stopFlight)
 
     const setProjection = (p: ViewProjection) => {
       const next = p === 'ortho' ? ortho : persp
@@ -386,6 +399,135 @@ export default function View3D() {
       built.scene.background = new THREE.Color(BACKDROP[bd])
     }
     apiRef.current = { setProjection, setBackdrop }
+    const half = Math.tan((FOV * Math.PI) / 360)
+
+    /** Set the height of every wall (and the corner posts that follow them) from a ratio per wall. */
+    const setWalls = (ratioOf: (w: WallEntry) => number) => {
+      const wallScale = new Map<string, number>()
+      for (const w of built.walls) {
+        w.ratio = ratioOf(w)
+        for (const part of w.parts) applyWallHeight(part, w.ratio * w.data.heightCm)
+        wallScale.set(w.data.id, w.ratio)
+      }
+      for (const p of built.posts) {
+        const a = wallScale.get(p.wallIds[0]) ?? 1, c = wallScale.get(p.wallIds[1]) ?? 1
+        p.group.scale.y = Math.max(MIN_SCALE, Math.min(a, c))
+      }
+    }
+
+    // ----- Handle: snapshot, fly-to, presets, PNG capture -----
+    const getSnapshot = (): CameraSnapshot => {
+      const pos = camera.position.clone()
+      const t = controls.target
+      if (camera === ortho) {
+        // An ortho view is framed by its zoom, not by its distance: store the distance that frames the same height.
+        const dir = pos.clone().sub(t)
+        if (dir.lengthSq() > 0) pos.copy(t).addScaledVector(dir.normalize(), orthoHalfH / ortho.zoom / half)
+      }
+      const r = (n: number) => Math.round(n * 100) / 100
+      return {
+        position: [r(pos.x), r(pos.y), r(pos.z)],
+        target: [r(t.x), r(t.y), r(t.z)],
+        fov: FOV,
+        projection: camera === ortho ? 'ortho' : 'perspective',
+        wallMode: wallModeRef.current,
+      }
+    }
+
+    const applyFlight = (f: Flight, k: number) => {
+      camera.position.lerpVectors(f.fromPos, f.toPos, k)
+      controls.target.lerpVectors(f.fromTarget, f.toTarget, k)
+      if (camera === ortho) {
+        const vis = Math.max(1e-3, f.fromVis + (f.toVis - f.fromVis) * k)
+        ortho.zoom = Math.max(1e-3, orthoHalfH / vis)
+        ortho.updateProjectionMatrix()
+      }
+    }
+
+    const flyTo: View3DHandle['flyTo'] = (view) => {
+      const ui = useUi.getState()
+      if (ui.wallViewMode !== view.wallMode) ui.set({ wallViewMode: view.wallMode })
+      wallModeRef.current = view.wallMode
+      const proj: ViewProjection = view.projection ?? 'perspective'
+      if (ui.viewProjection !== proj) ui.set({ viewProjection: proj })
+      projectionRef.current = proj
+      setProjection(proj)
+      intro = false
+      const toPos = new THREE.Vector3(...view.position)
+      const toTarget = new THREE.Vector3(...view.target)
+      const f: Flight = {
+        t0: performance.now(),
+        fromPos: camera.position.clone(), toPos,
+        fromTarget: controls.target.clone(), toTarget,
+        fromVis: camera === ortho ? orthoHalfH / ortho.zoom : 0,
+        toVis: Math.max(1, toPos.distanceTo(toTarget)) * half,
+      }
+      if (reducedMotion) {
+        flight = null
+        applyFlight(f, 1)
+        controls.update()
+      } else flight = f
+    }
+
+    const applyPreset: View3DHandle['applyPreset'] = (preset) => {
+      const pose = computePresetPose(scene.bounds, preset)
+      flyTo({ position: pose.position, target: pose.target, wallMode: wallModeRef.current, projection: camera === ortho ? 'ortho' : 'perspective' })
+    }
+
+    const capturePngBlob: View3DHandle['capturePngBlob'] = async (opts) => {
+      const W = Math.max(1, Math.round(opts?.width ?? PNG_WIDTH))
+      const H = Math.max(1, Math.round(opts?.height ?? PNG_HEIGHT))
+      const view = opts?.view
+      const cam = view ? (view.projection === 'ortho' ? ortho : persp) : camera
+      const savedPos = cam.position.clone()
+      const savedQuat = cam.quaternion.clone()
+      const savedZoom = ortho.zoom
+      const savedRatios = new Map(built.walls.map((w) => [w, w.ratio] as const))
+      const savedFurn = built.furniture.map((g) => g.scale.y)
+      const prevPixelRatio = renderer.getPixelRatio()
+      const setOrthoExtents = (halfH: number) => {
+        ortho.left = -halfH * (W / H); ortho.right = halfH * (W / H)
+        ortho.top = halfH; ortho.bottom = -halfH
+        ortho.updateProjectionMatrix()
+      }
+      let blob: Promise<Blob | null>
+      try {
+        renderer.setPixelRatio(1)
+        renderer.setSize(W, H, false)
+        if (cam === persp) { persp.aspect = W / H; persp.updateProjectionMatrix() } else setOrthoExtents(orthoHalfH)
+        if (view) {
+          const pos = new THREE.Vector3(...view.position)
+          const tgt = new THREE.Vector3(...view.target)
+          cam.position.copy(pos)
+          cam.lookAt(tgt)
+          if (cam === ortho) { ortho.zoom = 1; setOrthoExtents(Math.max(1, pos.distanceTo(tgt)) * half) }
+          // Snap walls to the heights of that view (no partial lerp) and show every furniture item in full.
+          const targets = computeWallTargetHeights(scene.walls, pos, tgt, view.wallMode)
+          setWalls((w) => Math.max(MIN_SCALE, (targets.get(w.data.id) ?? w.data.heightCm) / w.data.heightCm))
+          for (const g of built.furniture) g.scale.y = 1
+        }
+        built.scene.updateMatrixWorld()
+        renderer.render(built.scene, cam)
+        // toBlob copies the drawing buffer when it is called, so the live size can come back right after.
+        blob = new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+      } finally {
+        cam.position.copy(savedPos)
+        cam.quaternion.copy(savedQuat)
+        ortho.zoom = savedZoom
+        setWalls((w) => savedRatios.get(w) ?? w.ratio)
+        built.furniture.forEach((g, i) => { g.scale.y = savedFurn[i] })
+        renderer.setPixelRatio(prevPixelRatio)
+        renderer.setSize(width, height, false)
+        persp.aspect = width / height
+        persp.updateProjectionMatrix()
+        updateOrtho()
+        renderer.render(built.scene, camera)
+      }
+      return blob
+    }
+
+    const handle: View3DHandle = { getSnapshot, flyTo, applyPreset, capturePngBlob }
+    if (handleRef) handleRef.current = handle
 
     const resize = () => {
       width = Math.max(1, container.clientWidth); height = Math.max(1, container.clientHeight)
@@ -419,22 +561,20 @@ export default function View3D() {
           persp.lookAt(target); ortho.lookAt(target)
         }
       }
+      if (flight) {
+        const k = easeOut((now - flight.t0) / FLY_MS)
+        applyFlight(flight, k)
+        if (k >= 1) flight = null
+      }
       controls.update()
 
       const targets = computeWallTargetHeights(scene.walls, camera.position, controls.target, wallModeRef.current)
       const k = snap || intro || reducedMotion ? 1 : 1 - Math.exp(-dt * 10)
-      const wallScale = new Map<string, number>()
-      for (const w of built.walls) {
+      setWalls((w) => {
         const want = Math.max(MIN_SCALE, ((targets.get(w.data.id) ?? w.data.heightCm) / w.data.heightCm) * wallK)
         const cur = w.ratio
-        w.ratio = k >= 1 ? want : Math.abs(want - cur) < 1e-4 ? want : cur + (want - cur) * k
-        for (const part of w.parts) applyWallHeight(part, w.ratio * w.data.heightCm)
-        wallScale.set(w.data.id, w.ratio)
-      }
-      for (const p of built.posts) {
-        const a = wallScale.get(p.wallIds[0]) ?? 1, c = wallScale.get(p.wallIds[1]) ?? 1
-        p.group.scale.y = Math.max(MIN_SCALE, Math.min(a, c))
-      }
+        return k >= 1 ? want : Math.abs(want - cur) < 1e-4 ? want : cur + (want - cur) * k
+      })
       // Furniture grows with the intro, then eases to full height (no pop when the user cancels the intro).
       furnS = intro || snap ? furnK : furnS + (1 - furnS) * k
       for (const f of built.furniture) f.scale.y = Math.max(MIN_SCALE, furnS)
@@ -449,14 +589,16 @@ export default function View3D() {
       ro.disconnect()
       savedCamera.current = { artboardId: artboardId ?? '', pos: camera.position.clone(), target: controls.target.clone(), orthoHalfH, zoom: ortho.zoom }
       apiRef.current = null
+      if (handleRef && handleRef.current === handle) handleRef.current = null
       controls.removeEventListener('start', stopIntro)
+      controls.removeEventListener('start', stopFlight)
       controls.dispose()
       built.dispose()
       renderer.dispose()
       renderer.forceContextLoss()
       canvas.remove()
     }
-  }, [scene, artboardId, viewShadows])
+  }, [scene, artboardId, viewShadows, handleRef])
 
   return (
     <div

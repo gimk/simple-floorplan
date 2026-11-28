@@ -13,7 +13,7 @@ const PNG_SCALE = 2
 const svgBlob = (svg: string): Blob => new Blob([svg], { type: 'image/svg+xml;charset=utf-8' })
 
 /** Click a temporary <a download> link, then drop the object URL. */
-function saveBlob(blob: Blob, filename: string): void {
+export function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   try {
     const a = document.createElement('a')
